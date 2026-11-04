@@ -1,0 +1,1 @@
+DJ_Platform_Implementation_Plan_v0.1_RU.md

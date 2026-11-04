@@ -1,0 +1,193 @@
+project: DJ Platform
+spec: DJ_Platform_TZ_v0.1_RU.md
+version: '0.1'
+date: '2026-11-04'
+status: proposed
+rules:
+  license_gate: 'No GPL-dependency merges before ADR-001 is approved'
+  rt_contract: 'No heap allocations, locks, synchronous I/O, or Qt calls inside audio callback'
+  review: 'Critical DSP, protocol, license and hardware changes require human review'
+  evidence: 'Do not mark hardware tests as passing without physical hardware'
+  default_done:
+    - tests_added_and_pass
+    - relevant_docs_updated
+    - traceability_record_updated
+    - dependency_licenses_reviewed
+    - reviewer_approved
+sprints:
+  - id: S0
+    name: foundation
+    work: [A00, A12]
+  - id: S1
+    name: independent_contracts
+    work: [A01, A08, A09, A11]
+  - id: S2
+    name: media_and_ui_vertical
+    work: [A02, A05, A06, A07]
+  - id: S3
+    name: playing_and_mixing
+    work: [A03, A04, A10]
+  - id: S4
+    name: vertical_slice_gate
+    work: [A13]
+tasks:
+  - id: A00
+    title: 'Repository and reproducible NixOS environment'
+    role: architect-devops
+    priority: P0
+    release: R0
+    depends_on: []
+    requirements: [DJP-ENV-001, DJP-ENV-003]
+    deliverables: [Cargo.toml, Cargo.lock, flake.nix, flake.lock, rust-toolchain.toml, CMakeLists.txt, .github/workflows]
+    acceptance:
+      - 'nix develop, cargo test --workspace and blank Qt/QML shell build work on clean NixOS setup'
+      - 'Toolchain and dependencies are pinned'
+  - id: A01
+    title: 'Real-time contract, command queue and deterministic headless runner'
+    role: audio-core
+    priority: P0
+    release: R0
+    depends_on: [A00]
+    requirements: [DJP-ARCH-001, DJP-ARCH-002, DJP-ARCH-003, DJP-ARCH-005, DJP-NFR-001]
+    deliverables: [crates/dj-domain, crates/dj-audio-core, apps/dj-headless, docs/architecture/rt-contract.md]
+    acceptance:
+      - '440 Hz sine generator renders deterministic WAV with exact frame count'
+      - 'Play and Stop are applied at designated sample index'
+      - 'Instrumented RT callback performs no allocation or locking'
+  - id: A02
+    title: 'Media decoder, indexed seek and bounded PCM prefetch'
+    role: media
+    priority: P0
+    release: R0
+    depends_on: [A00, A01]
+    requirements: [DJP-MEDIA-001, DJP-MEDIA-002]
+    deliverables: [crates/dj-codec]
+    acceptance:
+      - 'WAV and FLAC decode and seek correctly; MP3 support after license review'
+      - 'Audio callback reads only prebuffered PCM'
+      - 'EOF, corrupted media and underrun produce defined non-crashing outcomes'
+  - id: A03
+    title: 'Deck A/B transport, hotcue and loop state machine'
+    role: audio-core
+    priority: P0
+    release: R0
+    depends_on: [A01, A02]
+    requirements: [DJP-DECK-001, DJP-DECK-002, DJP-DECK-003, DJP-DECK-004]
+    deliverables: [crates/dj-deck]
+    acceptance:
+      - 'Two sample-accurate deck tracks render together headlessly'
+      - 'Eight hotcues, seek and loop boundary fixtures pass'
+  - id: A04
+    title: 'Mixer, crossfader, cue bus and meter logic'
+    role: dsp-audio
+    priority: P0
+    release: R0
+    depends_on: [A01, A03]
+    requirements: [DJP-MIX-001, DJP-ARCH-006, DJP-ARCH-007]
+    deliverables: [crates/dj-mixer]
+    acceptance:
+      - 'Routing fixtures show only intended destinations'
+      - 'Crossfader extremity values and NaN guards pass tests'
+  - id: A05
+    title: 'Audio backend and physical device benchmark proof-of-concept'
+    role: audio-platform
+    priority: P0
+    release: R0
+    depends_on: [A01]
+    requirements: [DJP-NFR-002, DJP-NFR-003, DJP-NFR-004]
+    deliverables: [crates/dj-audio-io, docs/adr/0002-audio-backend.md, docs/qa/benchmarks.md]
+    acceptance:
+      - 'CPAL and/or native PipeWire/JACK device enumeration implemented'
+      - '48 kHz / 256 frame trial reported with actual hardware metadata'
+  - id: A06
+    title: 'Two-deck Qt/QML shell and command/state bridge'
+    role: ui
+    priority: P0
+    release: R0
+    depends_on: [A00, A01]
+    requirements: [DJP-UI-001, DJP-UI-002, DJP-ARCH-004]
+    deliverables: [apps/dj-ui, crates/dj-bridge]
+    acceptance:
+      - 'Play and Cue buttons reflect acknowledged engine state'
+      - 'UI does not block the sound callback'
+  - id: A07
+    title: 'Waveform generation and cache-backed renderer'
+    role: media-ui
+    priority: P0
+    release: R0
+    depends_on: [A02, A06]
+    requirements: [DJP-MEDIA-003, DJP-UI-004]
+    deliverables: [crates/dj-analysis, apps/dj-ui/qml/decks]
+    acceptance:
+      - 'Waveform timebase matches exact source frame positions'
+      - 'Changing file fingerprint invalidates cache'
+  - id: A08
+    title: 'SQLite collection and first persistence migration'
+    role: storage
+    priority: P0
+    release: R0
+    depends_on: [A00]
+    requirements: [DJP-DATA-001, DJP-DATA-003, DJP-DATA-005]
+    deliverables: [crates/dj-library, crates/dj-session]
+    acceptance:
+      - 'Track and cue data survive save, restart and versioned migration'
+      - 'No DB operations on RT thread'
+  - id: A09
+    title: 'S4 MK3 read-only HID controller probe'
+    role: hardware
+    priority: P0
+    release: R0
+    depends_on: [A00, A12]
+    requirements: [DJP-CTRL-001, DJP-CTRL-004]
+    deliverables: [crates/dj-controller-core, docs/hardware/s4mk3/hardware-profile.md]
+    hardware_needed: true
+    acceptance:
+      - 'Control input events recorded from physical S4 MK3'
+      - 'No motor activity, firmware changes or unknown outgoing packets'
+      - 'udev permission procedure documented'
+  - id: A10
+    title: 'S4 MK3 Linux audio routing and loopback proof'
+    role: hardware-audio
+    priority: P1
+    release: R1
+    depends_on: [A05, A09]
+    requirements: [DJP-CTRL-003, DJP-MIX-003, DJP-MIX-008]
+    deliverables: [docs/hardware/s4mk3/test-matrix.md]
+    hardware_needed: true
+    acceptance:
+      - 'Actual output assignments for master, headphones and booth documented'
+      - 'Device and OS versions, tested backend and pass/fail evidence recorded'
+  - id: A11
+    title: 'Golden audio fixtures, QA traceability and AI-agent contracts'
+    role: qa
+    priority: P0
+    release: R0
+    depends_on: [A00, A01]
+    requirements: [DJP-NFR-001]
+    deliverables: [crates/dj-testkit, docs/requirements/traceability.csv, docs/agents/AGENTS.md]
+    acceptance:
+      - 'CI fails when an offline golden audio fixture changes unexpectedly'
+      - 'Every new requirement has an owning test or explicit unverified status'
+  - id: A12
+    title: 'License policy and third-party gate'
+    role: compliance-architect
+    priority: P0
+    release: R0
+    depends_on: []
+    requirements: [DJP-LIC-001, DJP-LIC-002, DJP-LIC-003, DJP-LIC-004, DJP-LIC-005, DJP-LIC-006]
+    deliverables: [docs/adr/0001-license.md, THIRD_PARTY.md]
+    acceptance:
+      - 'Project license strategy approved before GPL-only code incorporation'
+      - 'Encdr, Qt, CPAL, Symphonia and Ableton Link licensing assessed'
+  - id: A13
+    title: 'R0 integration demo: two decks, mixer and waveforms'
+    role: integrator
+    priority: P0
+    release: R0
+    depends_on: [A01, A02, A03, A04, A05, A06, A07, A08, A11]
+    requirements: [DJP-GOAL-002, DJP-GOAL-003]
+    deliverables: [apps/dj-ui, apps/dj-headless, README.md]
+    acceptance:
+      - 'Two independently controllable decks and crossfader work in Linux GUI'
+      - 'Cue and loop operations persist across reload'
+      - 'Headless reproducibility and RT benchmark evidence attached'
