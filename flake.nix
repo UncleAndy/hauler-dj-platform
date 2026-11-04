@@ -7,7 +7,9 @@
   };
 
   outputs = { self, nixpkgs, flake-utils }:
-    flake-utils.lib.eachDefaultSystem (system:
+    # Linux only (DJP-ENV-001): the shell contains ALSA/PipeWire/Qt, which do not exist on
+    # Darwin. Windows/macOS become separate adapters after ADR-006.
+    flake-utils.lib.eachSystem [ "x86_64-linux" ] (system:
       let
         pkgs = import nixpkgs { inherit system; };
 
