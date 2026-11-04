@@ -36,8 +36,8 @@ bash scripts/check.sh       # полный локальный гейт
 
 ## Лицензии
 
-LICENSE — MIT, окончательная стратегия в ADR-001 не принята. GPL-only код (Encdr, Ableton Link) не
-включается до решения владельца. Код и ресурсы Traktor/NI/Mixxx не копируются (DJP-LIC-006).
+LICENSE — двойная `MIT OR Apache-2.0` (ADR-001 accepted). GPL-only код (Encdr, Ableton Link)
+не включается никогда: он сделал бы комбинированную работу GPL. Код и ресурсы Traktor/NI/Mixxx не копируются (DJP-LIC-006).
 
 ## Аппаратура
 

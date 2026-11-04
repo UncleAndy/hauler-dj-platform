@@ -1,21 +1,17 @@
-MIT License
+# DJ Platform License
 
-Copyright (c) 2026 Andrey Velikoredchanin
+DJ Platform (this repository, `hauler-dj-platform`) is dual-licensed under your
+choice of either:
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+* Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+* MIT License ([LICENSE-MIT](LICENSE-MIT))
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+at your option. SPDX identifier: `MIT OR Apache-2.0`.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in this project by you shall be dual-licensed as above, without
+any additional terms or conditions.
+
+Third-party components are listed in [THIRD_PARTY.md](THIRD_PARTY.md) and keep
+their own licenses. The licensing policy, including the ban on GPL-only code in
+this distribution, is recorded in [docs/adr/0001-license.md](docs/adr/0001-license.md).

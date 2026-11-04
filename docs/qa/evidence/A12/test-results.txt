@@ -1,0 +1,19 @@
+# A12 — фактические команды
+# дата: 2026-11-04T20:06:01Z
+
+$ md5sum LICENSE-MIT LICENSE-APACHE ~/projects/RUST/transono/LICENSE-MIT ~/projects/RUST/transono/LICENSE-APACHE
+7903327eca7536bc9c7f49d4c17bf242  LICENSE-MIT
+99e241652bb71836b459ddfebc7ac5a7  LICENSE-APACHE
+7903327eca7536bc9c7f49d4c17bf242  /home/hermes/projects/RUST/transono/LICENSE-MIT
+99e241652bb71836b459ddfebc7ac5a7  /home/hermes/projects/RUST/transono/LICENSE-APACHE
+
+$ grep -n "^license" Cargo.toml
+9:license = "MIT OR Apache-2.0"
+
+$ head -3 LICENSE-MIT
+The MIT License (MIT)
+Copyright © 2026 Andrey Velikoredchanin
+
+
+$ grep -c "MIT OR Apache-2.0" LICENSE
+1

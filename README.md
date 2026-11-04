@@ -84,7 +84,8 @@ bash scripts/ui.sh --smoke   # build, load QML offscreen, fail on any Qt warning
 ```
 
 `nix develop` exports `CARGO_TARGET_DIR` to `~/.cache/dj-platform-target` so build artifacts stay
-out of the checkout; override the variable to change it. `direnv allow` picks the shell up
+out of the checkout; `BUILD_DIR=/tmp/dj-ui-build bash scripts/ui.sh` moves the CMake tree out of it as
+well (needed when the checkout is shared with another uid). `direnv allow` picks the shell up
 automatically (`.envrc`).
 
 On NixOS there is no `/usr/bin/env`, so invoke the scripts as `bash scripts/check.sh` — the
@@ -102,6 +103,9 @@ On NixOS there is no `/usr/bin/env`, so invoke the scripts as `bash scripts/chec
 
 ## License
 
-`LICENSE` is MIT (© 2026 Andrey Velikoredchanin). The final licensing strategy, including the
-GPL-only question around Encdr and Ableton Link, is **not decided**: see `docs/adr/0001-license.md`
-and `THIRD_PARTY.md`. No GPL-only dependency may be added before that decision.
+Dual-licensed under **MIT OR Apache-2.0**, at your option: `LICENSE` (pointer), `LICENSE-MIT`,
+`LICENSE-APACHE`; contributions are accepted under the same dual terms.
+
+The policy is recorded in `docs/adr/0001-license.md` (accepted): GPL/AGPL dependencies are excluded
+(so Encdr and Ableton Link are out), LGPL components (Qt, ALSA) only through dynamic linking with the
+usual notices. Third-party inventory: `THIRD_PARTY.md`.
