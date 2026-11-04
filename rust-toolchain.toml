@@ -1,0 +1,13 @@
+# Toolchain pin for the Rust workspace.
+#
+# The supported development environment is `nix develop`, where rustc/cargo/rustfmt/
+# clippy come from the flake's pinned nixpkgs input (flake.lock). This file exists so
+# that (a) an IDE or a rustup-based contributor uses the same version, and (b) the
+# version is written down where a human looks for it.
+#
+# scripts/check-rust.sh fails when `rustc --version` differs from `channel` below, so
+# the pin cannot drift silently.
+[toolchain]
+channel = "1.95.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

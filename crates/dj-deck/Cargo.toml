@@ -1,0 +1,13 @@
+[package]
+name = "dj-deck"
+description = "Track deck transport, hotcues, loops and source positions."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

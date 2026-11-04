@@ -1,0 +1,13 @@
+[package]
+name = "dj-controller-core"
+description = "Device abstraction, capability negotiation and mapping."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

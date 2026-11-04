@@ -1,0 +1,22 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "apps/dj-headless", "apps/dj-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT"
+authors = ["Andrey Velikoredchanin"]
+
+# Workspace lints. The audio real-time contract (DJP-NFR-001, docs/architecture/rt-contract.md)
+# makes unwrap/expect/panic in library code a defect; crates additionally set
+# `#![cfg_attr(not(test), deny(clippy::unwrap_used))]` so tests stay writable.
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+undocumented_unsafe_blocks = "deny"

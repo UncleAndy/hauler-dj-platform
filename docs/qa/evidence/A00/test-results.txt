@@ -1,0 +1,241 @@
+# A00 — фактически выполненные команды и их вывод
+# дата: 2026-11-04T19:40:52Z  хост: NixOS 26.05.20261007.2efa67f (Yarara), ядро 6.18.55
+# агент: hermes (uid 10000) через SSH-bwrap; каталог: /home/hermes/projects/RUST/Hauler-DJ-Platform
+
+$ nix --version
+nix (Nix) 2.34.8
+
+$ bash scripts/check.sh
+dj-platform dev shell — rust 1.95.0, qt 6.11.2, cmake 4.1.6
+  cargo test --workspace    bash scripts/check.sh    bash scripts/ui.sh --smoke
+toolchain: rustc 1.95.0 (matches rust-toolchain.toml)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.04s
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running unittests src/lib.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_analysis-5507a6b26b09e24b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_audio_core-9dbf4dbadd8b1f51)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_audio_io-b5fb2ff0c7cc3345)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_bridge-e0edf0f264e257e7)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_cli-0efdc1c475a4ae7e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cli.rs (/home/hermes/.cache/dj-platform-target/debug/deps/cli-ef485f2fc9ae6196)
+
+running 3 tests
+test help_exits_zero ... ok
+test version_reports_package_version ... ok
+test import_is_not_wired_yet_and_says_so ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_codec-8944337830ec969d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_controller_core-96bcf3ba8362f26f)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_deck-91d68dc76dbc6bdf)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_domain-e0fdaf11d1a6cdc5)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_dsp-ed963e00664e7948)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_headless-640fe3ea98550e18)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cli.rs (/home/hermes/.cache/dj-platform-target/debug/deps/cli-a2eaed4c9e5898ad)
+
+running 3 tests
+test version_reports_package_version ... ok
+test a_render_request_fails_with_exit_code_two ... ok
+test help_lists_the_planned_scenario_flags ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_library-7b1dc9cf6b5f2ce3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_mixer-efdefcef18cda1bd)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_session-7d4c719fc355fbae)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_testkit-6fe02543aca694a9)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests dj_analysis
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests dj_audio_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests dj_audio_io
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests dj_bridge
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests dj_codec
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests dj_controller_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests dj_deck
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests dj_domain
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests dj_dsp
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests dj_library
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests dj_mixer
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests dj_session
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests dj_testkit
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+traceability: every DJP-* requirement has an owned row
+-- Configuring done (0.2s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/hermes/projects/RUST/Hauler-DJ-Platform/build
+[1/13] Automatic MOC and UIC for target dj-ui
+[2/12] Running AUTOMOC file extraction for target dj-ui
+dj-ui: QML scene loaded, no Qt warnings
+check.sh: all gates passed
+exit: 0
+
+# --- проверка окружения под зависимости A02/A05 (scratch-крейт вне репозитория) ---
+$ cat /tmp/djprobe/Cargo.toml
+[package]
+name = "djprobe"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cpal = "0.16"
+symphonia = { version = "0.5", features = ["wav", "flac"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+$ cat /tmp/djprobe/src/main.rs
+use cpal::traits::HostTrait;
+
+fn main() {
+    let host = cpal::default_host();
+    let count = host.devices().map(|d| d.count()).unwrap_or(0);
+    println!("cpal devices visible in this sandbox: {count}");
+}
+
+$ nix develop "path:$PWD" --command bash -c "cd /tmp/djprobe && cargo run --quiet"
+dj-platform dev shell — rust 1.95.0, qt 6.11.2, cmake 4.1.6
+  cargo test --workspace    bash scripts/check.sh    bash scripts/ui.sh --smoke
+cpal devices visible in this sandbox: 0
+
+# Разрешённые версии из /tmp/djprobe/Cargo.lock:
+name = "alsa-sys"	version = "0.3.1"
+name = "cpal"	version = "0.16.0"
+name = "rusqlite"	version = "0.32.1"
+name = "symphonia"	version = "0.5.5"
+# 0 устройств — в песочнице агента нет /dev/snd; проверялась только сборка и линковка с ALSA.

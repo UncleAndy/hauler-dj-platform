@@ -1,0 +1,13 @@
+[package]
+name = "dj-domain"
+description = "Domain contracts: commands, acks, snapshots and the audio-frame timebase."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true
