@@ -45,7 +45,7 @@ never treats its own optimistic state as confirmation. See `docs/architecture/rt
 |---|---|
 | Core, DSP, state | Rust stable 1.95.0, Cargo workspace, edition 2024 |
 | UI | Qt 6.11.2 + QML + Qt Quick, separate from DSP |
-| Bridge | narrow C ABI or cxx adapter — decision pending (ADR-003) |
+| Bridge | separate UI process over a versioned local protocol (`command-v1`/`state-v1`), ADR-003 |
 | Audio backend | CPAL vs native PipeWire/JACK — decision pending (ADR-002) |
 | Decoders | Symphonia (WAV/FLAC first; MP3 after license review) |
 | Storage | SQLite in WAL mode, versioned migrations |
