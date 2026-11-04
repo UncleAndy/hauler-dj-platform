@@ -81,6 +81,7 @@ nix develop                  # enters the pinned shell (rust 1.95.0, qt 6.11.2, 
 bash scripts/check.sh        # fmt, clippy, tests, toolchain pin, traceability, QML smoke
 bash scripts/ui.sh           # build and open the blank two-deck window (needs a display)
 bash scripts/ui.sh --smoke   # build, load QML offscreen, fail on any Qt warning
+cargo run -p dj-audio-probe  # what CPAL sees on this machine (audio backend evidence, ADR-002)
 ```
 
 `nix develop` exports `CARGO_TARGET_DIR` to `~/.cache/dj-platform-target` so build artifacts stay

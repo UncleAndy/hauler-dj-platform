@@ -1,0 +1,15 @@
+[package]
+name = "dj-audio-probe"
+description = "Read-only audio device probe for ADR-002: what CPAL sees, which channels, how the callbacks behave (A05)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+cpal = "0.16"
+serde_json = "1"
+
+[lints]
+workspace = true

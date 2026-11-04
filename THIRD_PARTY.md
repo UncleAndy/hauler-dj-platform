@@ -16,12 +16,13 @@ ALSA) допустимы только через динамическую лин
 | ALSA lib | системная (nixpkgs) | LGPL-2.1-or-later | динамическая линковка | уведомления | нет данных | в dev shell |
 | OpenSSL | nixpkgs | Apache-2.0 | динамическая линковка | уведомления | нет данных | в dev shell |
 | Rust toolchain (rustc, cargo, clippy, rustfmt) | 1.95.0 (nixpkgs) | MIT / Apache-2.0 | инструмент сборки | нет | нет | в dev shell |
+| cpal | 0.16.0 | MIT | статическая линковка (Rust) | уведомление | нет данных | в сборке (`apps/dj-audio-probe`) |
+| serde / serde_json | 1.0.x | MIT OR Apache-2.0 | статическая линковка (Rust) | уведомление | нет данных | в сборке (`apps/dj-audio-probe`) |
 
 ## Запланированы (ещё не зависимость)
 
 | Компонент | Лицензия (по ТЗ §17 / upstream) | Роль | Когда | Ограничение |
 |---|---|---|---|---|
-| CPAL | MIT | адаптер аудиоустройств | A05 | выбор backend — ADR-002 |
 | Symphonia | MPL-2.0 | декодирование WAV/FLAC, затем MP3 | A02 | MP3 — после license review |
 | SQLite | Public Domain | коллекция | A08 | — |
 | Tokio | MIT | фоновые задачи | по необходимости | не на RT-пути |
