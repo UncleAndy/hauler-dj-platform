@@ -376,6 +376,49 @@ fn parse_scheduling(stat: &str) -> Option<ThreadScheduling> {
     })
 }
 
+/// The verdict the application is allowed to draw about real-time scheduling (ADR-0010).
+///
+/// The application never grants itself priority: the packaging does (`CPUSchedulingPolicy=fifo`
+/// on a systemd unit, MMCSS on Windows, a time-constraint policy on macOS). What the application
+/// must do is notice when it did not get it and say so, because a silent `SCHED_OTHER` audio thread
+/// is exactly how a working graph produces dropouts on a busy desktop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RealtimeStatus {
+    /// True when the thread actually runs under a real-time policy.
+    pub realtime: bool,
+    /// Policy as the kernel names it, or `unknown` when procfs could not be read.
+    pub policy: &'static str,
+    /// What to tell the user or the log when the answer is no.
+    pub advice: Option<&'static str>,
+}
+
+/// Judge a thread's scheduling against the RT requirement.
+pub fn realtime_status(scheduling: Option<ThreadScheduling>) -> RealtimeStatus {
+    match scheduling {
+        Some(seen) if seen.policy == "fifo" || seen.policy == "round-robin" => RealtimeStatus {
+            realtime: true,
+            policy: seen.policy,
+            advice: None,
+        },
+        Some(seen) => RealtimeStatus {
+            realtime: false,
+            policy: seen.policy,
+            advice: Some(
+                "the audio thread runs without real-time priority; expect dropouts on a busy machine. \
+                 Run the engine under a unit with CPUSchedulingPolicy=fifo (see docs/operations/realtime-audio.md)",
+            ),
+        },
+        None => RealtimeStatus {
+            realtime: false,
+            policy: "unknown",
+            advice: Some(
+                "the scheduling policy of the audio thread could not be read; \
+                 this platform reports it through procfs only",
+            ),
+        },
+    }
+}
+
 /// Scheduling policy and priority of one thread.
 pub fn thread_scheduling(tid: u64) -> Option<ThreadScheduling> {
     if tid == 0 {
@@ -880,6 +923,42 @@ mod tests {
         fields[37] = rt_priority.to_string();
         fields[38] = policy.to_string();
         format!("1234 (cpal audio thread) {}", fields.join(" "))
+    }
+
+    #[test]
+    fn realtime_scheduling_is_judged_not_assumed() {
+        let fifo = RealtimeStatus {
+            realtime: true,
+            policy: "fifo",
+            advice: None,
+        };
+        assert_eq!(
+            realtime_status(Some(ThreadScheduling {
+                policy: "fifo",
+                rt_priority: 20,
+                nice: 0,
+            })),
+            fifo
+        );
+
+        let ordinary = realtime_status(Some(ThreadScheduling {
+            policy: "other",
+            rt_priority: 0,
+            nice: 0,
+        }));
+        assert!(!ordinary.realtime);
+        assert_eq!(ordinary.policy, "other");
+        assert!(
+            ordinary
+                .advice
+                .is_some_and(|text| text.contains("CPUSchedulingPolicy=fifo")),
+            "the advice must name the fix, not just the fault"
+        );
+
+        let unreadable = realtime_status(None);
+        assert!(!unreadable.realtime, "silence must not pass for success");
+        assert_eq!(unreadable.policy, "unknown");
+        assert!(unreadable.advice.is_some());
     }
 
     #[test]

@@ -365,6 +365,12 @@ fn run(argv: &[String]) -> Result<String, Error> {
     if let Some(path) = &options.out {
         let _ = std::fs::write(path, &json);
     }
+    // A silent SCHED_OTHER audio thread is how a working graph still produces dropouts; say it out
+    // loud rather than letting the report be the only place the fact is recorded (ADR-0010).
+    let realtime = dj_audio_io::realtime_status(output.audio_thread_scheduling());
+    if let Some(advice) = realtime.advice {
+        eprintln!("dj-live-probe: warning: {advice}");
+    }
     Ok(json)
 }
 
@@ -393,6 +399,7 @@ fn report_json(
     let audio_tid = facts.audio_tid;
     let pressure = facts.pressure;
     let scheduling = facts.scheduling;
+    let realtime = dj_audio_io::realtime_status(scheduling);
     json!({
         "device": report.device,
         "channels": report.channels,
@@ -443,6 +450,11 @@ fn report_json(
             })
         } else {
             None
+        },
+        "realtime": {
+            "ok": realtime.realtime,
+            "policy": realtime.policy,
+            "advice": realtime.advice,
         },
         "thread_scheduling": scheduling.map(|seen| json!({
             "policy": seen.policy,
