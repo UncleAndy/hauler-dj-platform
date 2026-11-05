@@ -11,6 +11,8 @@
 
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use dj_audio_io::{LiveConfig, LiveOutput, Renderer, RoutePlan};
@@ -168,6 +170,8 @@ fn run(argv: &[String]) -> Result<String, Error> {
     let rate = options.rate.unwrap_or(shape.sample_rate);
     let plan = RoutePlan::for_channels(shape.channels);
 
+    let underruns = Arc::new(AtomicU64::new(0));
+    let loop_wraps = Arc::new(AtomicU64::new(0));
     let renderer: Box<dyn Renderer> = match &options.file {
         Some(path) => {
             let probe = StreamDecoder::open(path)
@@ -224,7 +228,14 @@ fn run(argv: &[String]) -> Result<String, Error> {
             }
             deck.play();
 
-            Box::new(DeckRenderer::new(deck, rate, options.block, options.gain))
+            Box::new(DeckRenderer::new(
+                deck,
+                rate,
+                options.block,
+                options.gain,
+                Arc::clone(&underruns),
+                Arc::clone(&loop_wraps),
+            ))
         }
         None => Box::new(ToneRenderer::new(options.tone_hz, rate, options.gain)),
     };
@@ -253,23 +264,27 @@ fn run(argv: &[String]) -> Result<String, Error> {
         std::thread::sleep(tick.min(Duration::from_secs_f64(total - elapsed)));
         let report = output.snapshot();
         eprintln!(
-            "dj-live-probe: {:.0}s of {:.0}s | audio {:.1}s | callbacks {} | late {} | errors {} | max {:.3} ms | rss {} kB",
+            "dj-live-probe: {:.0}s of {:.0}s | audio {:.1}s | callbacks {} | late {} | errors {} | underruns {} | max {:.3} ms | rss {} kB",
             started.elapsed().as_secs_f64().min(total),
             total,
             report.audio_seconds,
             report.callbacks,
             report.late_callbacks,
             report.errors,
+            underruns.load(Ordering::Relaxed),
             report.interval_max_ms,
             rss_kb().map_or_else(|| "?".to_string(), |kb| kb.to_string()),
         );
         if let Some(path) = &options.out {
-            let _ = std::fs::write(path, report_json(&report, &options, plan));
+            let _ = std::fs::write(
+                path,
+                report_json(&report, &options, plan, &underruns, &loop_wraps),
+            );
         }
         final_report = report;
     }
 
-    let json = report_json(&final_report, &options, plan);
+    let json = report_json(&final_report, &options, plan, &underruns, &loop_wraps);
     if let Some(path) = &options.out {
         let _ = std::fs::write(path, &json);
     }
@@ -277,7 +292,13 @@ fn run(argv: &[String]) -> Result<String, Error> {
 }
 
 /// The JSON the run is judged by, printed and optionally written to `--out`.
-fn report_json(report: &dj_audio_io::LiveReport, options: &Options, plan: RoutePlan) -> String {
+fn report_json(
+    report: &dj_audio_io::LiveReport,
+    options: &Options,
+    plan: RoutePlan,
+    underruns: &Arc<AtomicU64>,
+    loop_wraps: &Arc<AtomicU64>,
+) -> String {
     json!({
         "device": report.device,
         "channels": report.channels,
@@ -301,6 +322,8 @@ fn report_json(report: &dj_audio_io::LiveReport, options: &Options, plan: RouteP
         "render_max_us": report.render_max_us,
         "render_budget": report.render_budget,
         "rss_kb": rss_kb(),
+        "deck_underruns": underruns.load(Ordering::Relaxed),
+        "loop_wraps": loop_wraps.load(Ordering::Relaxed),
         "route": {
             "master": [plan.master.0, plan.master.1],
             "cue": plan.cue.map(|(left, right)| [left, right]),
@@ -354,10 +377,22 @@ struct DeckRenderer {
     mixer: Mixer,
     block: usize,
     scratch: Vec<f32>,
+    /// Blocked-audio counters, shared with the report: a silent block is not a late callback,
+    /// so the callback timing would look perfect while the deck was starved.
+    underruns: Arc<AtomicU64>,
+    /// Loop wraps, which is what a whole-track loop does every few minutes.
+    loop_wraps: Arc<AtomicU64>,
 }
 
 impl DeckRenderer {
-    fn new(deck: Deck, sample_rate: u32, block: usize, gain: f32) -> Self {
+    fn new(
+        deck: Deck,
+        sample_rate: u32,
+        block: usize,
+        gain: f32,
+        underruns: Arc<AtomicU64>,
+        loop_wraps: Arc<AtomicU64>,
+    ) -> Self {
         let mut mixer = Mixer::new(1);
         mixer.prepare(sample_rate, block);
         mixer.set_channel(
@@ -374,6 +409,8 @@ impl DeckRenderer {
             mixer,
             block,
             scratch: vec![0.0f32; block * 2],
+            underruns,
+            loop_wraps,
         }
     }
 }
@@ -390,5 +427,9 @@ impl Renderer for DeckRenderer {
         master[..frames * 2].copy_from_slice(self.mixer.master());
         master[frames * 2..].fill(0.0);
         cue.fill(0.0);
+
+        let stats = self.deck.stats();
+        self.underruns.store(stats.underruns, Ordering::Relaxed);
+        self.loop_wraps.store(stats.loop_wraps, Ordering::Relaxed);
     }
 }
