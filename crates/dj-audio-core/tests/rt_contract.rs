@@ -36,6 +36,28 @@ fn the_instrumentation_sees_a_deliberate_allocation() {
 }
 
 #[test]
+fn scopes_on_different_threads_do_not_interfere() {
+    // The tally is per thread because test binaries run tests in parallel: a shared counter let one
+    // test's reset zero another's evidence, which fails the control test at random and can hide a
+    // real allocation the same way.
+    rt::reset();
+    let other = std::thread::spawn(|| {
+        rt::reset();
+        let _scope = RtScope::enter();
+        let deliberate = vec![0u8; 1_024];
+        std::hint::black_box(&deliberate);
+        rt::allocations_in_rt()
+    });
+    let theirs = other.join().unwrap_or(0);
+    assert!(theirs > 0, "the other thread counts its own allocation");
+    assert_eq!(
+        rt::allocations_in_rt(),
+        0,
+        "this thread must not inherit the other thread's tally"
+    );
+}
+
+#[test]
 fn processing_a_block_does_not_allocate() {
     let mut engine = Engine::new(48_000, 440.0);
     // Everything that could allocate happens before the measured section.

@@ -17,13 +17,17 @@
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 thread_local! {
     static IN_RT_SCOPE: Cell<bool> = const { Cell::new(false) };
+    /// Counted per thread on purpose.
+    ///
+    /// A global counter looks simpler and is wrong: test binaries run tests in parallel, so one
+    /// test's `reset` zeroes another's tally between the allocation and the assertion. That fails
+    /// the control test ("the allocator must notice an allocation") at random, and — worse — could
+    /// hide a real allocation the same way. A scope belongs to one thread, so its tally must too.
+    static ALLOCATIONS_IN_RT: Cell<usize> = const { Cell::new(0) };
 }
-
-static ALLOCATIONS_IN_RT: AtomicUsize = AtomicUsize::new(0);
 
 /// Marks the current thread as being inside an RT section.
 ///
@@ -52,19 +56,22 @@ pub fn in_rt_scope() -> bool {
     IN_RT_SCOPE.with(Cell::get)
 }
 
-/// Allocations observed inside RT scopes since the last [`reset`].
+/// Allocations this thread made inside RT scopes since its last [`reset`].
 pub fn allocations_in_rt() -> usize {
-    ALLOCATIONS_IN_RT.load(Ordering::Relaxed)
+    ALLOCATIONS_IN_RT.with(Cell::get)
 }
 
-/// Zero the counter.
+/// Zero this thread's counter.
 pub fn reset() {
-    ALLOCATIONS_IN_RT.store(0, Ordering::Relaxed);
+    ALLOCATIONS_IN_RT.with(|count| count.set(0));
 }
 
 fn note_allocation() {
-    if in_rt_scope() {
-        ALLOCATIONS_IN_RT.fetch_add(1, Ordering::Relaxed);
+    // `try_with` because the allocator still runs while thread-local storage is being torn down,
+    // and a panic there would abort the process. Allocations during teardown are not RT work.
+    let inside = IN_RT_SCOPE.try_with(Cell::get).unwrap_or(false);
+    if inside {
+        let _ = ALLOCATIONS_IN_RT.try_with(|count| count.set(count.get() + 1));
     }
 }
 
