@@ -31,6 +31,7 @@ Usage:
   dj-live-probe [--file PATH] [--device SUBSTR] [--seconds N] [--block N]
                 [--rate HZ] [--tone-hz HZ] [--gain G] [--cache-dir DIR]
                 [--out FILE] [--progress-seconds N] [--loop] [--loop-seconds N]
+                [--config FILE] [--write-config FILE]
 
 Defaults: default output device, 10 s, block 256, tone 440 Hz, gain 0.25.
 Without --file a pure tone is played, so the device path can be checked alone.
@@ -66,8 +67,10 @@ struct Options {
     file: Option<PathBuf>,
     device: Option<String>,
     seconds: f64,
-    block: usize,
+    block: Option<usize>,
     rate: Option<u32>,
+    config: Option<PathBuf>,
+    write_config: Option<PathBuf>,
     tone_hz: f32,
     gain: f32,
     cache_dir: Option<PathBuf>,
@@ -92,8 +95,10 @@ fn run(argv: &[String]) -> Result<String, Error> {
         file: None,
         device: None,
         seconds: 10.0,
-        block: 256,
+        block: None,
         rate: None,
+        config: None,
+        write_config: None,
         tone_hz: 440.0,
         gain: 0.25,
         cache_dir: None,
@@ -135,7 +140,15 @@ fn run(argv: &[String]) -> Result<String, Error> {
                 index += 2;
             }
             "--block" => {
-                options.block = number("--block")? as usize;
+                options.block = Some(number("--block")? as usize);
+                index += 2;
+            }
+            "--config" => {
+                options.config = Some(PathBuf::from(value()?));
+                index += 2;
+            }
+            "--write-config" => {
+                options.write_config = Some(PathBuf::from(value()?));
                 index += 2;
             }
             "--rate" => {
@@ -169,7 +182,7 @@ fn run(argv: &[String]) -> Result<String, Error> {
             }
             other => return Err(Error::Usage(format!("unknown option {other:?}"))),
         }
-        if options.block == 0 {
+        if options.block == Some(0) {
             return Err(Error::Usage("--block must be positive".to_string()));
         }
     }
@@ -178,7 +191,34 @@ fn run(argv: &[String]) -> Result<String, Error> {
     // default path is "play through whatever the system uses", not "play through the S4".
     let shape = dj_audio_io::resolve_device(options.device.as_deref())
         .map_err(|err| Error::Device(err.to_string()))?;
-    let rate = options.rate.unwrap_or(shape.sample_rate);
+    // Settings first, then flags: a value given on the command line wins, but the file is the
+    // place where a machine-specific number belongs (block size, thresholds, loop budget).
+    if let Some(path) = &options.write_config {
+        let text = dj_config::Config::default()
+            .to_toml()
+            .map_err(|err| Error::Usage(err.to_string()))?;
+        std::fs::write(path, text)
+            .map_err(|err| Error::Usage(format!("cannot write {}: {err}", path.display())))?;
+        println!("{}", path.display());
+        std::process::exit(0);
+    }
+    let settings = match &options.config {
+        Some(path) => dj_config::Config::load(path).map_err(|err| Error::Usage(err.to_string()))?,
+        None => dj_config::Config::default(),
+    };
+
+    let rate = options.rate.unwrap_or(if settings.audio.sample_rate > 0 {
+        settings.audio.sample_rate
+    } else {
+        shape.sample_rate
+    });
+    let block_frames = options.block.unwrap_or(settings.audio.block_frames);
+    let thresholds = dj_audio_io::Thresholds {
+        late_periods: settings.diagnostics.late_threshold_periods,
+        early_periods: settings.diagnostics.early_threshold_periods,
+        stall_us: settings.diagnostics.stall_threshold_us,
+        expensive_percent: settings.diagnostics.expensive_threshold_percent,
+    };
     let plan = RoutePlan::for_channels(shape.channels);
 
     let underruns = Arc::new(AtomicU64::new(0));
@@ -229,6 +269,9 @@ fn run(argv: &[String]) -> Result<String, Error> {
             // The audio callback must never wait for the prefetcher.
             deck.set_blocking(false);
             deck.set_gain(1.0);
+            deck.set_loop_config(dj_deck::LoopConfig {
+                buffer_max_seconds: settings.loop_playback.buffer_max_seconds,
+            });
             // A whole-track loop keeps the real path busy for the whole run instead of rendering
             // silence once the file ends.
             if options.loop_track
@@ -250,7 +293,7 @@ fn run(argv: &[String]) -> Result<String, Error> {
             Box::new(DeckRenderer::new(
                 deck,
                 rate,
-                options.block,
+                block_frames,
                 options.gain,
                 Arc::clone(&underruns),
                 Arc::clone(&loop_wraps),
@@ -261,10 +304,14 @@ fn run(argv: &[String]) -> Result<String, Error> {
     };
 
     let config = LiveConfig {
-        device: options.device.clone(),
+        device: options
+            .device
+            .clone()
+            .or_else(|| settings.audio.device.clone()),
         sample_rate: rate,
-        block_frames: options.block,
+        block_frames,
         seconds: options.seconds,
+        thresholds,
     };
     let output =
         LiveOutput::start(&config, plan, renderer).map_err(|err| Error::Device(err.to_string()))?;
@@ -413,6 +460,13 @@ fn report_json(
         "channels": report.channels,
         "sample_rate": report.sample_rate,
         "block_frames_requested": report.block_frames_requested,
+        "thresholds": {
+            "late_periods": report.thresholds.late_periods,
+            "early_periods": report.thresholds.early_periods,
+            "stall_us": report.thresholds.stall_us,
+            "expensive_percent": report.thresholds.expensive_percent,
+        },
+        "settings_file": options.config.as_ref().map(|path| path.display().to_string()),
         "frames_per_callback": report.frames_per_callback,
         "block_honoured": report.honoured_block(),
         "callbacks": report.callbacks,

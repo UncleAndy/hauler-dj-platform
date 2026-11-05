@@ -107,7 +107,7 @@ DJP-REMIX-003,ml,P2,R2,DJP-SRS-001 §5,,,unverified,,,
 DJP-REMIX-004,ml,P2,R2,DJP-SRS-001 §5,,,unverified,,,
 DJP-REMIX-005,ml,P2,R3,DJP-SRS-001 §5,,,unverified,,,
 DJP-REMIX-006,ml,P2,R3,DJP-SRS-001 §5,,,unverified,,,
-DJP-SET-001,media,P1,R1,DJP-SRS-001 §5,,,unverified,,,
+DJP-SET-001,media,P1,R1,DJP-SRS-001 §5,crates/dj-config (все критичные значения как параметры с дефолтами из замеров; UI-поверхность — A10),dj_config::defaults_are_the_values_the_measurements_justified; dj_config::nonsense_is_rejected_with_the_field_named; dj_config::settings_survive_a_round_trip,review,docs/operations/settings.md,,2026-11-05
 DJP-SET-002,media,P1,R1,DJP-SRS-001 §5,,,unverified,,,
 DJP-SET-003,media,P1,R1,DJP-SRS-001 §5,,,unverified,,,
 DJP-SET-004,media,P2,R2,DJP-SRS-001 §5,,,unverified,,,

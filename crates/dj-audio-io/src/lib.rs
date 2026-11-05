@@ -111,13 +111,13 @@ impl Counters {
         }
     }
 
-    fn note_interval(&self, micros: u32, period_us: f64) {
+    fn note_interval(&self, micros: u32, period_us: f64, thresholds: Thresholds) {
         self.min_us.fetch_min(micros, Ordering::Relaxed);
         self.max_us.fetch_max(micros, Ordering::Relaxed);
         if let Some(bucket) = self.histogram.get(micros as usize) {
             bucket.fetch_add(1, Ordering::Relaxed);
         }
-        match classify_interval(micros, period_us) {
+        match classify_interval(micros, period_us, thresholds) {
             IntervalKind::Late => self.late.fetch_add(1, Ordering::Relaxed),
             IntervalKind::Early => self.early.fetch_add(1, Ordering::Relaxed),
             IntervalKind::OnTime => 0,
@@ -178,6 +178,8 @@ pub struct LiveReport {
     pub stalled_blocks: u64,
     /// Longest stretch spent off the CPU inside a block, microseconds.
     pub off_cpu_max_us: u32,
+    /// The thresholds this run was judged against.
+    pub thresholds: Thresholds,
     /// Blocks that were late, early, or expensive, with the moment they happened.
     pub outliers: Vec<Outlier>,
     /// Outlier records dropped because the log filled up.
@@ -376,6 +378,34 @@ fn parse_scheduling(stat: &str) -> Option<ThreadScheduling> {
     })
 }
 
+/// The lines a run is judged against.
+///
+/// Defaults come from the A05 measurements, but they are settings: if a later test disagrees — a
+/// hungrier desktop, a bigger buffer, a slower machine — the line moves without a rebuild, and the
+/// report carries the values it was judged by.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Thresholds {
+    /// A callback interval above this many periods counts as late.
+    pub late_periods: f64,
+    /// Below this many periods counts as early.
+    pub early_periods: f64,
+    /// A block with at least this long off the CPU counts as stalled.
+    pub stall_us: u32,
+    /// A block costing more than this share of the period is recorded as expensive.
+    pub expensive_percent: f64,
+}
+
+impl Default for Thresholds {
+    fn default() -> Self {
+        Self {
+            late_periods: 1.5,
+            early_periods: 0.5,
+            stall_us: 500,
+            expensive_percent: 1.0,
+        }
+    }
+}
+
 /// The verdict the application is allowed to draw about real-time scheduling (ADR-0010).
 ///
 /// The application never grants itself priority: the packaging does (`CPUSchedulingPolicy=fifo`
@@ -445,9 +475,6 @@ pub fn thread_pressure(tid: u64) -> Option<ThreadPressure> {
 
 /// Number of outlier records kept for diagnosis.
 const OUTLIER_SLOTS: usize = 32;
-
-/// A block whose thread was off the CPU for at least this long is counted as stalled.
-const STALL_THRESHOLD_US: u32 = 500;
 
 /// One block that misbehaved, with the time it happened.
 ///
@@ -527,14 +554,14 @@ pub enum IntervalKind {
 ///
 /// Separated out and tested because it is the number the report is read for: a run that says
 /// "0 late" must actually mean no callback lost ground, not "the backend printed no errors".
-pub fn classify_interval(micros: u32, period_us: f64) -> IntervalKind {
+pub fn classify_interval(micros: u32, period_us: f64, thresholds: Thresholds) -> IntervalKind {
     if period_us <= 0.0 {
         return IntervalKind::OnTime;
     }
     let ratio = f64::from(micros) / period_us;
-    if ratio > 1.5 {
+    if ratio > thresholds.late_periods {
         IntervalKind::Late
-    } else if ratio < 0.5 {
+    } else if ratio < thresholds.early_periods {
         IntervalKind::Early
     } else {
         IntervalKind::OnTime
@@ -578,6 +605,8 @@ pub struct LiveConfig {
     pub block_frames: usize,
     /// Seconds to run.
     pub seconds: f64,
+    /// Thresholds to judge the run by.
+    pub thresholds: Thresholds,
 }
 
 impl Default for LiveConfig {
@@ -587,6 +616,7 @@ impl Default for LiveConfig {
             sample_rate: 48_000,
             block_frames: 256,
             seconds: 10.0,
+            thresholds: Thresholds::default(),
         }
     }
 }
@@ -596,6 +626,8 @@ pub struct LiveOutput {
     _stream: cpal::Stream,
     counters: Arc<Counters>,
     outliers: Arc<Outliers>,
+    /// Thresholds this run is judged by.
+    thresholds: Thresholds,
     /// Thread the callback runs on, filled from inside it on the first block.
     ///
     /// Kept as the shared atomic rather than as a copy: the value does not exist yet when the
@@ -661,6 +693,7 @@ impl LiveOutput {
         let mut callbacks = 0u64;
         let period_us =
             config.block_frames.max(1) as f64 / f64::from(config.sample_rate) * 1_000_000.0;
+        let thresholds = config.thresholds;
 
         let data_fn = move |buffer: &mut [f32], _: &cpal::OutputCallbackInfo| {
             // The thread's identity is unambiguous only from inside it, and only worth reading once.
@@ -674,7 +707,7 @@ impl LiveOutput {
             if let Some(previous) = last {
                 let micros = now.duration_since(previous).as_micros();
                 interval_us = u32::try_from(micros).unwrap_or(u32::MAX);
-                callback_counters.note_interval(interval_us, period_us);
+                callback_counters.note_interval(interval_us, period_us, thresholds);
             }
             last = Some(now);
 
@@ -699,7 +732,7 @@ impl LiveOutput {
                 .unwrap_or(u32::MAX)
                 .min(spent);
             let off_cpu_us = spent.saturating_sub(cpu_us);
-            if off_cpu_us >= STALL_THRESHOLD_US {
+            if off_cpu_us >= thresholds.stall_us {
                 callback_counters.stalled.fetch_add(1, Ordering::Relaxed);
                 callback_counters
                     .off_cpu_max_us
@@ -742,8 +775,9 @@ impl LiveOutput {
 
             // Record what would otherwise be an unexplained count: a late arrival and an
             // expensive block are different faults and the timestamp tells them apart.
-            let interval_kind = classify_interval(interval_us, period_us);
-            let expensive = period_us > 0.0 && f64::from(spent) * 100.0 >= period_us;
+            let interval_kind = classify_interval(interval_us, period_us, thresholds);
+            let expensive = period_us > 0.0
+                && f64::from(spent) * 100.0 >= period_us * thresholds.expensive_percent;
             if interval_us != 0 && (interval_kind != IntervalKind::OnTime || expensive) {
                 callback_outliers.note(
                     u32::try_from(started.elapsed().as_micros()).unwrap_or(u32::MAX),
@@ -784,6 +818,7 @@ impl LiveOutput {
             _stream: stream,
             counters,
             outliers,
+            thresholds,
             audio_tid: tid,
             device: name,
             channels: usize::from(channels),
@@ -871,6 +906,7 @@ impl LiveOutput {
             } else {
                 0.0
             },
+            thresholds: self.thresholds,
             stalled_blocks: self.counters.stalled.load(Ordering::Relaxed),
             off_cpu_max_us: self.counters.off_cpu_max_us.load(Ordering::Relaxed),
             outliers,
@@ -1025,14 +1061,51 @@ mod tests {
     #[test]
     fn intervals_are_judged_against_the_period() {
         let period = 5_333.33;
-        assert_eq!(classify_interval(5_333, period), IntervalKind::OnTime);
-        assert_eq!(classify_interval(5_352, period), IntervalKind::OnTime);
+        let thresholds = Thresholds::default();
+        assert_eq!(
+            classify_interval(5_333, period, thresholds),
+            IntervalKind::OnTime
+        );
+        assert_eq!(
+            classify_interval(5_352, period, thresholds),
+            IntervalKind::OnTime
+        );
         // 1.5 periods is 8 000.0 µs exactly, and the boundary counts as late.
-        assert_eq!(classify_interval(7_900, period), IntervalKind::OnTime);
-        assert_eq!(classify_interval(8_000, period), IntervalKind::Late);
-        assert_eq!(classify_interval(12_836, period), IntervalKind::Late);
-        assert_eq!(classify_interval(2_600, period), IntervalKind::Early);
-        assert_eq!(classify_interval(5_333, 0.0), IntervalKind::OnTime);
+        assert_eq!(
+            classify_interval(7_900, period, thresholds),
+            IntervalKind::OnTime
+        );
+        assert_eq!(
+            classify_interval(8_000, period, thresholds),
+            IntervalKind::Late
+        );
+        assert_eq!(
+            classify_interval(12_836, period, thresholds),
+            IntervalKind::Late
+        );
+        assert_eq!(
+            classify_interval(2_600, period, thresholds),
+            IntervalKind::Early
+        );
+        assert_eq!(
+            classify_interval(5_333, 0.0, thresholds),
+            IntervalKind::OnTime
+        );
+
+        // The line is a setting: a run may be judged against a stricter one.
+        let strict = Thresholds {
+            late_periods: 1.1,
+            ..Thresholds::default()
+        };
+        assert_eq!(
+            classify_interval(6_500, period, strict),
+            IntervalKind::Late,
+            "6 500 µs is 1.22 periods: late under 1.1, fine under 1.5"
+        );
+        assert_eq!(
+            classify_interval(6_500, period, thresholds),
+            IntervalKind::OnTime
+        );
     }
 
     #[test]

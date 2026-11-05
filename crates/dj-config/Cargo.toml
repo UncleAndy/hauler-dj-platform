@@ -1,0 +1,15 @@
+[package]
+name = "dj-config"
+description = "Settings: every critical value as a parameter, with defaults taken from measurements."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde.workspace = true
+toml.workspace = true
+
+[lints]
+workspace = true

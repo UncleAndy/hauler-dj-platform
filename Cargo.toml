@@ -25,3 +25,5 @@ undocumented_unsafe_blocks = "deny"
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Human-edited settings files: TOML keeps them readable and still typed.
+toml = "0.9"
