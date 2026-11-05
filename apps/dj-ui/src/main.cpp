@@ -200,8 +200,22 @@ int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socket
                 loop.quit();
                 return;
             }
-            std::fprintf(stdout, "dj-ui: waveform loaded: %d columns of %d frames at %d Hz\n",
-                         waveform.buckets(), waveform.framesPerBucket(), waveform.sampleRate());
+            // Coverage is the property the renderer relies on: every frame of the track has a
+            // column, so a marker or a playhead near the end cannot fall off the picture.
+            const double covered = double(waveform.buckets()) * waveform.framesPerBucket();
+            const double duration = track.value(QStringLiteral("duration_frames")).toDouble();
+            if (duration > 0 && covered + waveform.framesPerBucket() < duration) {
+                failure = QStringLiteral("the envelope covers %1 frames of %2")
+                              .arg(covered)
+                              .arg(duration);
+                loop.quit();
+                return;
+            }
+            std::fprintf(stdout,
+                         "dj-ui: waveform loaded: %d columns of %d frames at %d Hz, covering %.0f "
+                         "of %.0f frames\n",
+                         waveform.buckets(), waveform.framesPerBucket(), waveform.sampleRate(),
+                         covered, duration);
             stage = SendingPlay;
             commandId = bridge.play(QStringLiteral("A"), true);
             std::fprintf(stdout, "dj-ui: sent Play(A) as command %d\n", commandId);
