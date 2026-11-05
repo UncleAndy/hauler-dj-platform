@@ -516,6 +516,14 @@ impl LiveOutput {
     /// Wait for the run to finish and produce the report.
     pub fn finish(self, seconds: f64) -> LiveReport {
         std::thread::sleep(Duration::from_secs_f64(seconds.max(0.0)));
+        self.snapshot()
+    }
+
+    /// Report on the run so far, without stopping it.
+    ///
+    /// A two-hour run has to be observable while it happens: if it ends badly, the numbers up to
+    /// that moment are the evidence.
+    pub fn snapshot(&self) -> LiveReport {
         let callbacks = self.counters.callbacks.load(Ordering::Relaxed);
         let frames = self.counters.frames.load(Ordering::Relaxed);
         let frames_per_callback = if callbacks == 0 {

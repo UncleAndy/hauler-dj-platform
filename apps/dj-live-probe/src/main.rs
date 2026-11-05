@@ -11,6 +11,7 @@
 
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::{Duration, Instant};
 
 use dj_audio_io::{LiveConfig, LiveOutput, Renderer, RoutePlan};
 use dj_codec::{PrefetchConfig, Prefetcher, StreamDecoder};
@@ -25,6 +26,7 @@ dj-live-probe — play through the system output and report the callback
 Usage:
   dj-live-probe [--file PATH] [--device SUBSTR] [--seconds N] [--block N]
                 [--rate HZ] [--tone-hz HZ] [--gain G] [--cache-dir DIR]
+                [--out FILE] [--progress-seconds N] [--loop]
 
 Defaults: default output device, 10 s, block 256, tone 440 Hz, gain 0.25.
 Without --file a pure tone is played, so the device path can be checked alone.
@@ -65,6 +67,9 @@ struct Options {
     tone_hz: f32,
     gain: f32,
     cache_dir: Option<PathBuf>,
+    out: Option<PathBuf>,
+    progress_seconds: f64,
+    loop_track: bool,
 }
 
 fn run(argv: &[String]) -> Result<String, Error> {
@@ -86,6 +91,9 @@ fn run(argv: &[String]) -> Result<String, Error> {
         tone_hz: 440.0,
         gain: 0.25,
         cache_dir: None,
+        out: None,
+        progress_seconds: 60.0,
+        loop_track: false,
     };
 
     let mut index = 0;
@@ -133,6 +141,18 @@ fn run(argv: &[String]) -> Result<String, Error> {
             "--gain" => {
                 options.gain = number("--gain")? as f32;
                 index += 2;
+            }
+            "--out" => {
+                options.out = Some(PathBuf::from(value()?));
+                index += 2;
+            }
+            "--progress-seconds" => {
+                options.progress_seconds = number("--progress-seconds")?;
+                index += 2;
+            }
+            "--loop" => {
+                options.loop_track = true;
+                index += 1;
             }
             other => return Err(Error::Usage(format!("unknown option {other:?}"))),
         }
@@ -194,6 +214,14 @@ fn run(argv: &[String]) -> Result<String, Error> {
             // The audio callback must never wait for the prefetcher.
             deck.set_blocking(false);
             deck.set_gain(1.0);
+            // A whole-track loop keeps the real path busy for the whole run instead of rendering
+            // silence once the file ends.
+            if options.loop_track
+                && let Some(frames) = info.frames
+                && let Some(region) = dj_domain::FrameRange::new(0, frames)
+            {
+                deck.set_loop(Some(region));
+            }
             deck.play();
 
             Box::new(DeckRenderer::new(deck, rate, options.block, options.gain))
@@ -209,9 +237,48 @@ fn run(argv: &[String]) -> Result<String, Error> {
     };
     let output =
         LiveOutput::start(&config, plan, renderer).map_err(|err| Error::Device(err.to_string()))?;
-    let report = output.finish(options.seconds);
 
-    Ok(json!({
+    // A two-hour run must be observable while it happens: the report is rewritten at every tick,
+    // so a crash or Ctrl-C still leaves the numbers up to that moment on disk.
+    let started = Instant::now();
+    let tick = Duration::from_secs_f64(options.progress_seconds.max(1.0));
+    let total = options.seconds.max(0.0);
+    let mut final_report = output.snapshot();
+
+    loop {
+        let elapsed = started.elapsed().as_secs_f64();
+        if elapsed >= total {
+            break;
+        }
+        std::thread::sleep(tick.min(Duration::from_secs_f64(total - elapsed)));
+        let report = output.snapshot();
+        eprintln!(
+            "dj-live-probe: {:.0}s of {:.0}s | audio {:.1}s | callbacks {} | late {} | errors {} | max {:.3} ms | rss {} kB",
+            started.elapsed().as_secs_f64().min(total),
+            total,
+            report.audio_seconds,
+            report.callbacks,
+            report.late_callbacks,
+            report.errors,
+            report.interval_max_ms,
+            rss_kb().map_or_else(|| "?".to_string(), |kb| kb.to_string()),
+        );
+        if let Some(path) = &options.out {
+            let _ = std::fs::write(path, report_json(&report, &options, plan));
+        }
+        final_report = report;
+    }
+
+    let json = report_json(&final_report, &options, plan);
+    if let Some(path) = &options.out {
+        let _ = std::fs::write(path, &json);
+    }
+    Ok(json)
+}
+
+/// The JSON the run is judged by, printed and optionally written to `--out`.
+fn report_json(report: &dj_audio_io::LiveReport, options: &Options, plan: RoutePlan) -> String {
+    json!({
         "device": report.device,
         "channels": report.channels,
         "sample_rate": report.sample_rate,
@@ -233,14 +300,23 @@ fn run(argv: &[String]) -> Result<String, Error> {
         "render_p99_us": report.render_p99_us,
         "render_max_us": report.render_max_us,
         "render_budget": report.render_budget,
-        "source": options.file.as_ref().map(|path| path.display().to_string()),
+        "rss_kb": rss_kb(),
         "route": {
             "master": [plan.master.0, plan.master.1],
             "cue": plan.cue.map(|(left, right)| [left, right]),
         },
+        "source": options.file.as_ref().map(|path| path.display().to_string()),
+        "looped": options.loop_track,
         "note": "live run through the system output; not the reference rig (DJP-NFR-003 needs A11)",
     })
-    .to_string())
+    .to_string()
+}
+
+/// Resident set size in kilobytes, so a long run can show whether memory grows.
+fn rss_kb() -> Option<u64> {
+    let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
+    let pages: u64 = statm.split_whitespace().nth(1)?.parse().ok()?;
+    Some(pages * 4)
 }
 
 /// A plain tone: proves the device path without involving media at all.
