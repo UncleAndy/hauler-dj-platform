@@ -100,9 +100,12 @@ was applied, and — with `--measure` — p50/p99/max of the callback. Scenario 
 the format is documented in `apps/dj-headless/src/scenario.rs`.
 
 `nix develop` exports `CARGO_TARGET_DIR` to `~/.cache/dj-platform-target` so build artifacts stay
-out of the checkout; `BUILD_DIR=/tmp/dj-ui-build bash scripts/ui.sh` moves the CMake tree out of it as
-well (needed when the checkout is shared with another uid). `direnv allow` picks the shell up
-automatically (`.envrc`).
+out of the checkout, and `scripts/ui.sh` builds in `~/.cache/dj-platform-ui-build` for the same
+reason — a CMake cache belongs to the absolute path it was created for, so a shared checkout with a
+repository-local `build/` fails with "the source ... does not match the source ... used to generate
+cache". `BUILD_DIR=/path` overrides it; a cache configured for another checkout is discarded and
+rebuilt rather than reported as a CMake error. `direnv allow` picks the shell up automatically
+(`.envrc`).
 
 On NixOS there is no `/usr/bin/env`, so invoke the scripts as `bash scripts/check.sh` — the
 `#!/usr/bin/env bash` shebang is kept for the CI runners, where that path does exist.

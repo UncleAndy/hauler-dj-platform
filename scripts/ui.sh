@@ -12,7 +12,18 @@ if [ -z "${DJ_PLATFORM_DEVSHELL:-}" ]; then
   exec nix develop --command bash "$0" "$@"
 fi
 
-build_dir="${BUILD_DIR:-build}"
+# Build outside the tree by default: a cache created from another checkout path makes CMake refuse
+# to proceed ("the source ... does not match the source ... used to generate cache"), and a
+# repository-local build/ then belongs to whoever ran the build first.
+build_dir="${BUILD_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/dj-platform-ui-build}"
+
+# If someone points BUILD_DIR at a cache from a different checkout, throw the cache away rather
+# than fail with a CMake error that says nothing about what to do.
+if [ -f "$build_dir/CMakeCache.txt" ] \
+   && ! grep -q "^CMAKE_HOME_DIRECTORY:INTERNAL=$PWD$" "$build_dir/CMakeCache.txt"; then
+  echo "ui.sh: $build_dir was configured for another checkout; reconfiguring" >&2
+  rm -rf "$build_dir/CMakeCache.txt" "$build_dir/CMakeFiles"
+fi
 
 cmake -S . -B "$build_dir" -G Ninja
 cmake --build "$build_dir"
