@@ -77,6 +77,7 @@ tasks:
     acceptance:
       - 'Two sample-accurate deck tracks render together headlessly'
       - 'Eight hotcues, seek and loop boundary fixtures pass'
+      - 'state-v1 carries the fields controller displays need (track meta, remaining, position, bpm, key, hotcues, levels) with golden wire tests (ADR-0006)'
   - id: A04
     title: 'Mixer, crossfader, cue bus and meter logic'
     role: dsp-audio
@@ -133,18 +134,21 @@ tasks:
       - 'Track and cue data survive save, restart and versioned migration'
       - 'No DB operations on RT thread'
   - id: A09
-    title: 'S4 MK3 read-only HID controller probe'
+    title: 'S4 MK3 read-only HID driver skeleton and control map probe'
     role: hardware
     priority: P0
     release: R0
     depends_on: [A00, A12]
     requirements: [DJP-CTRL-001, DJP-CTRL-004]
-    deliverables: [crates/dj-controller-core, docs/hardware/s4mk3/hardware-profile.md]
+    decisions: [ADR-0006]
+    deliverables: [crates/dj-hid, crates/dj-controller-core, crates/dj-controller-s4mk3, apps/dj-controller, docs/hardware/s4mk3/hardware-profile.md, docs/hardware/s4mk3/protocol-notes.md, docs/hardware/s4mk3/cleanroom-log.md]
     hardware_needed: true
     acceptance:
       - 'Control input events recorded from physical S4 MK3'
       - 'No motor activity, firmware changes or unknown outgoing packets'
       - 'udev permission procedure documented'
+      - 'Driver written from docs/hardware/s4mk3/protocol-notes.md only; no GPL source opened in that task (ADR-0006)'
+      - 'Displays, LEDs and jog feedback stay out of scope: CTRL-005/006/007'
   - id: A10
     title: 'S4 MK3 Linux audio routing and loopback proof'
     role: hardware-audio

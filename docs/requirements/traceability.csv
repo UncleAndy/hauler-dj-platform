@@ -4,19 +4,19 @@ DJP-ARCH-002,audio-core,P0,R0,DJP-SRS-001 §4,crates/dj-audio-core/src/queue.rs,
 DJP-ARCH-003,audio-core,P0,R0,DJP-SRS-001 §4,crates/dj-audio-core/src/queue.rs,queue::a_full_critical_lane_rejects_explicitly; queue::several_decks_keep_their_own_coalesced_value,passing,docs/qa/evidence/A01/summary.md,,2026-11-05
 DJP-ARCH-004,audio-core,P0,R0,DJP-SRS-001 §4,,,unverified,,,
 DJP-ARCH-005,audio-core,P0,R0,DJP-SRS-001 §4,crates/dj-audio-core/src/engine.rs; crates/dj-audio-core/tests/rt_contract.rs,rt_contract::processing_a_block_does_not_allocate,passing,docs/qa/evidence/A01/summary.md,,2026-11-05
-DJP-ARCH-006,audio-core,P0,R0,DJP-SRS-001 §4,,,unverified,,,
-DJP-ARCH-007,audio-core,P1,R1,DJP-SRS-001 §4,,,unverified,,,
-DJP-ARCH-008,audio-core,P1,R1,DJP-SRS-001 §4,,,unverified,,,
+DJP-ARCH-006,audio-core,P0,R0,DJP-SRS-001 §4,,,unverified,docs/adr/0005-audio-devices-and-routes.md,,2026-11-05
+DJP-ARCH-007,audio-core,P1,R1,DJP-SRS-001 §4,,,unverified,docs/adr/0005-audio-devices-and-routes.md,,2026-11-05
+DJP-ARCH-008,audio-core,P1,R1,DJP-SRS-001 §4,,,unverified,docs/adr/0005-audio-devices-and-routes.md,,2026-11-05
 DJP-ARCH-009,audio-core,P1,R1,DJP-SRS-001 §4,,,unverified,,,
 DJP-ARCH-010,audio-core,P1,R1,DJP-SRS-001 §4,,,unverified,,,
-DJP-CTRL-001,hardware,P0,R0,DJP-SRS-001 §5,,,unverified,,,
-DJP-CTRL-002,hardware,P0,R0,DJP-SRS-001 §5,,,unverified,,,
-DJP-CTRL-003,hardware,P1,R1,DJP-SRS-001 §5,,,unverified,,,
-DJP-CTRL-004,hardware,P1,R1,DJP-SRS-001 §5,,,unverified,,,
-DJP-CTRL-005,hardware,P1,R1,DJP-SRS-001 §5,,,unverified,,,
-DJP-CTRL-006,hardware,P2,R2,DJP-SRS-001 §5,,,unverified,,,
-DJP-CTRL-007,hardware,P2,R2,DJP-SRS-001 §5,,,unverified,,,
-DJP-CTRL-008,hardware,P2,R3,DJP-SRS-001 §5,,,unverified,,,
+DJP-CTRL-001,hardware,P0,R0,DJP-SRS-001 §5,planned: crates/dj-controller-core,,unverified,docs/adr/0006-controllers.md,,2026-11-05
+DJP-CTRL-002,hardware,P0,R0,DJP-SRS-001 §5,planned: crates/dj-midi; crates/dj-controller-core,,unverified,docs/adr/0006-controllers.md,,2026-11-05
+DJP-CTRL-003,hardware,P1,R1,DJP-SRS-001 §5,planned: crates/dj-controller-s4mk3,,unverified,docs/adr/0006-controllers.md,,2026-11-05
+DJP-CTRL-004,hardware,P1,R1,DJP-SRS-001 §5,planned: crates/dj-hid; docs/hardware/s4mk3/hardware-profile.md,,unverified,docs/adr/0006-controllers.md,,2026-11-05
+DJP-CTRL-005,hardware,P1,R1,DJP-SRS-001 §5,planned: crates/dj-display; crates/dj-controller-s4mk3,,unverified,docs/adr/0006-controllers.md,,2026-11-05
+DJP-CTRL-006,hardware,P2,R2,DJP-SRS-001 §5,planned: crates/dj-controller-s4mk3; docs/adr (safety gate),,unverified,docs/adr/0006-controllers.md,,2026-11-05
+DJP-CTRL-007,hardware,P2,R2,DJP-SRS-001 §5,planned: crates/dj-display; crates/dj-controller-s4mk3,,unverified,docs/adr/0006-controllers.md,,2026-11-05
+DJP-CTRL-008,hardware,P2,R3,DJP-SRS-001 §5,planned: crates/dj-hid; crates/dj-midi,,unverified,docs/adr/0006-controllers.md,,2026-11-05
 DJP-CTRL-009,hardware,P2,R3,DJP-SRS-001 §5,,,unverified,,,
 DJP-CTRL-010,hardware,P3,R3,DJP-SRS-001 §5,,,unverified,,,
 DJP-DATA-001,media,,,DJP-SRS-001 §6,,,unverified,,,
@@ -36,12 +36,12 @@ DJP-DECK-009,audio-core,P1,R1,DJP-SRS-001 §5,,,unverified,,,
 DJP-DECK-010,audio-core,P2,R2,DJP-SRS-001 §5,,,unverified,,,
 DJP-DECK-011,audio-core,P2,R2,DJP-SRS-001 §5,,,unverified,,,
 DJP-ENV-001,architect,P0,R0,DJP-SRS-001 §2,flake.nix; rust-toolchain.toml; Cargo.toml; CMakeLists.txt,,review,docs/qa/evidence/A00/summary.md,,
-DJP-ENV-002,architect,P0,R0,DJP-SRS-001 §2,,,unverified,,,
+DJP-ENV-002,architect,P0,R0,DJP-SRS-001 §2,,,unverified,docs/adr/0005-audio-devices-and-routes.md,,2026-11-05
 DJP-ENV-003,architect,P0,R0,DJP-SRS-001 §2,flake.nix; rust-toolchain.toml; Cargo.toml; CMakeLists.txt,,review,docs/qa/evidence/A00/summary.md,,
 DJP-ENV-004,architect,P1,R1,DJP-SRS-001 §2,,,unverified,,,
 DJP-ENV-005,architect,P1,R1,DJP-SRS-001 §2,,,unverified,,,
-DJP-ENV-006,architect,P1,R1,DJP-SRS-001 §2,,,unverified,,,
-DJP-ENV-007,architect,P2,R2,DJP-SRS-001 §2,,,unverified,,,
+DJP-ENV-006,architect,P1,R1,DJP-SRS-001 §2,,,unverified,docs/adr/0005-audio-devices-and-routes.md,,2026-11-05
+DJP-ENV-007,architect,P2,R2,DJP-SRS-001 §2,,,unverified,docs/adr/0005-audio-devices-and-routes.md,,2026-11-05
 DJP-FX-001,dsp,P1,R1,DJP-SRS-001 §5,,,unverified,,,
 DJP-FX-002,dsp,P1,R1,DJP-SRS-001 §5,,,unverified,,,
 DJP-FX-003,dsp,P1,R1,DJP-SRS-001 §5,,,unverified,,,
@@ -75,7 +75,7 @@ DJP-MEDIA-010,media,P2,R3,DJP-SRS-001 §5,,,unverified,,,
 DJP-MEDIA-011,media,P3,R3,DJP-SRS-001 §5,,,unverified,,,
 DJP-MIX-001,dsp,P0,R0,DJP-SRS-001 §5,,,unverified,,,
 DJP-MIX-002,dsp,P1,R1,DJP-SRS-001 §5,,,unverified,,,
-DJP-MIX-003,dsp,P1,R1,DJP-SRS-001 §5,,,unverified,,,
+DJP-MIX-003,dsp,P1,R1,DJP-SRS-001 §5,,,unverified,docs/adr/0005-audio-devices-and-routes.md,,2026-11-05
 DJP-MIX-004,dsp,P1,R1,DJP-SRS-001 §5,,,unverified,,,
 DJP-MIX-005,dsp,P1,R1,DJP-SRS-001 §5,,,unverified,,,
 DJP-MIX-006,dsp,P1,R1,DJP-SRS-001 §5,,,unverified,,,

@@ -24,7 +24,8 @@
 | `dj-testkit` | qa | A11 | R0 | DJP-NFR-001 — `rt::CountingAllocator`/`RtScope` уже в A01; фикстуры и остальная инструментация — A11 |
 
 Приложения: `apps/dj-headless` (A01/A13, audio-core), `apps/dj-cli` (A08, media),
-`apps/dj-ui` (A06, ui; Qt/C++ + QML, собирается CMake, вне cargo-воркспейса).
+`apps/dj-ui` (A06, ui; Qt/C++ + QML, собирается CMake, вне cargo-воркспейса),
+`apps/dj-controller` (A09, hardware; сервис контроллера — отдельный процесс, ADR-0006).
 
 * `apps/dj-audio-probe` (A05, architect/audio-platform) — read-only перечисление устройств и короткий прогон для ADR-002: что видит CPAL, сколько каналов, как ведут себя callback'и. Уже в репозитории.
 
@@ -42,7 +43,10 @@
 | `dj-stems` | ml | M5 (DJP-STEM-*) |
 | `dj-remix` | ml | M5 (DJP-REMIX-*) |
 | `dj-pattern` | ml | M5 |
-| `dj-controller-s4mk3` | hardware | M3 (DJP-CTRL-003…007) |
+| `dj-hid` | hardware | A09 (транспорт hidraw / IOHIDManager / Windows HID, ADR-0006) |
+| `dj-midi` | hardware | A09 (транспорт ALSA-seq / CoreMIDI / WinMM, DJP-CTRL-002) |
+| `dj-display` | hardware | A09+ (состояние/события экрана и трейт рендера, ADR-0006) |
+| `dj-controller-s4mk3` | hardware | M3 (DJP-CTRL-003…007); драйвер пишется по `docs/hardware/s4mk3/protocol-notes.md` |
 | `dj-recording` | dsp | M2 (DJP-MIX-005) |
 | `services/stem-worker` | ml | M5 |
 
