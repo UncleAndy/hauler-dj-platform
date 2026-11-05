@@ -59,5 +59,7 @@ pub fn write_wav(path: &Path, sample_rate: u32, seconds: f64, tone_from: u32) ->
 
 /// Peak absolute value of an interleaved stereo block.
 pub fn peak(samples: &[f32]) -> f32 {
-    samples.iter().fold(0.0f32, |acc, value| acc.max(value.abs()))
+    samples
+        .iter()
+        .fold(0.0f32, |acc, value| acc.max(value.abs()))
 }

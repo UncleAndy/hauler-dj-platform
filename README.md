@@ -4,7 +4,7 @@ An independent DJ platform for Linux/NixOS, built to reach practical functional 
 Traktor Pro 4 through our own engine, our own UI and our own effects — no Traktor, Native
 Instruments or Mixxx code, graphics, samples or firmware are used or copied.
 
-**Status: A00 done, A01 done.** The specification, plan and backlog are approved (v0.1). The
+**Status: A00, A01 and A02 done.** The specification, plan and backlog are approved (v0.1). The
 repository holds the module skeleton, a pinned reproducible build environment, CI, and the first
 piece of the audio engine: typed command contracts, a bounded RT queue, a sample-accurate scheduler
 and a deterministic offline renderer. `dj-headless` renders a 440 Hz tone (and scripted command
@@ -16,6 +16,7 @@ plays through a sound card yet — that is `dj-audio-io` (A05) and the engine pr
 | Specification / plan / backlog | `DJ_Platform_TZ_v0.1_RU.md`, `DJ_Platform_Implementation_Plan_v0.1_RU.md`, `DJ_Platform_Initial_Backlog_v0.1.yaml` |
 | Rust workspace | 13 crates: boundaries, owners and lint rules fixed |
 | Engine core (A01) | `dj-domain` contracts, bounded queue, sample-accurate scheduler, offline render, RT guards |
+| Media (A02) | `dj-codec`: WAV/FLAC/MP3/Vorbis decode, exact seek, bounded prefetch; PCM cache for lossy formats (ADR-0008) |
 | Qt 6 / QML shell | blank two-deck window with a crossfader, starts headless (`--smoke`) |
 | Build environment | `flake.nix` + `flake.lock` + `rust-toolchain.toml` (Rust 1.95.0, Qt 6.11.2) |
 | CI | fmt, clippy `-D warnings`, tests, toolchain pin, QML smoke, requirement coverage |
@@ -110,6 +111,7 @@ On NixOS there is no `/usr/bin/env`, so invoke the scripts as `bash scripts/chec
 - `docs/architecture/rt-contract.md` — the real-time rules and how they are verified.
 - `docs/adr/` — license (0001), audio backend (0002), UI bridge (0003): all `accepted`.
 - `docs/qa/evidence/A01/` — the deterministic render, the RT guards and the first block timings.
+- `docs/qa/evidence/A02/` — decode speed, load-to-ready and seek measurements per format.
 - `docs/requirements/traceability.csv` — every `DJP-*` requirement with an owning role.
 - `docs/agents/AGENTS.md` — mandatory rules for AI agents working in this repository.
 - `docs/qa/evidence/` — actual command output per task; `docs/qa/reference-rig.md` — test rig.

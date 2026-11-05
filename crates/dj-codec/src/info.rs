@@ -136,16 +136,27 @@ impl fmt::Display for MediaError {
             MediaError::NoAudioTrack => write!(f, "no audio track"),
             MediaError::UnsupportedCodec(detail) => write!(f, "unsupported codec: {detail}"),
             MediaError::UnsupportedChannelCount(count) => {
-                write!(f, "unsupported channel count {count} (R0 handles mono and stereo)")
+                write!(
+                    f,
+                    "unsupported channel count {count} (R0 handles mono and stereo)"
+                )
             }
             MediaError::MissingSampleRate => write!(f, "the track does not declare a sample rate"),
             MediaError::Decode(detail) => write!(f, "decode error: {detail}"),
-            MediaError::SeekOutOfRange(frame) => write!(f, "seek target {frame} is outside the file"),
+            MediaError::SeekOutOfRange(frame) => {
+                write!(f, "seek target {frame} is outside the file")
+            }
             MediaError::OddBuffer(len) => {
-                write!(f, "buffer of {len} samples is not a whole number of stereo frames")
+                write!(
+                    f,
+                    "buffer of {len} samples is not a whole number of stereo frames"
+                )
             }
             MediaError::StreamResetRequired => {
-                write!(f, "the stream requires a reset (chained stream); not supported")
+                write!(
+                    f,
+                    "the stream requires a reset (chained stream); not supported"
+                )
             }
             MediaError::Prefetch(detail) => write!(f, "prefetch: {detail}"),
         }
@@ -179,7 +190,10 @@ mod tests {
     fn extensions_are_matched_case_insensitively() {
         assert_eq!(MediaFormat::from_extension("MP3"), Some(MediaFormat::Mp3));
         assert_eq!(MediaFormat::from_extension("Flac"), Some(MediaFormat::Flac));
-        assert_eq!(MediaFormat::from_extension("oga"), Some(MediaFormat::OggVorbis));
+        assert_eq!(
+            MediaFormat::from_extension("oga"),
+            Some(MediaFormat::OggVorbis)
+        );
         assert_eq!(MediaFormat::from_extension("aiff"), Some(MediaFormat::Aiff));
         assert_eq!(MediaFormat::from_extension("m4a"), None);
     }

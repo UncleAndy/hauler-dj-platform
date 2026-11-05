@@ -16,6 +16,24 @@
 | `apps/dj-media-bench` | `decode` / `load` / `seek` с JSON-выводом |
 | `crates/dj-codec/tests/fixtures/audio` | FLAC, MP3 CBR, MP3 VBR, Ogg — из нашего собственного синуса (`scripts/gen-media-fixtures.sh`), WAV генерируется тестами |
 
+## Что сделано (этап 2: PCM-кэш по ADR-0008)
+
+| Файл | Содержание |
+|---|---|
+| `crates/dj-codec/src/cache.rs` | `PcmCache`: ключ = sha256 содержимого + частота + каналы + формат сэмпла + версия формата; запись атомарная (`.part` → rename); `CacheStorage::{Disk, Memory}`; `PcmSampleFormat::{I16, I24, F32}`; LRU с лимитом и пиннингом; при сканировании битые записи удаляются |
+| `CachedReader` | чтение записи без декодера, точный seek по байтовому смещению |
+| `playback_source()` | решение `Streaming` / `PcmCache` **только по формату файла** (никакой адаптации в потоке) |
+| `Prefetcher::open_with_cache()` | один и тот же аудиопут для обеих стратегий: кольцо и нарезка окна не меняются |
+
+Замеры сборки кэша (5-минутный MP3 320, release):
+
+| Сценарий | Время | Размер записи |
+|---|---|---|
+| холодная сборка (`Built`) | **244 мс** | 52,9 МБ |
+| повторное открытие (`Hit`) | 33,7 мс (почти всё — хэш 12 МБ файла) | — |
+
+Бюджет `Ready ≤ 3 с` при этом выполняется с запасом ~12×, даже с учётом записи на диск.
+
 ## Acceptance
 
 | Пункт | Чем проверено | Результат |
@@ -29,6 +47,14 @@
 | Audio callback читает только предзабуференный PCM | `tests/prefetch.rs`: кольцо отдаёт те же сэмплы, что декодер | ✅ |
 | Seek внутри окна не трогает декодер | `a_seek_inside_the_window_never_calls_the_decoder`: `decoder_calls` и `seeks` не меняются | ✅ |
 | EOF, мусор, обрезанный файл — определённый исход без паники | `garbage_is_an_error_and_not_a_panic`, `reading_past_the_end_returns_zero_rather_than_padding` | ✅ |
+| Lossy идут через кэш, lossless — потоково, решение по формату | `cache::the_policy_reads_the_format_only`, `a_lossless_file_is_not_cached` | ✅ |
+| Кэш строится один раз и переиспользуется | `an_mp3_is_built_once_then_reused` (`Built` → `Hit`, одна запись) | ✅ |
+| Запись отдаёт те же сэмплы | `the_entry_plays_the_same_audio_as_the_decoder` (в пределах квантования i16) | ✅ |
+| Seek в кэше точен | `seeking_inside_the_entry_is_exact_and_cheap` (`landed == 22050`) | ✅ |
+| Лимит вытесняет LRU, пиннинг защищает | `the_limit_evicts_the_least_recently_used_and_spares_pinned_entries` | ✅ |
+| Битые записи не играют | `a_corrupt_entry_is_dropped_on_scan_instead_of_being_played` | ✅ |
+| Memory-хранилище не пишет на диск | `memory_storage_never_touches_the_disk` | ✅ |
+| Плеер из кэша не вызывает декодер | `a_prefetch_over_the_cache_plays_without_a_decoder` (`decoder_calls == 0`) | ✅ |
 
 ## Замеры (release, 60-секундный файл, 44,1 кГц stereo)
 

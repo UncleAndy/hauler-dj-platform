@@ -17,7 +17,9 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Instant;
 
-use dj_codec::{PrefetchConfig, Prefetcher, StreamDecoder};
+use dj_codec::{
+    CacheConfig, CacheStorage, PcmCache, PcmSampleFormat, PrefetchConfig, Prefetcher, StreamDecoder,
+};
 use serde_json::json;
 
 const USAGE: &str = "\
@@ -27,6 +29,7 @@ Usage:
   dj-media-bench decode --file F [--repeat N]
   dj-media-bench load   --file F [--window-seconds S]
   dj-media-bench seek   --file F [--count N]
+  dj-media-bench cache  --file F [--cache-dir D]
 
 Exit codes: 0 ok, 2 bad usage, 3 media or I/O error.
 ";
@@ -76,6 +79,7 @@ fn run(argv: &[String]) -> Result<Vec<String>, Error> {
     let mut repeat: usize = 1;
     let mut window_seconds: f64 = 2.0;
     let mut seeks: usize = 50;
+    let mut cache_dir: Option<PathBuf> = None;
 
     let mut index = 1;
     while index < argv.len() {
@@ -102,6 +106,10 @@ fn run(argv: &[String]) -> Result<Vec<String>, Error> {
                     .map_err(|_| Error::Usage("--count expects a number".to_string()))?;
                 index += 2;
             }
+            "--cache-dir" => {
+                cache_dir = Some(PathBuf::from(value()?));
+                index += 2;
+            }
             "--window-seconds" => {
                 window_seconds = value()?
                     .parse()
@@ -122,6 +130,7 @@ fn run(argv: &[String]) -> Result<Vec<String>, Error> {
             "decode" => measure_decode(file, repeat)?,
             "load" => measure_load(file, window_seconds)?,
             "seek" => measure_seek(file, seeks)?,
+            "cache" => measure_cache(file, cache_dir.as_deref())?,
             other => return Err(Error::Usage(format!("unknown mode {other:?}"))),
         };
         lines.push(line.to_string());
@@ -129,7 +138,7 @@ fn run(argv: &[String]) -> Result<Vec<String>, Error> {
     Ok(lines)
 }
 
-fn header(file: &PathBuf, info: &dj_codec::MediaInfo) -> serde_json::Value {
+fn header(file: &std::path::Path, info: &dj_codec::MediaInfo) -> serde_json::Value {
     json!({
         "file": file.display().to_string(),
         "format": info.format.as_str(),
@@ -142,7 +151,7 @@ fn header(file: &PathBuf, info: &dj_codec::MediaInfo) -> serde_json::Value {
     })
 }
 
-fn measure_decode(file: &PathBuf, repeat: usize) -> Result<serde_json::Value, Error> {
+fn measure_decode(file: &std::path::Path, repeat: usize) -> Result<serde_json::Value, Error> {
     let mut best: Option<(f64, u64, u64, u64)> = None;
     let mut info = None;
 
@@ -187,7 +196,7 @@ fn measure_decode(file: &PathBuf, repeat: usize) -> Result<serde_json::Value, Er
     Ok(report)
 }
 
-fn measure_load(file: &PathBuf, window_seconds: f64) -> Result<serde_json::Value, Error> {
+fn measure_load(file: &std::path::Path, window_seconds: f64) -> Result<serde_json::Value, Error> {
     let info = {
         let decoder = StreamDecoder::open(file)
             .map_err(|err| Error::Media(format!("{}: {err}", file.display())))?;
@@ -217,7 +226,7 @@ fn measure_load(file: &PathBuf, window_seconds: f64) -> Result<serde_json::Value
     Ok(report)
 }
 
-fn measure_seek(file: &PathBuf, count: usize) -> Result<serde_json::Value, Error> {
+fn measure_seek(file: &std::path::Path, count: usize) -> Result<serde_json::Value, Error> {
     let mut decoder = StreamDecoder::open(file)
         .map_err(|err| Error::Media(format!("{}: {err}", file.display())))?;
     let info = decoder.info().clone();
@@ -234,7 +243,9 @@ fn measure_seek(file: &PathBuf, count: usize) -> Result<serde_json::Value, Error
     // Deterministic spread of targets: no RNG, so two runs (and two machines) compare.
     let mut state: u64 = 0x2545_f491_4f6c_dd1d;
     for _ in 0..count.max(1) {
-        state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1);
         let target = state % total.saturating_sub(1).max(1);
         let started = Instant::now();
         decoder
@@ -265,10 +276,69 @@ fn measure_seek(file: &PathBuf, count: usize) -> Result<serde_json::Value, Error
         object.insert("seeks".to_string(), json!(timings.len()));
         object.insert("p50_ms".to_string(), json!(at(0.5)));
         object.insert("p99_ms".to_string(), json!(at(0.99)));
-        object.insert("max_ms".to_string(), json!(timings.last().copied().unwrap_or(0.0)));
+        object.insert(
+            "max_ms".to_string(),
+            json!(timings.last().copied().unwrap_or(0.0)),
+        );
         object.insert(
             "note".to_string(),
             json!("includes landing after a fresh format seek and one decoded block; not the in-window path"),
+        );
+    }
+    Ok(report)
+}
+
+/// Time to build a PCM cache entry (the load cost of ADR-0008), and the entry size.
+fn measure_cache(
+    file: &std::path::Path,
+    dir: Option<&std::path::Path>,
+) -> Result<serde_json::Value, Error> {
+    let info = StreamDecoder::open(file)
+        .map_err(|err| Error::Media(format!("{}: {err}", file.display())))?
+        .info()
+        .clone();
+
+    let root = match dir {
+        Some(path) => path.to_path_buf(),
+        None => std::env::temp_dir().join("dj-media-bench-cache"),
+    };
+    let config = CacheConfig {
+        enabled: true,
+        storage: CacheStorage::Disk,
+        max_bytes: 64 * 1_000_000_000,
+        sample_format: PcmSampleFormat::I16,
+    };
+    let mut cache =
+        PcmCache::new(root, config).map_err(|err| Error::Media(format!("cache: {err}")))?;
+
+    let cold_started = Instant::now();
+    let cold = cache
+        .prepare(file)
+        .map_err(|err| Error::Media(format!("{}: {err}", file.display())))?;
+    let cold_ms = cold_started.elapsed().as_secs_f64() * 1000.0;
+
+    let warm_started = Instant::now();
+    let warm = cache
+        .prepare(file)
+        .map_err(|err| Error::Media(format!("{}: {err}", file.display())))?;
+    let warm_ms = warm_started.elapsed().as_secs_f64() * 1000.0;
+
+    let key = PcmCache::key_for(file, &info, cache.config())
+        .map_err(|err| Error::Media(format!("{err}")))?;
+    let cached_frames = cache.frames(&key);
+
+    let mut report = header(file, &info);
+    if let Some(object) = report.as_object_mut() {
+        object.insert("mode".to_string(), json!("cache"));
+        object.insert("cold_outcome".to_string(), json!(format!("{cold:?}")));
+        object.insert("warm_outcome".to_string(), json!(format!("{warm:?}")));
+        object.insert("t_build_ms".to_string(), json!(cold_ms));
+        object.insert("t_hit_ms".to_string(), json!(warm_ms));
+        object.insert("entry_bytes".to_string(), json!(cache.size_bytes()));
+        object.insert("cached_frames".to_string(), json!(cached_frames));
+        object.insert(
+            "cache_root".to_string(),
+            json!(cache.config().storage == CacheStorage::Disk),
         );
     }
     Ok(report)

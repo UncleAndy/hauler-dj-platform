@@ -14,10 +14,15 @@
 //! Ownership: media (`docs/architecture/crate-map.md`).
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
+pub mod cache;
 pub mod decode;
 pub mod info;
 pub mod prefetch;
 
+pub use cache::{
+    CacheConfig, CacheOutcome, CacheStorage, CachedReader, PcmCache, PcmSampleFormat,
+    PlaybackSource, playback_source,
+};
 pub use decode::{DecodeStats, StreamDecoder};
 pub use info::{GaplessInfo, MediaError, MediaFormat, MediaInfo};
 pub use prefetch::{PrefetchConfig, PrefetchStats, Prefetcher, SeekOutcome};

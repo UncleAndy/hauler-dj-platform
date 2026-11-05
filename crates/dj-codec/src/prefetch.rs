@@ -17,6 +17,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use crate::cache::{CachedReader, PcmCache};
 use crate::decode::StreamDecoder;
 use crate::info::{MediaError, MediaInfo};
 
@@ -114,10 +115,10 @@ impl Ring {
     }
 
     fn record_error(&self, message: String) {
-        if let Ok(mut slot) = self.error.lock() {
-            if slot.is_none() {
-                *slot = Some(message);
-            }
+        if let Ok(mut slot) = self.error.lock()
+            && slot.is_none()
+        {
+            *slot = Some(message);
         }
     }
 
@@ -128,9 +129,12 @@ impl Ring {
             let slot = ((start as usize + written) % self.capacity) * 2;
             let remaining = (frames - written).min(self.capacity - slot / 2);
             for index in 0..remaining {
-                self.data[slot + index * 2].store(samples[(written + index) * 2].to_bits(), Ordering::Relaxed);
-                self.data[slot + index * 2 + 1]
-                    .store(samples[(written + index) * 2 + 1].to_bits(), Ordering::Relaxed);
+                self.data[slot + index * 2]
+                    .store(samples[(written + index) * 2].to_bits(), Ordering::Relaxed);
+                self.data[slot + index * 2 + 1].store(
+                    samples[(written + index) * 2 + 1].to_bits(),
+                    Ordering::Relaxed,
+                );
             }
             written += remaining;
         }
@@ -152,6 +156,40 @@ impl Ring {
                     f32::from_bits(self.data[slot + index * 2 + 1].load(Ordering::Relaxed));
             }
             read += remaining;
+        }
+    }
+}
+
+/// Where the producer thread gets its frames from.
+///
+/// The audio side never learns the difference: both variants fill the same ring. Lossless files
+/// stream from the decoder with an index, lossy files read from the PCM cache entry built at load
+/// (ADR-0008).
+enum Source {
+    Stream(StreamDecoder),
+    Cached(CachedReader),
+}
+
+impl Source {
+    fn read_frames(&mut self, out: &mut [f32]) -> Result<usize, MediaError> {
+        match self {
+            Source::Stream(decoder) => decoder.read_frames(out),
+            Source::Cached(reader) => reader.read_frames(out),
+        }
+    }
+
+    fn seek(&mut self, frame: u64) -> Result<u64, MediaError> {
+        match self {
+            Source::Stream(decoder) => decoder.seek(frame),
+            Source::Cached(reader) => reader.seek(frame),
+        }
+    }
+
+    fn decoder_calls(&self) -> u64 {
+        match self {
+            Source::Stream(decoder) => decoder.stats().decoder_calls,
+            // A cached source has no decoder at all; that is the point of the cache.
+            Source::Cached(_) => 0,
         }
     }
 }
@@ -185,8 +223,42 @@ impl Prefetcher {
                 "window must hold at least two blocks".to_string(),
             ));
         }
-        let mut decoder = StreamDecoder::open(path)?;
+        let decoder = StreamDecoder::open(path)?;
         let info = decoder.info().clone();
+        Self::spawn(Source::Stream(decoder), info, config)
+    }
+
+    /// Open a file through the PCM cache policy (ADR-0008).
+    ///
+    /// Lossy files are decoded into `cache` once and then read from the entry; lossless files
+    /// stream from the decoder exactly as [`Prefetcher::open`] does. The decision comes from the
+    /// file alone — never from how the machine happens to be behaving.
+    pub fn open_with_cache(
+        path: &Path,
+        config: PrefetchConfig,
+        cache: &mut PcmCache,
+    ) -> Result<Self, MediaError> {
+        let probe = StreamDecoder::open(path)?;
+        let info = probe.info().clone();
+        drop(probe);
+
+        let source = if info.format.needs_pcm_cache() && cache.config().enabled {
+            cache.prepare(path)?;
+            let key = PcmCache::key_for(path, &info, cache.config())?;
+            let reader = cache.open_reader(&key)?;
+            Source::Cached(reader)
+        } else {
+            Source::Stream(StreamDecoder::open(path)?)
+        };
+
+        Self::spawn(source, info, config)
+    }
+
+    fn spawn(
+        mut decoder: Source,
+        info: MediaInfo,
+        config: PrefetchConfig,
+    ) -> Result<Self, MediaError> {
         let ring = Arc::new(Ring::new(config.window_frames));
 
         let producer_ring = Arc::clone(&ring);
@@ -211,10 +283,9 @@ impl Prefetcher {
                             }
                             Err(err) => producer_ring.record_error(err.to_string()),
                         }
-                        producer_ring.decoder_calls.store(
-                            decoder.stats().decoder_calls,
-                            Ordering::Relaxed,
-                        );
+                        producer_ring
+                            .decoder_calls
+                            .store(decoder.decoder_calls(), Ordering::Relaxed);
                         producer_ring.seek_request.store(NO_SEEK, Ordering::Release);
                         continue;
                     }
@@ -228,7 +299,8 @@ impl Prefetcher {
                         continue;
                     }
 
-                    let want = usize::try_from(free.min(block_frames as u64)).unwrap_or(block_frames);
+                    let want =
+                        usize::try_from(free.min(block_frames as u64)).unwrap_or(block_frames);
                     match decoder.read_frames(&mut scratch[..want * 2]) {
                         Ok(0) => {
                             producer_ring.eof.store(true, Ordering::Release);
@@ -236,17 +308,18 @@ impl Prefetcher {
                         }
                         Ok(frames) => {
                             producer_ring.write_frames(produced, &scratch[..frames * 2]);
-                            producer_ring.produced.store(produced + frames as u64, Ordering::Release);
+                            producer_ring
+                                .produced
+                                .store(produced + frames as u64, Ordering::Release);
                         }
                         Err(err) => {
                             producer_ring.record_error(err.to_string());
                             break;
                         }
                     }
-                    producer_ring.decoder_calls.store(
-                        decoder.stats().decoder_calls,
-                        Ordering::Relaxed,
-                    );
+                    producer_ring
+                        .decoder_calls
+                        .store(decoder.decoder_calls(), Ordering::Relaxed);
                 }
             })
             .map_err(|err| MediaError::Prefetch(err.to_string()))?;
@@ -276,7 +349,9 @@ impl Prefetcher {
             return 0;
         }
         self.ring.copy_out(start, &mut out[..take * 2]);
-        self.ring.consumed.store(start + take as u64, Ordering::Release);
+        self.ring
+            .consumed
+            .store(start + take as u64, Ordering::Release);
         take
     }
 

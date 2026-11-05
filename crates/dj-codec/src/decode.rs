@@ -90,7 +90,10 @@ impl StreamDecoder {
             let track = reader
                 .default_track(TrackType::Audio)
                 .ok_or(MediaError::NoAudioTrack)?;
-            let params = track.codec_params.as_ref().ok_or(MediaError::NoAudioTrack)?;
+            let params = track
+                .codec_params
+                .as_ref()
+                .ok_or(MediaError::NoAudioTrack)?;
             let audio = params.audio().ok_or(MediaError::NoAudioTrack)?;
             let sample_rate = audio.sample_rate.ok_or(MediaError::MissingSampleRate)?;
             let channels = audio
@@ -175,7 +178,7 @@ impl StreamDecoder {
 
     /// Read up to `out.len() / 2` stereo frames. Returns frames written; 0 means end of file.
     pub fn read_frames(&mut self, out: &mut [f32]) -> Result<usize, MediaError> {
-        if out.len() % 2 != 0 {
+        if !out.len().is_multiple_of(2) {
             return Err(MediaError::OddBuffer(out.len()));
         }
         let want = out.len() / 2;
@@ -207,10 +210,10 @@ impl StreamDecoder {
     /// discarded here, so the next read starts exactly at `frame` for formats with exact
     /// timestamps (WAV, FLAC) and within one codec frame for MP3.
     pub fn seek(&mut self, frame: u64) -> Result<u64, MediaError> {
-        if let Some(total) = self.info.frames {
-            if frame >= total {
-                return Err(MediaError::SeekOutOfRange(frame));
-            }
+        if let Some(total) = self.info.frames
+            && frame >= total
+        {
+            return Err(MediaError::SeekOutOfRange(frame));
         }
 
         let target = Timestamp::new(i64::try_from(frame).unwrap_or(i64::MAX));
@@ -264,8 +267,8 @@ impl StreamDecoder {
         let mut buffer = vec![0.0f32; 2048];
         while left > 0 {
             let want = (left * 2).min(buffer.len());
-            let mut chunk = buffer.get_mut(..want).ok_or(MediaError::OddBuffer(want))?;
-            let read = self.read_frames(&mut chunk)?;
+            let chunk = buffer.get_mut(..want).ok_or(MediaError::OddBuffer(want))?;
+            let read = self.read_frames(chunk)?;
             if read == 0 {
                 break;
             }
