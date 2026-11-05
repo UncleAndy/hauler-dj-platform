@@ -78,4 +78,16 @@
 - спецификация упаковки — `docs/operations/realtime-audio.md` (systemd-юнит, NixOS, проверка через
   `systemd-run --user --scope -p CPUSchedulingPolicy=fifo`).
 
+### Поправка рецепта (2026-11-05, по факту запуска)
+
+Первая версия `docs/operations/realtime-audio.md` предлагала `systemd-run --user --scope -p
+CPUSchedulingPolicy=fifo`, и владелец получил `Unknown assignment: CPUSchedulingPolicy=fifo`.
+Причина: это свойство сервиса, а не scope. Проверено на systemd 260.
+
+Из этого следует уточнение к решению: приоритет выдаёт **либо лимит `rtprio` из PAM плюс лаунчер с
+`chrt -f 20`**, либо **системный юнит**. Пользовательский менеджер systemd приоритет поставить не
+может: свойство принимается, но применяется с `Failed to set scheduling policy, ignoring`. Поэтому
+проверка в приложении обязательна — она ловит именно этот случай, когда «настроено» не значит
+«применено».
+
 Счётчик xrun остаётся долгом: без него NFR-002 и NFR-004 не выносятся.

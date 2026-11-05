@@ -14,30 +14,65 @@
 Вывод: на обычном десктопе `SCHED_OTHER` для звука недостаточно, и это не лечится оптимизацией
 кода.
 
-## Linux: юнит с RT-политикой
+## Linux: кто на самом деле выдаёт приоритет
 
-Приложение не запускает себя само; его запускает юнит. Для пользовательского юнита:
+`CPUSchedulingPolicy` — свойство **сервиса**, а не scope: `systemd-run --user --scope -p
+CPUSchedulingPolicy=fifo` отвечает `Unknown assignment`. Это распространённая ошибка рецептов, и
+она проверена на живом systemd 260.
+
+Дальше важно, у кого есть право менять политику. У обычного пользователя `ulimit -r` почти всегда
+`0`, и тогда:
+
+- `chrt -f 20 <cmd>` → `Operation not permitted`;
+- пользовательский менеджер systemd тоже не имеет `CAP_SYS_NICE`: свойство принимается, но
+  применяется с предупреждением `Failed to set scheduling policy, ignoring` — то есть **тихо не
+  применяется**. Именно поэтому приложение измеряет политику и показывает её, а не верит юниту.
+
+### Рабочий путь без root на каждый запуск: лимит `rtprio`
+
+Лимит выдаётся один раз при установке (это и есть «упаковка»), после чего приоритет ставит
+лаунчер. NixOS:
+
+```nix
+security.pam.loginLimits = [
+  { domain = "@audio"; item = "rtprio"; value = "95"; type = "-"; }
+  { domain = "@audio"; item = "memlock"; value = "unlimited"; type = "-"; }
+];
+users.users.andy.extraGroups = [ "audio" ];
+```
+
+После `nixos-rebuild switch` и повторного входа:
+
+```
+ulimit -r            # должно стать 95, а не 0
+chrt -f 20 nix develop --command cargo run --release -p dj-live-probe -- \
+  --file "$HOME/Музыка/Плов и Кодецы.mp3" --seconds 900 --loop-seconds 2 \
+  --out docs/qa/evidence/A05/rt-fifo.json --progress-seconds 60
+```
+
+`chrt` ставит политику процессу, а потоки и дочерние процессы её наследуют — поэтому её получает и
+поток колбэка внутри cpal, который создаёт не наш код.
+
+### Альтернатива: системный юнит
+
+Приложение ставится системным юнитом (root ставит, пользователь только запускает):
 
 ```ini
 [Service]
+User=andy
 # 20–30 хватает: выше 50 бессмысленно и вредно для системных задач
 CPUSchedulingPolicy=fifo
 CPUSchedulingPriority=20
-# Только если звук не нужен в фоне:
-# Nice=-10
 ```
 
-NixOS: то же самое через `systemd.user.services.<name>.serviceConfig`, плюс `security.rtkit.enable`
-для тех компонентов, которые берут приоритет через брокера (PipeWire делает это сам).
+Это предпочтительный путь для упаковки в дистрибутиве: привилегия нужна один раз при установке, а
+не при каждом запуске.
 
-Проверить, что приоритет действительно выдан, можно без нашего кода:
+### Проверка
 
-```
-systemd-run --user --scope -p CPUSchedulingPolicy=fifo -p CPUSchedulingPriority=20 \
-  cargo run --release -p dj-live-probe -- --seconds 60 --loop-seconds 2
-```
-
-В отчёте при этом должно быть `thread_scheduling.policy = "fifo"` и `realtime = true`.
+В отчёте должно быть `thread_scheduling.policy = "fifo"` и `realtime.ok = true`. Если там `other`
+при настроенном юните — значит приоритет не применился (см. предупреждение выше), и это видно по
+`realtime.advice`, а не по слуху.
 
 ## Что делает приложение
 
