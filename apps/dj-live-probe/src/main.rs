@@ -411,6 +411,8 @@ fn report_json(
         "render_p99_us": report.render_p99_us,
         "render_max_us": report.render_max_us,
         "render_budget": report.render_budget,
+        "stalled_blocks": report.stalled_blocks,
+        "off_cpu_max_us": report.off_cpu_max_us,
         "rss_kb": rss_kb(),
         "rss_start_kb": rss_start_kb,
         "outliers": report
@@ -420,6 +422,8 @@ fn report_json(
                 "at_s": outlier.elapsed_ms / 1000,
                 "interval_us": outlier.interval_us,
                 "render_us": outlier.render_us,
+                "cpu_us": outlier.cpu_us,
+                "off_cpu_us": outlier.render_us.saturating_sub(outlier.cpu_us),
             }))
             .collect::<Vec<_>>(),
         "outliers_dropped": report.outliers_dropped,

@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use rustix::time::{ClockId, clock_gettime};
 
 /// Which physical channels carry which bus (ADR-0005).
 ///
@@ -86,6 +87,10 @@ struct Counters {
     render_histogram: Vec<AtomicU32>,
     /// Backend-reported stream errors.
     errors: AtomicU64,
+    /// Blocks during which the thread was off the CPU for at least `STALL_THRESHOLD_US`.
+    stalled: AtomicU64,
+    /// Longest stretch off the CPU, microseconds.
+    off_cpu_max_us: AtomicU32,
     /// Shortest and longest callback interval, microseconds.
     min_us: AtomicU32,
     max_us: AtomicU32,
@@ -169,6 +174,10 @@ pub struct LiveReport {
     pub render_max_us: f64,
     /// Share of the period the p99 render took: the figure DJP-NFR-003 judges.
     pub render_budget: f64,
+    /// Blocks during which the thread was off the CPU for 500 us or more.
+    pub stalled_blocks: u64,
+    /// Longest stretch spent off the CPU inside a block, microseconds.
+    pub off_cpu_max_us: u32,
     /// Blocks that were late, early, or expensive, with the moment they happened.
     pub outliers: Vec<Outlier>,
     /// Outlier records dropped because the log filled up.
@@ -281,6 +290,18 @@ fn percentiles(histogram: &[AtomicU32], low: f64, high: f64) -> (f64, f64) {
     (low_value, high_value)
 }
 
+/// CPU time consumed by the calling thread, in nanoseconds.
+///
+/// The difference against wall time is the whole answer to "was the block slow, or was the thread
+/// gone?": a block that takes 2.7 ms of wall time but 20 us of CPU was not executing our code.
+fn thread_cpu_ns() -> u64 {
+    let now = clock_gettime(ClockId::ThreadCPUTime);
+    u64::try_from(now.tv_sec)
+        .unwrap_or(0)
+        .saturating_mul(1_000_000_000)
+        .saturating_add(u64::try_from(now.tv_nsec).unwrap_or(0))
+}
+
 /// What the kernel says about the thread the callback runs on.
 ///
 /// A block that costs 3 ms may be slow code or a thread that was taken off the CPU. The two look
@@ -332,6 +353,9 @@ pub fn thread_pressure(tid: u64) -> Option<ThreadPressure> {
 /// Number of outlier records kept for diagnosis.
 const OUTLIER_SLOTS: usize = 32;
 
+/// A block whose thread was off the CPU for at least this long is counted as stalled.
+const STALL_THRESHOLD_US: u32 = 500;
+
 /// One block that misbehaved, with the time it happened.
 ///
 /// A count alone cannot be attributed after the fact: "22 late callbacks" over two hours says
@@ -345,6 +369,8 @@ pub struct Outlier {
     pub interval_us: u32,
     /// Time spent inside the renderer for this block, microseconds.
     pub render_us: u32,
+    /// Of that, time the thread was actually running on a CPU.
+    pub cpu_us: u32,
 }
 
 /// Fixed-size log of misbehaving blocks, written with atomics only.
@@ -354,6 +380,7 @@ struct Outliers {
     elapsed_us: Vec<AtomicU32>,
     interval_us: Vec<AtomicU32>,
     render_us: Vec<AtomicU32>,
+    cpu_us: Vec<AtomicU32>,
 }
 
 impl Default for Outliers {
@@ -363,16 +390,18 @@ impl Default for Outliers {
             elapsed_us: (0..OUTLIER_SLOTS).map(|_| AtomicU32::new(0)).collect(),
             interval_us: (0..OUTLIER_SLOTS).map(|_| AtomicU32::new(0)).collect(),
             render_us: (0..OUTLIER_SLOTS).map(|_| AtomicU32::new(0)).collect(),
+            cpu_us: (0..OUTLIER_SLOTS).map(|_| AtomicU32::new(0)).collect(),
         }
     }
 }
 
 impl Outliers {
-    fn note(&self, elapsed_us: u32, interval_us: u32, render_us: u32) {
+    fn note(&self, elapsed_us: u32, interval_us: u32, render_us: u32, cpu_us: u32) {
         let slot = self.index.fetch_add(1, Ordering::Relaxed) as usize % OUTLIER_SLOTS;
         self.elapsed_us[slot].store(elapsed_us, Ordering::Relaxed);
         self.interval_us[slot].store(interval_us, Ordering::Relaxed);
         self.render_us[slot].store(render_us, Ordering::Relaxed);
+        self.cpu_us[slot].store(cpu_us, Ordering::Relaxed);
     }
 
     fn collected(&self) -> (Vec<Outlier>, u64) {
@@ -383,6 +412,7 @@ impl Outliers {
                 elapsed_ms: u64::from(self.elapsed_us[slot].load(Ordering::Relaxed)) / 1000,
                 interval_us: self.interval_us[slot].load(Ordering::Relaxed),
                 render_us: self.render_us[slot].load(Ordering::Relaxed),
+                cpu_us: self.cpu_us[slot].load(Ordering::Relaxed),
             })
             .collect();
         (outliers, total.saturating_sub(kept as u64))
@@ -564,11 +594,24 @@ impl LiveOutput {
             }
             master[..frames * 2].fill(0.0);
             cue[..frames * 2].fill(0.0);
+            let cpu_before = thread_cpu_ns();
             let render_started = Instant::now();
             renderer.render(&mut master[..frames * 2], &mut cue[..frames * 2], frames);
             // What the graph actually cost, as opposed to when the callback arrived: this is the
             // number DJP-NFR-003 is about ("p99 block processing under 60 % of the period").
             let spent = u32::try_from(render_started.elapsed().as_micros()).unwrap_or(u32::MAX);
+            // The split that identifies the fault: wall time without CPU time is time the thread
+            // was not running, and no amount of optimisation removes it.
+            let cpu_us = u32::try_from(thread_cpu_ns().saturating_sub(cpu_before) / 1000)
+                .unwrap_or(u32::MAX)
+                .min(spent);
+            let off_cpu_us = spent.saturating_sub(cpu_us);
+            if off_cpu_us >= STALL_THRESHOLD_US {
+                callback_counters.stalled.fetch_add(1, Ordering::Relaxed);
+                callback_counters
+                    .off_cpu_max_us
+                    .fetch_max(off_cpu_us, Ordering::Relaxed);
+            }
             callback_counters
                 .render_sum_us
                 .fetch_add(u64::from(spent), Ordering::Relaxed);
@@ -613,6 +656,7 @@ impl LiveOutput {
                     u32::try_from(started.elapsed().as_micros()).unwrap_or(u32::MAX),
                     interval_us,
                     spent,
+                    cpu_us,
                 );
             }
 
@@ -729,6 +773,8 @@ impl LiveOutput {
             } else {
                 0.0
             },
+            stalled_blocks: self.counters.stalled.load(Ordering::Relaxed),
+            off_cpu_max_us: self.counters.off_cpu_max_us.load(Ordering::Relaxed),
             outliers,
             outliers_dropped,
         }

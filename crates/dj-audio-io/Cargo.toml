@@ -11,6 +11,7 @@ authors.workspace = true
 # Same backend decision as ADR-0002: CPAL with the native PipeWire host on Linux, WASAPI/CoreAudio
 # elsewhere.
 cpal = { version = "0.18.2", features = ["pipewire"] }
+rustix = { version = "1.1.6", features = ["time"] }
 
 [lints]
 workspace = true
