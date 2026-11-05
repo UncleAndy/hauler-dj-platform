@@ -161,9 +161,7 @@ struct OutputDevice {
 }
 
 fn describe_device(device: &cpal::Device, default: &Option<String>) -> OutputDevice {
-    let name = device
-        .name()
-        .unwrap_or_else(|_| "<unnamed device>".to_string());
+    let name = device.to_string();
     let configs: Vec<cpal::SupportedStreamConfigRange> = match device.supported_output_configs() {
         Ok(configs) => configs.collect(),
         Err(_) => Vec::new(),
@@ -175,7 +173,7 @@ fn describe_device(device: &cpal::Device, default: &Option<String>) -> OutputDev
 
     let mut sample_rates: Vec<u32> = Vec::new();
     for config in &configs {
-        for rate in [config.min_sample_rate().0, config.max_sample_rate().0] {
+        for rate in [config.min_sample_rate(), config.max_sample_rate()] {
             if !sample_rates.contains(&rate) {
                 sample_rates.push(rate);
             }
@@ -217,7 +215,7 @@ fn collect_hosts() -> Vec<(String, Vec<OutputDevice>)> {
         };
         let default_name = host
             .default_output_device()
-            .and_then(|device| device.name().ok());
+            .map(|device| device.to_string());
         let mut devices: Vec<OutputDevice> = Vec::new();
         match host.output_devices() {
             Ok(iter) => {
@@ -286,7 +284,7 @@ fn attempt_stream(
         (|| -> Result<usize, String> {
             let config = cpal::StreamConfig {
                 channels,
-                sample_rate: cpal::SampleRate(TRIAL_RATE),
+                sample_rate: TRIAL_RATE,
                 buffer_size: buffer,
             };
             let (done_tx, done_rx) = mpsc::channel::<()>();
@@ -302,7 +300,7 @@ fn attempt_stream(
 
             let stream = device
                 .build_output_stream(
-                    &config,
+                    config,
                     data_fn,
                     |err| eprintln!("dj-audio-probe: stream error: {err}"),
                     None,
@@ -419,9 +417,7 @@ fn channel_trials(
     let mut budget_exhausted = false;
 
     for device in devices {
-        let name = device
-            .name()
-            .unwrap_or_else(|_| "<unnamed device>".to_string());
+        let name = device.to_string();
         if !matches_filter(&name, filter) {
             continue;
         }
@@ -561,13 +557,11 @@ fn run_trial_inner(seconds: u64, silent: bool) -> TrialReport {
             "no default output device".to_string(),
         );
     };
-    let name = device
-        .name()
-        .unwrap_or_else(|_| "<unnamed device>".to_string());
+    let name = device.to_string();
 
     let config = cpal::StreamConfig {
         channels: TRIAL_CHANNELS,
-        sample_rate: cpal::SampleRate(TRIAL_RATE),
+        sample_rate: TRIAL_RATE,
         buffer_size: cpal::BufferSize::Fixed(TRIAL_FRAMES),
     };
 
@@ -590,7 +584,7 @@ fn run_trial_inner(seconds: u64, silent: bool) -> TrialReport {
     };
 
     let stream = match device.build_output_stream(
-        &config,
+        config,
         data_fn,
         |err| eprintln!("dj-audio-probe: stream error: {err}"),
         None,
@@ -778,9 +772,14 @@ fn human_report(
 
     let _ = writeln!(
         out,
-        "\n== CPAL enumeration (ALSA plugin layer: ranges are API limits, not hardware) =="
+        "\n== CPAL enumeration (ALSA hosts report plugin ranges, PipeWire hosts report the node) =="
     );
-    let _ = writeln!(out, "hosts: {}", hosts.len());
+    let _ = writeln!(
+        out,
+        "hosts: {} {:?}",
+        hosts.len(),
+        hosts.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>()
+    );
     for (host_id, devices) in hosts {
         let _ = writeln!(out, "[{host_id}] output devices: {}", devices.len());
         for device in devices {

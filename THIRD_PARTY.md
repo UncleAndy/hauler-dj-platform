@@ -16,7 +16,8 @@ ALSA) допустимы только через динамическую лин
 | ALSA lib | системная (nixpkgs) | LGPL-2.1-or-later | динамическая линковка | уведомления | нет данных | в dev shell |
 | OpenSSL | nixpkgs | Apache-2.0 | динамическая линковка | уведомления | нет данных | в dev shell |
 | Rust toolchain (rustc, cargo, clippy, rustfmt) | 1.95.0 (nixpkgs) | MIT / Apache-2.0 | инструмент сборки | нет | нет | в dev shell |
-| cpal | 0.16.0 | MIT | статическая линковка (Rust) | уведомление | нет данных | в сборке (`apps/dj-audio-probe`) |
+| cpal | 0.18.2 (`pipewire` feature) | MIT | статическая линковка (Rust) | уведомление | нет данных | в сборке (`apps/dj-audio-probe`) |
+| pipewire / pipewire-sys / libspa | 0.10.1 | MIT | статическая линковка (Rust-биндинги к libpipewire) | уведомление | нет данных | в сборке (через cpal PipeWire-бэкенд) |
 | serde / serde_json | 1.0.x | MIT OR Apache-2.0 | статическая линковка (Rust) | уведомление | нет данных | в сборке (`apps/dj-audio-probe`) |
 
 ## Запланированы (ещё не зависимость)
