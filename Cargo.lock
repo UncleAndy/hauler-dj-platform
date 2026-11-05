@@ -315,6 +315,7 @@ name = "dj-engine"
 version = "0.1.0"
 dependencies = [
  "dj-audio-core",
+ "dj-audio-io",
  "dj-bridge",
  "dj-deck",
  "dj-domain",

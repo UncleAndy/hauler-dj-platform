@@ -17,21 +17,26 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use dj_bridge::{BridgeServer, ClientMessage, ServerMessage};
 use dj_deck::{Deck, DeckSource};
-use dj_domain::{Ack, DeckId};
-use dj_engine::{DeckStatic, StateCells, apply};
+use dj_domain::DeckId;
+use dj_engine::{DeckStatic, EngineGraph, StateCells, Submission};
 use dj_mixer::{ChannelSettings, CrossAssign, Mixer};
 
 const USAGE: &str = "\
 dj-engine — the audio engine process
 
 Usage:
-  dj-engine [--socket PATH] [--null-sink] [--device SUBSTR] [--block N] [--rate HZ]
+  dj-engine [--socket PATH] [--null-sink] [--device SUBSTR] [--block N] [--rate HZ] [--seconds S]
 
 Defaults: socket $XDG_RUNTIME_DIR/hauler-dj-engine.sock, null sink, 48 kHz, block 256.
-The null sink generates a tone instead of opening a device, so the command path can be
-exercised anywhere.
+--device SUBSTR opens the real output (substring of the backend name); --null-sink keeps a
+generated tone and a clock instead, so the command path works anywhere, including CI.
+On a device with four or more outputs master goes to the first pair and cue to the second
+(ADR-0005).
 
-Exit codes: 0 stopped by a signal, 2 bad usage, 3 socket or device error.
+--seconds S renders for S seconds, prints the timing report as JSON and exits: the same
+counters the probe reports, for the evidence directory.
+
+Exit codes: 0 stopped by a signal, 2 bad usage or a device that will not open.
 ";
 
 /// A generated tone, so the command path works without a device or a file.
@@ -82,12 +87,6 @@ impl DeckSource for ToneSource {
     }
 }
 
-/// What a client thread hands to the render loop.
-struct Submission {
-    command: dj_domain::ScheduledCommand,
-    reply: Sender<Ack>,
-}
-
 /// Clients currently attached to the fan-out.
 ///
 /// The lock is taken by the publisher thread and by client threads, never by the render thread.
@@ -115,6 +114,7 @@ fn run(argv: &[String]) -> Result<(), String> {
     let mut device: Option<String> = None;
     let mut block = 256usize;
     let mut rate = 48_000u32;
+    let mut seconds: Option<f64> = None;
 
     let mut index = 0;
     while index < argv.len() {
@@ -145,9 +145,29 @@ fn run(argv: &[String]) -> Result<(), String> {
                 rate = value(1)?.parse().map_err(|_| "--rate expects a number")?;
                 index += 2;
             }
+            "--seconds" => {
+                let parsed: f64 = value(1)?
+                    .parse()
+                    .map_err(|_| "--seconds expects a number")?;
+                if !parsed.is_finite() || parsed <= 0.0 {
+                    return Err("--seconds must be a positive number".to_string());
+                }
+                seconds = Some(parsed);
+                index += 2;
+            }
             other => return Err(format!("unknown option {other:?}")),
         }
     }
+
+    // Look at the device before claiming the socket: a wrong name should not leave a socket behind
+    // that a client can connect to and then wait on for ever.
+    let device_channels = match &device {
+        Some(requested) => Some(
+            dj_audio_io::output_channels(Some(requested), 4)
+                .map_err(|err| format!("cannot open {requested:?}: {err}"))?,
+        ),
+        None => None,
+    };
 
     let socket = socket.unwrap_or_else(default_socket);
     let server = BridgeServer::bind(&socket).map_err(|err| err.to_string())?;
@@ -246,16 +266,143 @@ fn run(argv: &[String]) -> Result<(), String> {
         });
     }
 
-    if null_sink || device.is_none() {
-        render_null(&mut decks, &mut mixer, rate, block, &cells, &submissions_rx);
+    let graph = EngineGraph::new(decks, mixer, submissions_rx, Arc::clone(&cells), block);
+
+    match (device, device_channels) {
+        (Some(requested), Some(channels)) => {
+            run_device(graph, &requested, channels, block, rate, seconds)
+        }
+        _ => {
+            let _ = null_sink;
+            run_null(graph, block, rate, seconds);
+            Ok(())
+        }
+    }
+}
+
+/// The device path: the graph lives inside the callback, which is the only place it may run.
+fn run_device(
+    graph: EngineGraph,
+    requested: &str,
+    channels: usize,
+    block: usize,
+    rate: u32,
+    seconds: Option<f64>,
+) -> Result<(), String> {
+    let plan = dj_audio_io::RoutePlan::for_channels(channels);
+    let config = dj_audio_io::LiveConfig {
+        device: Some(requested.to_string()),
+        sample_rate: rate,
+        block_frames: block,
+        seconds: f64::INFINITY,
+        thresholds: dj_audio_io::Thresholds::default(),
+    };
+
+    let output = dj_audio_io::LiveOutput::start(&config, plan, Box::new(graph))
+        .map_err(|err| format!("cannot open {requested:?}: {err}"))?;
+    let report = output.snapshot();
+    eprintln!(
+        "dj-engine: playing on {:?} — {} channel(s), master {}/{} cue {}",
+        report.device,
+        report.channels,
+        plan.master.0,
+        plan.master.1,
+        plan.cue
+            .map(|(left, right)| format!("{left}/{right}"))
+            .unwrap_or_else(|| "none".to_string())
+    );
+
+    // A bounded run is how the owner checks the device without listening for ever: the same
+    // counters the probe reports, printed as JSON for the evidence directory.
+    if let Some(seconds) = seconds {
+        let report = output.finish(seconds);
+        let json = serde_json::json!({
+            "device": report.device,
+            "channels": report.channels,
+            "sample_rate": report.sample_rate,
+            "block_frames_requested": report.block_frames_requested,
+            "block_honoured": report.honoured_block(),
+            "frames_per_callback": report.frames_per_callback,
+            "callbacks": report.callbacks,
+            "frames": report.frames,
+            "audio_seconds": report.audio_seconds,
+            "late_callbacks": report.late_callbacks,
+            "early_callbacks": report.early_callbacks,
+            "errors": report.errors,
+            "interval_p50_ms": report.interval_p50_ms,
+            "interval_p99_ms": report.interval_p99_ms,
+            "interval_max_ms": report.interval_max_ms,
+            "render_p50_us": report.render_p50_us,
+            "render_p99_us": report.render_p99_us,
+            "render_max_us": report.render_max_us,
+            "render_budget": report.render_budget,
+            "stalled_blocks": report.stalled_blocks,
+            "off_cpu_max_us": report.off_cpu_max_us,
+            "peaks": report.peaks,
+            "route": {
+                "master": [plan.master.0, plan.master.1],
+                "cue": plan.cue.map(|(left, right)| [left, right]),
+            },
+        });
+        println!(
+            "{}",
+            serde_json::to_string(&json).unwrap_or_else(|_| "{}".to_string())
+        );
         return Ok(());
     }
 
-    // A real device needs the graph inside the callback; the owner of that path is A05/A06 next
-    // step, so this binary refuses rather than pretending.
-    Err(format!(
-        "device output {device:?} is not wired into the engine yet; use --null-sink"
-    ))
+    // The engine is the owner of the device for as long as it lives; the stream stops when this
+    // value drops, so holding it is the whole job of this thread.
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        let report = output.snapshot();
+        if report.callbacks > 0 && report.callbacks % 20_000 == 0 {
+            eprintln!(
+                "dj-engine: {} callbacks, {} frames, late {}",
+                report.callbacks, report.frames, report.late_callbacks
+            );
+        }
+    }
+}
+
+/// The null path: same graph, same rules, paced by a clock instead of a sound card.
+fn run_null(mut graph: EngineGraph, block: usize, rate: u32, seconds: Option<f64>) {
+    let period = Duration::from_secs_f64(f64::from(block as u32) / f64::from(rate));
+    let mut master = vec![0.0f32; block * 2];
+    let mut cue = vec![0.0f32; block * 2];
+    let started = Instant::now();
+    let mut next_block = started;
+    let mut callbacks: u64 = 0;
+    let limit = seconds.map(|seconds| (seconds * f64::from(rate)) as u64);
+
+    loop {
+        graph.render_pair(&mut master, &mut cue, block);
+        callbacks += 1;
+        if let Some(limit) = limit
+            && graph.clock() >= limit
+        {
+            let json = serde_json::json!({
+                "mode": "null_sink",
+                "callbacks": callbacks,
+                "frames": graph.clock(),
+                "audio_seconds": graph.clock() as f64 / f64::from(rate),
+                "sample_rate": rate,
+                "block_frames": block,
+            });
+            println!(
+                "{}",
+                serde_json::to_string(&json).unwrap_or_else(|_| "{}".to_string())
+            );
+            return;
+        }
+        next_block += period;
+        let now = Instant::now();
+        if next_block > now {
+            std::thread::sleep(next_block - now);
+        } else {
+            next_block = now;
+        }
+    }
 }
 
 fn default_socket() -> PathBuf {
@@ -307,49 +454,6 @@ fn serve_client(
             }
             Ok(_) => {}
             Err(_) => return,
-        }
-    }
-}
-
-fn render_null(
-    decks: &mut [Deck],
-    mixer: &mut Mixer,
-    rate: u32,
-    block: usize,
-    cells: &Arc<StateCells>,
-    submissions: &Receiver<Submission>,
-) {
-    let period = Duration::from_secs_f64(f64::from(block as u32) / f64::from(rate));
-    let mut clock: u64 = 0;
-    let mut scratch = vec![0.0f32; block * 2];
-    let started = Instant::now();
-    let mut next_block = started;
-
-    loop {
-        // Commands first, so a command at this sample is applied at this sample.
-        while let Ok(submission) = submissions.try_recv() {
-            let ack = apply(decks, mixer, &submission.command, clock);
-            let _ = submission.reply.send(ack);
-        }
-
-        mixer.begin_block(block);
-        for (index, deck) in decks.iter_mut().enumerate() {
-            deck.render(&mut scratch);
-            mixer.mix_channel(index, &scratch);
-        }
-        mixer.finish_block();
-        clock += block as u64;
-
-        // Atomic stores only: the audio path does not build a snapshot, take a lock, or allocate.
-        cells.publish(decks, mixer, clock);
-
-        next_block += period;
-        let now = Instant::now();
-        if next_block > now {
-            std::thread::sleep(next_block - now);
-        } else {
-            // Keep the clock honest instead of spinning after a stall.
-            next_block = now;
         }
     }
 }

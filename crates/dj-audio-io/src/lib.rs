@@ -639,6 +639,39 @@ pub struct LiveOutput {
     block_frames: usize,
 }
 
+/// How many output channels a device offers, as the backend enumerates them.
+///
+/// Capped at `limit`, because the graph has at most two output pairs (master and cue); a wider
+/// interface has no more to give us. Two when the backend says nothing, which is the ADR-0005
+/// fallback for an interface we know nothing about.
+pub fn output_channels(device: Option<&str>, limit: usize) -> Result<usize, IoError> {
+    let host = cpal::default_host();
+    let chosen = match device {
+        Some(needle) => {
+            let needle_lower = needle.to_ascii_lowercase();
+            host.output_devices()
+                .map_err(|err| IoError::Unsupported(err.to_string()))?
+                .find(|candidate| {
+                    candidate
+                        .to_string()
+                        .to_ascii_lowercase()
+                        .contains(&needle_lower)
+                })
+                .ok_or_else(|| IoError::DeviceNotFound(needle.to_string()))?
+        }
+        None => host
+            .default_output_device()
+            .ok_or_else(|| IoError::DeviceNotFound("default".to_string()))?,
+    };
+    let widest = chosen
+        .supported_output_configs()
+        .map_err(|err| IoError::Unsupported(err.to_string()))?
+        .map(|range| usize::from(range.channels()))
+        .max()
+        .unwrap_or(2);
+    Ok(widest.clamp(1, limit.max(1)))
+}
+
 impl LiveOutput {
     /// Open a device and start rendering.
     ///

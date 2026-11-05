@@ -8,8 +8,10 @@ use dj_deck::Deck;
 use dj_domain::{
     AckStatus, CueAction, DeckId, DjCommand, RejectReason, ScheduledCommand, SourceFrame,
 };
-use dj_engine::{DeckStatic, StateCells, apply, snapshot};
+use dj_engine::{DeckStatic, EngineGraph, StateCells, Submission, apply, snapshot};
 use dj_mixer::{ChannelSettings, CrossAssign, Mixer};
+use std::sync::Arc;
+use std::sync::mpsc::Sender;
 
 fn deck_with_tone(id: DeckId, rate: u32) -> Deck {
     struct Tone;
@@ -368,4 +370,111 @@ fn a_snapshot_read_back_carries_what_was_published() {
         "a deck with a known duration reports its position"
     );
     assert_eq!(read_back.deck, DeckId::A);
+}
+
+fn graph_for(block: usize) -> (EngineGraph, Arc<StateCells>, Sender<Submission>) {
+    let decks = vec![
+        deck_with_tone(DeckId::A, 48_000),
+        deck_with_tone(DeckId::B, 48_000),
+    ];
+    let cells = Arc::new(StateCells::new());
+    let (submissions, receiver) = std::sync::mpsc::channel();
+    let graph = EngineGraph::new(
+        decks,
+        mixer_for(48_000),
+        receiver,
+        Arc::clone(&cells),
+        block,
+    );
+    (graph, cells, submissions)
+}
+
+#[test]
+fn a_block_through_the_graph_is_audible_acked_and_published() {
+    // This is the device path minus the device: the callback's own work, called directly.
+    let (mut graph, cells, submissions) = graph_for(256);
+    let (reply, answers) = std::sync::mpsc::channel();
+    submissions
+        .send(Submission {
+            command: command(
+                1,
+                DjCommand::Play {
+                    deck: DeckId::A,
+                    enabled: true,
+                },
+            ),
+            reply,
+        })
+        .unwrap_or_else(|err| panic!("{err}"));
+
+    let mut master = vec![0.0f32; 256 * 2];
+    let mut cue = vec![0.0f32; 256 * 2];
+    graph.render_pair(&mut master, &mut cue, 256);
+
+    assert!(
+        master.iter().any(|sample| sample.abs() > 0.01),
+        "a playing deck must reach the master bus"
+    );
+    assert!(
+        cue.iter().all(|sample| sample.abs() < 1e-9),
+        "a deck that is not cued must stay out of the headphone bus"
+    );
+    let ack = answers
+        .try_recv()
+        .unwrap_or_else(|err| panic!("a command must be acknowledged inside the block: {err}"));
+    assert!(matches!(ack.status, AckStatus::Applied { .. }));
+    assert_eq!(
+        graph.clock(),
+        256,
+        "the clock advances by the rendered frames"
+    );
+
+    let statics = vec![
+        DeckStatic::from_snapshot(&graph.decks()[0].snapshot()),
+        DeckStatic::from_snapshot(&graph.decks()[1].snapshot()),
+    ];
+    let state = cells.read(&statics, 48_000, 1, 1);
+    assert!(
+        state.decks[0].playing,
+        "the graph publishes what it rendered"
+    );
+    assert_eq!(state.audio_clock_samples, 256);
+}
+
+#[test]
+fn a_block_larger_than_prepared_is_truncated_not_allocated_for() {
+    let (mut graph, _, _) = graph_for(128);
+    let mut master = vec![0.0f32; 512 * 2];
+    let mut cue = vec![0.0f32; 512 * 2];
+    graph.render_pair(&mut master, &mut cue, 512);
+    assert_eq!(
+        graph.clock(),
+        128,
+        "rendering beyond the prepared block stops at the block boundary"
+    );
+    assert!(
+        master[128 * 2..].iter().all(|sample| *sample == 0.0),
+        "the part that was not rendered stays silent"
+    );
+}
+
+#[test]
+fn the_callback_path_does_not_allocate() {
+    let (mut graph, _, _) = graph_for(256);
+    let mut master = vec![0.0f32; 256 * 2];
+    let mut cue = vec![0.0f32; 256 * 2];
+    graph.render_pair(&mut master, &mut cue, 256); // warm-up: decoders and buffers
+
+    dj_testkit::rt::reset();
+    {
+        let _scope = dj_testkit::rt::RtScope::enter();
+        for _ in 0..16 {
+            graph.render_pair(&mut master, &mut cue, 256);
+        }
+    }
+    assert_eq!(
+        dj_testkit::rt::allocations_in_rt(),
+        0,
+        "the block path of the engine must not allocate"
+    );
 }

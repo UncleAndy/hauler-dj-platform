@@ -5,8 +5,11 @@
 //! distinction came from a hanging integration test: spawning a server inside a test binary is a
 //! fragile way to check a rule.
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::mpsc::{Receiver, Sender};
 
+use dj_audio_io::Renderer;
 use dj_deck::Deck;
 use dj_domain::{
     Ack, AckStatus, CueAction, DeckId, DeckLoad, DeckSnapshot, DjCommand, FrameRange, Levels,
@@ -333,5 +336,102 @@ impl StateCells {
             crossfader: f32::from_bits(self.crossfader.load(Ordering::Relaxed)),
             decks,
         }
+    }
+}
+
+/// What a client thread hands to the render loop.
+pub struct Submission {
+    /// The command, with its deadline in device samples.
+    pub command: ScheduledCommand,
+    /// Where the ack goes; a client waits on it before reporting anything to the user.
+    pub reply: Sender<Ack>,
+}
+
+/// Decks → channel strips → master and cue, driven either by a device callback or by a null sink.
+///
+/// One implementation for both: the null sink paces itself and the device paces the callback, but
+/// what happens inside a block — drain commands, render decks, mix, publish counters — is the same
+/// code, so a bug cannot live in only one of the two paths.
+pub struct EngineGraph {
+    decks: Vec<Deck>,
+    mixer: Mixer,
+    submissions: Receiver<Submission>,
+    cells: Arc<StateCells>,
+    block: usize,
+    clock: u64,
+    scratch: Vec<f32>,
+}
+
+impl EngineGraph {
+    /// Build the graph for `block` frames per callback.
+    pub fn new(
+        decks: Vec<Deck>,
+        mixer: Mixer,
+        submissions: Receiver<Submission>,
+        cells: Arc<StateCells>,
+        block: usize,
+    ) -> Self {
+        let block = block.max(1);
+        Self {
+            decks,
+            mixer,
+            submissions,
+            cells,
+            block,
+            clock: 0,
+            scratch: vec![0.0f32; block * 2],
+        }
+    }
+
+    /// Device-clock position after the last rendered block.
+    pub fn clock(&self) -> u64 {
+        self.clock
+    }
+
+    /// Decks, for a caller that needs to inspect them (tests, mostly).
+    pub fn decks(&self) -> &[Deck] {
+        &self.decks
+    }
+
+    /// Render one block into `master` and `cue`, interleaved stereo.
+    ///
+    /// Everything here runs inside the audio callback, so it allocates nothing, locks nothing, and
+    /// never waits for a decoder: a deck that has no data renders silence and counts it.
+    pub fn render_pair(&mut self, master: &mut [f32], cue: &mut [f32], frames: usize) {
+        let frames = frames.min(self.block);
+        // Commands first: a command due at this sample is applied at this sample.
+        while let Ok(submission) = self.submissions.try_recv() {
+            let ack = apply(
+                &mut self.decks,
+                &mut self.mixer,
+                &submission.command,
+                self.clock,
+            );
+            let _ = submission.reply.send(ack);
+        }
+
+        self.mixer.begin_block(frames);
+        for index in 0..self.decks.len() {
+            let deck = &mut self.decks[index];
+            deck.render(&mut self.scratch[..frames * 2]);
+            self.mixer.mix_channel(index, &self.scratch[..frames * 2]);
+        }
+        self.mixer.finish_block();
+
+        master[..frames * 2].copy_from_slice(&self.mixer.master()[..frames * 2]);
+        master[frames * 2..].fill(0.0);
+
+        let cue_frames = (cue.len() / 2).min(self.mixer.cue().len() / 2);
+        cue[..cue_frames * 2].copy_from_slice(&self.mixer.cue()[..cue_frames * 2]);
+        cue[cue_frames * 2..].fill(0.0);
+
+        self.clock += frames as u64;
+        self.cells.publish(&self.decks, &self.mixer, self.clock);
+    }
+}
+
+impl Renderer for EngineGraph {
+    fn render(&mut self, master: &mut [f32], cue: &mut [f32], frames: usize) {
+        self.render_pair(master, cue, frames);
     }
 }

@@ -90,6 +90,10 @@ bash scripts/ui.sh --smoke   # build, load QML offscreen, fail on any Qt warning
 bash scripts/ui.sh --engine-check  # run a real engine and a real UI: Play and Cue must be acked
 cargo run -p dj-audio-probe  # what CPAL sees on this machine (audio backend evidence, ADR-002)
 
+# The engine on a real device for a minute, then the timing report as JSON
+cargo run --release -p dj-engine -- --device default_output --seconds 60 > engine-report.json
+cargo run -p dj-engine -- --null-sink --seconds 5   # the same graph without a sound card
+
 # A01: render without a sound card and inspect the result
 cargo run -p dj-headless -- sine --frames 48000 --measure --out /tmp/tone.wav
 cargo run -p dj-headless -- scenario --file apps/dj-headless/tests/scenarios/play-stop.json

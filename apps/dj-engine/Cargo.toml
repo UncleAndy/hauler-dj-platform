@@ -9,6 +9,7 @@ authors.workspace = true
 
 [dependencies]
 dj-audio-core = { path = "../../crates/dj-audio-core" }
+dj-audio-io = { path = "../../crates/dj-audio-io" }
 dj-bridge = { path = "../../crates/dj-bridge" }
 dj-deck = { path = "../../crates/dj-deck" }
 dj-domain = { path = "../../crates/dj-domain" }
