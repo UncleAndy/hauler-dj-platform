@@ -93,6 +93,72 @@ Pane {
 
         Item { Layout.fillHeight: true }
 
+        // Level and cue indicators (DJP-UI-002): driven by the snapshot, never by the click.
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 2
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 6
+                Label { text: qsTr("L"); opacity: 0.5; font.pixelSize: 10 }
+                Rectangle {
+                    Layout.fillWidth: true
+                    height: 6
+                    radius: 2
+                    color: "#232830"
+                    Rectangle {
+                        height: parent.height
+                        radius: 2
+                        color: panel.playing ? "#7fd67f" : "#4a5a4a"
+                        width: parent.width * Math.min(1.0, panel.state.levels !== undefined
+                                                        ? panel.state.levels.peak_left : 0.0)
+                    }
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 6
+                Label { text: qsTr("R"); opacity: 0.5; font.pixelSize: 10 }
+                Rectangle {
+                    Layout.fillWidth: true
+                    height: 6
+                    radius: 2
+                    color: "#232830"
+                    Rectangle {
+                        height: parent.height
+                        radius: 2
+                        color: panel.playing ? "#7fd67f" : "#4a5a4a"
+                        width: parent.width * Math.min(1.0, panel.state.levels !== undefined
+                                                        ? panel.state.levels.peak_right : 0.0)
+                    }
+                }
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 8
+
+            Label {
+                text: qsTr("play")
+                font.pixelSize: 10
+                color: panel.playing ? "#7fd67f" : "#3a4048"
+            }
+            Label {
+                text: qsTr("cue")
+                font.pixelSize: 10
+                color: panel.state.hotcues !== undefined
+                       && panel.state.hotcues[0] !== null
+                       && panel.state.hotcues[0] !== undefined ? "#e2c07f" : "#3a4048"
+            }
+            Label {
+                text: qsTr("loop")
+                font.pixelSize: 10
+                color: panel.loop !== null && panel.loop !== undefined ? "#7fb0e2" : "#3a4048"
+            }
+        }
+
         Label {
             Layout.alignment: Qt.AlignHCenter
             text: qsTr("at %1 · gain %2")

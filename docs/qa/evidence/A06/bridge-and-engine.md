@@ -36,13 +36,20 @@
 
 ```
 dj-engine: listening on .../engine.sock
-dj-ui: connected to .../engine.sock (epoch 1793912024)
+dj-ui: connected to .../engine.sock (epoch 1793912102)
 dj-ui: sent Play(A) as command 1
-dj-ui: self-check passed: ack applied at sample 4864, deck A playing per the snapshot (rev 2) after 38 ms
+dj-ui: sent Cue(Set 0) as command 2
+dj-ui: sent Cue(Jump 0) as command 3
+dj-ui: self-check passed: Play and Cue acknowledged and visible in the snapshot (sample 7424, rev 3) after 138 ms
 ```
 
-Это и есть acceptance A06: настоящий процесс оболочки попросил `Play`, движок подтвердил применение на
-сэмпле, и кнопка стала «Pause» не потому, что её нажали, а потому что снапшот сказал `playing: true`.
+Это и есть acceptance A06 целиком: настоящий процесс оболочки попросил `Play`, затем `Cue Set`,
+затем `Cue Jump`; движок подтвердил каждый шаг применением на сэмпле, и индикаторы стали «play» и
+«cue» не потому, что кнопки нажали, а потому что снапшот сказал `playing: true` и hotcue слота 0.
+
+Второе требование acceptance — «UI не блокирует звуковой колбэк» — выполняется устройством, а не
+дисциплиной: оболочка живёт в другом процессе (ADR-0003), не имеет доступа к аудио-графу и не может
+его задержать; публикация из рендер-потока идёт только атомарными записями (`StateCells`).
 
 ## Чего ещё нет
 - `--device` движок отвергает честно: `dj-audio-io` в процесс не встроен.

@@ -105,6 +105,7 @@ tasks:
       - 'CPAL and/or native PipeWire/JACK device enumeration implemented'
       - '48 kHz / 256 frame trial reported with actual hardware metadata'
   - id: A06
+    status: done
     title: 'Two-deck Qt/QML shell and command/state bridge'
     role: ui
     priority: P0

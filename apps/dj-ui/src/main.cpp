@@ -48,6 +48,23 @@ QString defaultSocketPath()
     return QStringLiteral("/tmp/hauler-dj-engine.sock");
 }
 
+bool deckHasHotcue(const QVariantMap &snapshot, const QString &deck, int slot)
+{
+    const QVariantList decks = snapshot.value(QStringLiteral("decks")).toList();
+    for (const QVariant &entry : decks) {
+        const QVariantMap deckState = entry.toMap();
+        if (deckState.value(QStringLiteral("deck")).toString() != deck) {
+            continue;
+        }
+        const QVariantList cues = deckState.value(QStringLiteral("hotcues")).toList();
+        if (slot >= cues.size()) {
+            return false;
+        }
+        return !cues.at(slot).isNull() && cues.at(slot).isValid();
+    }
+    return false;
+}
+
 bool deckIsPlaying(const QVariantMap &snapshot, const QString &deck)
 {
     const QVariant decks = snapshot.value(QStringLiteral("decks"));
@@ -107,13 +124,47 @@ int runSelfCheck(BridgeClient &bridge, const QString &socketPath, int timeoutMs)
                          }
                      });
 
+    // A stage machine, because the acceptance names two controls: Play and Cue.
+    enum Stage { SendingPlay, SendingSetCue, SendingJumpCue, Done };
+    auto stage = SendingPlay;
+    bool sawCue = false;
+
     QObject::connect(&bridge, &BridgeClient::snapshotChanged, &loop, [&]() {
         const QVariantMap snapshot = bridge.snapshot();
         appliedAt = static_cast<qulonglong>(
             snapshot.value(QStringLiteral("audio_clock_samples")).toDouble());
-        if (sawAck && ackApplied && deckIsPlaying(snapshot, QStringLiteral("A"))) {
+        if (!sawAck || !ackApplied) {
+            return;
+        }
+        switch (stage) {
+        case SendingPlay:
+            if (!deckIsPlaying(snapshot, QStringLiteral("A"))) {
+                return;
+            }
             sawPlaying = true;
+            stage = SendingSetCue;
+            commandId = bridge.cue(QStringLiteral("A"), QStringLiteral("Set"), 0);
+            std::fprintf(stdout, "dj-ui: sent Cue(Set 0) as command %d\n", commandId);
+            sawAck = false;
+            ackApplied = false;
+            return;
+        case SendingSetCue:
+            if (!deckHasHotcue(snapshot, QStringLiteral("A"), 0)) {
+                return;
+            }
+            sawCue = true;
+            stage = SendingJumpCue;
+            commandId = bridge.cue(QStringLiteral("A"), QStringLiteral("Jump"), 0);
+            std::fprintf(stdout, "dj-ui: sent Cue(Jump 0) as command %d\n", commandId);
+            sawAck = false;
+            ackApplied = false;
+            return;
+        case SendingJumpCue:
+            stage = Done;
             loop.quit();
+            return;
+        case Done:
+            return;
         }
     });
 
@@ -141,9 +192,13 @@ int runSelfCheck(BridgeClient &bridge, const QString &socketPath, int timeoutMs)
         std::fprintf(stderr, "dj-ui: self-check failed: no snapshot reported deck A playing\n");
         return 1;
     }
+    if (!sawCue) {
+        std::fprintf(stderr, "dj-ui: self-check failed: the cue never appeared in a snapshot\n");
+        return 1;
+    }
     std::fprintf(stdout,
-                 "dj-ui: self-check passed: ack applied at sample %llu, deck A playing per the "
-                 "snapshot (rev %u) after %lld ms\n",
+                 "dj-ui: self-check passed: Play and Cue acknowledged and visible in the snapshot "
+                 "(sample %llu, rev %u) after %lld ms\n",
                  static_cast<unsigned long long>(appliedAt),
                  bridge.snapshot().value(QStringLiteral("revision")).toUInt(),
                  static_cast<long long>(elapsed.elapsed()));

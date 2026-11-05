@@ -128,7 +128,7 @@ DJP-SYNC-006,audio-core,P2,R2,DJP-SRS-001 §5,,,unverified,,,
 DJP-SYNC-007,audio-core,P2,R3,DJP-SRS-001 §5,,,unverified,,,
 DJP-SYNC-008,audio-core,P2,R3,DJP-SRS-001 §5,,,unverified,,,
 DJP-UI-001,ui,P0,R0,DJP-SRS-001 §5,dj-ui: BridgeClient говорит по command-v1/state-v1; кнопки Play/Cue/Loop и кроссфейдер показывают только опубликованное состояние,scripts/ui.sh --engine-check: dj-ui --self-check против настоящего dj-engine,review,,,2026-11-05
-DJP-UI-002,ui,P0,R0,DJP-SRS-001 §5,,,unverified,,,
+DJP-UI-002,ui,P0,R0,DJP-SRS-001 §5,dj-ui: рабочая раскладка 2-deck тёмная схема индикаторы play/cue/loop и уровни L/R из снапшота,scripts/ui.sh --smoke + --engine-check (индикаторы от состояния),review,docs/qa/evidence/A06/bridge-and-engine.md,,2026-11-05
 DJP-UI-003,ui,P1,R1,DJP-SRS-001 §5,,,unverified,,,
 DJP-UI-004,ui,P1,R1,DJP-SRS-001 §5,,,unverified,,,
 DJP-UI-005,ui,P1,R1,DJP-SRS-001 §5,,,unverified,,,
