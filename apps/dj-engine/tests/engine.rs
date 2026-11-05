@@ -8,7 +8,7 @@ use dj_deck::Deck;
 use dj_domain::{
     AckStatus, CueAction, DeckId, DjCommand, RejectReason, ScheduledCommand, SourceFrame,
 };
-use dj_engine::{apply, snapshot};
+use dj_engine::{DeckStatic, StateCells, apply, snapshot};
 use dj_mixer::{ChannelSettings, CrossAssign, Mixer};
 
 fn deck_with_tone(id: DeckId, rate: u32) -> Deck {
@@ -269,4 +269,103 @@ fn hotcues_round_trip_through_the_command_path() {
         ),
         "jumping to an empty slot is refused, not ignored"
     );
+}
+
+#[test]
+fn publishing_a_block_does_not_allocate() {
+    // The whole point of the cells: the audio path stores numbers, it does not build a snapshot.
+    // A regression here would show up as a click, not as a failed assertion, so it is checked.
+    let mut decks = vec![deck_with_tone(DeckId::A, 48_000)];
+    let mut mixer = mixer_for(48_000);
+    let cells = StateCells::new();
+    cells.publish(&decks, &mixer, 0); // warm: first touch of the atomics is not measured
+
+    dj_testkit::rt::reset();
+    {
+        let _scope = dj_testkit::rt::RtScope::enter();
+        for clock in 1..=64 {
+            cells.publish(&decks, &mixer, clock * 256);
+        }
+    }
+    assert_eq!(
+        dj_testkit::rt::allocations_in_rt(),
+        0,
+        "publish must not allocate inside the render path"
+    );
+    let _ = (&mut decks, &mut mixer);
+}
+
+#[test]
+fn a_snapshot_read_back_carries_what_was_published() {
+    let mut decks = vec![
+        deck_with_tone(DeckId::A, 48_000),
+        deck_with_tone(DeckId::B, 48_000),
+    ];
+    let mut mixer = mixer_for(48_000);
+    let cells = StateCells::new();
+    let statics = vec![
+        DeckStatic::from_snapshot(&decks[0].snapshot()),
+        DeckStatic::from_snapshot(&decks[1].snapshot()),
+    ];
+
+    apply(
+        &mut decks,
+        &mut mixer,
+        &command(
+            11,
+            DjCommand::Play {
+                deck: DeckId::A,
+                enabled: true,
+            },
+        ),
+        0,
+    );
+    apply(
+        &mut decks,
+        &mut mixer,
+        &command(
+            12,
+            DjCommand::Cue {
+                deck: DeckId::A,
+                action: CueAction::Set(2),
+            },
+        ),
+        0,
+    );
+    apply(
+        &mut decks,
+        &mut mixer,
+        &command(
+            13,
+            DjCommand::SetLoop {
+                deck: DeckId::A,
+                region: Some(dj_domain::FrameRange {
+                    start: SourceFrame(1_000),
+                    end: SourceFrame(2_000),
+                }),
+            },
+        ),
+        0,
+    );
+    cells.publish(&decks, &mixer, 12_345);
+
+    let state = cells.read(&statics, 48_000, 7, 3);
+    assert_eq!(state.revision, 3);
+    assert_eq!(state.epoch, 7);
+    assert_eq!(state.audio_clock_samples, 12_345);
+    assert_eq!(state.decks.len(), 2, "both decks are published");
+    let read_back = &state.decks[0];
+    assert_eq!(read_back.deck, DeckId::A);
+    assert!(read_back.playing, "playing survives the atomic round trip");
+    assert!(read_back.hotcues[2].is_some(), "the hotcue is in the state");
+    let region = read_back
+        .loop_region
+        .unwrap_or_else(|| panic!("the loop is in the state, not only in the deck"));
+    assert_eq!(region.start, SourceFrame(1_000));
+    assert_eq!(region.end, SourceFrame(2_000));
+    assert!(
+        read_back.position_ratio.is_some(),
+        "a deck with a known duration reports its position"
+    );
+    assert_eq!(read_back.deck, DeckId::A);
 }

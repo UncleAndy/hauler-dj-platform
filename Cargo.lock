@@ -319,6 +319,7 @@ dependencies = [
  "dj-deck",
  "dj-domain",
  "dj-mixer",
+ "dj-testkit",
  "serde_json",
 ]
 

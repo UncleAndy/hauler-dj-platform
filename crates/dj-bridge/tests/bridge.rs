@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use dj_bridge::{
-    BridgeServer, ClientMessage, FrameError, MAX_FRAME_BYTES, ServerMessage, connect, read_frame,
-    write_frame,
+    BridgeServer, ClientMessage, Connection, FrameError, MAX_FRAME_BYTES, ServerMessage, connect,
+    read_frame, write_frame,
 };
 use dj_domain::{
     Ack, COMMAND_PROTOCOL, CommandOrigin, DeckId, DjCommand, ScheduledCommand, Snapshot,
@@ -231,4 +231,49 @@ fn commands_carry_their_origin_so_a_stuck_controller_is_visible() {
     // The enum exists in the protocol; the engine is the only place that can attribute a command.
     let _origin = CommandOrigin::Ui;
     let _source = SourceFrame(0);
+}
+
+#[test]
+fn a_split_connection_writes_while_its_reader_is_blocked() {
+    // The defect this covers: one thread serving both halves. It waited 5 ms for an outgoing
+    // message, then parked in a blocking read, so a quiet client received its greeting and then
+    // nothing at all. After the split, writing cannot be starved by reading.
+    let (engine_side, client_side) =
+        std::os::unix::net::UnixStream::pair().unwrap_or_else(|err| panic!("socket pair: {err}"));
+    let engine = Connection::new(engine_side).unwrap_or_else(|err| panic!("{err}"));
+    let mut client = Connection::new(client_side).unwrap_or_else(|err| panic!("{err}"));
+    client
+        .set_read_timeout(std::time::Duration::from_secs(2))
+        .unwrap_or_else(|err| panic!("{err}"));
+    let (mut reader, mut writer) = engine.split();
+
+    // The reader blocks on a command that is never sent.
+    let reader_handle = std::thread::spawn(move || reader.recv_client());
+
+    // Meanwhile the writer must still be able to answer.
+    let snapshot = ServerMessage::Snapshot(Box::new(dj_domain::Snapshot {
+        protocol: dj_domain::STATE_PROTOCOL.to_string(),
+        revision: 4,
+        epoch: 2,
+        audio_clock_samples: 512,
+        sample_rate: 48_000,
+        crossfader: 0.5,
+        decks: Vec::new(),
+    }));
+    writer
+        .send(&snapshot)
+        .unwrap_or_else(|err| panic!("the writer sends: {err}"));
+
+    match client.recv_server() {
+        Ok(ServerMessage::Snapshot(state)) => {
+            assert_eq!(state.revision, 4);
+            assert_eq!(state.audio_clock_samples, 512);
+        }
+        Ok(other) => panic!("expected a snapshot, got {other:?}"),
+        Err(err) => panic!("the client receives: {err}"),
+    }
+
+    // Close the client so the blocked reader can finish instead of leaking a thread.
+    drop(client);
+    let _ = reader_handle.join();
 }

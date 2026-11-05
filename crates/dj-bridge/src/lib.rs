@@ -171,6 +171,54 @@ impl Connection {
     pub fn recv(&mut self) -> Result<ClientMessage, FrameError> {
         read_frame(&mut self.reader)
     }
+
+    /// Split into halves that can live on separate threads.
+    ///
+    /// A client needs two independent loops: one waiting for commands, one forwarding snapshots.
+    /// One thread cannot do both — a blocking read parks it, and outgoing messages wait for the
+    /// client to speak again. That was a real defect: the client got its greeting, then silence.
+    pub fn split(self) -> (ConnectionReader, ConnectionWriter) {
+        (
+            ConnectionReader {
+                reader: self.reader,
+            },
+            ConnectionWriter {
+                stream: self.stream,
+            },
+        )
+    }
+}
+
+/// The reading half of a split connection.
+pub struct ConnectionReader {
+    reader: BufReader<std::os::unix::net::UnixStream>,
+}
+
+impl ConnectionReader {
+    /// Read one client message.
+    pub fn recv_client(&mut self) -> Result<ClientMessage, FrameError> {
+        read_frame(&mut self.reader)
+    }
+
+    /// Give up waiting after `timeout`.
+    pub fn set_read_timeout(&self, timeout: std::time::Duration) -> Result<(), FrameError> {
+        self.reader
+            .get_ref()
+            .set_read_timeout(Some(timeout))
+            .map_err(|err| FrameError::Io(err.to_string()))
+    }
+}
+
+/// The writing half of a split connection.
+pub struct ConnectionWriter {
+    stream: std::os::unix::net::UnixStream,
+}
+
+impl ConnectionWriter {
+    /// Write one message.
+    pub fn send(&mut self, message: &ServerMessage) -> Result<(), FrameError> {
+        write_frame(&mut self.stream, message)
+    }
 }
 
 /// A listening socket the engine owns.
@@ -295,5 +343,15 @@ impl Connection {
     /// Receive a message from the engine side.
     pub fn recv_server(&mut self) -> Result<ServerMessage, FrameError> {
         read_frame(&mut self.reader)
+    }
+
+    /// Give up waiting for a message after `timeout`.
+    ///
+    /// Without it, a missing message turns into a hung client instead of a reported failure.
+    pub fn set_read_timeout(&self, timeout: std::time::Duration) -> Result<(), FrameError> {
+        self.reader
+            .get_ref()
+            .set_read_timeout(Some(timeout))
+            .map_err(|err| FrameError::Io(err.to_string()))
     }
 }

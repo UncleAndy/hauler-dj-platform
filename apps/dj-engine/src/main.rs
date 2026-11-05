@@ -17,8 +17,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use dj_bridge::{BridgeServer, ClientMessage, ServerMessage};
 use dj_deck::{Deck, DeckSource};
-use dj_domain::{Ack, DeckId, Snapshot};
-use dj_engine::{apply, snapshot};
+use dj_domain::{Ack, DeckId};
+use dj_engine::{DeckStatic, StateCells, apply};
 use dj_mixer::{ChannelSettings, CrossAssign, Mixer};
 
 const USAGE: &str = "\
@@ -88,12 +88,10 @@ struct Submission {
     reply: Sender<Ack>,
 }
 
-/// State the render loop publishes and the client threads attach to.
-#[derive(Default)]
-struct Published {
-    snapshot: Option<Snapshot>,
-    subscribers: Vec<Sender<ServerMessage>>,
-}
+/// Clients currently attached to the fan-out.
+///
+/// The lock is taken by the publisher thread and by client threads, never by the render thread.
+type Subscribers = Arc<Mutex<Vec<Sender<ServerMessage>>>>;
 
 fn main() -> std::process::ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
@@ -182,12 +180,43 @@ fn run(argv: &[String]) -> Result<(), String> {
         );
     }
 
-    let published = Arc::new(Mutex::new(Published::default()));
+    // The render thread writes scalars here; nothing in the audio path allocates or locks.
+    let cells = Arc::new(StateCells::new());
+    let statics = Arc::new(
+        decks
+            .iter()
+            .map(|deck| DeckStatic::from_snapshot(&deck.snapshot()))
+            .collect::<Vec<_>>(),
+    );
+    let subscribers: Subscribers = Arc::new(Mutex::new(Vec::new()));
     let (submissions, submissions_rx) = std::sync::mpsc::channel::<Submission>();
+
+    // The publisher owns snapshot assembly: one allocation, at display rate, off the audio path.
+    {
+        let cells = Arc::clone(&cells);
+        let statics = Arc::clone(&statics);
+        let subscribers = Arc::clone(&subscribers);
+        let publish_every = Duration::from_millis(50);
+        std::thread::spawn(move || {
+            let mut revision: u64 = 0;
+            loop {
+                std::thread::sleep(publish_every);
+                revision += 1;
+                let snapshot = cells.read(&statics, rate, epoch, revision);
+                let message = ServerMessage::Snapshot(Box::new(snapshot));
+
+                if let Ok(mut list) = subscribers.lock() {
+                    list.retain(|subscriber| subscriber.send(message.clone()).is_ok());
+                }
+            }
+        });
+    }
 
     // Client threads: they never touch a deck, only the channel.
     {
-        let published = Arc::clone(&published);
+        let subscribers = Arc::clone(&subscribers);
+        let cells = Arc::clone(&cells);
+        let statics = Arc::clone(&statics);
         std::thread::spawn(move || {
             // Accept forever: a refused connection must not take the engine down with it.
             loop {
@@ -203,27 +232,22 @@ fn run(argv: &[String]) -> Result<(), String> {
                     continue;
                 }
                 let (outgoing, receiver) = std::sync::mpsc::channel::<ServerMessage>();
-                if let Ok(mut state) = published.lock() {
-                    if let Some(snapshot) = &state.snapshot {
-                        let _ = outgoing.send(ServerMessage::Snapshot(Box::new(snapshot.clone())));
-                    }
-                    state.subscribers.push(outgoing);
+                // Greet with the state as it is now, then join the fan-out list.
+                let first = cells.read(&statics, rate, epoch, 0);
+                let _ = outgoing.send(ServerMessage::Snapshot(Box::new(first)));
+                let outgoing_clone = outgoing.clone();
+                if let Ok(mut list) = subscribers.lock() {
+                    list.push(outgoing);
                 }
                 let submissions = submissions.clone();
-                std::thread::spawn(move || serve_client(connection, receiver, submissions));
+                let alerts = outgoing_clone;
+                std::thread::spawn(move || serve_client(connection, receiver, alerts, submissions));
             }
         });
     }
 
     if null_sink || device.is_none() {
-        render_null(
-            &mut decks,
-            &mut mixer,
-            rate,
-            block,
-            &published,
-            &submissions_rx,
-        );
+        render_null(&mut decks, &mut mixer, rate, block, &cells, &submissions_rx);
         return Ok(());
     }
 
@@ -240,71 +264,66 @@ fn default_socket() -> PathBuf {
 }
 
 fn serve_client(
-    mut connection: dj_bridge::Connection,
+    connection: dj_bridge::Connection,
     outgoing: Receiver<ServerMessage>,
+    alerts: Sender<ServerMessage>,
     submissions: Sender<Submission>,
 ) {
-    loop {
-        match outgoing.recv_timeout(Duration::from_millis(5)) {
-            Ok(message) => {
-                if connection.send(&message).is_err() {
-                    return;
-                }
-                continue;
+    let (mut reader, mut writer) = connection.split();
+
+    // The writer only writes: it blocks on the channel, never polls with a deadline.
+    std::thread::spawn(move || {
+        for message in outgoing {
+            if writer.send(&message).is_err() {
+                return;
             }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
         }
-        match connection.recv() {
+    });
+
+    // The reader only reads, so a quiet client cannot starve the snapshot stream.
+    let alerts = alerts;
+    loop {
+        match reader.recv_client() {
             Ok(ClientMessage::Command(command)) => {
                 let (reply, answer) = std::sync::mpsc::channel();
                 if submissions.send(Submission { command, reply }).is_err() {
                     return;
                 }
-                match answer.recv_timeout(Duration::from_secs(1)) {
+                match answer.recv_timeout(Duration::from_millis(500)) {
                     Ok(ack) => {
-                        if connection.send(&ServerMessage::Ack(ack)).is_err() {
+                        if alerts.send(ServerMessage::Ack(ack)).is_err() {
                             return;
                         }
                     }
                     Err(_) => {
-                        let _ = connection.send(&ServerMessage::Error {
-                            message: "the render loop did not answer".to_string(),
+                        // An engine that is behind is not a client's fault: report the wait instead
+                        // of dropping the command silently.
+                        let _ = alerts.send(ServerMessage::Error {
+                            message: "the engine did not acknowledge the command in time"
+                                .to_string(),
                         });
-                        return;
                     }
                 }
             }
-            Ok(ClientMessage::Ping) => {
-                if connection.send(&ServerMessage::Pong).is_err() {
-                    return;
-                }
-            }
-            Ok(ClientMessage::Subscribe) | Ok(ClientMessage::Hello { .. }) => {}
+            Ok(_) => {}
             Err(_) => return,
         }
     }
 }
 
-/// Render against a clock instead of a device.
 fn render_null(
     decks: &mut [Deck],
     mixer: &mut Mixer,
     rate: u32,
     block: usize,
-    published: &Arc<Mutex<Published>>,
+    cells: &Arc<StateCells>,
     submissions: &Receiver<Submission>,
 ) {
     let period = Duration::from_secs_f64(f64::from(block as u32) / f64::from(rate));
     let mut clock: u64 = 0;
-    let mut revision: u64 = 0;
     let mut scratch = vec![0.0f32; block * 2];
     let started = Instant::now();
     let mut next_block = started;
-    // Snapshots go out at display rate, not at block rate: a UI cannot use 750 of them a second,
-    // and flooding the socket would bury the acks a client is waiting for.
-    let mut last_publish: Option<Instant> = None;
-    let publish_every = Duration::from_millis(50);
 
     loop {
         // Commands first, so a command at this sample is applied at this sample.
@@ -321,25 +340,8 @@ fn render_null(
         mixer.finish_block();
         clock += block as u64;
 
-        let now = Instant::now();
-        // Publish at display rate. The first version compared against "the previous publish", which
-        // is true on every block after the first: it sent ~750 snapshots a second, always left a
-        // message queued for the client writer, and the reader never reached the commands waiting
-        // on the socket. Acks were never produced.
-        let due = last_publish.is_none_or(|last| now.duration_since(last) >= publish_every);
-        if due {
-            revision += 1;
-            last_publish = Some(now);
-        }
-        if due && let Ok(mut state) = published.lock() {
-            let snapshot = snapshot(decks, mixer, revision, clock, rate, 1);
-            state.snapshot = Some(snapshot.clone());
-            state.subscribers.retain(|subscriber| {
-                subscriber
-                    .send(ServerMessage::Snapshot(Box::new(snapshot.clone())))
-                    .is_ok()
-            });
-        }
+        // Atomic stores only: the audio path does not build a snapshot, take a lock, or allocate.
+        cells.publish(decks, mixer, clock);
 
         next_block += period;
         let now = Instant::now();

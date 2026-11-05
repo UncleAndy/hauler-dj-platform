@@ -446,6 +446,21 @@ impl Deck {
     }
 
     /// Current gain.
+    /// Current output peaks, without building a snapshot.
+    pub fn levels(&self) -> Levels {
+        self.levels
+    }
+
+    /// Current tempo ratio, without building a snapshot.
+    pub fn tempo_ratio(&self) -> f64 {
+        self.tempo_ratio
+    }
+
+    /// Track metadata, without building a snapshot.
+    pub fn track(&self) -> Option<&TrackMeta> {
+        self.track.as_ref()
+    }
+
     pub fn gain(&self) -> f32 {
         self.gain
     }
