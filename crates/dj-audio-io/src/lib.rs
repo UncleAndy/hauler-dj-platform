@@ -74,8 +74,12 @@ pub trait Renderer: Send {
 struct Counters {
     callbacks: AtomicU64,
     frames: AtomicU64,
-    /// Callback intervals outside 0.5 … 1.5 of the expected period.
-    gaps: AtomicU64,
+    /// Callbacks that arrived later than 1.5 periods after the previous one.
+    late: AtomicU64,
+    /// Callbacks that arrived earlier than half a period after the previous one.
+    early: AtomicU64,
+    /// Backend-reported stream errors.
+    errors: AtomicU64,
     /// Shortest and longest callback interval, microseconds.
     min_us: AtomicU32,
     max_us: AtomicU32,
@@ -95,12 +99,17 @@ impl Counters {
         }
     }
 
-    fn note_interval(&self, micros: u32) {
+    fn note_interval(&self, micros: u32, period_us: f64) {
         self.min_us.fetch_min(micros, Ordering::Relaxed);
         self.max_us.fetch_max(micros, Ordering::Relaxed);
         if let Some(bucket) = self.histogram.get(micros as usize) {
             bucket.fetch_add(1, Ordering::Relaxed);
         }
+        match classify_interval(micros, period_us) {
+            IntervalKind::Late => self.late.fetch_add(1, Ordering::Relaxed),
+            IntervalKind::Early => self.early.fetch_add(1, Ordering::Relaxed),
+            IntervalKind::OnTime => 0,
+        };
     }
 
     fn note_peak(&self, channel: usize, value: f32) {
@@ -129,8 +138,12 @@ pub struct LiveReport {
     pub frames: u64,
     /// Seconds of audio produced.
     pub audio_seconds: f64,
-    /// Callback intervals outside the expected range.
-    pub gaps: u64,
+    /// Callbacks that arrived more than 1.5 periods late.
+    pub late_callbacks: u64,
+    /// Callbacks that arrived less than half a period after the previous one.
+    pub early_callbacks: u64,
+    /// Backend-reported stream errors.
+    pub errors: u64,
     /// Shortest and longest callback interval, milliseconds.
     pub interval_min_ms: f64,
     /// Longest callback interval, milliseconds.
@@ -214,6 +227,35 @@ pub fn resolve_device(device: Option<&str>) -> Result<DeviceShape, IoError> {
         channels,
         sample_rate,
     })
+}
+
+/// How a callback interval compares to the expected period.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntervalKind {
+    /// Within half a period of the expectation.
+    OnTime,
+    /// Later than 1.5 periods — the buffer lost ground.
+    Late,
+    /// Earlier than half a period — a spurious or catch-up callback.
+    Early,
+}
+
+/// Classify one callback interval.
+///
+/// Separated out and tested because it is the number the report is read for: a run that says
+/// "0 late" must actually mean no callback lost ground, not "the backend printed no errors".
+pub fn classify_interval(micros: u32, period_us: f64) -> IntervalKind {
+    if period_us <= 0.0 {
+        return IntervalKind::OnTime;
+    }
+    let ratio = f64::from(micros) / period_us;
+    if ratio > 1.5 {
+        IntervalKind::Late
+    } else if ratio < 0.5 {
+        IntervalKind::Early
+    } else {
+        IntervalKind::OnTime
+    }
 }
 
 /// What can go wrong opening or running a device.
@@ -320,15 +362,22 @@ impl LiveOutput {
         let mut renderer = renderer;
         let mut master = vec![0.0f32; config.block_frames.max(1) * 2];
         let mut cue = vec![0.0f32; config.block_frames.max(1) * 2];
-        let mut last = Instant::now();
+        let mut last: Option<Instant> = None;
         let mut frames_total = 0u64;
         let mut callbacks = 0u64;
+        let period_us =
+            config.block_frames.max(1) as f64 / f64::from(config.sample_rate) * 1_000_000.0;
 
         let data_fn = move |buffer: &mut [f32], _: &cpal::OutputCallbackInfo| {
             let now = Instant::now();
-            let micros = now.duration_since(last).as_micros();
-            last = now;
-            callback_counters.note_interval(u32::try_from(micros).unwrap_or(u32::MAX));
+            // The interval before the first callback measures stream start-up, not the callback
+            // cadence: counting it would report a fake stall at the beginning of every run.
+            if let Some(previous) = last {
+                let micros = now.duration_since(previous).as_micros();
+                callback_counters
+                    .note_interval(u32::try_from(micros).unwrap_or(u32::MAX), period_us);
+            }
+            last = Some(now);
 
             let frames = buffer.len() / usize::from(channels);
             if master.len() < frames * 2 {
@@ -382,7 +431,7 @@ impl LiveOutput {
                 stream_config,
                 data_fn,
                 move |err| {
-                    error_counters.gaps.fetch_add(1, Ordering::Relaxed);
+                    error_counters.errors.fetch_add(1, Ordering::Relaxed);
                     eprintln!("dj-audio-io: stream error: {err}");
                 },
                 None,
@@ -413,10 +462,6 @@ impl LiveOutput {
         } else {
             frames as f64 / callbacks as f64
         };
-        let period_us = frames_per_callback / f64::from(self.sample_rate) * 1_000_000.0;
-        let low = period_us * 0.5;
-        let high = period_us * 1.5;
-
         let mut seen = 0u64;
         let mut p50 = 0.0;
         let mut p99 = 0.0;
@@ -440,9 +485,6 @@ impl LiveOutput {
                 p99 = micros as f64 / 1000.0;
             }
         }
-        let _ = low;
-        let _ = high;
-
         LiveReport {
             device: self.device.clone(),
             channels: self.channels,
@@ -452,7 +494,9 @@ impl LiveOutput {
             callbacks,
             frames,
             audio_seconds: frames as f64 / f64::from(self.sample_rate),
-            gaps: self.counters.gaps.load(Ordering::Relaxed),
+            late_callbacks: self.counters.late.load(Ordering::Relaxed),
+            early_callbacks: self.counters.early.load(Ordering::Relaxed),
+            errors: self.counters.errors.load(Ordering::Relaxed),
             interval_min_ms: f64::from(self.counters.min_us.load(Ordering::Relaxed)) / 1000.0,
             interval_max_ms: f64::from(self.counters.max_us.load(Ordering::Relaxed)) / 1000.0,
             interval_p50_ms: p50,
@@ -485,6 +529,19 @@ mod tests {
 
         let many = RoutePlan::for_channels(8);
         assert_eq!(many.channels(), 4, "R0 opens at most master + cue");
+    }
+
+    #[test]
+    fn intervals_are_judged_against_the_period() {
+        let period = 5_333.33;
+        assert_eq!(classify_interval(5_333, period), IntervalKind::OnTime);
+        assert_eq!(classify_interval(5_352, period), IntervalKind::OnTime);
+        // 1.5 periods is 8 000.0 µs exactly, and the boundary counts as late.
+        assert_eq!(classify_interval(7_900, period), IntervalKind::OnTime);
+        assert_eq!(classify_interval(8_000, period), IntervalKind::Late);
+        assert_eq!(classify_interval(12_836, period), IntervalKind::Late);
+        assert_eq!(classify_interval(2_600, period), IntervalKind::Early);
+        assert_eq!(classify_interval(5_333, 0.0), IntervalKind::OnTime);
     }
 
     #[test]
