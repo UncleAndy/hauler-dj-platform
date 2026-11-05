@@ -46,6 +46,9 @@ Usage:
   dj-audio-probe --out FILE          write the report to FILE
   dj-audio-probe --seconds N         timing trial length in seconds (default 2)
   dj-audio-probe --silent            timing trial with silence instead of a 440 Hz tone
+  dj-audio-probe --devices SUBSTR    only devices whose name contains SUBSTR (case-insensitive)
+  dj-audio-probe --open-timeout-ms N give up on one stream open after N ms (default 2000)
+  dj-audio-probe --trial-budget-s N  stop starting new channel trials after N s (default 25)
   dj-audio-probe --help | --version
 
 What the sections mean:
@@ -53,6 +56,9 @@ What the sections mean:
   CPAL             what the API reports; on ALSA these are plugin ranges, not hardware
   channel trials   a real 48 kHz stream opened with 2/4/6/8 channels (measured)
   pipewire         node/port names from pw-dump (how master/cue can be addressed)
+
+A device whose open blocks is reported as TIMEOUT and never waited on further: the
+whole run is bounded by --trial-budget-s plus the timing trial.
 
 Exit codes:
   0  report produced and at least one output device was enumerated
@@ -67,12 +73,17 @@ struct Args {
     silent: bool,
     seconds: u64,
     out: Option<String>,
+    devices: Option<String>,
+    open_timeout_ms: u64,
+    budget_s: u64,
 }
 
 impl Args {
     fn parse(argv: &[String]) -> Result<Option<Self>, String> {
         let mut args = Args {
             seconds: 2,
+            open_timeout_ms: 2000,
+            budget_s: 25,
             ..Args::default()
         };
         let mut iter = argv.iter();
@@ -99,6 +110,36 @@ impl Args {
                         .next()
                         .ok_or_else(|| "--out needs a file path".to_string())?;
                     args.out = Some(value.clone());
+                }
+                "--devices" => {
+                    let value = iter
+                        .next()
+                        .ok_or_else(|| "--devices needs a name substring".to_string())?;
+                    args.devices = Some(value.to_lowercase());
+                }
+                "--open-timeout-ms" => {
+                    let value = iter
+                        .next()
+                        .ok_or_else(|| "--open-timeout-ms needs a value".to_string())?;
+                    let parsed: u64 = value.parse().map_err(|_| {
+                        format!("--open-timeout-ms expects a number, got {value:?}")
+                    })?;
+                    if !(200..=30_000).contains(&parsed) {
+                        return Err("--open-timeout-ms must be between 200 and 30000".to_string());
+                    }
+                    args.open_timeout_ms = parsed;
+                }
+                "--trial-budget-s" => {
+                    let value = iter
+                        .next()
+                        .ok_or_else(|| "--trial-budget-s needs a value".to_string())?;
+                    let parsed: u64 = value
+                        .parse()
+                        .map_err(|_| format!("--trial-budget-s expects a number, got {value:?}"))?;
+                    if !(1..=600).contains(&parsed) {
+                        return Err("--trial-budget-s must be between 1 and 600".to_string());
+                    }
+                    args.budget_s = parsed;
                 }
                 other => return Err(format!("unknown argument {other:?}")),
             }
@@ -201,107 +242,203 @@ struct ChannelTrial {
     callbacks: usize,
     buffer: String,
     error: Option<String>,
+    timed_out: bool,
 }
 
+/// Run `work` on a worker thread and wait at most `timeout`.
+///
+/// `None` means "still blocked": the caller reports a timeout and moves on. The worker
+/// is abandoned deliberately — a stuck ALSA open cannot be cancelled from outside, and
+/// the probe must never hang on it. Every blocking call in this tool goes through here.
+fn bounded<T: Send + 'static>(
+    timeout: Duration,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
+    let (tx, rx) = mpsc::channel::<T>();
+    std::thread::spawn(move || {
+        let _ = tx.send(work());
+    });
+    rx.recv_timeout(timeout).ok()
+}
+
+#[derive(Debug, Clone)]
+enum Attempt {
+    Opened { callbacks: usize },
+    Failed { error: String },
+    Timeout,
+}
+
+/// Open a stream and count callbacks, but never wait longer than `timeout`.
+///
+/// `build_output_stream` can block indefinitely on a busy or half-dead ALSA device
+/// (PipeWire holding the card, a stuck `default` plugin, a device that stopped
+/// answering). The whole attempt runs on a worker thread, so a blocked open becomes
+/// a reported result instead of a hung tool.
 fn attempt_stream(
     device: &cpal::Device,
     channels: u16,
     buffer: cpal::BufferSize,
-) -> Result<usize, String> {
-    let config = cpal::StreamConfig {
-        channels,
-        sample_rate: cpal::SampleRate(TRIAL_RATE),
-        buffer_size: buffer,
-    };
-    let (tx, rx) = mpsc::channel::<()>();
+    timeout: Duration,
+) -> Attempt {
+    let device = device.clone();
 
-    // Silence only: these trials answer "can this channel count be opened",
-    // they must not surprise the listener with a tone.
-    let data_fn = move |out: &mut [f32], _: &cpal::OutputCallbackInfo| {
-        for sample in out.iter_mut() {
-            *sample = 0.0;
-        }
-        let _ = tx.send(());
-    };
+    match bounded(timeout, move || {
+        (|| -> Result<usize, String> {
+            let config = cpal::StreamConfig {
+                channels,
+                sample_rate: cpal::SampleRate(TRIAL_RATE),
+                buffer_size: buffer,
+            };
+            let (done_tx, done_rx) = mpsc::channel::<()>();
 
-    let stream = device
-        .build_output_stream(
-            &config,
-            data_fn,
-            |err| eprintln!("dj-audio-probe: stream error: {err}"),
-            None,
-        )
-        .map_err(|err| err.to_string())?;
-    stream.play().map_err(|err| err.to_string())?;
+            // Silence only: these trials answer "can this channel count be opened",
+            // they must not surprise the listener with a tone.
+            let data_fn = move |out: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                for sample in out.iter_mut() {
+                    *sample = 0.0;
+                }
+                let _ = done_tx.send(());
+            };
 
-    let deadline = Instant::now() + Duration::from_millis(150);
-    let mut callbacks = 0usize;
-    while Instant::now() < deadline {
-        match rx.recv_timeout(Duration::from_millis(20)) {
-            Ok(()) => callbacks += 1,
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
-        }
+            let stream = device
+                .build_output_stream(
+                    &config,
+                    data_fn,
+                    |err| eprintln!("dj-audio-probe: stream error: {err}"),
+                    None,
+                )
+                .map_err(|err| err.to_string())?;
+            stream.play().map_err(|err| err.to_string())?;
+
+            let deadline = Instant::now() + Duration::from_millis(150);
+            let mut callbacks = 0usize;
+            while Instant::now() < deadline {
+                match done_rx.recv_timeout(Duration::from_millis(20)) {
+                    Ok(()) => callbacks += 1,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+            }
+            drop(stream);
+            Ok(callbacks)
+        })()
+    }) {
+        Some(Ok(callbacks)) => Attempt::Opened { callbacks },
+        Some(Err(error)) => Attempt::Failed { error },
+        None => Attempt::Timeout,
     }
-    drop(stream);
-    Ok(callbacks)
 }
 
-fn probe_channels(device: &cpal::Device, name: &str, channels: u16) -> ChannelTrial {
-    let mut result = ChannelTrial {
+fn probe_channels(
+    device: &cpal::Device,
+    name: &str,
+    channels: u16,
+    timeout: Duration,
+) -> ChannelTrial {
+    let mut trial = ChannelTrial {
         device: name.to_string(),
         channels,
         ok: false,
         callbacks: 0,
         buffer: format!("{TRIAL_FRAMES}"),
         error: None,
+        timed_out: false,
     };
 
-    match attempt_stream(device, channels, cpal::BufferSize::Fixed(TRIAL_FRAMES)) {
-        Ok(callbacks) if callbacks > 0 => {
-            result.ok = true;
-            result.callbacks = callbacks;
-            return result;
+    match attempt_stream(
+        device,
+        channels,
+        cpal::BufferSize::Fixed(TRIAL_FRAMES),
+        timeout,
+    ) {
+        Attempt::Opened { callbacks } if callbacks > 0 => {
+            trial.ok = true;
+            trial.callbacks = callbacks;
+            return trial;
         }
-        Ok(_) => result.error = Some("stream opened but produced no callbacks".to_string()),
-        Err(err) => result.error = Some(err),
+        Attempt::Opened { .. } => {
+            trial.error = Some("stream opened but produced no callbacks".to_string());
+        }
+        Attempt::Failed { error } => trial.error = Some(error),
+        Attempt::Timeout => {
+            // A blocked device is a result, not a reason to wait twice.
+            trial.timed_out = true;
+            trial.error = Some(format!(
+                "open blocked for more than {} ms",
+                timeout.as_millis()
+            ));
+            return trial;
+        }
     }
 
     // Some devices reject a fixed buffer size; retry with the backend default.
-    match attempt_stream(device, channels, cpal::BufferSize::Default) {
-        Ok(callbacks) if callbacks > 0 => {
-            result.ok = true;
-            result.callbacks = callbacks;
-            result.buffer = "default".to_string();
-            result.error = None;
+    match attempt_stream(device, channels, cpal::BufferSize::Default, timeout) {
+        Attempt::Opened { callbacks } if callbacks > 0 => {
+            trial.ok = true;
+            trial.callbacks = callbacks;
+            trial.buffer = "default".to_string();
+            trial.error = None;
         }
-        Ok(_) => {}
-        Err(err) => {
-            if result.error.is_none() {
-                result.error = Some(err);
+        Attempt::Opened { .. } => {}
+        Attempt::Failed { error } => {
+            if trial.error.is_none() {
+                trial.error = Some(error);
             }
         }
+        Attempt::Timeout => {
+            trial.timed_out = true;
+            trial.error = Some(format!(
+                "open blocked for more than {} ms",
+                timeout.as_millis()
+            ));
+        }
     }
-    result
+    trial
 }
 
-fn channel_trials() -> Vec<ChannelTrial> {
+fn matches_filter(name: &str, filter: Option<&str>) -> bool {
+    match filter {
+        Some(needle) => name.to_lowercase().contains(needle),
+        None => true,
+    }
+}
+
+fn channel_trials(
+    filter: Option<&str>,
+    timeout: Duration,
+    budget: Duration,
+) -> (Vec<ChannelTrial>, bool) {
     let host = cpal::default_host();
     let devices: Vec<cpal::Device> = match host.output_devices() {
         Ok(iter) => iter.collect(),
-        Err(_) => return Vec::new(),
+        Err(_) => return (Vec::new(), false),
     };
 
+    let started = Instant::now();
     let mut trials = Vec::new();
+    let mut budget_exhausted = false;
+
     for device in devices {
         let name = device
             .name()
             .unwrap_or_else(|_| "<unnamed device>".to_string());
+        if !matches_filter(&name, filter) {
+            continue;
+        }
         for channels in CHANNEL_TRIALS {
-            trials.push(probe_channels(&device, &name, channels));
+            if started.elapsed() > budget {
+                budget_exhausted = true;
+                break;
+            }
+            eprintln!("dj-audio-probe: trying {name} with {channels} ch");
+            trials.push(probe_channels(&device, &name, channels, timeout));
+        }
+        if budget_exhausted {
+            break;
         }
     }
-    trials
+
+    (trials, budget_exhausted)
 }
 
 // ------------------------------------------------------------ timing trial
@@ -386,7 +523,20 @@ fn failed_trial(device: String, error: String) -> TrialReport {
     }
 }
 
-fn run_trial(seconds: u64, silent: bool) -> TrialReport {
+fn run_trial(seconds: u64, silent: bool, timeout: Duration) -> TrialReport {
+    match bounded(timeout, move || run_trial_inner(seconds, silent)) {
+        Some(report) => report,
+        None => failed_trial(
+            "<timing trial>".to_string(),
+            format!(
+                "device did not answer within {} s (open blocked)",
+                timeout.as_secs()
+            ),
+        ),
+    }
+}
+
+fn run_trial_inner(seconds: u64, silent: bool) -> TrialReport {
     let host = cpal::default_host();
     let Some(device) = host.default_output_device() else {
         return failed_trial(
@@ -558,6 +708,7 @@ fn human_report(
     trials: &[ChannelTrial],
     trial: Option<&TrialReport>,
     nodes: &[PwNode],
+    budget_exhausted: bool,
 ) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "dj-audio-probe (schema {SCHEMA_VERSION})");
@@ -656,6 +807,8 @@ fn human_report(
             .map(|trial| {
                 if trial.ok {
                     format!("{}ch ok", trial.channels)
+                } else if trial.timed_out {
+                    format!("{}ch TIMEOUT", trial.channels)
                 } else {
                     format!("{}ch FAIL", trial.channels)
                 }
@@ -667,6 +820,13 @@ fn human_report(
                 let _ = writeln!(out, "      {}ch: {error}", trial.channels);
             }
         }
+    }
+
+    if budget_exhausted {
+        let _ = writeln!(
+            out,
+            "  trial budget exhausted: remaining channel counts were not attempted"
+        );
     }
 
     let _ = writeln!(out, "\n== timing trial ==");
@@ -728,6 +888,8 @@ fn human_report(
 }
 
 fn json_report(
+    args: &Args,
+    budget_exhausted: bool,
     hosts: &[(String, Vec<OutputDevice>)],
     cards: &[asound::UsbCard],
     trials: &[ChannelTrial],
@@ -807,6 +969,7 @@ fn json_report(
                 "callbacks": trial.callbacks,
                 "buffer": trial.buffer,
                 "error": trial.error,
+                "timed_out": trial.timed_out,
             })
         })
         .collect();
@@ -852,6 +1015,9 @@ fn json_report(
             .unwrap_or(0),
         "usb_cards": card_values,
         "cpal": {"hosts": host_values, "output_devices": output_count},
+        "open_timeout_ms": args.open_timeout_ms,
+        "trial_budget_s": args.budget_s,
+        "budget_exhausted": budget_exhausted,
         "channel_trials": trial_values,
         "timing_trial": timing,
         "pipewire_nodes": node_values,
@@ -887,15 +1053,31 @@ fn main() -> ExitCode {
     let cards = asound::read_cards("/proc/asound");
     let output_devices: usize = hosts.iter().map(|(_, devices)| devices.len()).sum();
 
-    let (channel_trial_results, timing_trial) = if args.list_only || output_devices == 0 {
-        (Vec::new(), None)
+    let (channel_trial_results, budget_exhausted) = if args.list_only || output_devices == 0 {
+        (Vec::new(), false)
     } else {
-        (channel_trials(), Some(run_trial(args.seconds, args.silent)))
+        channel_trials(
+            args.devices.as_deref(),
+            Duration::from_millis(args.open_timeout_ms),
+            Duration::from_secs(args.budget_s),
+        )
+    };
+
+    let timing_trial = if args.list_only || output_devices == 0 {
+        None
+    } else {
+        Some(run_trial(
+            args.seconds,
+            args.silent,
+            Duration::from_secs(args.seconds + 5),
+        ))
     };
     let nodes = pipewire_nodes();
 
     let rendered = if args.json {
         let value = json_report(
+            &args,
+            budget_exhausted,
             &hosts,
             &cards,
             &channel_trial_results,
@@ -916,6 +1098,7 @@ fn main() -> ExitCode {
             &channel_trial_results,
             timing_trial.as_ref(),
             &nodes,
+            budget_exhausted,
         )
     };
 
@@ -979,6 +1162,33 @@ mod tests {
     fn unknown_flag_is_an_error() {
         let argv = vec!["--nope".to_string()];
         assert!(Args::parse(&argv).is_err());
+    }
+
+    #[test]
+    fn a_blocked_operation_times_out_instead_of_hanging() {
+        let started = Instant::now();
+        let result = bounded(Duration::from_millis(80), || {
+            std::thread::sleep(Duration::from_millis(800));
+            42
+        });
+        assert!(result.is_none(), "a blocked worker must report a timeout");
+        assert!(
+            started.elapsed() < Duration::from_millis(600),
+            "the caller must not wait for the abandoned worker"
+        );
+    }
+
+    #[test]
+    fn a_fast_operation_still_returns_its_value() {
+        assert_eq!(bounded(Duration::from_millis(500), || 7), Some(7));
+    }
+
+    #[test]
+    fn device_filter_is_case_insensitive() {
+        assert!(matches_filter("Traktor Kontrol S4 MK3", Some("traktor")));
+        assert!(matches_filter("Traktor Kontrol S4 MK3", Some("s4 mk3")));
+        assert!(!matches_filter("HDA Intel PCH", Some("s4")));
+        assert!(matches_filter("anything", None));
     }
 
     #[test]
@@ -1061,8 +1271,15 @@ mod tests {
             callbacks: 12,
             buffer: "256".to_string(),
             error: None,
+            timed_out: false,
         }];
-        let value = json_report(&hosts, &cards, &trials, None, &[]);
+        let args = Args {
+            seconds: 2,
+            open_timeout_ms: 2000,
+            budget_s: 25,
+            ..Args::default()
+        };
+        let value = json_report(&args, false, &hosts, &cards, &trials, None, &[]);
         assert_eq!(value["schema_version"], 2);
         assert_eq!(value["usb_cards"][0]["playback_max_channels"], 4);
         assert_eq!(
