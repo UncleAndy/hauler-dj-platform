@@ -473,8 +473,11 @@ pub struct LiveOutput {
     _stream: cpal::Stream,
     counters: Arc<Counters>,
     outliers: Arc<Outliers>,
-    /// Thread the callback runs on, captured from inside it on the first block.
-    audio_tid: u64,
+    /// Thread the callback runs on, filled from inside it on the first block.
+    ///
+    /// Kept as the shared atomic rather than as a copy: the value does not exist yet when the
+    /// stream is built, and a copy taken then would read zero for the whole run.
+    audio_tid: Arc<std::sync::atomic::AtomicU64>,
     device: String,
     channels: usize,
     sample_rate: u32,
@@ -644,7 +647,7 @@ impl LiveOutput {
             _stream: stream,
             counters,
             outliers,
-            audio_tid: tid.load(Ordering::Relaxed),
+            audio_tid: tid,
             device: name,
             channels: usize::from(channels),
             sample_rate: config.sample_rate,
@@ -659,13 +662,16 @@ impl LiveOutput {
     }
 
     /// Thread the audio callback runs on, or 0 when it has not run yet.
+    ///
+    /// Zero is the honest answer before the first block: the id is read from inside the callback,
+    /// and a copy taken while the stream is being built would be zero for the whole run.
     pub fn audio_thread_id(&self) -> u64 {
-        self.audio_tid
+        self.audio_tid.load(Ordering::Relaxed)
     }
 
     /// Kernel view of that thread: preemptions and run-queue delay.
     pub fn audio_thread_pressure(&self) -> Option<ThreadPressure> {
-        thread_pressure(self.audio_tid)
+        thread_pressure(self.audio_thread_id())
     }
 
     /// Report on the run so far, without stopping it.

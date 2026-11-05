@@ -425,6 +425,17 @@ fn report_json(
         "outliers_dropped": report.outliers_dropped,
         "timeline": timeline,
         "audio_thread_id": audio_tid,
+        // Silence must not look like success: if the callback never reported its thread, say so
+        // instead of emitting `null` as if the counters were merely optional.
+        "thread_pressure_unavailable": if pressure.is_none() {
+            Some(if audio_tid == 0 {
+                "the callback never reported its thread id"
+            } else {
+                "procfs counters for the callback thread are not readable"
+            })
+        } else {
+            None
+        },
         "thread_pressure": pressure.map(|seen| json!({
             "nonvoluntary_switches": seen.nonvoluntary,
             "run_delay_ms": seen.run_delay_ns as f64 / 1_000_000.0,
