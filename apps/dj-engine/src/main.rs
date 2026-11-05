@@ -25,7 +25,8 @@ const USAGE: &str = "\
 dj-engine — the audio engine process
 
 Usage:
-  dj-engine [--socket PATH] [--null-sink] [--device SUBSTR] [--block N] [--rate HZ] [--seconds S]
+  dj-engine [--socket PATH] [--null-sink] [--device SUBSTR] [--block N] [--rate HZ]
+            [--seconds S] [--autoplay]
 
 Defaults: socket $XDG_RUNTIME_DIR/hauler-dj-engine.sock, null sink, 48 kHz, block 256.
 --device SUBSTR opens the real output (substring of the backend name); --null-sink keeps a
@@ -35,6 +36,8 @@ On a device with four or more outputs master goes to the first pair and cue to t
 
 --seconds S renders for S seconds, prints the timing report as JSON and exits: the same
 counters the probe reports, for the evidence directory.
+--autoplay starts every deck playing, so a bounded run actually carries signal. Without it the
+decks stay paused and every level reads zero, which says nothing about the output path.
 
 Exit codes: 0 stopped by a signal, 2 bad usage or a device that will not open.
 ";
@@ -115,6 +118,7 @@ fn run(argv: &[String]) -> Result<(), String> {
     let mut block = 256usize;
     let mut rate = 48_000u32;
     let mut seconds: Option<f64> = None;
+    let mut autoplay = false;
 
     let mut index = 0;
     while index < argv.len() {
@@ -144,6 +148,10 @@ fn run(argv: &[String]) -> Result<(), String> {
             "--rate" => {
                 rate = value(1)?.parse().map_err(|_| "--rate expects a number")?;
                 index += 2;
+            }
+            "--autoplay" => {
+                autoplay = true;
+                index += 1;
             }
             "--seconds" => {
                 let parsed: f64 = value(1)?
@@ -198,6 +206,13 @@ fn run(argv: &[String]) -> Result<(), String> {
                 cue: false,
             },
         );
+    }
+
+    // A measurement of silence proves nothing about the signal path, and decks start paused.
+    if autoplay {
+        for deck in &mut decks {
+            deck.play();
+        }
     }
 
     // The render thread writes scalars here; nothing in the audio path allocates or locks.
@@ -381,8 +396,14 @@ fn run_null(mut graph: EngineGraph, block: usize, rate: u32, seconds: Option<f64
         if let Some(limit) = limit
             && graph.clock() >= limit
         {
+            let deck_peaks: Vec<f32> = graph
+                .decks()
+                .iter()
+                .map(|deck| deck.levels().peak_left.max(deck.levels().peak_right))
+                .collect();
             let json = serde_json::json!({
                 "mode": "null_sink",
+                "deck_peaks": deck_peaks,
                 "callbacks": callbacks,
                 "frames": graph.clock(),
                 "audio_seconds": graph.clock() as f64 / f64::from(rate),
