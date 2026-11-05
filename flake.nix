@@ -114,5 +114,18 @@
             echo "  cargo test --workspace    bash scripts/check.sh    bash scripts/ui.sh --smoke"
           '';
         };
-      });
+      })
+    // {
+      # Real-time priority for the audio thread is granted by the system, not requested by the
+      # application (ADR-0010): the app checks the policy it actually got and warns. The module
+      # lives in its own file so it can be evaluated on its own.
+      #
+      #   imports = [ inputs.hauler-dj.nixosModules.dj-audio-rt ];
+      #   services.dj-audio-rt.enable = true;
+      #
+      # The user still has to be in the `audio` group:
+      #   users.users.<name>.extraGroups = [ "audio" ];
+      nixosModules.dj-audio-rt = import ./nix/module.nix;
+      nixosModules.default = self.nixosModules.dj-audio-rt;
+    };
 }

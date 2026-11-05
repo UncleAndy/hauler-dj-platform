@@ -31,17 +31,29 @@ CPUSchedulingPolicy=fifo` отвечает `Unknown assignment`. Это расп
 ### Рабочий путь без root на каждый запуск: лимит `rtprio`
 
 Лимит выдаётся один раз при установке (это и есть «упаковка»), после чего приоритет ставит
-лаунчер. NixOS:
+лаунчер. В репозитории для этого есть модуль — `nixosModules.dj-audio-rt` из `nix/module.nix`:
 
 ```nix
-security.pam.loginLimits = [
-  { domain = "@audio"; item = "rtprio"; value = "95"; type = "-"; }
-  { domain = "@audio"; item = "memlock"; value = "unlimited"; type = "-"; }
-];
-users.users.andy.extraGroups = [ "audio" ];
+{
+  inputs.hauler-dj.url = "git+file:///home/andy/projects/RUST/Hauler-DJ-Platform";
+
+  imports = [ inputs.hauler-dj.nixosModules.dj-audio-rt ];
+  services.dj-audio-rt = {
+    enable = true;
+    # realtimePriority = 20;   # по умолчанию 20
+    # memlockUnlimited = true; # по умолчанию true
+  };
+  users.users.andy.extraGroups = [ "audio" ];
+}
 ```
 
-После `nixos-rebuild switch` и повторного входа:
+Модуль ставит `security.pam.loginLimits` для группы `audio` (`rtprio` и `memlock`), включает
+`security.rtkit` (нужен PipeWire) и ничего не делает, пока `services.dj-audio-rt.enable = false`.
+Проверено вычислением: при `enable = true` лимиты `rtprio 20` и `memlock unlimited` появляются, при
+`realtimePriority = 30` и `memlockUnlimited = false` остаётся только `rtprio 30`, без `enable` —
+пусто.
+
+После `nixos-rebuild switch` и **повторного входа** (PAM применяет лимиты при логине):
 
 ```
 ulimit -r            # должно стать 95, а не 0
