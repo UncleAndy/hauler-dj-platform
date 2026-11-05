@@ -8,6 +8,10 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+dj-audio-core = { path = "../../crates/dj-audio-core" }
+dj-domain = { path = "../../crates/dj-domain" }
+serde.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

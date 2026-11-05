@@ -1,10 +1,9 @@
-//! Golden fixtures, simulated clock and RT instrumentation for tests.
+//! Test instrumentation for the audio core.
 //!
-//! Status: **scaffold**. No behaviour is implemented yet; the crate exists so that
-//! the module boundary, ownership and dependency direction are fixed before code
-//! lands (`docs/architecture/crate-map.md`).
+//! The interesting part is [`rt::CountingAllocator`] + [`rt::RtScope`]: together they turn
+//! "the callback does not allocate" from a review comment into an assertion (DJP-NFR-001).
 //!
-//! - Backlog task: A11
-//! - Requirements: DJP-NFR-001
-//! - Evidence produced here feeds docs/qa/evidence/.
-#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+//! Ownership: qa (`docs/architecture/crate-map.md`).
+#![deny(clippy::unwrap_used)]
+
+pub mod rt;

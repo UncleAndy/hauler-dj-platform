@@ -3,12 +3,14 @@
 Выход G0 требует зафиксировать владельца каждого базового крейта. Разделение — границы
 ответственности, а не обязанность делать отдельный крейт на каждую функцию (ТЗ §10).
 
-## Созданы в A00 (scaffold)
+## Созданы и наполнены
+
+Статус в колонке «Реализовано»: `A00` — каркас, `A01` — есть поведение и тесты.
 
 | Крейт | Владелец (роль) | Задача | Релиз | Требования |
 |---|---|---|---|---|
-| `dj-domain` | audio-core | A01 | R0 | DJP-ARCH-001, -002, -004; DJP-DATA-002 |
-| `dj-audio-core` | audio-core | A01 | R0 | DJP-ARCH-001, -003, -005; DJP-NFR-001 |
+| `dj-domain` | audio-core | A01 | R0 | DJP-ARCH-001, -002, -004; DJP-DATA-002 — **реализовано в A01**: протокол `command-v1`/`state-v1`, golden-тесты формата |
+| `dj-audio-core` | audio-core | A01 | R0 | DJP-ARCH-001, -003, -005; DJP-NFR-001 — **реализовано в A01**: очередь, scheduler, рендер, замер блока |
 | `dj-audio-io` | architect (audio-platform) | A05 | R0 | DJP-NFR-002, -003; DJP-ARCH-007 — CPAL 0.18, на Linux PipeWire-бэкенд (ADR-002) |
 | `dj-codec` | media | A02 | R0 | DJP-MEDIA-001, -002 |
 | `dj-deck` | audio-core | A03 | R0 | DJP-DECK-001…004 |
@@ -19,7 +21,7 @@
 | `dj-session` | media | A08 | R0 | DJP-ENV-006; DJP-SET-002, -003 |
 | `dj-bridge` | ui | A06 | R0 | DJP-ARCH-004; DJP-UI-001, -002 |
 | `dj-controller-core` | hardware | A09 | R0 | DJP-CTRL-001, -002, -004 |
-| `dj-testkit` | qa | A11 | R0 | DJP-NFR-001 |
+| `dj-testkit` | qa | A11 | R0 | DJP-NFR-001 — `rt::CountingAllocator`/`RtScope` уже в A01; фикстуры и остальная инструментация — A11 |
 
 Приложения: `apps/dj-headless` (A01/A13, audio-core), `apps/dj-cli` (A08, media),
 `apps/dj-ui` (A06, ui; Qt/C++ + QML, собирается CMake, вне cargo-воркспейса).

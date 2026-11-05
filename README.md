@@ -4,19 +4,21 @@ An independent DJ platform for Linux/NixOS, built to reach practical functional 
 Traktor Pro 4 through our own engine, our own UI and our own effects — no Traktor, Native
 Instruments or Mixxx code, graphics, samples or firmware are used or copied.
 
-**Status: M0 "blueprint" — scaffolding only.** The specification, the implementation plan and the
-initial backlog are approved (v0.1); this repository contains the module skeleton, a pinned
-reproducible build environment and CI. There is no audio engine yet, and the UI is a blank
-two-deck shell. Nothing in this tree plays sound.
+**Status: A00 done, A01 done.** The specification, plan and backlog are approved (v0.1). The
+repository holds the module skeleton, a pinned reproducible build environment, CI, and the first
+piece of the audio engine: typed command contracts, a bounded RT queue, a sample-accurate scheduler
+and a deterministic offline renderer. `dj-headless` renders a 440 Hz tone (and scripted command
+scenarios) to WAV with an exact frame count; the UI is still a blank two-deck shell, and nothing
+plays through a sound card yet — that is `dj-audio-io` (A05) and the engine process (A06).
 
 | Area | State |
 |---|---|
 | Specification / plan / backlog | `DJ_Platform_TZ_v0.1_RU.md`, `DJ_Platform_Implementation_Plan_v0.1_RU.md`, `DJ_Platform_Initial_Backlog_v0.1.yaml` |
-| Rust workspace | 13 crates: boundaries, owners and lint rules fixed; no behaviour |
+| Rust workspace | 13 crates: boundaries, owners and lint rules fixed |
+| Engine core (A01) | `dj-domain` contracts, bounded queue, sample-accurate scheduler, offline render, RT guards |
 | Qt 6 / QML shell | blank two-deck window with a crossfader, starts headless (`--smoke`) |
 | Build environment | `flake.nix` + `flake.lock` + `rust-toolchain.toml` (Rust 1.95.0, Qt 6.11.2) |
 | CI | fmt, clippy `-D warnings`, tests, toolchain pin, QML smoke, requirement coverage |
-| Contracts (`schemas/`) | not written yet — A01 |
 | Audio backend, codecs, storage | not started — A02/A05/A08 |
 
 ## Architecture
@@ -82,7 +84,16 @@ bash scripts/check.sh        # fmt, clippy, tests, toolchain pin, traceability, 
 bash scripts/ui.sh           # build and open the blank two-deck window (needs a display)
 bash scripts/ui.sh --smoke   # build, load QML offscreen, fail on any Qt warning
 cargo run -p dj-audio-probe  # what CPAL sees on this machine (audio backend evidence, ADR-002)
+
+# A01: render without a sound card and inspect the result
+cargo run -p dj-headless -- sine --frames 48000 --measure --out /tmp/tone.wav
+cargo run -p dj-headless -- scenario --file apps/dj-headless/tests/scenarios/play-stop.json
 ```
+
+`dj-headless` prints a JSON report: exact frame count, peak/RMS, the sample at which each command
+was applied, and — with `--measure` — p50/p99/max of the callback. Scenario files are JSON
+(`{"frames": 4800, "commands": [{"at": 1000, "command": {"Play": {"deck": "A", "enabled": true}}}]}`);
+the format is documented in `apps/dj-headless/src/scenario.rs`.
 
 `nix develop` exports `CARGO_TARGET_DIR` to `~/.cache/dj-platform-target` so build artifacts stay
 out of the checkout; `BUILD_DIR=/tmp/dj-ui-build bash scripts/ui.sh` moves the CMake tree out of it as
@@ -97,7 +108,8 @@ On NixOS there is no `/usr/bin/env`, so invoke the scripts as `bash scripts/chec
 - `docs/README.md` — document map and what is deliberately missing.
 - `docs/architecture/crate-map.md` — crate ownership, planned crates, dependency rules.
 - `docs/architecture/rt-contract.md` — the real-time rules and how they are verified.
-- `docs/adr/` — license (0001), audio backend (0002), UI bridge (0003): all `proposed`.
+- `docs/adr/` — license (0001), audio backend (0002), UI bridge (0003): all `accepted`.
+- `docs/qa/evidence/A01/` — the deterministic render, the RT guards and the first block timings.
 - `docs/requirements/traceability.csv` — every `DJP-*` requirement with an owning role.
 - `docs/agents/AGENTS.md` — mandatory rules for AI agents working in this repository.
 - `docs/qa/evidence/` — actual command output per task; `docs/qa/reference-rig.md` — test rig.

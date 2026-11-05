@@ -31,6 +31,8 @@ bash scripts/ui.sh --smoke            # только UI-гейт
 3. `bash scripts/check.sh` зелёный **до** отчёта; ослаблять проверки запрещено.
 4. Свидетельства — в `docs/qa/evidence/<task>/` в формате из `docs/qa/evidence/README.md`.
 5. Обновить `docs/requirements/traceability.csv` (путь реализации, test_id, статус).
+   Сценарий headless-прогона — JSON в `apps/dj-headless/tests/scenarios/`: пример из плана
+   (`two-deck.yaml`) устарел, YAML-парсер ради тестового артефакта не добавляется.
 6. Коммит — одна задача; push и merge делает человек.
 
 ## Шаблон задания

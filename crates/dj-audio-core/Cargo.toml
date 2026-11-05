@@ -8,6 +8,10 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+dj-domain = { path = "../dj-domain" }
+
+[dev-dependencies]
+dj-testkit = { path = "../dj-testkit" }
 
 [lints]
 workspace = true

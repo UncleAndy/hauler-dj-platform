@@ -1,0 +1,100 @@
+# A01 evidence — generated 2026-11-05T06:55:41Z
+# host: Linux 6.18.55 x86_64 / nixos 26.05
+
+## cargo test --workspace
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 18 tests
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 3 tests
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 14 tests
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 3 tests
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 5 tests
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 3 tests
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 7 tests
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 1 test
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+## cargo clippy -D warnings
+    Checking dj-audio-core v0.1.0 (/home/hermes/projects/RUST/Hauler-DJ-Platform/crates/dj-audio-core)
+    Checking dj-headless v0.1.0 (/home/hermes/projects/RUST/Hauler-DJ-Platform/apps/dj-headless)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.84s
+
+## cargo fmt --check
+fmt: clean
+
+## golden render: 440 Hz, 4800 frames, block 256
+{"applied":[{"applied_at_sample":0,"id":0}],"block_frames":256,"commands":0,"frames":4800,"frequency_hz":440.0,"out":"/tmp/a01-sine.wav","peak":1.0,"rejected":0,"rms":0.7071070660803634,"sample_rate":48000,"timing":null}
+5874c3aacb0955dbe439f12eb6a9c1a97a48a448a39d03b920afc443075fb242  /tmp/a01-sine.wav
+bytes: 9644
+
+## scenario: Play at 1000, Stop at 4000
+{"applied":[{"applied_at_sample":1000,"id":1},{"applied_at_sample":4000,"id":2}],"block_frames":256,"commands":2,"frames":4800,"frequency_hz":440.0,"out":"/tmp/a01-scenario.wav","peak":1.0,"rejected":0,"rms":0.55901721556572,"sample_rate":48000,"timing":null}
+3f9cea995796acfedbb532b71fd5bcb389473de4361cf198dd6c87567a7aaa5c  /tmp/a01-scenario.wav
+
+## block timing: 1 s at 48 kHz, block 256 (offline, this host)
+{"applied":[{"applied_at_sample":0,"id":0}],"block_frames":256,"commands":0,"frames":48000,"frequency_hz":440.0,"out":"/tmp/a01-timing.wav","peak":1.0,"rejected":0,"rms":0.7071070648151438,"sample_rate":48000,"timing":{"block_frames":256,"blocks":188,"max_of_period":0.0032240625000000004,"max_us":17.195,"note":"offline render on this host, not the reference rig (DJP-NFR-003 needs A11)","p50_us":2.605,"p99_of_period":0.0011754374999999998,"p99_us":6.268999999999999,"period_us":5333.333333333333,"sample_rate":48000}}
+
+## full gate
+$ BUILD_DIR=/tmp/dj-ui-build bash scripts/check.sh
+toolchain: rustc 1.95.0 (matches rust-toolchain.toml)
+traceability: every DJP-* requirement has an owned row
+dj-ui: QML scene loaded, no Qt warnings
+check.sh: all gates passed
+# 63 tests passed, 0 failed across the workspace
+# (BUILD_DIR is needed because build/ in this shared checkout belongs to another uid;
+#  `nix develop` exports CARGO_TARGET_DIR, so Rust artifacts stay out of the tree)

@@ -9,5 +9,6 @@ authors.workspace = true
 
 [dependencies]
 
-[lints]
-workspace = true
+# This crate is the one place where `unsafe` is required: a GlobalAlloc wrapper cannot be
+# written without it. It is deliberately excluded from the workspace lint set and every
+# unsafe block carries a SAFETY comment instead.
