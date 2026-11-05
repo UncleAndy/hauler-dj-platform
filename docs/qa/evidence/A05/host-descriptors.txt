@@ -1,0 +1,33 @@
+warning: Git tree '/home/hermes/projects/RUST/Hauler-DJ-Platform' is dirty
+dj-platform dev shell — rust 1.95.0, qt 6.11.2, cmake 4.1.6
+  cargo test --workspace    bash scripts/check.sh    bash scripts/ui.sh --smoke
+dj-audio-probe (schema 2)
+
+== USB descriptors (/proc/asound/card*/stream0) — hardware truth ==
+  Yamaha Corporation Steinberg UR22C [card0] playback max 2 ch, capture max 2 ch
+      playback: 2 ch, S32_LE, rates [44100, 48000, 88200, 96000, 176400, 192000], 48 kHz yes, map FL FR
+      capture:  2 ch, S32_LE, rates [44100, 48000, 88200, 96000, 176400, 192000]
+  Sonix Technology Co., Ltd. REDRAGON Live Camera [card1] playback max 0 ch, capture max 2 ch
+      capture:  2 ch, S16_LE, rates [11025, 44100, 48000]
+  the t.bone SC460 USB the t.bone SC460 USB [card2] playback max 2 ch, capture max 2 ch
+      playback: 2 ch, S16_LE, rates [8000, 11025, 16000, 22050, 32000, 44100, 48000], 48 kHz yes, map FL FR
+      capture:  2 ch, S16_LE, rates [8000, 11025, 16000, 22050, 32000, 44100, 48000]
+      capture:  2 ch, S24_3LE, rates [8000, 11025, 16000, 22050, 32000, 44100, 48000]
+      capture:  2 ch, S16_LE, rates [88200, 96000]
+      capture:  2 ch, S24_3LE, rates [88200, 96000]
+  Native Instruments Traktor Kontrol S4 MK3 [card4] playback max 4 ch, capture max 8 ch
+      playback: 4 ch, S32_LE, rates [44100, 48000, 88200, 96000], 48 kHz yes, map FL FR FC LFE
+      capture:  8 ch, S32_LE, rates [44100, 48000, 88200, 96000]
+
+== CPAL enumeration (ALSA plugin layer: ranges are API limits, not hardware) ==
+hosts: 1
+[Alsa] output devices: 0
+
+== channel trials (48 kHz, real stream open, silence) ==
+  skipped or no output device
+
+== timing trial ==
+  skipped (--list-only or no output device)
+
+== PipeWire nodes (pw-dump) ==
+  unavailable (no running session, or pw-dump missing)

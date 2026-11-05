@@ -1,20 +1,27 @@
 //! Read-only audio device probe (A05, ADR-002).
 //!
-//! Answers the question that decides the audio backend, without any engine code:
-//! what does CPAL enumerate on this machine, how many channels does each output
-//! offer, does the device expose anything beyond stereo (master / cue / booth),
-//! and how do the callbacks behave for a short 48 kHz / 256-frame trial.
+//! The question it answers: what can this machine actually do, and on which
+//! interface — not "what does the API claim". Three independent sources are
+//! reported side by side, because they disagree:
 //!
-//! It never opens input streams, never claims a result it did not measure, and
-//! exits 3 when no output device is visible — "nothing measured" is a distinct
-//! answer from "measured and failed".
+//! 1. **USB descriptors** (`/proc/asound/card*/stream0`) — the hardware truth about
+//!    channel counts, formats and rates. Readable without `/dev/snd`.
+//! 2. **CPAL enumeration** — what the Rust API sees. On ALSA this is the *plugin*
+//!    layer, where "up to 32 channels" is an API limit and not the device.
+//! 3. **Channel trials** — an actual `build_output_stream` at 48 kHz for 2/4/6/8
+//!    channels, so "supported" is a measured fact rather than a range.
 //!
-//! Usage:
-//!   dj-audio-probe                     # human report, includes a 2 s trial
-//!   dj-audio-probe --list-only         # enumeration only, no sound
-//!   dj-audio-probe --json --out a.json # machine-readable evidence
-//!   dj-audio-probe --seconds 10 --silent
+//! Plus a short callback-timing trial on the default output and a PipeWire node/port
+//! summary from `pw-dump` (ports are what decides whether master and cue can be
+//! addressed separately).
+//!
+//! It never opens input streams, never sends anything to a controller, and exits 3
+//! when no output device is visible — "nothing measured" is a distinct answer from
+//! "measured and unsupported".
 
+mod asound;
+
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::process::ExitCode;
 use std::sync::mpsc;
@@ -23,22 +30,29 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde_json::{Value, json};
 
-const SCHEMA_VERSION: u64 = 1;
+const SCHEMA_VERSION: u64 = 2;
 const TRIAL_RATE: u32 = 48_000;
 const TRIAL_FRAMES: u32 = 256;
 const TRIAL_CHANNELS: u16 = 2;
+const CHANNEL_TRIALS: [u16; 4] = [2, 4, 6, 8];
 
 const USAGE: &str = "\
 dj-audio-probe — read-only audio device probe (ADR-002 / A05)
 
 Usage:
-  dj-audio-probe                     enumerate devices and run a short output trial
-  dj-audio-probe --list-only         enumeration only (no sound, no stream)
+  dj-audio-probe                     enumerate, probe channels, run a short timing trial
+  dj-audio-probe --list-only         enumeration and descriptors only (opens no stream)
   dj-audio-probe --json              machine-readable output
   dj-audio-probe --out FILE          write the report to FILE
-  dj-audio-probe --seconds N         trial length in seconds (default 2)
-  dj-audio-probe --silent            run the trial with silence instead of a 440 Hz tone
+  dj-audio-probe --seconds N         timing trial length in seconds (default 2)
+  dj-audio-probe --silent            timing trial with silence instead of a 440 Hz tone
   dj-audio-probe --help | --version
+
+What the sections mean:
+  USB descriptors  channel counts written in the hardware descriptor (authoritative)
+  CPAL             what the API reports; on ALSA these are plugin ranges, not hardware
+  channel trials   a real 48 kHz stream opened with 2/4/6/8 channels (measured)
+  pipewire         node/port names from pw-dump (how master/cue can be addressed)
 
 Exit codes:
   0  report produced and at least one output device was enumerated
@@ -93,34 +107,30 @@ impl Args {
     }
 }
 
-/// One enumerated output device, in the shape the report and the JSON share.
+// ---------------------------------------------------------------- CPAL layer
+
 #[derive(Debug, Clone)]
 struct OutputDevice {
     name: String,
     default: bool,
-    channels: Vec<u16>,
-    max_channels: u16,
+    plugin_channels: Vec<u16>,
     sample_rates: Vec<u32>,
     buffer_frames: Option<(u32, u32)>,
     sample_formats: Vec<String>,
-}
-
-fn configs_of(device: &cpal::Device) -> Vec<cpal::SupportedStreamConfigRange> {
-    match device.supported_output_configs() {
-        Ok(configs) => configs.collect(),
-        Err(_) => Vec::new(),
-    }
 }
 
 fn describe_device(device: &cpal::Device, default: &Option<String>) -> OutputDevice {
     let name = device
         .name()
         .unwrap_or_else(|_| "<unnamed device>".to_string());
-    let configs = configs_of(device);
+    let configs: Vec<cpal::SupportedStreamConfigRange> = match device.supported_output_configs() {
+        Ok(configs) => configs.collect(),
+        Err(_) => Vec::new(),
+    };
 
-    let mut channels: Vec<u16> = configs.iter().map(|c| c.channels()).collect();
-    channels.sort_unstable();
-    channels.dedup();
+    let mut plugin_channels: Vec<u16> = configs.iter().map(|c| c.channels()).collect();
+    plugin_channels.sort_unstable();
+    plugin_channels.dedup();
 
     let mut sample_rates: Vec<u32> = Vec::new();
     for config in &configs {
@@ -144,344 +154,14 @@ fn describe_device(device: &cpal::Device, default: &Option<String>) -> OutputDev
     sample_formats.sort();
     sample_formats.dedup();
 
-    let max_channels = channels.iter().copied().max().unwrap_or(0);
-
     OutputDevice {
         default: default.as_deref() == Some(name.as_str()),
         name,
-        channels,
-        max_channels,
+        plugin_channels,
         sample_rates,
         buffer_frames,
         sample_formats,
     }
-}
-
-/// Nearest-rank percentile of an already sorted slice.
-fn percentile(sorted: &[f64], p: f64) -> f64 {
-    if sorted.is_empty() {
-        return 0.0;
-    }
-    let rank = ((p / 100.0) * sorted.len() as f64).ceil() as usize;
-    let index = rank.saturating_sub(1).min(sorted.len() - 1);
-    sorted[index]
-}
-
-#[derive(Debug, Clone)]
-struct TrialReport {
-    device: String,
-    sample_rate: u32,
-    frames: u32,
-    channels: u16,
-    callbacks: usize,
-    avg_ms: f64,
-    p99_ms: f64,
-    max_ms: f64,
-    gaps: usize,
-    error: Option<String>,
-}
-
-impl TrialReport {
-    fn period_ms(&self) -> f64 {
-        f64::from(self.frames) * 1000.0 / f64::from(self.sample_rate)
-    }
-}
-
-/// Summary of callback start times: interval statistics plus a gap count.
-fn summarize(
-    device: &str,
-    timestamps_ns: &[u64],
-    frames: u32,
-    sample_rate: u32,
-    channels: u16,
-) -> TrialReport {
-    let mut intervals: Vec<f64> = timestamps_ns
-        .windows(2)
-        .map(|w| (w[1] - w[0]) as f64 / 1_000_000.0)
-        .collect();
-    intervals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-
-    let period = f64::from(frames) * 1000.0 / f64::from(sample_rate);
-    let gap_threshold = period * 1.5;
-    let gaps = intervals.iter().filter(|i| **i > gap_threshold).count();
-    let avg = if intervals.is_empty() {
-        0.0
-    } else {
-        intervals.iter().sum::<f64>() / intervals.len() as f64
-    };
-
-    TrialReport {
-        device: device.to_string(),
-        sample_rate,
-        frames,
-        channels,
-        callbacks: timestamps_ns.len(),
-        avg_ms: avg,
-        p99_ms: percentile(&intervals, 99.0),
-        max_ms: intervals.last().copied().unwrap_or(0.0),
-        gaps,
-        error: None,
-    }
-}
-
-fn run_trial(seconds: u64, silent: bool) -> TrialReport {
-    let host = cpal::default_host();
-    let device = match host.default_output_device() {
-        Some(device) => device,
-        None => {
-            return TrialReport {
-                device: "<no default output>".to_string(),
-                sample_rate: TRIAL_RATE,
-                frames: TRIAL_FRAMES,
-                channels: TRIAL_CHANNELS,
-                callbacks: 0,
-                avg_ms: 0.0,
-                p99_ms: 0.0,
-                max_ms: 0.0,
-                gaps: 0,
-                error: Some("no default output device".to_string()),
-            };
-        }
-    };
-
-    let name = device
-        .name()
-        .unwrap_or_else(|_| "<unnamed device>".to_string());
-
-    let config = cpal::StreamConfig {
-        channels: TRIAL_CHANNELS,
-        sample_rate: cpal::SampleRate(TRIAL_RATE),
-        buffer_size: cpal::BufferSize::Fixed(TRIAL_FRAMES),
-    };
-
-    let (tx, rx) = mpsc::channel::<u64>();
-    let started = Instant::now();
-    let mut phase: f32 = 0.0;
-    let step = std::f32::consts::TAU * 440.0 / TRIAL_RATE as f32;
-    // The probe is the one place where allocation and a mutex are acceptable: it is a
-    // measurement tool, not the audio path (the RT contract applies to dj-audio-core).
-    let data_fn = move |buffer: &mut [f32], _: &cpal::OutputCallbackInfo| {
-        let _ = tx.send(started.elapsed().as_nanos() as u64);
-        for frame in buffer.chunks_mut(usize::from(TRIAL_CHANNELS)) {
-            let sample = if silent { 0.0 } else { phase.sin() * 0.1 };
-            phase = (phase + step) % std::f32::consts::TAU;
-            for channel in frame.iter_mut() {
-                *channel = sample;
-            }
-        }
-    };
-    let err_fn = |err: cpal::StreamError| eprintln!("dj-audio-probe: stream error: {err}");
-
-    let stream = match device.build_output_stream(&config, data_fn, err_fn, None) {
-        Ok(stream) => stream,
-        Err(err) => {
-            return TrialReport {
-                device: name,
-                sample_rate: TRIAL_RATE,
-                frames: TRIAL_FRAMES,
-                channels: TRIAL_CHANNELS,
-                callbacks: 0,
-                avg_ms: 0.0,
-                p99_ms: 0.0,
-                max_ms: 0.0,
-                gaps: 0,
-                error: Some(format!("build_output_stream: {err}")),
-            };
-        }
-    };
-
-    if let Err(err) = stream.play() {
-        return TrialReport {
-            device: name,
-            sample_rate: TRIAL_RATE,
-            frames: TRIAL_FRAMES,
-            channels: TRIAL_CHANNELS,
-            callbacks: 0,
-            avg_ms: 0.0,
-            p99_ms: 0.0,
-            max_ms: 0.0,
-            gaps: 0,
-            error: Some(format!("play: {err}")),
-        };
-    }
-
-    let deadline = Instant::now() + Duration::from_secs(seconds);
-    let mut timestamps: Vec<u64> = Vec::with_capacity(2048);
-    while Instant::now() < deadline {
-        match rx.recv_timeout(Duration::from_millis(100)) {
-            Ok(ts) => timestamps.push(ts),
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
-        }
-    }
-    drop(stream);
-
-    summarize(&name, &timestamps, TRIAL_FRAMES, TRIAL_RATE, TRIAL_CHANNELS)
-}
-
-fn pipewire_snapshot() -> Value {
-    let run = |program: &str, args: &[&str]| -> Option<String> {
-        let output = std::process::Command::new(program)
-            .args(args)
-            .output()
-            .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        Some(String::from_utf8_lossy(&output.stdout).to_string())
-    };
-
-    let ports = run("pw-cli", &["ls", "Port"]);
-    let links = run("pw-link", &["-l"]);
-    json!({
-        "available": ports.is_some() || links.is_some(),
-        "ports": ports,
-        "links": links,
-    })
-}
-
-fn human_report(
-    hosts: &[(String, Vec<OutputDevice>)],
-    trial: Option<&TrialReport>,
-    pipewire: &Value,
-) -> String {
-    let mut out = String::new();
-    let _ = writeln!(out, "dj-audio-probe (schema {SCHEMA_VERSION})");
-    let _ = writeln!(out, "hosts: {}", hosts.len());
-
-    for (host_id, devices) in hosts {
-        let _ = writeln!(out, "\n[{host_id}] output devices: {}", devices.len());
-        for device in devices {
-            let _ = writeln!(
-                out,
-                "  - {}{}",
-                device.name,
-                if device.default { "  <-- default" } else { "" }
-            );
-            let _ = writeln!(out, "      channels: {:?}", device.channels);
-            let _ = writeln!(
-                out,
-                "      sample rates (min/max): {:?}",
-                device.sample_rates
-            );
-            let _ = writeln!(out, "      sample formats: {:?}", device.sample_formats);
-            match device.buffer_frames {
-                Some((min, max)) => {
-                    let _ = writeln!(out, "      buffer frames: {min}..{max}");
-                }
-                None => {
-                    let _ = writeln!(out, "      buffer frames: unspecified");
-                }
-            }
-            if device.max_channels > 2 {
-                let _ = writeln!(
-                    out,
-                    "      >2 channels: a separate cue/booth route may be addressable here"
-                );
-            }
-        }
-    }
-
-    match trial {
-        Some(trial) => {
-            let _ = writeln!(
-                out,
-                "\ntrial: {} @ {} Hz / {} frames / {} ch",
-                trial.device, trial.sample_rate, trial.frames, trial.channels
-            );
-            let _ = writeln!(
-                out,
-                "  callbacks: {}  avg {:.3} ms  p99 {:.3} ms  max {:.3} ms  (period {:.3} ms)",
-                trial.callbacks,
-                trial.avg_ms,
-                trial.p99_ms,
-                trial.max_ms,
-                trial.period_ms()
-            );
-            let _ = writeln!(out, "  gaps > 1.5x period: {}", trial.gaps);
-            if let Some(error) = &trial.error {
-                let _ = writeln!(out, "  error: {error}");
-            }
-        }
-        None => {
-            let _ = writeln!(out, "\ntrial: skipped (--list-only)");
-        }
-    }
-
-    let _ = writeln!(
-        out,
-        "\npipewire snapshot: {}",
-        if pipewire["available"].as_bool().unwrap_or(false) {
-            "captured (see JSON or run pw-cli ls Port yourself)"
-        } else {
-            "unavailable (pw-cli/pw-link not running or not installed)"
-        }
-    );
-    out
-}
-
-fn json_report(
-    hosts: &[(String, Vec<OutputDevice>)],
-    trial: Option<&TrialReport>,
-    pipewire: &Value,
-) -> Value {
-    let host_values: Vec<Value> = hosts
-        .iter()
-        .map(|(host_id, devices)| {
-            let device_values: Vec<Value> = devices
-                .iter()
-                .map(|device| {
-                    json!({
-                        "name": device.name,
-                        "default": device.default,
-                        "channels": device.channels,
-                        "max_channels": device.max_channels,
-                        "sample_rates": device.sample_rates,
-                        "buffer_frames": device.buffer_frames.map(|(min, max)| json!({"min": min, "max": max})),
-                        "sample_formats": device.sample_formats,
-                    })
-                })
-                .collect();
-            json!({"host": host_id, "devices": device_values})
-        })
-        .collect();
-
-    let trial_value = match trial {
-        Some(trial) => json!({
-            "device": trial.device,
-            "sample_rate": trial.sample_rate,
-            "frames": trial.frames,
-            "channels": trial.channels,
-            "callbacks": trial.callbacks,
-            "period_ms": trial.period_ms(),
-            "avg_ms": trial.avg_ms,
-            "p99_ms": trial.p99_ms,
-            "max_ms": trial.max_ms,
-            "gaps_over_1_5x_period": trial.gaps,
-            "error": trial.error,
-        }),
-        None => Value::Null,
-    };
-
-    let output_count: usize = hosts.iter().map(|(_, devices)| devices.len()).sum();
-    let multichannel = hosts
-        .iter()
-        .flat_map(|(_, devices)| devices.iter())
-        .filter(|device| device.max_channels > 2)
-        .count();
-
-    json!({
-        "schema_version": SCHEMA_VERSION,
-        "generated_at_unix": SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0),
-        "hosts": host_values,
-        "output_devices": output_count,
-        "devices_with_more_than_2_channels": multichannel,
-        "trial": trial_value,
-        "pipewire": pipewire,
-    })
 }
 
 fn collect_hosts() -> Vec<(String, Vec<OutputDevice>)> {
@@ -511,6 +191,673 @@ fn collect_hosts() -> Vec<(String, Vec<OutputDevice>)> {
     hosts
 }
 
+// --------------------------------------------------------- channel trials
+
+#[derive(Debug, Clone)]
+struct ChannelTrial {
+    device: String,
+    channels: u16,
+    ok: bool,
+    callbacks: usize,
+    buffer: String,
+    error: Option<String>,
+}
+
+fn attempt_stream(
+    device: &cpal::Device,
+    channels: u16,
+    buffer: cpal::BufferSize,
+) -> Result<usize, String> {
+    let config = cpal::StreamConfig {
+        channels,
+        sample_rate: cpal::SampleRate(TRIAL_RATE),
+        buffer_size: buffer,
+    };
+    let (tx, rx) = mpsc::channel::<()>();
+
+    // Silence only: these trials answer "can this channel count be opened",
+    // they must not surprise the listener with a tone.
+    let data_fn = move |out: &mut [f32], _: &cpal::OutputCallbackInfo| {
+        for sample in out.iter_mut() {
+            *sample = 0.0;
+        }
+        let _ = tx.send(());
+    };
+
+    let stream = device
+        .build_output_stream(
+            &config,
+            data_fn,
+            |err| eprintln!("dj-audio-probe: stream error: {err}"),
+            None,
+        )
+        .map_err(|err| err.to_string())?;
+    stream.play().map_err(|err| err.to_string())?;
+
+    let deadline = Instant::now() + Duration::from_millis(150);
+    let mut callbacks = 0usize;
+    while Instant::now() < deadline {
+        match rx.recv_timeout(Duration::from_millis(20)) {
+            Ok(()) => callbacks += 1,
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    drop(stream);
+    Ok(callbacks)
+}
+
+fn probe_channels(device: &cpal::Device, name: &str, channels: u16) -> ChannelTrial {
+    let mut result = ChannelTrial {
+        device: name.to_string(),
+        channels,
+        ok: false,
+        callbacks: 0,
+        buffer: format!("{TRIAL_FRAMES}"),
+        error: None,
+    };
+
+    match attempt_stream(device, channels, cpal::BufferSize::Fixed(TRIAL_FRAMES)) {
+        Ok(callbacks) if callbacks > 0 => {
+            result.ok = true;
+            result.callbacks = callbacks;
+            return result;
+        }
+        Ok(_) => result.error = Some("stream opened but produced no callbacks".to_string()),
+        Err(err) => result.error = Some(err),
+    }
+
+    // Some devices reject a fixed buffer size; retry with the backend default.
+    match attempt_stream(device, channels, cpal::BufferSize::Default) {
+        Ok(callbacks) if callbacks > 0 => {
+            result.ok = true;
+            result.callbacks = callbacks;
+            result.buffer = "default".to_string();
+            result.error = None;
+        }
+        Ok(_) => {}
+        Err(err) => {
+            if result.error.is_none() {
+                result.error = Some(err);
+            }
+        }
+    }
+    result
+}
+
+fn channel_trials() -> Vec<ChannelTrial> {
+    let host = cpal::default_host();
+    let devices: Vec<cpal::Device> = match host.output_devices() {
+        Ok(iter) => iter.collect(),
+        Err(_) => return Vec::new(),
+    };
+
+    let mut trials = Vec::new();
+    for device in devices {
+        let name = device
+            .name()
+            .unwrap_or_else(|_| "<unnamed device>".to_string());
+        for channels in CHANNEL_TRIALS {
+            trials.push(probe_channels(&device, &name, channels));
+        }
+    }
+    trials
+}
+
+// ------------------------------------------------------------ timing trial
+
+#[derive(Debug, Clone)]
+struct TrialReport {
+    device: String,
+    sample_rate: u32,
+    frames: u32,
+    channels: u16,
+    callbacks: usize,
+    avg_ms: f64,
+    p99_ms: f64,
+    max_ms: f64,
+    gaps: usize,
+    error: Option<String>,
+}
+
+impl TrialReport {
+    fn period_ms(&self) -> f64 {
+        f64::from(self.frames) * 1000.0 / f64::from(self.sample_rate)
+    }
+}
+
+/// Nearest-rank percentile of an already sorted slice.
+fn percentile(sorted: &[f64], p: f64) -> f64 {
+    if sorted.is_empty() {
+        return 0.0;
+    }
+    let rank = ((p / 100.0) * sorted.len() as f64).ceil() as usize;
+    let index = rank.saturating_sub(1).min(sorted.len() - 1);
+    sorted[index]
+}
+
+fn summarize(
+    device: &str,
+    timestamps_ns: &[u64],
+    frames: u32,
+    sample_rate: u32,
+    channels: u16,
+) -> TrialReport {
+    let mut intervals: Vec<f64> = timestamps_ns
+        .windows(2)
+        .map(|w| (w[1] - w[0]) as f64 / 1_000_000.0)
+        .collect();
+    intervals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+    let period = f64::from(frames) * 1000.0 / f64::from(sample_rate);
+    let gaps = intervals.iter().filter(|i| **i > period * 1.5).count();
+    let avg = if intervals.is_empty() {
+        0.0
+    } else {
+        intervals.iter().sum::<f64>() / intervals.len() as f64
+    };
+
+    TrialReport {
+        device: device.to_string(),
+        sample_rate,
+        frames,
+        channels,
+        callbacks: timestamps_ns.len(),
+        avg_ms: avg,
+        p99_ms: percentile(&intervals, 99.0),
+        max_ms: intervals.last().copied().unwrap_or(0.0),
+        gaps,
+        error: None,
+    }
+}
+
+fn failed_trial(device: String, error: String) -> TrialReport {
+    TrialReport {
+        device,
+        sample_rate: TRIAL_RATE,
+        frames: TRIAL_FRAMES,
+        channels: TRIAL_CHANNELS,
+        callbacks: 0,
+        avg_ms: 0.0,
+        p99_ms: 0.0,
+        max_ms: 0.0,
+        gaps: 0,
+        error: Some(error),
+    }
+}
+
+fn run_trial(seconds: u64, silent: bool) -> TrialReport {
+    let host = cpal::default_host();
+    let Some(device) = host.default_output_device() else {
+        return failed_trial(
+            "<no default output>".to_string(),
+            "no default output device".to_string(),
+        );
+    };
+    let name = device
+        .name()
+        .unwrap_or_else(|_| "<unnamed device>".to_string());
+
+    let config = cpal::StreamConfig {
+        channels: TRIAL_CHANNELS,
+        sample_rate: cpal::SampleRate(TRIAL_RATE),
+        buffer_size: cpal::BufferSize::Fixed(TRIAL_FRAMES),
+    };
+
+    let (tx, rx) = mpsc::channel::<u64>();
+    let started = Instant::now();
+    let mut phase: f32 = 0.0;
+    let step = std::f32::consts::TAU * 440.0 / TRIAL_RATE as f32;
+    // The probe is the one place where a mutex-free channel and a small buffer are
+    // acceptable: it is a measurement tool, not the audio path (the RT contract
+    // applies to dj-audio-core).
+    let data_fn = move |buffer: &mut [f32], _: &cpal::OutputCallbackInfo| {
+        let _ = tx.send(started.elapsed().as_nanos() as u64);
+        for frame in buffer.chunks_mut(usize::from(TRIAL_CHANNELS)) {
+            let sample = if silent { 0.0 } else { phase.sin() * 0.1 };
+            phase = (phase + step) % std::f32::consts::TAU;
+            for channel in frame.iter_mut() {
+                *channel = sample;
+            }
+        }
+    };
+
+    let stream = match device.build_output_stream(
+        &config,
+        data_fn,
+        |err| eprintln!("dj-audio-probe: stream error: {err}"),
+        None,
+    ) {
+        Ok(stream) => stream,
+        Err(err) => return failed_trial(name, format!("build_output_stream: {err}")),
+    };
+
+    if let Err(err) = stream.play() {
+        return failed_trial(name, format!("play: {err}"));
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(seconds);
+    let mut timestamps: Vec<u64> = Vec::with_capacity(2048);
+    while Instant::now() < deadline {
+        match rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(ts) => timestamps.push(ts),
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    drop(stream);
+
+    summarize(&name, &timestamps, TRIAL_FRAMES, TRIAL_RATE, TRIAL_CHANNELS)
+}
+
+// --------------------------------------------------------------- PipeWire
+
+#[derive(Debug, Clone)]
+struct PwNode {
+    id: u64,
+    name: String,
+    media_class: String,
+    channels: Option<u64>,
+    out_ports: Vec<String>,
+    in_ports: Vec<String>,
+}
+
+fn run_capture(program: &str, args: &[&str]) -> Option<String> {
+    let output = std::process::Command::new(program)
+        .args(args)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn summarize_pw_dump(dump: &Value) -> Vec<PwNode> {
+    let Some(objects) = dump.as_array() else {
+        return Vec::new();
+    };
+
+    let mut nodes: BTreeMap<u64, PwNode> = BTreeMap::new();
+    let mut ports: Vec<(u64, String, String)> = Vec::new();
+
+    for object in objects {
+        let Some(kind) = object["type"].as_str() else {
+            continue;
+        };
+        let Some(id) = object["id"].as_u64() else {
+            continue;
+        };
+        let props = &object["info"]["props"];
+
+        match kind {
+            "PipeWire:Interface:Node" => {
+                let name = props["node.name"]
+                    .as_str()
+                    .or_else(|| props["node.description"].as_str())
+                    .unwrap_or("<unnamed node>")
+                    .to_string();
+                let media_class = props["media.class"].as_str().unwrap_or("").to_string();
+                let channels = props["audio.channels"].as_u64();
+                nodes.insert(
+                    id,
+                    PwNode {
+                        id,
+                        name,
+                        media_class,
+                        channels,
+                        out_ports: Vec::new(),
+                        in_ports: Vec::new(),
+                    },
+                );
+            }
+            "PipeWire:Interface:Port" => {
+                let Some(node_id) = props["node.id"].as_u64() else {
+                    continue;
+                };
+                let direction = props["port.direction"].as_str().unwrap_or("");
+                let name = props["port.name"]
+                    .as_str()
+                    .or_else(|| props["audio.channel"].as_str())
+                    .unwrap_or("")
+                    .to_string();
+                ports.push((node_id, direction.to_string(), name));
+            }
+            _ => {}
+        }
+    }
+
+    for (node_id, direction, name) in ports {
+        if let Some(node) = nodes.get_mut(&node_id) {
+            if direction == "out" {
+                node.out_ports.push(name);
+            } else {
+                node.in_ports.push(name);
+            }
+        }
+    }
+
+    nodes.into_values().collect()
+}
+
+fn pipewire_nodes() -> Vec<PwNode> {
+    let Some(text) = run_capture("pw-dump", &[]) else {
+        return Vec::new();
+    };
+    match serde_json::from_str::<Value>(&text) {
+        Ok(dump) => summarize_pw_dump(&dump),
+        Err(_) => Vec::new(),
+    }
+}
+
+// ---------------------------------------------------------------- reports
+
+fn human_report(
+    hosts: &[(String, Vec<OutputDevice>)],
+    cards: &[asound::UsbCard],
+    trials: &[ChannelTrial],
+    trial: Option<&TrialReport>,
+    nodes: &[PwNode],
+) -> String {
+    let mut out = String::new();
+    let _ = writeln!(out, "dj-audio-probe (schema {SCHEMA_VERSION})");
+
+    let _ = writeln!(
+        out,
+        "\n== USB descriptors (/proc/asound/card*/stream0) — hardware truth =="
+    );
+    if cards.is_empty() {
+        let _ = writeln!(out, "  none readable");
+    }
+    for card in cards {
+        let _ = writeln!(
+            out,
+            "  {} [{}] playback max {} ch, capture max {} ch",
+            card.name,
+            card.id,
+            card.playback_max_channels(),
+            card.capture_max_channels()
+        );
+        for altset in &card.playback {
+            let _ = writeln!(
+                out,
+                "      playback: {} ch, {}, rates {:?}, 48 kHz {}{}",
+                altset.channels,
+                altset.format.as_deref().unwrap_or("format?"),
+                altset.rates,
+                if altset.supports_rate(TRIAL_RATE) {
+                    "yes"
+                } else {
+                    "NO"
+                },
+                altset
+                    .channel_map
+                    .as_deref()
+                    .map(|map| format!(", map {map}"))
+                    .unwrap_or_default()
+            );
+        }
+        for altset in &card.capture {
+            let _ = writeln!(
+                out,
+                "      capture:  {} ch, {}, rates {:?}",
+                altset.channels,
+                altset.format.as_deref().unwrap_or("format?"),
+                altset.rates
+            );
+        }
+    }
+
+    let _ = writeln!(
+        out,
+        "\n== CPAL enumeration (ALSA plugin layer: ranges are API limits, not hardware) =="
+    );
+    let _ = writeln!(out, "hosts: {}", hosts.len());
+    for (host_id, devices) in hosts {
+        let _ = writeln!(out, "[{host_id}] output devices: {}", devices.len());
+        for device in devices {
+            let _ = writeln!(
+                out,
+                "  - {}{}",
+                device.name,
+                if device.default { "  <-- default" } else { "" }
+            );
+            let _ = writeln!(out, "      plugin channels: {:?}", device.plugin_channels);
+            let _ = writeln!(out, "      plugin rates:    {:?}", device.sample_rates);
+            let _ = writeln!(out, "      sample formats:  {:?}", device.sample_formats);
+            match device.buffer_frames {
+                Some((min, max)) => {
+                    let _ = writeln!(out, "      buffer frames:   {min}..{max}");
+                }
+                None => {
+                    let _ = writeln!(out, "      buffer frames:   unspecified");
+                }
+            }
+        }
+    }
+
+    let _ = writeln!(
+        out,
+        "\n== channel trials (48 kHz, real stream open, silence) =="
+    );
+    if trials.is_empty() {
+        let _ = writeln!(out, "  skipped or no output device");
+    }
+    let mut by_device: BTreeMap<&str, Vec<&ChannelTrial>> = BTreeMap::new();
+    for trial in trials {
+        by_device
+            .entry(trial.device.as_str())
+            .or_default()
+            .push(trial);
+    }
+    for (device, device_trials) in by_device {
+        let summary: Vec<String> = device_trials
+            .iter()
+            .map(|trial| {
+                if trial.ok {
+                    format!("{}ch ok", trial.channels)
+                } else {
+                    format!("{}ch FAIL", trial.channels)
+                }
+            })
+            .collect();
+        let _ = writeln!(out, "  {device}: {}", summary.join(", "));
+        for trial in device_trials.iter().filter(|trial| !trial.ok) {
+            if let Some(error) = &trial.error {
+                let _ = writeln!(out, "      {}ch: {error}", trial.channels);
+            }
+        }
+    }
+
+    let _ = writeln!(out, "\n== timing trial ==");
+    match trial {
+        Some(trial) => {
+            let _ = writeln!(
+                out,
+                "  {} @ {} Hz / {} frames / {} ch",
+                trial.device, trial.sample_rate, trial.frames, trial.channels
+            );
+            let _ = writeln!(
+                out,
+                "  callbacks {}  avg {:.3} ms  p99 {:.3} ms  max {:.3} ms  (period {:.3} ms)",
+                trial.callbacks,
+                trial.avg_ms,
+                trial.p99_ms,
+                trial.max_ms,
+                trial.period_ms()
+            );
+            let _ = writeln!(out, "  gaps > 1.5x period: {}", trial.gaps);
+            if let Some(error) = &trial.error {
+                let _ = writeln!(out, "  error: {error}");
+            }
+        }
+        None => {
+            let _ = writeln!(out, "  skipped (--list-only or no output device)");
+        }
+    }
+
+    let _ = writeln!(out, "\n== PipeWire nodes (pw-dump) ==");
+    if nodes.is_empty() {
+        let _ = writeln!(
+            out,
+            "  unavailable (no running session, or pw-dump missing)"
+        );
+    }
+    for node in nodes
+        .iter()
+        .filter(|node| node.media_class.starts_with("Audio/"))
+    {
+        let _ = writeln!(
+            out,
+            "  [{}] {} — {}, {} ch",
+            node.id,
+            node.name,
+            node.media_class,
+            node.channels
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "?".to_string())
+        );
+        if !node.out_ports.is_empty() {
+            let _ = writeln!(out, "      out: {}", node.out_ports.join(" "));
+        }
+        if !node.in_ports.is_empty() {
+            let _ = writeln!(out, "      in:  {}", node.in_ports.join(" "));
+        }
+    }
+    out
+}
+
+fn json_report(
+    hosts: &[(String, Vec<OutputDevice>)],
+    cards: &[asound::UsbCard],
+    trials: &[ChannelTrial],
+    trial: Option<&TrialReport>,
+    nodes: &[PwNode],
+) -> Value {
+    let host_values: Vec<Value> = hosts
+        .iter()
+        .map(|(host_id, devices)| {
+            let device_values: Vec<Value> = devices
+                .iter()
+                .map(|device| {
+                    json!({
+                        "name": device.name,
+                        "default": device.default,
+                        "plugin_channels": device.plugin_channels,
+                        "plugin_sample_rates": device.sample_rates,
+                        "buffer_frames": device.buffer_frames.map(|(min, max)| json!({"min": min, "max": max})),
+                        "sample_formats": device.sample_formats,
+                    })
+                })
+                .collect();
+            json!({"host": host_id, "devices": device_values})
+        })
+        .collect();
+
+    let card_values: Vec<Value> = cards
+        .iter()
+        .map(|card| {
+            let playback: Vec<Value> = card
+                .playback
+                .iter()
+                .map(|altset| {
+                    json!({
+                        "interface": altset.interface,
+                        "altset": altset.altset,
+                        "channels": altset.channels,
+                        "format": altset.format,
+                        "rates": altset.rates,
+                        "channel_map": altset.channel_map,
+                        "supports_48k": altset.supports_rate(TRIAL_RATE),
+                    })
+                })
+                .collect();
+            let capture: Vec<Value> = card
+                .capture
+                .iter()
+                .map(|altset| {
+                    json!({
+                        "interface": altset.interface,
+                        "altset": altset.altset,
+                        "channels": altset.channels,
+                        "format": altset.format,
+                        "rates": altset.rates,
+                        "channel_map": altset.channel_map,
+                    })
+                })
+                .collect();
+            json!({
+                "id": card.id,
+                "name": card.name,
+                "playback_max_channels": card.playback_max_channels(),
+                "capture_max_channels": card.capture_max_channels(),
+                "playback": playback,
+                "capture": capture,
+            })
+        })
+        .collect();
+
+    let trial_values: Vec<Value> = trials
+        .iter()
+        .map(|trial| {
+            json!({
+                "device": trial.device,
+                "channels": trial.channels,
+                "ok": trial.ok,
+                "callbacks": trial.callbacks,
+                "buffer": trial.buffer,
+                "error": trial.error,
+            })
+        })
+        .collect();
+
+    let node_values: Vec<Value> = nodes
+        .iter()
+        .map(|node| {
+            json!({
+                "id": node.id,
+                "name": node.name,
+                "media_class": node.media_class,
+                "channels": node.channels,
+                "out_ports": node.out_ports,
+                "in_ports": node.in_ports,
+            })
+        })
+        .collect();
+
+    let timing = match trial {
+        Some(trial) => json!({
+            "device": trial.device,
+            "sample_rate": trial.sample_rate,
+            "frames": trial.frames,
+            "channels": trial.channels,
+            "callbacks": trial.callbacks,
+            "period_ms": trial.period_ms(),
+            "avg_ms": trial.avg_ms,
+            "p99_ms": trial.p99_ms,
+            "max_ms": trial.max_ms,
+            "gaps_over_1_5x_period": trial.gaps,
+            "error": trial.error,
+        }),
+        None => Value::Null,
+    };
+
+    let output_count: usize = hosts.iter().map(|(_, devices)| devices.len()).sum();
+
+    json!({
+        "schema_version": SCHEMA_VERSION,
+        "generated_at_unix": SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+        "usb_cards": card_values,
+        "cpal": {"hosts": host_values, "output_devices": output_count},
+        "channel_trials": trial_values,
+        "timing_trial": timing,
+        "pipewire_nodes": node_values,
+    })
+}
+
 fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
 
@@ -537,16 +884,24 @@ fn main() -> ExitCode {
     };
 
     let hosts = collect_hosts();
+    let cards = asound::read_cards("/proc/asound");
     let output_devices: usize = hosts.iter().map(|(_, devices)| devices.len()).sum();
-    let trial = if args.list_only || output_devices == 0 {
-        None
+
+    let (channel_trial_results, timing_trial) = if args.list_only || output_devices == 0 {
+        (Vec::new(), None)
     } else {
-        Some(run_trial(args.seconds, args.silent))
+        (channel_trials(), Some(run_trial(args.seconds, args.silent)))
     };
-    let pipewire = pipewire_snapshot();
+    let nodes = pipewire_nodes();
 
     let rendered = if args.json {
-        let value = json_report(&hosts, trial.as_ref(), &pipewire);
+        let value = json_report(
+            &hosts,
+            &cards,
+            &channel_trial_results,
+            timing_trial.as_ref(),
+            &nodes,
+        );
         match serde_json::to_string_pretty(&value) {
             Ok(text) => text,
             Err(err) => {
@@ -555,7 +910,13 @@ fn main() -> ExitCode {
             }
         }
     } else {
-        human_report(&hosts, trial.as_ref(), &pipewire)
+        human_report(
+            &hosts,
+            &cards,
+            &channel_trial_results,
+            timing_trial.as_ref(),
+            &nodes,
+        )
     };
 
     match &args.out {
@@ -571,8 +932,8 @@ fn main() -> ExitCode {
 
     if output_devices == 0 {
         eprintln!(
-            "dj-audio-probe: no output device is visible — nothing was measured (running as a user \
-             without a session? no PipeWire/ALSA device?)"
+            "dj-audio-probe: no output device is visible — nothing was measured (run this in your \
+             desktop session, with PipeWire running)"
         );
         ExitCode::from(3)
     } else {
@@ -631,7 +992,6 @@ mod tests {
 
     #[test]
     fn summarize_counts_intervals_and_gaps() {
-        // 5.33 ms period: five "good" intervals, then one 20 ms stall.
         let ns = |ms: f64| (ms * 1_000_000.0) as u64;
         let stamps = [0.0, 5.33, 10.66, 15.99, 21.32, 26.65, 46.65]
             .iter()
@@ -645,24 +1005,71 @@ mod tests {
     }
 
     #[test]
-    fn json_report_has_the_documented_shape() {
+    fn pw_dump_is_summarized_into_nodes_with_ports() {
+        let dump: Value = serde_json::from_str(
+            r#"[
+              {"id": 40, "type": "PipeWire:Interface:Node",
+               "info": {"props": {"node.name": "alsa_output.usb-S4", "media.class": "Audio/Sink", "audio.channels": 4}}},
+              {"id": 41, "type": "PipeWire:Interface:Port",
+               "info": {"props": {"node.id": 40, "port.direction": "in", "audio.channel": "FL"}}},
+              {"id": 42, "type": "PipeWire:Interface:Port",
+               "info": {"props": {"node.id": 40, "port.direction": "in", "audio.channel": "FR"}}},
+              {"id": 43, "type": "PipeWire:Interface:Port",
+               "info": {"props": {"node.id": 40, "port.direction": "in", "audio.channel": "AUX0"}}}
+            ]"#,
+        )
+        .unwrap_or(Value::Null);
+        let nodes = summarize_pw_dump(&dump);
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].name, "alsa_output.usb-S4");
+        assert_eq!(nodes[0].channels, Some(4));
+        assert_eq!(nodes[0].in_ports, vec!["FL", "FR", "AUX0"]);
+        assert!(nodes[0].out_ports.is_empty());
+    }
+
+    #[test]
+    fn json_report_carries_all_three_sources() {
         let hosts = vec![(
             "Alsa".to_string(),
             vec![OutputDevice {
-                name: "S4 MK3".to_string(),
+                name: "default".to_string(),
                 default: true,
-                channels: vec![2, 8],
-                max_channels: 8,
-                sample_rates: vec![44_100, 48_000],
-                buffer_frames: Some((16, 8192)),
+                plugin_channels: vec![1, 32],
+                sample_rates: vec![1, 384_000],
+                buffer_frames: Some((1, 4_194_304)),
                 sample_formats: vec!["F32".to_string()],
             }],
         )];
-        let value = json_report(&hosts, None, &json!({"available": false}));
-        assert_eq!(value["schema_version"], 1);
-        assert_eq!(value["output_devices"], 1);
-        assert_eq!(value["devices_with_more_than_2_channels"], 1);
-        assert_eq!(value["hosts"][0]["devices"][0]["channels"][1], 8);
-        assert!(value["trial"].is_null());
+        let cards = vec![asound::UsbCard {
+            id: "card4".to_string(),
+            name: "Traktor Kontrol S4 MK3".to_string(),
+            playback: vec![asound::Altset {
+                interface: Some(1),
+                altset: Some(1),
+                channels: 4,
+                format: Some("S32_LE".to_string()),
+                rates: vec![44_100, 48_000],
+                channel_map: Some("FL FR FC LFE".to_string()),
+                endpoint: None,
+            }],
+            capture: Vec::new(),
+        }];
+        let trials = vec![ChannelTrial {
+            device: "default".to_string(),
+            channels: 4,
+            ok: true,
+            callbacks: 12,
+            buffer: "256".to_string(),
+            error: None,
+        }];
+        let value = json_report(&hosts, &cards, &trials, None, &[]);
+        assert_eq!(value["schema_version"], 2);
+        assert_eq!(value["usb_cards"][0]["playback_max_channels"], 4);
+        assert_eq!(
+            value["usb_cards"][0]["playback"][0]["channel_map"],
+            "FL FR FC LFE"
+        );
+        assert_eq!(value["channel_trials"][0]["ok"], true);
+        assert!(value["timing_trial"].is_null());
     }
 }

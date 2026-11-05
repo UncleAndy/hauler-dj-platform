@@ -1,0 +1,201 @@
+warning: Git tree '/home/hermes/projects/RUST/Hauler-DJ-Platform' is dirty
+dj-platform dev shell — rust 1.95.0, qt 6.11.2, cmake 4.1.6
+  cargo test --workspace    bash scripts/check.sh    bash scripts/ui.sh --smoke
+{
+  "channel_trials": [],
+  "cpal": {
+    "hosts": [
+      {
+        "devices": [],
+        "host": "Alsa"
+      }
+    ],
+    "output_devices": 0
+  },
+  "generated_at_unix": 1793859034,
+  "pipewire_nodes": [],
+  "schema_version": 2,
+  "timing_trial": null,
+  "usb_cards": [
+    {
+      "capture": [
+        {
+          "altset": 1,
+          "channel_map": "FL FR",
+          "channels": 2,
+          "format": "S32_LE",
+          "interface": 2,
+          "rates": [
+            44100,
+            48000,
+            88200,
+            96000,
+            176400,
+            192000
+          ]
+        }
+      ],
+      "capture_max_channels": 2,
+      "id": "card0",
+      "name": "Yamaha Corporation Steinberg UR22C",
+      "playback": [
+        {
+          "altset": 1,
+          "channel_map": "FL FR",
+          "channels": 2,
+          "format": "S32_LE",
+          "interface": 1,
+          "rates": [
+            44100,
+            48000,
+            88200,
+            96000,
+            176400,
+            192000
+          ],
+          "supports_48k": true
+        }
+      ],
+      "playback_max_channels": 2
+    },
+    {
+      "capture": [
+        {
+          "altset": 1,
+          "channel_map": "FL FR",
+          "channels": 2,
+          "format": "S16_LE",
+          "interface": 4,
+          "rates": [
+            11025,
+            44100,
+            48000
+          ]
+        }
+      ],
+      "capture_max_channels": 2,
+      "id": "card1",
+      "name": "Sonix Technology Co., Ltd. REDRAGON Live Camera",
+      "playback": [],
+      "playback_max_channels": 0
+    },
+    {
+      "capture": [
+        {
+          "altset": 1,
+          "channel_map": "FL FR",
+          "channels": 2,
+          "format": "S16_LE",
+          "interface": 2,
+          "rates": [
+            8000,
+            11025,
+            16000,
+            22050,
+            32000,
+            44100,
+            48000
+          ]
+        },
+        {
+          "altset": 2,
+          "channel_map": "FL FR",
+          "channels": 2,
+          "format": "S24_3LE",
+          "interface": 2,
+          "rates": [
+            8000,
+            11025,
+            16000,
+            22050,
+            32000,
+            44100,
+            48000
+          ]
+        },
+        {
+          "altset": 3,
+          "channel_map": "FL FR",
+          "channels": 2,
+          "format": "S16_LE",
+          "interface": 2,
+          "rates": [
+            88200,
+            96000
+          ]
+        },
+        {
+          "altset": 4,
+          "channel_map": "FL FR",
+          "channels": 2,
+          "format": "S24_3LE",
+          "interface": 2,
+          "rates": [
+            88200,
+            96000
+          ]
+        }
+      ],
+      "capture_max_channels": 2,
+      "id": "card2",
+      "name": "the t.bone SC460 USB the t.bone SC460 USB",
+      "playback": [
+        {
+          "altset": 1,
+          "channel_map": "FL FR",
+          "channels": 2,
+          "format": "S16_LE",
+          "interface": 1,
+          "rates": [
+            8000,
+            11025,
+            16000,
+            22050,
+            32000,
+            44100,
+            48000
+          ],
+          "supports_48k": true
+        }
+      ],
+      "playback_max_channels": 2
+    },
+    {
+      "capture": [
+        {
+          "altset": 1,
+          "channel_map": "FL FR FC LFE RL RR FLC FRC",
+          "channels": 8,
+          "format": "S32_LE",
+          "interface": 2,
+          "rates": [
+            44100,
+            48000,
+            88200,
+            96000
+          ]
+        }
+      ],
+      "capture_max_channels": 8,
+      "id": "card4",
+      "name": "Native Instruments Traktor Kontrol S4 MK3",
+      "playback": [
+        {
+          "altset": 1,
+          "channel_map": "FL FR FC LFE",
+          "channels": 4,
+          "format": "S32_LE",
+          "interface": 1,
+          "rates": [
+            44100,
+            48000,
+            88200,
+            96000
+          ],
+          "supports_48k": true
+        }
+      ],
+      "playback_max_channels": 4
+    }
+  ]
+}
