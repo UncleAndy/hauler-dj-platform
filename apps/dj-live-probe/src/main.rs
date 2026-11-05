@@ -28,7 +28,7 @@ dj-live-probe — play through the system output and report the callback
 Usage:
   dj-live-probe [--file PATH] [--device SUBSTR] [--seconds N] [--block N]
                 [--rate HZ] [--tone-hz HZ] [--gain G] [--cache-dir DIR]
-                [--out FILE] [--progress-seconds N] [--loop]
+                [--out FILE] [--progress-seconds N] [--loop] [--loop-seconds N]
 
 Defaults: default output device, 10 s, block 256, tone 440 Hz, gain 0.25.
 Without --file a pure tone is played, so the device path can be checked alone.
@@ -72,6 +72,8 @@ struct Options {
     out: Option<PathBuf>,
     progress_seconds: f64,
     loop_track: bool,
+    loop_seconds: Option<f64>,
+    buffered: Arc<AtomicU64>,
 }
 
 fn run(argv: &[String]) -> Result<String, Error> {
@@ -96,6 +98,8 @@ fn run(argv: &[String]) -> Result<String, Error> {
         out: None,
         progress_seconds: 60.0,
         loop_track: false,
+        loop_seconds: None,
+        buffered: Arc::new(AtomicU64::new(0)),
     };
 
     let mut index = 0;
@@ -155,6 +159,11 @@ fn run(argv: &[String]) -> Result<String, Error> {
             "--loop" => {
                 options.loop_track = true;
                 index += 1;
+            }
+            "--loop-seconds" => {
+                options.loop_seconds = Some(number("--loop-seconds")?);
+                options.loop_track = true;
+                index += 2;
             }
             other => return Err(Error::Usage(format!("unknown option {other:?}"))),
         }
@@ -221,10 +230,18 @@ fn run(argv: &[String]) -> Result<String, Error> {
             // A whole-track loop keeps the real path busy for the whole run instead of rendering
             // silence once the file ends.
             if options.loop_track
-                && let Some(frames) = info.frames
-                && let Some(region) = dj_domain::FrameRange::new(0, frames)
+                && let Some(total) = info.frames
             {
-                deck.set_loop(Some(region));
+                // A whole-track loop by default; --loop-seconds narrows it to a musical loop, which
+                // is where the seam is audible and where the capture buffer has to prove itself.
+                let length = match options.loop_seconds {
+                    Some(seconds) => (seconds.max(0.0) * f64::from(info.sample_rate)) as u64,
+                    None => total,
+                };
+                let end = length.min(total);
+                if let Some(region) = dj_domain::FrameRange::new(0, end) {
+                    deck.set_loop(Some(region));
+                }
             }
             deck.play();
 
@@ -235,6 +252,7 @@ fn run(argv: &[String]) -> Result<String, Error> {
                 options.gain,
                 Arc::clone(&underruns),
                 Arc::clone(&loop_wraps),
+                Arc::clone(&options.buffered),
             ))
         }
         None => Box::new(ToneRenderer::new(options.tone_hz, rate, options.gain)),
@@ -351,6 +369,8 @@ fn report_json(
         },
         "source": options.file.as_ref().map(|path| path.display().to_string()),
         "looped": options.loop_track,
+        "loop_seconds": options.loop_seconds,
+        "loop_buffered": options.buffered.load(Ordering::Relaxed) == 1,
         "note": "live run through the system output; not the reference rig (DJP-NFR-003 needs A11)",
     })
     .to_string()
@@ -403,6 +423,8 @@ struct DeckRenderer {
     underruns: Arc<AtomicU64>,
     /// Loop wraps, which is what a whole-track loop does every few minutes.
     loop_wraps: Arc<AtomicU64>,
+    /// 1 once the loop is played from the capture buffer (no seam, ADR-0009).
+    buffered: Arc<AtomicU64>,
 }
 
 impl DeckRenderer {
@@ -413,6 +435,7 @@ impl DeckRenderer {
         gain: f32,
         underruns: Arc<AtomicU64>,
         loop_wraps: Arc<AtomicU64>,
+        buffered: Arc<AtomicU64>,
     ) -> Self {
         let mut mixer = Mixer::new(1);
         mixer.prepare(sample_rate, block);
@@ -432,6 +455,7 @@ impl DeckRenderer {
             scratch: vec![0.0f32; block * 2],
             underruns,
             loop_wraps,
+            buffered,
         }
     }
 }
@@ -452,5 +476,7 @@ impl Renderer for DeckRenderer {
         let stats = self.deck.stats();
         self.underruns.store(stats.underruns, Ordering::Relaxed);
         self.loop_wraps.store(stats.loop_wraps, Ordering::Relaxed);
+        self.buffered
+            .store(u64::from(self.deck.loop_is_buffered()), Ordering::Relaxed);
     }
 }

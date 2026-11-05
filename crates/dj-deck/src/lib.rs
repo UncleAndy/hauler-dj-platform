@@ -91,6 +91,60 @@ pub struct DeckStats {
 }
 
 /// One deck.
+/// How loops are played back.
+///
+/// A loop that wraps by seeking gives up one block of silence at the seam (ADR-0009): the start of
+/// the loop lies behind the read cursor, so it has to come from the decoder again. Capturing the
+/// loop's audio while it first plays through turns the seam into a plain copy.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LoopConfig {
+    /// Longest loop that is captured into memory, in seconds. Zero disables capturing.
+    ///
+    /// A setting, not a constant: the cost is memory (`seconds × 2 × 4 B` per deck, so the default
+    /// 30 s is ~11.5 MB) and the benefit stops mattering once the loop is long enough that the seam
+    /// falls where nobody plays.
+    pub buffer_max_seconds: f64,
+}
+
+impl Default for LoopConfig {
+    fn default() -> Self {
+        Self {
+            buffer_max_seconds: 30.0,
+        }
+    }
+}
+
+impl LoopConfig {
+    /// Longest captured loop in frames at `sample_rate`.
+    pub fn max_frames(&self, sample_rate: u32) -> u64 {
+        if self.buffer_max_seconds <= 0.0 {
+            return 0;
+        }
+        (self.buffer_max_seconds * f64::from(sample_rate)) as u64
+    }
+}
+
+/// Audio of one loop, captured while it plays through, so the seam costs a copy instead of a seek.
+#[derive(Debug, Clone)]
+struct LoopBuffer {
+    /// Loop start in source frames; the buffer covers `start .. start + frames`.
+    start: u64,
+    /// Interleaved stereo audio, `frames * 2` samples.
+    data: Vec<f32>,
+    /// Frames captured so far, from the start of the loop.
+    captured: u64,
+}
+
+impl LoopBuffer {
+    fn frames(&self) -> u64 {
+        (self.data.len() / 2) as u64
+    }
+
+    fn is_complete(&self) -> bool {
+        self.captured >= self.frames()
+    }
+}
+
 pub struct Deck {
     id: DeckId,
     source: Option<Box<dyn DeckSource>>,
@@ -106,6 +160,12 @@ pub struct Deck {
     stats: DeckStats,
     /// Whether rendering may wait for the prefetch window.
     blocking: bool,
+    /// Loop capture policy (ADR-0009).
+    loop_config: LoopConfig,
+    /// Captured loop, when one is being played back from memory.
+    loop_buffer: Option<LoopBuffer>,
+    /// True while the playhead reads the captured loop instead of the source.
+    reading_loop_buffer: bool,
 }
 
 impl std::fmt::Debug for Deck {
@@ -137,6 +197,9 @@ impl Deck {
             levels: Levels::SILENT,
             stats: DeckStats::default(),
             blocking: true,
+            loop_config: LoopConfig::default(),
+            loop_buffer: None,
+            reading_loop_buffer: false,
         }
     }
 
@@ -229,6 +292,7 @@ impl Deck {
         };
         // A command seeks now; the audio thread only asks, so a decoder outside the prefetch
         // window cannot stall the callback for however long the file needs to be re-read.
+        self.reading_loop_buffer = false;
         let result = if self.blocking {
             source.seek(clamped)
         } else {
@@ -264,6 +328,79 @@ impl Deck {
     /// it — activating a loop must never move the playhead by itself.
     pub fn set_loop(&mut self, region: Option<FrameRange>) {
         self.loop_region = region;
+        self.reading_loop_buffer = false;
+        self.loop_buffer = match region {
+            Some(region) => self.buffer_for(region),
+            None => None,
+        };
+    }
+
+    /// Capture policy in force.
+    pub fn loop_config(&self) -> LoopConfig {
+        self.loop_config
+    }
+
+    /// Change the capture policy. An active loop is re-evaluated against the new limit.
+    pub fn set_loop_config(&mut self, config: LoopConfig) {
+        self.loop_config = config;
+        let region = self.loop_region;
+        self.loop_buffer = region.and_then(|region| self.buffer_for(region));
+        self.reading_loop_buffer = false;
+    }
+
+    /// Whether the active loop is played from memory (no seam).
+    pub fn loop_is_buffered(&self) -> bool {
+        self.loop_buffer
+            .as_ref()
+            .is_some_and(LoopBuffer::is_complete)
+    }
+
+    /// Allocate the capture buffer for `region`, if the loop is short enough to justify it.
+    ///
+    /// Allocation happens here, on the command path, never in the render.
+    fn buffer_for(&self, region: FrameRange) -> Option<LoopBuffer> {
+        let frames = region.end.0.saturating_sub(region.start.0);
+        if frames == 0 {
+            return None;
+        }
+        let sample_rate = self
+            .source
+            .as_ref()
+            .map_or(0, |source| source.sample_rate());
+        if frames > self.loop_config.max_frames(sample_rate) {
+            return None;
+        }
+        let samples = usize::try_from(frames).ok()?.checked_mul(2)?;
+        Some(LoopBuffer {
+            start: region.start.0,
+            data: vec![0.0; samples],
+            captured: 0,
+        })
+    }
+
+    /// Record freshly read source audio into the loop buffer.
+    ///
+    /// Capture is what makes the seam free: the first pass through the loop records the audio, and
+    /// every later pass reads it back. A loop whose first pass has not finished still wraps by
+    /// seeking, exactly as before.
+    fn capture_loop(&mut self, from_frame: u64, samples: &[f32]) {
+        let Some(region) = self.loop_region else {
+            return;
+        };
+        let Some(buffer) = self.loop_buffer.as_mut() else {
+            return;
+        };
+        if from_frame < region.start.0 {
+            return;
+        }
+        let offset = from_frame - region.start.0;
+        let frames_here = (samples.len() / 2) as u64;
+        if offset + frames_here > buffer.frames() {
+            return;
+        }
+        let start = (offset * 2) as usize;
+        buffer.data[start..start + samples.len()].copy_from_slice(samples);
+        buffer.captured = buffer.captured.max(offset + frames_here);
     }
 
     /// Active loop, if any.
@@ -335,6 +472,17 @@ impl Deck {
         let frames = out.len() / 2;
         let mut written = 0usize;
         while written < frames {
+            // Once the loop has been captured, the seam is a copy: no seek, no gap (ADR-0009).
+            if self.reading_loop_buffer
+                && let Some(filled) = self.read_loop_buffer(&mut out[written * 2..])
+            {
+                written += filled;
+                if filled == 0 {
+                    break;
+                }
+                continue;
+            }
+
             let total = self.source.as_ref().and_then(|source| source.frames());
             let until_end = total
                 .map(|total| total.saturating_sub(self.position))
@@ -384,7 +532,9 @@ impl Deck {
                     break;
                 }
                 Some(Ok(read)) => {
+                    let from = self.position;
                     self.position += read as u64;
+                    self.capture_loop(from, &out[written * 2..written * 2 + read * 2]);
                     written += read;
                 }
                 Some(Err(_)) => {
@@ -398,7 +548,14 @@ impl Deck {
                 && let Some(region) = self.loop_region
                 && self.position >= region.end.0
             {
-                if let Some(source) = self.source.as_mut() {
+                let buffered = self
+                    .loop_buffer
+                    .as_ref()
+                    .is_some_and(LoopBuffer::is_complete);
+                if buffered {
+                    // Nothing to ask the decoder: the loop is in memory from here on.
+                    self.reading_loop_buffer = true;
+                } else if let Some(source) = self.source.as_mut() {
                     // Measured on the S4 run: a blocking wrap seek cost 3.8 ms inside the callback
                     // and produced late intervals. Offline waits (deterministic WAV), live asks.
                     let _ = if self.blocking {
@@ -416,6 +573,36 @@ impl Deck {
             *sample *= self.gain;
         }
         self.levels = measure_levels(out);
+    }
+
+    /// Fill `out` from the captured loop, wrapping at its end. `None` when there is nothing to read.
+    fn read_loop_buffer(&mut self, out: &mut [f32]) -> Option<usize> {
+        let region = self.loop_region?;
+        let buffer = self.loop_buffer.as_ref()?;
+        if !buffer.is_complete() {
+            return None;
+        }
+        let want = out.len() / 2;
+        if want == 0 {
+            return Some(0);
+        }
+        if self.position < region.start.0 || self.position >= region.end.0 {
+            self.position = region.start.0;
+        }
+        let offset = usize::try_from(self.position.saturating_sub(buffer.start)).unwrap_or(0);
+        let frames = usize::try_from(buffer.frames()).unwrap_or(0);
+        if offset >= frames {
+            self.position = region.start.0;
+            return Some(0);
+        }
+        let take = want.min(frames - offset);
+        out[..take * 2].copy_from_slice(&buffer.data[offset * 2..(offset + take) * 2]);
+        self.position += take as u64;
+        if self.position >= region.end.0 {
+            self.position = region.start.0;
+            self.stats.loop_wraps += 1;
+        }
+        Some(take)
     }
 
     /// Read-only state for displays and the UI (fields ordered by display priority, ADR-0006).

@@ -27,7 +27,7 @@ DJP-DATA-005,media,,,DJP-SRS-001 §6,,,unverified,,,
 DJP-DECK-001,audio-core,P0,R0,DJP-SRS-001 §5,crates/dj-deck/src/lib.rs,mix::two_decks_render_together_with_commands_on_their_samples; deck::a_deck_is_silent_until_the_transport_runs,passing,docs/qa/evidence/A03/summary.md,,2026-11-05
 DJP-DECK-002,audio-core,P0,R0,DJP-SRS-001 §5,partial: crates/dj-deck (play/pause/seek/gain; cue / scrub / tempo не реализованы),deck::a_deck_is_silent_until_the_transport_runs,unverified,docs/qa/evidence/A03/summary.md,,2026-11-05
 DJP-DECK-003,audio-core,P0,R0,DJP-SRS-001 §5,partial: crates/dj-deck (установка/удаление/переход; цвета / имена / хранение — A08),deck::eight_hotcues_are_independent; deck::a_hotcue_jumps_to_the_stored_frame,unverified,docs/qa/evidence/A03/summary.md,,2026-11-05
-DJP-DECK-004,audio-core,P0,R0,DJP-SRS-001 §5,partial: crates/dj-deck (явная область + перенос; loop sizes / перемещение / quantize — нет),deck::a_loop_wraps_at_the_exact_sample,unverified,docs/qa/evidence/A03/summary.md,,2026-11-05
+DJP-DECK-004,audio-core,P0,R0,DJP-SRS-001 §5,crates/dj-deck (область петли + захват в буфер по ADR-0009 с настраиваемым порогом 30 с; loop sizes и quantize — нет),deck::a_loop_wraps_at_the_exact_sample; deck::a_short_loop_plays_through_its_seam_without_a_gap; deck::a_loop_longer_than_the_budget_is_not_captured,review,docs/adr/0009-gapless-loops.md,,2026-11-05
 DJP-DECK-005,audio-core,P1,R1,DJP-SRS-001 §5,,,unverified,,,
 DJP-DECK-006,audio-core,P1,R1,DJP-SRS-001 §5,,,unverified,,,
 DJP-DECK-007,audio-core,P1,R1,DJP-SRS-001 §5,,,unverified,,,

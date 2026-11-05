@@ -203,6 +203,32 @@ nix develop --command cargo run --release -p dj-live-probe -- \
 (до 32 записей: секунда от старта, интервал, стоимость блока), `outliers_dropped`, `rss_start_kb`
 и `deck_underruns` / `loop_wraps`.
 
+### Петля без провала: реализовано и проверено тестами
+
+ADR-0009 принят: 30 секунд — дефолт, значение меняется в настройках. В `crates/dj-deck` появился
+захват петли: пока петля играет первый раз, её аудио записывается в буфер, и все следующие проходы
+идут из памяти — переиска на шве нет.
+
+Тесты (`cargo test -p dj-deck`, 13 тестов):
+
+| Тест | Что доказывает |
+|---|---|
+| `a_short_loop_plays_through_its_seam_without_a_gap` | петля 200 мс: после захвата `underruns = 0`, переходов больше одного, обращений к источнику за переиском — ноль |
+| `a_loop_longer_than_the_budget_is_not_captured` | петля сверх бюджета не захватывается: память не выделяется молча |
+| `a_live_deck_never_waits_for_a_seek` | при выключенном буфере живая дека просит, а не ждёт (это путь длинных петель) |
+| `an_offline_deck_still_waits_for_a_seek` | офлайн по-прежнему ждёт — детерминизм WAV не пострадал |
+
+Живая проверка того же — прогон с музыкальной петлёй вместо трека:
+
+```
+nix develop --command cargo run --release -p dj-live-probe -- \
+  --file "$HOME/Музыка/Плов и Кодецы.mp3" --seconds 1800 --loop-seconds 2 --gain 0.12 \
+  --out docs/qa/evidence/A05/loop-2s-30min.json --progress-seconds 60 2>&1 | tee /tmp/loop-2s.log
+```
+
+Критерий: `deck_underruns` = 0 (допускается 1, если первый проход не успел захватить петлю),
+`loop_wraps` в сотнях (переход каждые 2 с), `loop_buffered` = true.
+
 ### A/B: простой против нагрузки (задано до данных)
 
 | Рука | Условия | Что означает результат |

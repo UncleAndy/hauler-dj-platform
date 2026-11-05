@@ -333,6 +333,11 @@ fn a_live_deck_never_waits_for_a_seek() {
     let Some(region) = dj_domain::FrameRange::new(0, 200) else {
         panic!("a 0..200 loop region must be valid");
     };
+    // Buffering off: this test is about the fallback that long loops take, where wrapping really
+    // does ask the source for a seek.
+    deck.set_loop_config(dj_deck::LoopConfig {
+        buffer_max_seconds: 0.0,
+    });
     deck.set_loop(Some(region));
     // The live path: the deck must ask, not wait.
     deck.set_blocking(false);
@@ -381,4 +386,91 @@ fn an_offline_deck_still_waits_for_a_seek() {
     assert_eq!(blocking.load(Ordering::Relaxed), 1);
     assert_eq!(deferred.load(Ordering::Relaxed), 0);
     assert_eq!(deck.position(), 1_000);
+}
+
+#[test]
+fn a_short_loop_plays_through_its_seam_without_a_gap() {
+    // A loop that fits the capture budget must wrap by copying, not by asking the source for a
+    // seek: that seek is where the audible block of silence came from (ADR-0009).
+    let blocking = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let deferred = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let source = SlowSeekSource {
+        position: 0,
+        frames: 480_000,
+        blocking_seeks: std::sync::Arc::clone(&blocking),
+        deferred_seeks: std::sync::Arc::clone(&deferred),
+    };
+
+    let mut deck = Deck::new(DeckId::A);
+    deck.attach(Box::new(source), None);
+    // 9 600 frames is 200 ms at 48 kHz — a musical loop, well inside the default budget.
+    let Some(region) = dj_domain::FrameRange::new(0, 9_600) else {
+        panic!("a 0..9600 loop region must be valid");
+    };
+    deck.set_loop(Some(region));
+    deck.set_blocking(false);
+    assert!(deck.play());
+
+    // 512 samples per render is 256 frames, so 60 renders cover the 9 600-frame loop with room
+    // to wrap once.
+    let mut out = vec![0.0f32; 512];
+    for _ in 0..60 {
+        deck.render(&mut out);
+    }
+    assert!(deck.loop_is_buffered(), "the loop must be captured");
+
+    let wraps_before = deck.stats().loop_wraps;
+    for _ in 0..200 {
+        deck.render(&mut out);
+    }
+
+    assert_eq!(
+        deck.stats().underruns,
+        0,
+        "a captured loop must not starve the deck at its seam"
+    );
+    assert!(
+        deck.stats().loop_wraps > wraps_before,
+        "the loop must actually have wrapped again"
+    );
+    assert_eq!(
+        deferred.load(std::sync::atomic::Ordering::Relaxed),
+        0,
+        "a captured loop must not ask the source for a seek"
+    );
+}
+
+#[test]
+fn a_loop_longer_than_the_budget_is_not_captured() {
+    let blocking = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let deferred = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let source = SlowSeekSource {
+        position: 0,
+        frames: 480_000,
+        blocking_seeks: std::sync::Arc::clone(&blocking),
+        deferred_seeks: std::sync::Arc::clone(&deferred),
+    };
+
+    let mut deck = Deck::new(DeckId::A);
+    deck.attach(Box::new(source), None);
+    deck.set_loop_config(dj_deck::LoopConfig {
+        buffer_max_seconds: 0.1,
+    });
+    // 48 000 frames is one second, ten times the budget.
+    let Some(region) = dj_domain::FrameRange::new(0, 48_000) else {
+        panic!("a 0..48000 loop region must be valid");
+    };
+    deck.set_loop(Some(region));
+    deck.set_blocking(false);
+    assert!(deck.play());
+
+    let mut out = vec![0.0f32; 512];
+    for _ in 0..100 {
+        deck.render(&mut out);
+    }
+
+    assert!(
+        !deck.loop_is_buffered(),
+        "a loop over the budget must stay unbuffered rather than silently allocate"
+    );
 }
