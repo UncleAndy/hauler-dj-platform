@@ -229,6 +229,10 @@ fn run(argv: &[String]) -> Result<String, Error> {
         "interval_p99_ms": report.interval_p99_ms,
         "interval_max_ms": report.interval_max_ms,
         "peaks": report.peaks,
+        "render_p50_us": report.render_p50_us,
+        "render_p99_us": report.render_p99_us,
+        "render_max_us": report.render_max_us,
+        "render_budget": report.render_budget,
         "source": options.file.as_ref().map(|path| path.display().to_string()),
         "route": {
             "master": [plan.master.0, plan.master.1],

@@ -87,7 +87,7 @@ DJP-MIX-011,dsp,P2,R3,DJP-SRS-001 §5,,,unverified,,,
 DJP-MIX-012,dsp,P2,R3,DJP-SRS-001 §5,,,unverified,,,
 DJP-NFR-001,qa,,,DJP-SRS-001 §7,crates/dj-testkit/src/rt.rs; crates/dj-audio-core/tests/no_forbidden_primitives.rs,rt_contract::the_instrumentation_sees_a_deliberate_allocation; no_forbidden_primitives::the_core_crate_holds_no_blocking_primitives,passing,docs/qa/evidence/A01/summary.md,,2026-11-05
 DJP-NFR-002,qa,,,DJP-SRS-001 §7,,,unverified,,,
-DJP-NFR-003,qa,,,DJP-SRS-001 §7,предварительно: каденция колбэка p99 5.352 мс при периоде 5.333 мс (системное устройство — A05); время обработки блока под 4-дековой нагрузкой не измерялось — A11,,unverified,docs/qa/evidence/A05/live-output.md,,2026-11-05
+DJP-NFR-003,qa,,,DJP-SRS-001 §7,предварительно: каденция 10 с подтверждена (p99 5.352 мс при периоде 5.333 мс; max 5.391 мс; late 0) и добавлен замер стоимости блока render_*_us; 4-дековая нагрузка — A06 / A11,,unverified,docs/qa/evidence/A05/live-output.md,,2026-11-05
 DJP-NFR-004,qa,,,DJP-SRS-001 §7,,,unverified,,,
 DJP-NFR-005,qa,,,DJP-SRS-001 §7,,,unverified,,,
 DJP-NFR-006,qa,,,DJP-SRS-001 §7,,,unverified,,,

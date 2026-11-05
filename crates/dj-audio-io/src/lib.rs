@@ -78,6 +78,12 @@ struct Counters {
     late: AtomicU64,
     /// Callbacks that arrived earlier than half a period after the previous one.
     early: AtomicU64,
+    /// Total microseconds spent inside the renderer.
+    render_sum_us: AtomicU64,
+    /// Longest single render, microseconds.
+    render_max_us: AtomicU32,
+    /// Histogram of render durations, 1 µs buckets.
+    render_histogram: Vec<AtomicU32>,
     /// Backend-reported stream errors.
     errors: AtomicU64,
     /// Shortest and longest callback interval, microseconds.
@@ -94,6 +100,7 @@ impl Counters {
         Self {
             peaks: (0..channels).map(|_| AtomicU32::new(0)).collect(),
             histogram: (0..32_000).map(|_| AtomicU32::new(0)).collect(),
+            render_histogram: (0..32_000).map(|_| AtomicU32::new(0)).collect(),
             min_us: AtomicU32::new(u32::MAX),
             ..Self::default()
         }
@@ -154,6 +161,14 @@ pub struct LiveReport {
     pub interval_p99_ms: f64,
     /// Peak of every output channel, in plan order.
     pub peaks: Vec<f32>,
+    /// Median time spent inside the renderer per block, microseconds.
+    pub render_p50_us: f64,
+    /// 99th percentile render time, microseconds.
+    pub render_p99_us: f64,
+    /// Longest single render, microseconds.
+    pub render_max_us: f64,
+    /// Share of the period the p99 render took: the figure DJP-NFR-003 judges.
+    pub render_budget: f64,
 }
 
 impl LiveReport {
@@ -227,6 +242,39 @@ pub fn resolve_device(device: Option<&str>) -> Result<DeviceShape, IoError> {
         channels,
         sample_rate,
     })
+}
+
+/// Percentiles of a microsecond histogram.
+fn percentiles(histogram: &[AtomicU32], low: f64, high: f64) -> (f64, f64) {
+    let total: u64 = histogram
+        .iter()
+        .map(|bucket| u64::from(bucket.load(Ordering::Relaxed)))
+        .sum();
+    if total == 0 {
+        return (0.0, 0.0);
+    }
+    let mut seen = 0u64;
+    let mut low_value = 0.0;
+    let mut high_value = 0.0;
+    let mut low_done = false;
+    let high_done = false;
+    for (micros, bucket) in histogram.iter().enumerate() {
+        let count = u64::from(bucket.load(Ordering::Relaxed));
+        if count == 0 {
+            continue;
+        }
+        seen += count;
+        let fraction = seen as f64 / total as f64;
+        if !low_done && fraction >= low {
+            low_value = micros as f64;
+            low_done = true;
+        }
+        if !high_done && fraction >= high {
+            high_value = micros as f64;
+            break;
+        }
+    }
+    (low_value, high_value)
 }
 
 /// How a callback interval compares to the expected period.
@@ -388,7 +436,20 @@ impl LiveOutput {
             }
             master[..frames * 2].fill(0.0);
             cue[..frames * 2].fill(0.0);
+            let render_started = Instant::now();
             renderer.render(&mut master[..frames * 2], &mut cue[..frames * 2], frames);
+            // What the graph actually cost, as opposed to when the callback arrived: this is the
+            // number DJP-NFR-003 is about ("p99 block processing under 60 % of the period").
+            let spent = u32::try_from(render_started.elapsed().as_micros()).unwrap_or(u32::MAX);
+            callback_counters
+                .render_sum_us
+                .fetch_add(u64::from(spent), Ordering::Relaxed);
+            callback_counters
+                .render_max_us
+                .fetch_max(spent, Ordering::Relaxed);
+            if let Some(bucket) = callback_counters.render_histogram.get(spent as usize) {
+                bucket.fetch_add(1, Ordering::Relaxed);
+            }
 
             let (master_l, master_r) = plan.master;
             let cue_channels = plan.cue;
@@ -462,29 +523,18 @@ impl LiveOutput {
         } else {
             frames as f64 / callbacks as f64
         };
-        let mut seen = 0u64;
-        let mut p50 = 0.0;
-        let mut p99 = 0.0;
-        let total: u64 = self
-            .counters
-            .histogram
-            .iter()
-            .map(|bucket| u64::from(bucket.load(Ordering::Relaxed)))
-            .sum();
-        for (micros, bucket) in self.counters.histogram.iter().enumerate() {
-            let count = u64::from(bucket.load(Ordering::Relaxed));
-            if count == 0 {
-                continue;
-            }
-            seen += count;
-            let fraction = seen as f64 / total.max(1) as f64;
-            if p50 == 0.0 && fraction >= 0.5 {
-                p50 = micros as f64 / 1000.0;
-            }
-            if p99 == 0.0 && fraction >= 0.99 {
-                p99 = micros as f64 / 1000.0;
-            }
-        }
+        let (p50_us, p99_us) = percentiles(&self.counters.histogram, 0.5, 0.99);
+        let p50 = p50_us / 1000.0;
+        let p99 = p99_us / 1000.0;
+
+        let (render_p50, render_p99) = percentiles(&self.counters.render_histogram, 0.5, 0.99);
+        let render_max = f64::from(self.counters.render_max_us.load(Ordering::Relaxed));
+        let period_us = if frames_per_callback > 0.0 {
+            frames_per_callback / f64::from(self.sample_rate) * 1_000_000.0
+        } else {
+            0.0
+        };
+
         LiveReport {
             device: self.device.clone(),
             channels: self.channels,
@@ -507,6 +557,14 @@ impl LiveOutput {
                 .iter()
                 .map(|slot| f32::from_bits(slot.load(Ordering::Relaxed)))
                 .collect(),
+            render_p50_us: render_p50,
+            render_p99_us: render_p99,
+            render_max_us: render_max,
+            render_budget: if period_us > 0.0 {
+                render_p99 / period_us
+            } else {
+                0.0
+            },
         }
     }
 }
