@@ -6,6 +6,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Dialogs
 
 Pane {
     id: panel
@@ -63,6 +64,11 @@ Pane {
             Layout.alignment: Qt.AlignHCenter
             spacing: 8
 
+            Button {
+                text: qsTr("Load…")
+                enabled: panel.live
+                onClicked: loadDialog.open()
+            }
             Button {
                 text: panel.playing ? qsTr("Pause") : qsTr("Play")
                 enabled: panel.live
@@ -161,11 +167,41 @@ Pane {
 
         Label {
             Layout.alignment: Qt.AlignHCenter
+            text: {
+                const load = panel.state.load;
+                if (load === undefined) {
+                    return qsTr("empty");
+                }
+                if (load.Loading !== undefined) {
+                    return qsTr("preparing… %1%").arg(Math.round((load.Loading.progress || 0) * 100));
+                }
+                if (load.Failed !== undefined) {
+                    return qsTr("cannot play: %1").arg(load.Failed.message);
+                }
+                return qsTr("ready");
+            }
+            color: panel.state.load !== undefined && panel.state.load.Failed !== undefined
+                   ? "#e2a09b" : "#8a929c"
+            font.pixelSize: 11
+            elide: Text.ElideRight
+            Layout.fillWidth: true
+            horizontalAlignment: Text.AlignHCenter
+        }
+
+        Label {
+            Layout.alignment: Qt.AlignHCenter
             text: qsTr("at %1 · gain %2")
                       .arg(panel.positionLabel())
                       .arg(panel.state.linear_gain !== undefined
                            ? panel.state.linear_gain.toFixed(2) : "—")
             opacity: 0.6
         }
+    }
+
+    FileDialog {
+        id: loadDialog
+        title: qsTr("Load a track into %1").arg(panel.deckLabel)
+        nameFilters: [qsTr("Audio (*.wav *.flac *.mp3 *.ogg *.m4a)"), qsTr("All files (*)")]
+        onAccepted: Bridge.load(panel.deckId, selectedFile.toString().replace("file://", ""))
     }
 }

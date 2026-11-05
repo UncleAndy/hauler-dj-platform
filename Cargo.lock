@@ -317,6 +317,7 @@ dependencies = [
  "dj-audio-core",
  "dj-audio-io",
  "dj-bridge",
+ "dj-codec",
  "dj-deck",
  "dj-domain",
  "dj-mixer",

@@ -48,6 +48,18 @@ QString defaultSocketPath()
     return QStringLiteral("/tmp/hauler-dj-engine.sock");
 }
 
+QVariantMap deckById(const QVariantMap &snapshot, const QString &deck)
+{
+    const QVariantList decks = snapshot.value(QStringLiteral("decks")).toList();
+    for (const QVariant &entry : decks) {
+        const QVariantMap deckState = entry.toMap();
+        if (deckState.value(QStringLiteral("deck")).toString() == deck) {
+            return deckState;
+        }
+    }
+    return {};
+}
+
 bool deckHasHotcue(const QVariantMap &snapshot, const QString &deck, int slot)
 {
     const QVariantList decks = snapshot.value(QStringLiteral("decks")).toList();
@@ -84,13 +96,15 @@ bool deckIsPlaying(const QVariantMap &snapshot, const QString &deck)
 // Connect, ask deck A to play, and require exactly what the contract promises: an ack that says
 // "applied at sample N", and a snapshot that then reports the deck as playing. The UI must never
 // assume either.
-int runSelfCheck(BridgeClient &bridge, const QString &socketPath, int timeoutMs)
+int runSelfCheck(BridgeClient &bridge, const QString &socketPath, int timeoutMs,
+                 const QString &loadPath)
 {
     QElapsedTimer elapsed;
     elapsed.start();
 
     bool sawAck = false;
     bool ackApplied = false;
+    bool ackRejected = false;
     bool sawPlaying = false;
     qulonglong appliedAt = 0;
     int commandId = 0;
@@ -107,6 +121,12 @@ int runSelfCheck(BridgeClient &bridge, const QString &socketPath, int timeoutMs)
         }
         std::fprintf(stdout, "dj-ui: connected to %s (epoch %llu)\n", qPrintable(socketPath),
                      static_cast<unsigned long long>(bridge.epoch()));
+        if (!loadPath.isEmpty()) {
+            // The load stage asks for the file; Play would hit an empty deck and be refused.
+            commandId = bridge.load(QStringLiteral("A"), loadPath);
+            std::fprintf(stdout, "dj-ui: sent Load(A) as command %d\n", commandId);
+            return;
+        }
         commandId = bridge.play(QStringLiteral("A"), true);
         std::fprintf(stdout, "dj-ui: sent Play(A) as command %d\n", commandId);
     });
@@ -118,25 +138,58 @@ int runSelfCheck(BridgeClient &bridge, const QString &socketPath, int timeoutMs)
                          }
                          sawAck = true;
                          ackApplied = applied;
+                         ackRejected = rejected;
                          if (rejected) {
                              std::fprintf(stderr, "dj-ui: the engine refused the command: %s\n",
                                           qPrintable(reason));
                          }
                      });
 
-    // A stage machine, because the acceptance names two controls: Play and Cue.
-    enum Stage { SendingPlay, SendingSetCue, SendingJumpCue, Done };
-    auto stage = SendingPlay;
+    // A stage machine, because the acceptance names two controls: Play and Cue, plus the load
+    // that makes a deck worth playing.
+    enum Stage { SendingLoad, SendingPlay, SendingSetCue, SendingJumpCue, Done };
+    auto stage = loadPath.isEmpty() ? SendingPlay : SendingLoad;
+    QString loadTitle;
     bool sawCue = false;
 
     QObject::connect(&bridge, &BridgeClient::snapshotChanged, &loop, [&]() {
         const QVariantMap snapshot = bridge.snapshot();
         appliedAt = static_cast<qulonglong>(
             snapshot.value(QStringLiteral("audio_clock_samples")).toDouble());
-        if (!sawAck || !ackApplied) {
+        // `Accepted` is a valid ack for a load; every stage still demands the effect itself below.
+        if (!sawAck || ackRejected) {
             return;
         }
         switch (stage) {
+        case SendingLoad: {
+            // A load is acknowledged as accepted; the deck is playable when the state says Ready.
+            const QVariantMap deckState = deckById(snapshot, QStringLiteral("A"));
+            const QString load = deckState.value(QStringLiteral("load")).toString();
+            if (!load.isEmpty() && load != QStringLiteral("Ready")) {
+                return;
+            }
+            if (load.isEmpty()) {
+                // The deck is still `Empty` — wait for the loader, it is off the audio path.
+                if (!deckState.contains(QStringLiteral("load"))) {
+                    return;
+                }
+            }
+            if (loadTitle.isEmpty()) {
+                // Already requested on connect; wait for the loader to publish `Ready`.
+                loadTitle = QStringLiteral("requested");
+                return;
+            }
+            const QVariantMap track = deckState.value(QStringLiteral("track")).toMap();
+            std::fprintf(stdout, "dj-ui: deck A is ready: %s\n",
+                         qPrintable(track.value(QStringLiteral("title")).toString()));
+            stage = SendingPlay;
+            commandId = bridge.play(QStringLiteral("A"), true);
+            std::fprintf(stdout, "dj-ui: sent Play(A) as command %d\n", commandId);
+            sawAck = false;
+            ackApplied = false;
+            ackRejected = false;
+            return;
+        }
         case SendingPlay:
             if (!deckIsPlaying(snapshot, QStringLiteral("A"))) {
                 return;
@@ -147,6 +200,7 @@ int runSelfCheck(BridgeClient &bridge, const QString &socketPath, int timeoutMs)
             std::fprintf(stdout, "dj-ui: sent Cue(Set 0) as command %d\n", commandId);
             sawAck = false;
             ackApplied = false;
+            ackRejected = false;
             return;
         case SendingSetCue:
             if (!deckHasHotcue(snapshot, QStringLiteral("A"), 0)) {
@@ -158,6 +212,7 @@ int runSelfCheck(BridgeClient &bridge, const QString &socketPath, int timeoutMs)
             std::fprintf(stdout, "dj-ui: sent Cue(Jump 0) as command %d\n", commandId);
             sawAck = false;
             ackApplied = false;
+            ackRejected = false;
             return;
         case SendingJumpCue:
             stage = Done;
@@ -231,9 +286,14 @@ int main(int argc, char *argv[])
     const QCommandLineOption selfCheckOption(
         QStringLiteral("self-check"),
         QStringLiteral("Connect, press Play, require the ack and the snapshot, then exit."));
+    const QCommandLineOption loadOption(
+        QStringLiteral("load"),
+        QStringLiteral("With --self-check: load this file into deck A first."),
+        QStringLiteral("path"));
     parser.addOption(smokeOption);
     parser.addOption(connectOption);
     parser.addOption(selfCheckOption);
+    parser.addOption(loadOption);
     parser.process(app);
 
     auto bridge = std::make_unique<BridgeClient>();
@@ -242,7 +302,8 @@ int main(int argc, char *argv[])
     if (parser.isSet(selfCheckOption)) {
         const QString path = parser.isSet(connectOption) ? parser.value(connectOption)
                                                          : defaultSocketPath();
-        return runSelfCheck(*bridge, path, 5000);
+        return runSelfCheck(*bridge, path, 15000,
+                            parser.isSet(loadOption) ? parser.value(loadOption) : QString());
     }
 
     QQmlApplicationEngine engine;

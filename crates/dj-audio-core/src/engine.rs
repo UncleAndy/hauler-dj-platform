@@ -199,7 +199,11 @@ impl Engine {
                     Some(Ack::rejected(command_id, RejectReason::InvalidValue))
                 }
             }
-            DjCommand::Cue { .. } | DjCommand::SeekFrames { .. } | DjCommand::SetLoop { .. } => {
+            DjCommand::Cue { .. }
+            | DjCommand::SeekFrames { .. }
+            | DjCommand::SetLoop { .. }
+            | DjCommand::Load { .. }
+            | DjCommand::Eject { .. } => {
                 Some(Ack::rejected(command_id, RejectReason::NotSupported))
             }
         };

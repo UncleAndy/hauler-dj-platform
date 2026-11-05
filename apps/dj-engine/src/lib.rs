@@ -10,7 +10,9 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering}
 use std::sync::mpsc::{Receiver, Sender};
 
 use dj_audio_io::Renderer;
-use dj_deck::Deck;
+use dj_codec::{PrefetchConfig, Prefetcher};
+use dj_deck::{Deck, DeckSource};
+use dj_domain::CommandId;
 use dj_domain::{
     Ack, AckStatus, CueAction, DeckId, DeckLoad, DeckSnapshot, DjCommand, FrameRange, Levels,
     RejectReason, ScheduledCommand, Snapshot, SourceFrame, TrackMeta,
@@ -28,7 +30,9 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
         | DjCommand::Cue { deck, .. }
         | DjCommand::SeekFrames { deck, .. }
         | DjCommand::SetLoop { deck, .. }
-        | DjCommand::SetTempoRatio { deck, .. } => Some(*deck),
+        | DjCommand::SetTempoRatio { deck, .. }
+        | DjCommand::Eject { deck }
+        | DjCommand::Load { deck, .. } => Some(*deck),
         _ => None,
     };
 
@@ -77,6 +81,16 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
             }
             DjCommand::SetLoop { region, .. } => {
                 target.set_loop(*region);
+                Ack::applied(id, at)
+            }
+            // A load never runs in the callback; if it arrives here the routing broke, and a
+            // rejection is better than an ack that claims work which did not happen.
+            DjCommand::Load { .. } => Ack {
+                command_id: id,
+                status: AckStatus::Rejected(RejectReason::NotSupported),
+            },
+            DjCommand::Eject { .. } => {
+                target.eject();
                 Ack::applied(id, at)
             }
             // Tempo needs a resampler the graph does not have yet (A04/M2).
@@ -347,6 +361,122 @@ pub struct Submission {
     pub reply: Sender<Ack>,
 }
 
+/// A load the client thread hands to the loader, never to the audio callback.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoadRequest {
+    /// Command the ack belongs to.
+    pub command_id: CommandId,
+    /// Deck to fill.
+    pub deck: DeckId,
+    /// Absolute path as the client spelled it.
+    pub path: String,
+}
+
+/// What the loader asks the graph to do at its next block boundary.
+pub enum GraphLoad {
+    /// A prepared track is ready to be streamed. Boxed because the alternative is a 100-byte enum
+    /// where every clear carries the payload of an attach.
+    Attach(Box<PreparedTrack>),
+    /// Empty the deck; the loader owned the decision, the graph owns the source.
+    Clear {
+        /// Target deck.
+        deck: DeckId,
+    },
+}
+
+/// What the loader hands back to the graph once the deck is playable.
+pub struct PreparedTrack {
+    /// Deck to fill.
+    pub deck: DeckId,
+    /// Ready-to-stream source; the decode window is already warm.
+    pub source: Box<dyn DeckSource>,
+    /// Display metadata.
+    pub track: Option<TrackMeta>,
+    /// Static half of the snapshot for this deck.
+    pub static_info: DeckStatic,
+}
+
+/// What the loader tells the publisher, so the UI can show `Loading` and `Failed`.
+#[derive(Debug, Clone)]
+pub struct DeckUpdate {
+    /// Deck the update is about.
+    pub deck: DeckId,
+    /// New static description.
+    pub static_info: DeckStatic,
+}
+
+/// Where a command has to go.
+///
+/// `Load` and `Eject` must not run in the audio callback: opening a file, decoding and building a
+/// PCM cache take milliseconds to seconds, and the callback has 5.3 of them. The client thread
+/// routes them to the loader, which is off the audio path by construction.
+pub enum Routed {
+    /// Applied by the render loop at its next block boundary.
+    Render,
+    /// Handed to the loader; the state reports `Ready` when the deck is playable.
+    Load(LoadRequest),
+    /// Handed to the loader, which asks the graph to clear the deck.
+    Eject {
+        /// Target deck.
+        deck: DeckId,
+    },
+}
+
+/// Decide where a command goes without applying it.
+pub fn route(command: &ScheduledCommand) -> Routed {
+    match &command.command {
+        DjCommand::Load { deck, path } => Routed::Load(LoadRequest {
+            command_id: command.id,
+            deck: *deck,
+            path: path.clone(),
+        }),
+        DjCommand::Eject { deck } => Routed::Eject { deck: *deck },
+        _ => Routed::Render,
+    }
+}
+
+/// Open a file, make it playable at `rate` and describe it for the display (ADR-0008).
+///
+/// Runs on the loader thread. The PCM-cache decision is taken here, at load, from the file's
+/// format — never in the middle of playback, where it would show up as a dropout.
+pub fn prepare_track(
+    path: &std::path::Path,
+    rate: u32,
+    window_seconds: f64,
+) -> Result<PreparedTrack, String> {
+    let config = PrefetchConfig::for_sample_rate(rate, window_seconds);
+    let mut prefetcher = Prefetcher::open(path, config).map_err(|err| err.to_string())?;
+    let info = prefetcher.info().clone();
+    prefetcher
+        .wait_ready(config.window_frames, std::time::Duration::from_secs(60))
+        .map_err(|err| err.to_string())?;
+
+    let title = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let track = TrackMeta {
+        title,
+        artist: String::new(),
+        duration_frames: info.frames,
+        bpm: None,
+        key: None,
+    };
+    let static_info = DeckStatic {
+        deck: DeckId::A, // replaced by the caller, which knows the deck
+        load: DeckLoad::Ready,
+        track: Some(track.clone()),
+        total_frames: info.frames,
+    };
+    Ok(PreparedTrack {
+        deck: DeckId::A,
+        source: Box::new(prefetcher),
+        track: Some(track),
+        static_info,
+    })
+}
+
 /// Decks → channel strips → master and cue, driven either by a device callback or by a null sink.
 ///
 /// One implementation for both: the null sink paces itself and the device paces the callback, but
@@ -360,6 +490,14 @@ pub struct EngineGraph {
     block: usize,
     clock: u64,
     scratch: Vec<f32>,
+    /// Prepared tracks waiting for a block boundary; drained with `try_recv`, which allocates
+    /// nothing.
+    loads: Receiver<GraphLoad>,
+    /// Sources taken off a deck, parked rather than freed in the callback. The vector is
+    /// preallocated and released when the engine stops.
+    retired: Vec<Box<dyn DeckSource>>,
+    /// Loads applied since start, so the report can say whether a load ever stalled a block.
+    loads_applied: u64,
 }
 
 impl EngineGraph {
@@ -370,6 +508,7 @@ impl EngineGraph {
         submissions: Receiver<Submission>,
         cells: Arc<StateCells>,
         block: usize,
+        loads: Receiver<GraphLoad>,
     ) -> Self {
         let block = block.max(1);
         Self {
@@ -380,6 +519,9 @@ impl EngineGraph {
             block,
             clock: 0,
             scratch: vec![0.0f32; block * 2],
+            loads,
+            retired: Vec::with_capacity(16),
+            loads_applied: 0,
         }
     }
 
@@ -393,12 +535,48 @@ impl EngineGraph {
         &self.decks
     }
 
+    /// How many prepared tracks were attached since start.
+    pub fn loads_applied(&self) -> u64 {
+        self.loads_applied
+    }
+
     /// Render one block into `master` and `cue`, interleaved stereo.
     ///
     /// Everything here runs inside the audio callback, so it allocates nothing, locks nothing, and
     /// never waits for a decoder: a deck that has no data renders silence and counts it.
     pub fn render_pair(&mut self, master: &mut [f32], cue: &mut [f32], frames: usize) {
         let frames = frames.min(self.block);
+        // A prepared track is attached here, at a block boundary: the decode already happened on
+        // the loader thread, so this costs a pointer swap and the release of the old decoder.
+        while let Ok(load) = self.loads.try_recv() {
+            match load {
+                GraphLoad::Attach(prepared) => {
+                    if let Some(index) = self
+                        .decks
+                        .iter()
+                        .position(|deck| deck.id() == prepared.deck)
+                    {
+                        let old = self.decks[index].take_source();
+                        self.park_old(old);
+                        self.decks[index].attach(prepared.source, prepared.track);
+                        self.loads_applied += 1;
+                    }
+                }
+                GraphLoad::Clear { deck } => {
+                    if let Some(index) = self
+                        .decks
+                        .iter()
+                        .position(|candidate| candidate.id() == deck)
+                    {
+                        let old = self.decks[index].take_source();
+                        self.park_old(old);
+                        self.decks[index].eject();
+                        self.loads_applied += 1;
+                    }
+                }
+            }
+        }
+
         // Commands first: a command due at this sample is applied at this sample.
         while let Ok(submission) = self.submissions.try_recv() {
             let ack = apply(
@@ -427,6 +605,19 @@ impl EngineGraph {
 
         self.clock += frames as u64;
         self.cells.publish(&self.decks, &self.mixer, self.clock);
+    }
+}
+
+impl EngineGraph {
+    /// Move the deck's source into the park, where it is freed after the run rather than inside a
+    /// callback. Beyond the preallocated capacity the source is dropped instead, which is the
+    /// lesser evil for an engine that ejects dozens of tracks in a session, not thousands.
+    fn park_old(&mut self, old: Option<Box<dyn DeckSource>>) {
+        if let Some(old) = old
+            && self.retired.len() < self.retired.capacity()
+        {
+            self.retired.push(old);
+        }
     }
 }
 

@@ -120,6 +120,21 @@ pub enum DjCommand {
         /// True to play, false to stop.
         enabled: bool,
     },
+    /// Prepare a file into a deck (ADR-0008).
+    ///
+    /// Acknowledged as `Accepted`, not `Applied`: the deck is playable only when the state reports
+    /// `Ready`, because decoding and cache building happen off the audio path.
+    Load {
+        /// Target deck.
+        deck: DeckId,
+        /// Absolute path as the client spelled it.
+        path: String,
+    },
+    /// Return a deck to `Empty` and stop it.
+    Eject {
+        /// Target deck.
+        deck: DeckId,
+    },
     /// Hotcue operation.
     Cue {
         /// Target deck.
@@ -172,7 +187,9 @@ impl DjCommand {
             DjCommand::Play { .. }
             | DjCommand::Cue { .. }
             | DjCommand::SeekFrames { .. }
-            | DjCommand::SetLoop { .. } => true,
+            | DjCommand::SetLoop { .. }
+            | DjCommand::Load { .. }
+            | DjCommand::Eject { .. } => true,
             DjCommand::SetTempoRatio { .. }
             | DjCommand::SetChannelGain { .. }
             | DjCommand::SetCrossfader { .. } => false,

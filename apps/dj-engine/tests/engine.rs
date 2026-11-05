@@ -8,7 +8,11 @@ use dj_deck::Deck;
 use dj_domain::{
     AckStatus, CueAction, DeckId, DjCommand, RejectReason, ScheduledCommand, SourceFrame,
 };
-use dj_engine::{DeckStatic, EngineGraph, StateCells, Submission, apply, snapshot};
+use dj_engine::Routed;
+use dj_engine::{
+    DeckStatic, EngineGraph, GraphLoad, StateCells, Submission, apply, prepare_track, route,
+    snapshot,
+};
 use dj_mixer::{ChannelSettings, CrossAssign, Mixer};
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
@@ -379,12 +383,14 @@ fn graph_for(block: usize) -> (EngineGraph, Arc<StateCells>, Sender<Submission>)
     ];
     let cells = Arc::new(StateCells::new());
     let (submissions, receiver) = std::sync::mpsc::channel();
+    let (_loads, load_receiver) = std::sync::mpsc::channel();
     let graph = EngineGraph::new(
         decks,
         mixer_for(48_000),
         receiver,
         Arc::clone(&cells),
         block,
+        load_receiver,
     );
     (graph, cells, submissions)
 }
@@ -477,4 +483,190 @@ fn the_callback_path_does_not_allocate() {
         0,
         "the block path of the engine must not allocate"
     );
+}
+
+fn graph_with_loads(
+    block: usize,
+) -> (
+    EngineGraph,
+    std::sync::mpsc::Sender<GraphLoad>,
+    Sender<Submission>,
+) {
+    let decks = vec![
+        deck_with_tone(DeckId::A, 48_000),
+        deck_with_tone(DeckId::B, 48_000),
+    ];
+    let cells = Arc::new(StateCells::new());
+    let (submissions, submission_rx) = std::sync::mpsc::channel();
+    let (loads, load_rx) = std::sync::mpsc::channel();
+    let graph = EngineGraph::new(
+        decks,
+        mixer_for(48_000),
+        submission_rx,
+        Arc::clone(&cells),
+        block,
+        load_rx,
+    );
+    (graph, loads, submissions)
+}
+
+fn tone_wav(dir: &std::path::Path, name: &str, seconds: f32) -> std::path::PathBuf {
+    let path = dir.join(format!("{name}.wav"));
+    let rate = 48_000u32;
+    let frames = (rate as f32 * seconds) as usize;
+    let mut samples = Vec::with_capacity(frames * 2);
+    for frame in 0..frames {
+        let phase = frame as f32 / rate as f32 * 440.0 * std::f32::consts::TAU;
+        let value = phase.sin() * 0.5;
+        samples.push(value);
+        samples.push(value);
+    }
+    let file = std::fs::File::create(&path).unwrap_or_else(|err| panic!("create: {err}"));
+    let mut writer = std::io::BufWriter::new(file);
+    dj_audio_core::wav::write_pcm16_interleaved(&mut writer, rate, 2, &samples)
+        .unwrap_or_else(|err| panic!("write: {err}"));
+    path
+}
+
+#[test]
+fn a_load_is_routed_away_from_the_audio_callback() {
+    let load = command(
+        21,
+        DjCommand::Load {
+            deck: DeckId::B,
+            path: "/music/track.flac".to_string(),
+        },
+    );
+    match route(&load) {
+        Routed::Load(request) => {
+            assert_eq!(request.deck, DeckId::B);
+            assert_eq!(request.path, "/music/track.flac");
+            assert_eq!(request.command_id, 21);
+        }
+        _ => panic!("a load must go to the loader, never to the render loop"),
+    }
+    match route(&command(22, DjCommand::Eject { deck: DeckId::A })) {
+        Routed::Eject { deck } => assert_eq!(deck, DeckId::A),
+        _ => panic!("an eject must go to the graph, not be applied blindly"),
+    }
+    match route(&command(
+        23,
+        DjCommand::Play {
+            deck: DeckId::A,
+            enabled: true,
+        },
+    )) {
+        Routed::Render => {}
+        _ => panic!("transport commands stay in the render loop"),
+    }
+}
+
+#[test]
+fn a_stray_load_reaching_the_render_loop_is_refused_rather_than_pretended() {
+    // The router is supposed to keep loads out of the callback. If one slips through, an ack that
+    // says "applied" would send the UI to a deck that never got a track.
+    let mut decks = vec![deck_with_tone(DeckId::A, 48_000)];
+    let mut mixer = mixer_for(48_000);
+    let ack = apply(
+        &mut decks,
+        &mut mixer,
+        &command(
+            24,
+            DjCommand::Load {
+                deck: DeckId::A,
+                path: "/music/track.flac".to_string(),
+            },
+        ),
+        0,
+    );
+    assert!(matches!(
+        ack.status,
+        AckStatus::Rejected(RejectReason::NotSupported)
+    ));
+}
+
+#[test]
+fn a_prepared_track_is_attached_at_a_block_boundary_and_plays() {
+    let dir = std::env::temp_dir().join(format!("dj-engine-load-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap_or_else(|err| panic!("{err}"));
+    let path = tone_wav(&dir, "tone", 2.0);
+
+    let prepared = prepare_track(&path, 48_000, 2.0).unwrap_or_else(|err| panic!("{err}"));
+    assert!(prepared.track.is_some(), "the loader describes the track");
+    assert_eq!(
+        prepared.static_info.load,
+        dj_domain::DeckLoad::Ready,
+        "a prepared track is ready by construction"
+    );
+    assert!(
+        prepared.static_info.total_frames.unwrap_or(0) > 90_000,
+        "two seconds at 48 kHz"
+    );
+
+    let (mut graph, loads, _submissions) = graph_with_loads(256);
+    loads
+        .send(GraphLoad::Attach(Box::new(dj_engine::PreparedTrack {
+            deck: DeckId::B,
+            ..prepared
+        })))
+        .unwrap_or_else(|err| panic!("{err}"));
+
+    let mut master = vec![0.0f32; 256 * 2];
+    let mut cue = vec![0.0f32; 256 * 2];
+    graph.render_pair(&mut master, &mut cue, 256);
+    assert_eq!(
+        graph.loads_applied(),
+        1,
+        "the attach happened inside the block"
+    );
+
+    let deck_b = graph
+        .decks()
+        .iter()
+        .find(|deck| deck.id() == DeckId::B)
+        .unwrap_or_else(|| panic!("deck B"));
+    assert_eq!(deck_b.snapshot().load, dj_domain::DeckLoad::Ready);
+    assert!(
+        deck_b.snapshot().track.is_some(),
+        "the deck knows which track it holds"
+    );
+
+    // Then play it: the audio must come from the file, not from the old tone.
+    let (reply, _answers) = std::sync::mpsc::channel();
+    _submissions
+        .send(Submission {
+            command: command(
+                25,
+                DjCommand::Play {
+                    deck: DeckId::B,
+                    enabled: true,
+                },
+            ),
+            reply,
+        })
+        .unwrap_or_else(|err| panic!("{err}"));
+    graph.render_pair(&mut master, &mut cue, 256);
+    assert!(
+        master.iter().any(|sample| sample.abs() > 0.01),
+        "a loaded and playing deck must reach the master bus"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn an_eject_clears_the_deck_inside_the_block() {
+    let (mut graph, loads, _submissions) = graph_with_loads(64);
+    loads
+        .send(GraphLoad::Clear { deck: DeckId::A })
+        .unwrap_or_else(|err| panic!("{err}"));
+    let mut master = vec![0.0f32; 64 * 2];
+    let mut cue = vec![0.0f32; 64 * 2];
+    graph.render_pair(&mut master, &mut cue, 64);
+    let deck_a = graph
+        .decks()
+        .iter()
+        .find(|deck| deck.id() == DeckId::A)
+        .unwrap_or_else(|| panic!("deck A"));
+    assert_eq!(deck_a.snapshot().load, dj_domain::DeckLoad::Empty);
+    assert!(deck_a.snapshot().track.is_none());
 }

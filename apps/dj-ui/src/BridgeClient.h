@@ -39,6 +39,10 @@ public:
     // Commands. Each returns the id it was given, so a caller can correlate the ack.
     Q_INVOKABLE int play(const QString &deck, bool enabled);
     Q_INVOKABLE int cue(const QString &deck, const QString &action, int slot);
+    // Prepare a file into a deck. Acknowledged as accepted, not applied: the deck is playable when
+    // a snapshot reports `Ready` (ADR-0008).
+    Q_INVOKABLE int load(const QString &deck, const QString &path);
+    Q_INVOKABLE int eject(const QString &deck);
     Q_INVOKABLE int seek(const QString &deck, qulonglong frame);
     Q_INVOKABLE int setLoop(const QString &deck, bool enabled, qulonglong start, qulonglong end);
     Q_INVOKABLE int setCrossfader(double position);

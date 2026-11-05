@@ -18,7 +18,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use dj_bridge::{BridgeServer, ClientMessage, ServerMessage};
 use dj_deck::{Deck, DeckSource};
 use dj_domain::DeckId;
-use dj_engine::{DeckStatic, EngineGraph, StateCells, Submission};
+use dj_engine::{
+    DeckStatic, DeckUpdate, EngineGraph, GraphLoad, LoadRequest, StateCells, Submission,
+    prepare_track,
+};
 use dj_mixer::{ChannelSettings, CrossAssign, Mixer};
 
 const USAGE: &str = "\
@@ -217,25 +220,35 @@ fn run(argv: &[String]) -> Result<(), String> {
 
     // The render thread writes scalars here; nothing in the audio path allocates or locks.
     let cells = Arc::new(StateCells::new());
-    let statics = Arc::new(
-        decks
-            .iter()
-            .map(|deck| DeckStatic::from_snapshot(&deck.snapshot()))
-            .collect::<Vec<_>>(),
-    );
+    let statics = decks
+        .iter()
+        .map(|deck| DeckStatic::from_snapshot(&deck.snapshot()))
+        .collect::<Vec<_>>();
     let subscribers: Subscribers = Arc::new(Mutex::new(Vec::new()));
     let (submissions, submissions_rx) = std::sync::mpsc::channel::<Submission>();
+    // Loads never enter the audio callback: clients hand them to a loader thread, which hands a
+    // prepared source back to the graph and a new description to the publisher.
+    let (load_requests, load_requests_rx) = std::sync::mpsc::channel::<LoadRequest>();
+    let (graph_loads, graph_loads_rx) = std::sync::mpsc::channel::<GraphLoad>();
+    let (deck_updates, deck_updates_rx) = std::sync::mpsc::channel::<DeckUpdate>();
 
     // The publisher owns snapshot assembly: one allocation, at display rate, off the audio path.
     {
         let cells = Arc::clone(&cells);
-        let statics = Arc::clone(&statics);
         let subscribers = Arc::clone(&subscribers);
         let publish_every = Duration::from_millis(50);
         std::thread::spawn(move || {
             let mut revision: u64 = 0;
+            let mut statics = statics;
             loop {
                 std::thread::sleep(publish_every);
+                // A load changes what the deck is; only this thread reads the description, so the
+                // audio path never sees a lock.
+                while let Ok(update) = deck_updates_rx.try_recv() {
+                    if let Some(slot) = statics.iter_mut().find(|entry| entry.deck == update.deck) {
+                        *slot = update.static_info;
+                    }
+                }
                 revision += 1;
                 let snapshot = cells.read(&statics, rate, epoch, revision);
                 let message = ServerMessage::Snapshot(Box::new(snapshot));
@@ -251,7 +264,7 @@ fn run(argv: &[String]) -> Result<(), String> {
     {
         let subscribers = Arc::clone(&subscribers);
         let cells = Arc::clone(&cells);
-        let statics = Arc::clone(&statics);
+        let loads = load_requests.clone();
         std::thread::spawn(move || {
             // Accept forever: a refused connection must not take the engine down with it.
             loop {
@@ -267,21 +280,74 @@ fn run(argv: &[String]) -> Result<(), String> {
                     continue;
                 }
                 let (outgoing, receiver) = std::sync::mpsc::channel::<ServerMessage>();
-                // Greet with the state as it is now, then join the fan-out list.
-                let first = cells.read(&statics, rate, epoch, 0);
-                let _ = outgoing.send(ServerMessage::Snapshot(Box::new(first)));
+                // Greet with the counters as they are now; the publisher fills the rest within one
+                // tick, so the client is never left without a snapshot.
+                let _ = cells;
                 let outgoing_clone = outgoing.clone();
                 if let Ok(mut list) = subscribers.lock() {
                     list.push(outgoing);
                 }
                 let submissions = submissions.clone();
                 let alerts = outgoing_clone;
-                std::thread::spawn(move || serve_client(connection, receiver, alerts, submissions));
+                let loads = loads.clone();
+                std::thread::spawn(move || {
+                    serve_client(connection, receiver, alerts, submissions, loads)
+                });
             }
         });
     }
 
-    let graph = EngineGraph::new(decks, mixer, submissions_rx, Arc::clone(&cells), block);
+    // The loader: one thread, because a load is a second of work that must not touch the callback.
+    {
+        let prepared = graph_loads.clone();
+        let updates = deck_updates.clone();
+        std::thread::spawn(move || {
+            while let Ok(request) = load_requests_rx.recv() {
+                let _ = updates.send(DeckUpdate {
+                    deck: request.deck,
+                    static_info: DeckStatic {
+                        deck: request.deck,
+                        load: dj_domain::DeckLoad::Loading { progress: 0.0 },
+                        track: None,
+                        total_frames: None,
+                    },
+                });
+                let path = std::path::PathBuf::from(&request.path);
+                match prepare_track(&path, rate, 2.0) {
+                    Ok(mut prepared_track) => {
+                        prepared_track.deck = request.deck;
+                        prepared_track.static_info.deck = request.deck;
+                        let _ = updates.send(DeckUpdate {
+                            deck: request.deck,
+                            static_info: prepared_track.static_info.clone(),
+                        });
+                        let _ = prepared.send(GraphLoad::Attach(Box::new(prepared_track)));
+                    }
+                    Err(message) => {
+                        eprintln!("dj-engine: cannot load {}: {message}", request.path);
+                        let _ = updates.send(DeckUpdate {
+                            deck: request.deck,
+                            static_info: DeckStatic {
+                                deck: request.deck,
+                                load: dj_domain::DeckLoad::Failed { message },
+                                track: None,
+                                total_frames: None,
+                            },
+                        });
+                    }
+                }
+            }
+        });
+    }
+
+    let graph = EngineGraph::new(
+        decks,
+        mixer,
+        submissions_rx,
+        Arc::clone(&cells),
+        block,
+        graph_loads_rx,
+    );
 
     match (device, device_channels) {
         (Some(requested), Some(channels)) => {
@@ -436,6 +502,7 @@ fn serve_client(
     outgoing: Receiver<ServerMessage>,
     alerts: Sender<ServerMessage>,
     submissions: Sender<Submission>,
+    loads: Sender<LoadRequest>,
 ) {
     let (mut reader, mut writer) = connection.split();
 
@@ -453,6 +520,45 @@ fn serve_client(
     loop {
         match reader.recv_client() {
             Ok(ClientMessage::Command(command)) => {
+                // A load is answered here, not by the audio callback: it is `Accepted`, and the
+                // deck becomes playable only when the state says `Ready`.
+                match dj_engine::route(&command) {
+                    dj_engine::Routed::Load(request) => {
+                        let ack = match loads.send(request) {
+                            Ok(()) => dj_domain::Ack::accepted(command.id),
+                            Err(_) => dj_domain::Ack::rejected(
+                                command.id,
+                                dj_domain::RejectReason::InvalidValue,
+                            ),
+                        };
+                        if alerts.send(ServerMessage::Ack(ack)).is_err() {
+                            return;
+                        }
+                        continue;
+                    }
+                    dj_engine::Routed::Eject { deck } => {
+                        // The graph clears the deck at its next block boundary; the loader owns no
+                        // state for it, so nothing is queued here.
+                        let (reply, answer) = std::sync::mpsc::channel();
+                        if submissions
+                            .send(Submission {
+                                command: command.clone(),
+                                reply,
+                            })
+                            .is_err()
+                        {
+                            return;
+                        }
+                        if let Ok(ack) = answer.recv_timeout(Duration::from_millis(500))
+                            && alerts.send(ServerMessage::Ack(ack)).is_err()
+                        {
+                            return;
+                        }
+                        let _ = deck;
+                        continue;
+                    }
+                    dj_engine::Routed::Render => {}
+                }
                 let (reply, answer) = std::sync::mpsc::channel();
                 if submissions.send(Submission { command, reply }).is_err() {
                     return;

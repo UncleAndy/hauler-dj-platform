@@ -248,6 +248,27 @@ impl Deck {
         self.levels = Levels::SILENT;
     }
 
+    /// Take the source out, leaving the deck empty and playable-ready.
+    ///
+    /// The caller owns the old source, which matters on the audio path: freeing a decoder's
+    /// buffers there can take longer than a block, so the engine parks it instead.
+    pub fn take_source(&mut self) -> Option<Box<dyn DeckSource>> {
+        self.source.take()
+    }
+
+    /// Remove the source and return the deck to `Empty`.
+    pub fn eject(&mut self) {
+        self.source = None;
+        self.track = None;
+        self.playing = false;
+        self.position = 0;
+        self.loop_region = None;
+        self.loop_buffer = None;
+        self.reading_loop_buffer = false;
+        self.levels = Levels::SILENT;
+        self.load = DeckLoad::Empty;
+    }
+
     /// Record a failed load; the deck stays empty but the reason is visible.
     pub fn fail(&mut self, message: impl Into<String>) {
         self.source = None;

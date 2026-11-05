@@ -223,6 +223,25 @@ int BridgeClient::cue(const QString &deck, const QString &action, int slot)
     return sendCommand(deck, command);
 }
 
+int BridgeClient::load(const QString &deck, const QString &path)
+{
+    QJsonObject options;
+    options.insert(QStringLiteral("deck"), deck);
+    options.insert(QStringLiteral("path"), path);
+    QJsonObject command;
+    command.insert(QStringLiteral("Load"), options);
+    return sendCommand(deck, command);
+}
+
+int BridgeClient::eject(const QString &deck)
+{
+    QJsonObject options;
+    options.insert(QStringLiteral("deck"), deck);
+    QJsonObject command;
+    command.insert(QStringLiteral("Eject"), options);
+    return sendCommand(deck, command);
+}
+
 int BridgeClient::seek(const QString &deck, qulonglong frame)
 {
     QJsonObject options;
