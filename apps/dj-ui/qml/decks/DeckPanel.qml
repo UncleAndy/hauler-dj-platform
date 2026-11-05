@@ -6,6 +6,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "../views"
 
 Pane {
     id: panel
@@ -96,7 +97,11 @@ Pane {
             }
         }
 
-        Item { Layout.fillHeight: true }
+        WaveformView {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 96
+            deckState: panel.state
+        }
 
         // Level and cue indicators (DJP-UI-002): driven by the snapshot, never by the click.
         ColumnLayout {

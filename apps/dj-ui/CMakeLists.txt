@@ -8,6 +8,8 @@ qt_add_executable(dj-ui
     src/main.cpp
     src/BridgeClient.cpp
     src/BridgeClient.h
+    src/Waveform.cpp
+    src/Waveform.h
 )
 
 qt_add_qml_module(dj-ui
@@ -17,6 +19,7 @@ qt_add_qml_module(dj-ui
         qml/Main.qml
         qml/decks/DeckPanel.qml
         qml/decks/LoadDialog.qml
+        qml/views/WaveformView.qml
         qml/mixer/Crossfader.qml
 )
 

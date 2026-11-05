@@ -12,6 +12,7 @@
 //                         publish `playing`, then exit 0. This is the A06 acceptance, headless.
 
 #include "BridgeClient.h"
+#include "Waveform.h"
 
 #include <QCommandLineOption>
 #include <QCommandLineParser>
@@ -98,8 +99,8 @@ bool deckIsPlaying(const QVariantMap &snapshot, const QString &deck)
 // Connect, ask deck A to play, and require exactly what the contract promises: an ack that says
 // "applied at sample N", and a snapshot that then reports the deck as playing. The UI must never
 // assume either.
-int runSelfCheck(BridgeClient &bridge, const QString &socketPath, int timeoutMs,
-                 const QString &loadPath)
+int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socketPath,
+                 int timeoutMs, const QString &loadPath)
 {
     QElapsedTimer elapsed;
     elapsed.start();
@@ -107,6 +108,7 @@ int runSelfCheck(BridgeClient &bridge, const QString &socketPath, int timeoutMs,
     bool sawAck = false;
     bool ackApplied = false;
     bool ackRejected = false;
+    QString failure;
     bool sawPlaying = false;
     qulonglong appliedAt = 0;
     int commandId = 0;
@@ -184,6 +186,22 @@ int runSelfCheck(BridgeClient &bridge, const QString &socketPath, int timeoutMs,
             const QVariantMap track = deckState.value(QStringLiteral("track")).toMap();
             std::fprintf(stdout, "dj-ui: deck A is ready: %s\n",
                          qPrintable(track.value(QStringLiteral("title")).toString()));
+            // The engine publishes a reference to the envelope; the UI must be able to read it, or
+            // the deck has no picture however good the snapshot is.
+            const QVariantMap reference = deckState.value(QStringLiteral("waveform")).toMap();
+            if (reference.isEmpty()) {
+                failure = QStringLiteral("the deck published no waveform");
+                loop.quit();
+                return;
+            }
+            const QString envelope = reference.value(QStringLiteral("path")).toString();
+            if (!waveform.load(envelope) || waveform.buckets() <= 0) {
+                failure = waveform.error();
+                loop.quit();
+                return;
+            }
+            std::fprintf(stdout, "dj-ui: waveform loaded: %d columns of %d frames at %d Hz\n",
+                         waveform.buckets(), waveform.framesPerBucket(), waveform.sampleRate());
             stage = SendingPlay;
             commandId = bridge.play(QStringLiteral("A"), true);
             std::fprintf(stdout, "dj-ui: sent Play(A) as command %d\n", commandId);
@@ -233,6 +251,10 @@ int runSelfCheck(BridgeClient &bridge, const QString &socketPath, int timeoutMs,
     bridge.connectToEngine(socketPath);
     loop.exec();
 
+    if (!failure.isEmpty()) {
+        std::fprintf(stderr, "dj-ui: self-check failed: %s\n", qPrintable(failure));
+        return 1;
+    }
     if (!bridge.isConnected()) {
         std::fprintf(stderr, "dj-ui: self-check failed: no engine at %s\n", qPrintable(socketPath));
         return 1;
@@ -307,11 +329,13 @@ int main(int argc, char *argv[])
     qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "Bridge", bridge.get());
     FileBrowser browser;
     qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "Browser", &browser);
+    Waveform waveform;
+    qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "Waveform", &waveform);
 
     if (parser.isSet(selfCheckOption)) {
         const QString path = parser.isSet(connectOption) ? parser.value(connectOption)
                                                          : defaultSocketPath();
-        return runSelfCheck(*bridge, path, 15000,
+        return runSelfCheck(*bridge, waveform, path, 15000,
                             parser.isSet(loadOption) ? parser.value(loadOption) : QString());
     }
 
