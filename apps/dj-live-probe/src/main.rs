@@ -275,6 +275,9 @@ fn run(argv: &[String]) -> Result<String, Error> {
     let tick = Duration::from_secs_f64(options.progress_seconds.max(1.0));
     let total = options.seconds.max(0.0);
     let mut final_report = output.snapshot();
+    // Where in time the outliers happened: a total and a ring of the last 32 cannot answer "did it
+    // get worse", and that question comes after every long run.
+    let mut timeline: Vec<serde_json::Value> = Vec::new();
 
     loop {
         let elapsed = started.elapsed().as_secs_f64();
@@ -295,10 +298,30 @@ fn run(argv: &[String]) -> Result<String, Error> {
             report.interval_max_ms,
             rss_kb().map_or_else(|| "?".to_string(), |kb| kb.to_string()),
         );
+        timeline.push(json!({
+            "at_s": started.elapsed().as_secs(),
+            "callbacks": report.callbacks,
+            "late": report.late_callbacks,
+            "early": report.early_callbacks,
+            "errors": report.errors,
+            "underruns": underruns.load(Ordering::Relaxed),
+            "loop_wraps": loop_wraps.load(Ordering::Relaxed),
+            "interval_max_ms": report.interval_max_ms,
+            "render_max_us": report.render_max_us,
+            "rss_kb": rss_kb(),
+        }));
         if let Some(path) = &options.out {
             let _ = std::fs::write(
                 path,
-                report_json(&report, &options, plan, &underruns, &loop_wraps, rss_start),
+                report_json(
+                    &report,
+                    &options,
+                    plan,
+                    &underruns,
+                    &loop_wraps,
+                    rss_start,
+                    &timeline,
+                ),
             );
         }
         final_report = report;
@@ -311,6 +334,7 @@ fn run(argv: &[String]) -> Result<String, Error> {
         &underruns,
         &loop_wraps,
         rss_start,
+        &timeline,
     );
     if let Some(path) = &options.out {
         let _ = std::fs::write(path, &json);
@@ -326,6 +350,7 @@ fn report_json(
     underruns: &Arc<AtomicU64>,
     loop_wraps: &Arc<AtomicU64>,
     rss_start_kb: Option<u64>,
+    timeline: &[serde_json::Value],
 ) -> String {
     json!({
         "device": report.device,
@@ -361,6 +386,7 @@ fn report_json(
             }))
             .collect::<Vec<_>>(),
         "outliers_dropped": report.outliers_dropped,
+        "timeline": timeline,
         "deck_underruns": underruns.load(Ordering::Relaxed),
         "loop_wraps": loop_wraps.load(Ordering::Relaxed),
         "route": {
