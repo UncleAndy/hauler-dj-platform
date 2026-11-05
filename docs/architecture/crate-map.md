@@ -19,7 +19,7 @@
 | `dj-analysis` | media | A07 | R0 | DJP-MEDIA-003 |
 | `dj-library` | media | A08 | R0 | DJP-DATA-001, -003, -004, -005 |
 | `dj-session` | media | A08 | R0 | DJP-ENV-006; DJP-SET-002, -003 |
-| `dj-bridge` | ui | A06 | R0 | DJP-ARCH-004; DJP-UI-001, -002 |
+| `dj-bridge` | ui | A06 | R0 | DJP-ARCH-004; DJP-UI-001, -002 | — **реализовано в A06 (часть 1)**: кадры с длиной, рукопожатие `command-v1`, снапшоты, отказ чужому протоколу, замена протухшего сокета
 | `dj-controller-core` | hardware | A09 | R0 | DJP-CTRL-001, -002, -004 |
 | `dj-testkit` | qa | A11 | R0 | DJP-NFR-001 — `rt::CountingAllocator`/`RtScope` уже в A01; фикстуры и остальная инструментация — A11 |
 

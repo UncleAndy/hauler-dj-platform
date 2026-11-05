@@ -1,6 +1,6 @@
 [package]
 name = "dj-bridge"
-description = "Rust side of the UI bridge: command intake and snapshot publication."
+description = "Command and state transport between the engine process and its clients (ADR-0003)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,6 +8,9 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+dj-domain = { path = "../dj-domain" }
+serde.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

@@ -1,0 +1,19 @@
+[package]
+name = "dj-engine"
+description = "The audio engine process: owns the device, answers commands, publishes state (ADR-0003)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+dj-audio-core = { path = "../../crates/dj-audio-core" }
+dj-bridge = { path = "../../crates/dj-bridge" }
+dj-deck = { path = "../../crates/dj-deck" }
+dj-domain = { path = "../../crates/dj-domain" }
+dj-mixer = { path = "../../crates/dj-mixer" }
+serde_json.workspace = true
+
+[lints]
+workspace = true

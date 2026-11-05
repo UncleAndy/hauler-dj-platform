@@ -19,6 +19,7 @@ plays through a sound card yet — that is `dj-audio-io` (A05) and the engine pr
 | Media (A02) | `dj-codec`: WAV/FLAC/MP3/Vorbis decode, exact seek, bounded prefetch; PCM cache for lossy formats (ADR-0008) |
 | Decks (A03) | `dj-deck`: transport, sample-exact loop, eight hotcues, display state; `dj-headless mix` renders two decks to WAV |
 | Mixer (A04) | `dj-mixer`: channel strips, crossfader laws, master limiter, peak/RMS meters, cue bus; `--cue-out` writes the headphone bus |
+| Bridge (A06) | `dj-bridge`: framed `command-v1`/`state-v1` over a Unix socket; `dj-engine` applies commands at their sample and publishes state at display rate |
 | Qt 6 / QML shell | blank two-deck window with a crossfader, starts headless (`--smoke`) |
 | Build environment | `flake.nix` + `flake.lock` + `rust-toolchain.toml` (Rust 1.95.0, Qt 6.11.2) |
 | CI | fmt, clippy `-D warnings`, tests, toolchain pin, QML smoke, requirement coverage |

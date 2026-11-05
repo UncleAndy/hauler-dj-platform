@@ -261,6 +261,11 @@ dependencies = [
 [[package]]
 name = "dj-bridge"
 version = "0.1.0"
+dependencies = [
+ "dj-domain",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "dj-cli"
@@ -304,6 +309,18 @@ dependencies = [
 [[package]]
 name = "dj-dsp"
 version = "0.1.0"
+
+[[package]]
+name = "dj-engine"
+version = "0.1.0"
+dependencies = [
+ "dj-audio-core",
+ "dj-bridge",
+ "dj-deck",
+ "dj-domain",
+ "dj-mixer",
+ "serde_json",
+]
 
 [[package]]
 name = "dj-headless"
