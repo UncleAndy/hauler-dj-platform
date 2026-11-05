@@ -39,6 +39,12 @@ pub enum ClientMessage {
     Command(ScheduledCommand),
     /// Liveness check; answered with [`ServerMessage::Pong`].
     Ping,
+    /// Ask the engine to shut down.
+    ///
+    /// Signals are not always deliverable — a PipeWire thread loop can leave SIGINT blocked in the
+    /// thread that created it — so a stop must also be possible over the socket the client already
+    /// holds.
+    Quit,
 }
 
 /// What the engine sends back.

@@ -31,6 +31,7 @@ dj-engine — the audio engine process
 Usage:
   dj-engine [--socket PATH] [--null-sink] [--device SUBSTR] [--block N] [--rate HZ]
             [--seconds S] [--autoplay]
+  dj-engine [--socket PATH] --stop      ask a running engine to shut down
 
 Defaults: socket $XDG_RUNTIME_DIR/hauler-dj-engine.sock, null sink, 48 kHz, block 256.
 --device SUBSTR opens the real output (substring of the backend name); --null-sink keeps a
@@ -42,6 +43,8 @@ On a device with four or more outputs master goes to the first pair and cue to t
 counters the probe reports, for the evidence directory.
 --autoplay starts every deck playing, so a bounded run actually carries signal. Without it the
 decks stay paused and every level reads zero, which says nothing about the output path.
+--stop asks the running engine to shut down over its socket. Ctrl-C works too, but a signal can be
+blocked by the audio backend, so a stop must also be possible without one.
 
 Exit codes: 0 stopped by a signal, 2 bad usage or a device that will not open.
 ";
@@ -123,6 +126,7 @@ fn run(argv: &[String]) -> Result<(), String> {
     let mut rate = 48_000u32;
     let mut seconds: Option<f64> = None;
     let mut autoplay = false;
+    let mut request_stop = false;
 
     let mut index = 0;
     while index < argv.len() {
@@ -153,6 +157,10 @@ fn run(argv: &[String]) -> Result<(), String> {
                 rate = value(1)?.parse().map_err(|_| "--rate expects a number")?;
                 index += 2;
             }
+            "--stop" => {
+                request_stop = true;
+                index += 1;
+            }
             "--autoplay" => {
                 autoplay = true;
                 index += 1;
@@ -173,6 +181,18 @@ fn run(argv: &[String]) -> Result<(), String> {
 
     // Look at the device before claiming the socket: a wrong name should not leave a socket behind
     // that a client can connect to and then wait on for ever.
+    if request_stop {
+        let socket = socket.unwrap_or_else(default_socket);
+        let (mut client, _welcome) =
+            dj_bridge::connect_with_timeout(&socket, Some(Duration::from_secs(2)))
+                .map_err(|err| format!("no engine at {}: {err}", socket.display()))?;
+        client
+            .send_client(&dj_bridge::ClientMessage::Quit)
+            .map_err(|err| format!("cannot ask the engine to stop: {err}"))?;
+        eprintln!("dj-engine: stop requested at {}", socket.display());
+        return Ok(());
+    }
+
     let device_channels = match &device {
         Some(requested) => Some(
             dj_audio_io::output_channels(Some(requested), 4)
@@ -233,6 +253,12 @@ fn run(argv: &[String]) -> Result<(), String> {
     let (graph_loads, graph_loads_rx) = std::sync::mpsc::channel::<GraphLoad>();
     let (deck_updates, deck_updates_rx) = std::sync::mpsc::channel::<DeckUpdate>();
 
+    // Ctrl-C must stop the engine. PipeWire's thread loop blocks signals in the thread that creates
+    // it, so the flag and the receiving thread have to exist before the stream does.
+    let stop = Arc::new(AtomicBool::new(false));
+    register_signals(&stop)?;
+    keep_a_signal_receiving_thread(&stop);
+
     // The publisher owns snapshot assembly: one allocation, at display rate, off the audio path.
     {
         let cells = Arc::clone(&cells);
@@ -266,6 +292,7 @@ fn run(argv: &[String]) -> Result<(), String> {
         let subscribers = Arc::clone(&subscribers);
         let cells = Arc::clone(&cells);
         let loads = load_requests.clone();
+        let stop_handle = Arc::clone(&stop);
         std::thread::spawn(move || {
             // Accept forever: a refused connection must not take the engine down with it.
             loop {
@@ -291,8 +318,9 @@ fn run(argv: &[String]) -> Result<(), String> {
                 let submissions = submissions.clone();
                 let alerts = outgoing_clone;
                 let loads = loads.clone();
+                let stop = Arc::clone(&stop_handle);
                 std::thread::spawn(move || {
-                    serve_client(connection, receiver, alerts, submissions, loads)
+                    serve_client(connection, receiver, alerts, submissions, loads, stop)
                 });
             }
         });
@@ -341,12 +369,6 @@ fn run(argv: &[String]) -> Result<(), String> {
         });
     }
 
-    // Ctrl-C must stop the engine. PipeWire's thread loop installs its own SIGINT handling when the
-    // stream starts, so after that a signal no longer ends the process — the flag is set again once
-    // the stream is up (see run_device).
-    let stop = Arc::new(AtomicBool::new(false));
-    register_signals(&stop)?;
-
     let graph = EngineGraph::new(
         decks,
         mixer,
@@ -358,11 +380,17 @@ fn run(argv: &[String]) -> Result<(), String> {
 
     match (device, device_channels) {
         (Some(requested), Some(channels)) => {
-            run_device(graph, &requested, channels, block, rate, seconds, &stop)
+            let outcome = run_device(graph, &requested, channels, block, rate, seconds, &stop);
+            remove_socket(&socket);
+            outcome
         }
         _ => {
             let _ = null_sink;
             run_null(graph, block, rate, seconds, &stop);
+            // The listener lives in the accept thread, which is parked in accept() and therefore
+            // never runs its own destructor; the socket has to be removed here or the next engine
+            // sees a live path with nobody behind it.
+            remove_socket(&socket);
             Ok(())
         }
     }
@@ -372,6 +400,24 @@ fn run(argv: &[String]) -> Result<(), String> {
 ///
 /// A hard kill would skip the clean shutdown: the stream would stop mid-block and the socket would
 /// be left behind for the next engine to clean up.
+/// Keep one thread whose signal mask never gets blocked by PipeWire.
+///
+/// PipeWire's thread loop blocks signals in the thread that creates it — ours — so SIGINT stays
+/// pending there for ever and Ctrl-C does nothing, handler or not. A thread created before the
+/// stream starts keeps the mask it was born with, and the kernel delivers the signal there, where
+/// the handler sets the stop flag.
+fn keep_a_signal_receiving_thread(stop: &Arc<AtomicBool>) {
+    let stop = Arc::clone(stop);
+    std::thread::Builder::new()
+        .name("dj-signals".to_string())
+        .spawn(move || {
+            while !stop.load(Ordering::Relaxed) {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+        })
+        .ok();
+}
+
 fn register_signals(stop: &Arc<AtomicBool>) -> Result<(), String> {
     for signal in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
         signal_hook::flag::register(signal, Arc::clone(stop))
@@ -520,6 +566,11 @@ fn run_null(
     }
 }
 
+/// Remove the socket file the accept thread still holds open.
+fn remove_socket(path: &std::path::Path) {
+    let _ = std::fs::remove_file(path);
+}
+
 fn default_socket() -> PathBuf {
     let base = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
     PathBuf::from(base).join("hauler-dj-engine.sock")
@@ -531,6 +582,7 @@ fn serve_client(
     alerts: Sender<ServerMessage>,
     submissions: Sender<Submission>,
     loads: Sender<LoadRequest>,
+    stop: Arc<AtomicBool>,
 ) {
     let (mut reader, mut writer) = connection.split();
 
@@ -606,6 +658,12 @@ fn serve_client(
                         });
                     }
                 }
+            }
+            // A client can always stop the engine, whatever the signal mask looks like.
+            Ok(ClientMessage::Quit) => {
+                eprintln!("dj-engine: stop requested over the bridge");
+                stop.store(true, Ordering::Relaxed);
+                return;
             }
             Ok(_) => {}
             Err(_) => return,
