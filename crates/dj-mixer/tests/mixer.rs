@@ -1,0 +1,222 @@
+//! Mixer behaviour: crossfader law, routing, limiter, metering, NaN guards (A04).
+
+use dj_mixer::{ChannelSettings, CrossAssign, CrossfaderCurve, Mixer};
+
+fn settings(assign: CrossAssign, fader: f32) -> ChannelSettings {
+    ChannelSettings {
+        trim_db: 0.0,
+        fader,
+        assign,
+        cue: false,
+    }
+}
+
+fn dc_block(frames: usize, value: f32) -> Vec<f32> {
+    vec![value; frames * 2]
+}
+
+fn mix_two(a: f32, b: f32, crossfader: f32, curve: CrossfaderCurve) -> (Vec<f32>, Vec<f32>) {
+    let mut mixer = Mixer::new(2);
+    mixer.prepare(48_000, 256);
+    mixer.set_curve(curve);
+    mixer.set_crossfader(crossfader);
+    mixer.set_channel(0, settings(CrossAssign::A, 1.0));
+    mixer.set_channel(1, settings(CrossAssign::B, 1.0));
+    mixer.begin_block(256);
+    let block_a = dc_block(256, a);
+    let block_b = dc_block(256, b);
+    mixer.mix_channel(0, &block_a);
+    mixer.mix_channel(1, &block_b);
+    mixer.finish_block();
+    (mixer.master().to_vec(), mixer.cue().to_vec())
+}
+
+#[test]
+fn the_constant_power_crossfader_isolates_the_extremes() {
+    let mut mixer = Mixer::new(2);
+    mixer.prepare(48_000, 64);
+    mixer.set_curve(CrossfaderCurve::ConstantPower);
+
+    mixer.set_crossfader(0.0);
+    assert!((mixer.crossfader_gain(CrossAssign::A) - 1.0).abs() < 1e-6);
+    assert!(mixer.crossfader_gain(CrossAssign::B).abs() < 1e-6);
+
+    mixer.set_crossfader(1.0);
+    assert!(mixer.crossfader_gain(CrossAssign::A).abs() < 1e-6);
+    assert!((mixer.crossfader_gain(CrossAssign::B) - 1.0).abs() < 1e-6);
+
+    mixer.set_crossfader(0.5);
+    let half = mixer.crossfader_gain(CrossAssign::A);
+    assert!(
+        (half - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-4,
+        "constant power must sit at -3 dB in the middle, got {half}"
+    );
+    assert!((mixer.crossfader_gain(CrossAssign::Thru) - 1.0).abs() < 1e-6);
+}
+
+#[test]
+fn the_linear_curve_is_linear() {
+    let mut mixer = Mixer::new(2);
+    mixer.prepare(48_000, 64);
+    mixer.set_curve(CrossfaderCurve::Linear);
+    mixer.set_crossfader(0.25);
+    assert!((mixer.crossfader_gain(CrossAssign::A) - 0.75).abs() < 1e-6);
+    assert!((mixer.crossfader_gain(CrossAssign::B) - 0.25).abs() < 1e-6);
+}
+
+#[test]
+fn routing_puts_each_channel_only_where_it_belongs() {
+    // Crossfader fully to B: channel A must not reach the master, but its cue stays audible.
+    let mut mixer = Mixer::new(2);
+    mixer.prepare(48_000, 128);
+    mixer.set_crossfader(1.0);
+    mixer.set_channel(
+        0,
+        ChannelSettings {
+            cue: true,
+            ..settings(CrossAssign::A, 1.0)
+        },
+    );
+    mixer.set_channel(1, settings(CrossAssign::B, 1.0));
+
+    mixer.begin_block(128);
+    let block_a = dc_block(128, 0.5);
+    let silent_b = dc_block(128, 0.0);
+    mixer.mix_channel(0, &block_a);
+    mixer.mix_channel(1, &silent_b);
+    mixer.finish_block();
+
+    assert!(
+        mixer.master().iter().all(|sample| sample.abs() < 1e-6),
+        "a channel closed by the crossfader must not leak into master"
+    );
+    assert!(
+        mixer.cue().iter().all(|sample| (sample - 0.5).abs() < 1e-6),
+        "the cued channel must appear in the cue bus pre-crossfader"
+    );
+}
+
+#[test]
+fn non_finite_parameters_keep_the_previous_value() {
+    let mut mixer = Mixer::new(1);
+    mixer.prepare(48_000, 64);
+    mixer.set_crossfader(0.25);
+    mixer.set_crossfader(f32::NAN);
+    assert!((mixer.crossfader() - 0.25).abs() < 1e-6);
+
+    mixer.set_channel(0, settings(CrossAssign::A, 0.5));
+    mixer.set_channel(
+        0,
+        ChannelSettings {
+            trim_db: f32::INFINITY,
+            fader: f32::NAN,
+            ..settings(CrossAssign::B, 1.0)
+        },
+    );
+    let channel = mixer.channel(0).copied().unwrap_or_default();
+    assert!(
+        (channel.fader - 0.5).abs() < 1e-6,
+        "NaN fader must be ignored"
+    );
+    assert!(
+        (channel.trim_db - 0.0).abs() < 1e-6,
+        "inf trim must be ignored"
+    );
+}
+
+#[test]
+fn non_finite_samples_become_silence_and_are_counted() {
+    let mut mixer = Mixer::new(1);
+    mixer.prepare(48_000, 32);
+    mixer.set_channel(0, settings(CrossAssign::Thru, 1.0));
+    mixer.begin_block(32);
+    let mut block = dc_block(32, 0.1);
+    block[0] = f32::NAN;
+    block[3] = f32::INFINITY;
+    mixer.mix_channel(0, &block);
+    mixer.finish_block();
+
+    assert_eq!(mixer.meters().non_finite_samples, 2);
+    assert!(mixer.master().iter().all(|sample| sample.is_finite()));
+    assert_eq!(mixer.master()[0], 0.0);
+}
+
+#[test]
+fn the_limiter_keeps_the_master_below_full_scale() {
+    // Two full-scale channels on opposite sides at the centre sum to about 1.41.
+    let (master, _) = mix_two(1.0, 1.0, 0.5, CrossfaderCurve::ConstantPower);
+    let peak = master
+        .iter()
+        .fold(0.0f32, |acc, sample| acc.max(sample.abs()));
+    assert!(
+        peak <= 1.0,
+        "the master must never exceed full scale, peak was {peak}"
+    );
+    assert!(peak > 0.5, "the limiter must not silence the mix");
+}
+
+#[test]
+fn clipping_is_reported_when_the_input_is_over_full_scale() {
+    let mut mixer = Mixer::new(1);
+    mixer.prepare(48_000, 64);
+    mixer.set_channel(0, settings(CrossAssign::Thru, 1.0));
+    mixer.begin_block(64);
+    let block = dc_block(64, 1.5);
+    mixer.mix_channel(0, &block);
+    mixer.finish_block();
+
+    assert!(mixer.meters().clipped(), "overdriven input must be flagged");
+    assert!(mixer.meters().clipped_samples > 0);
+    assert!(mixer.meters().limiter_gain < 1.0);
+    let peak = mixer
+        .master()
+        .iter()
+        .fold(0.0f32, |acc, sample| acc.max(sample.abs()));
+    assert!(peak <= 1.0);
+}
+
+#[test]
+fn meters_report_peak_and_rms_of_the_channel() {
+    let mut mixer = Mixer::new(1);
+    mixer.prepare(48_000, 128);
+    mixer.set_channel(0, settings(CrossAssign::Thru, 0.5));
+    mixer.begin_block(128);
+    let block = dc_block(128, 0.6);
+    mixer.mix_channel(0, &block);
+    mixer.finish_block();
+
+    let channel = mixer.meters().channels[0];
+    assert!((channel.peak - 0.3).abs() < 1e-6, "peak {}", channel.peak);
+    assert!((channel.rms - 0.3).abs() < 1e-6, "rms {}", channel.rms);
+    assert!((mixer.meters().master.peak - 0.3).abs() < 1e-3);
+}
+
+#[test]
+fn trim_is_a_decibel_gain() {
+    let mut mixer = Mixer::new(1);
+    mixer.prepare(48_000, 64);
+    mixer.set_channel(
+        0,
+        ChannelSettings {
+            trim_db: -6.0206,
+            ..settings(CrossAssign::Thru, 1.0)
+        },
+    );
+    mixer.begin_block(64);
+    let block = dc_block(64, 0.5);
+    mixer.mix_channel(0, &block);
+    mixer.finish_block();
+    let peak = mixer.meters().channels[0].peak;
+    assert!(
+        (peak - 0.25).abs() < 1e-3,
+        "-6 dB must halve the level, got {peak}"
+    );
+}
+
+#[test]
+fn the_mixer_declares_no_latency() {
+    let mut mixer = Mixer::new(2);
+    mixer.prepare(48_000, 256);
+    assert_eq!(mixer.latency_frames(), 0);
+    assert_eq!(mixer.tail_frames(), 0);
+}

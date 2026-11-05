@@ -1,8 +1,9 @@
-//! Two (or more) decks rendered together, headlessly (A03 acceptance).
+//! Decks through the mixer, headlessly (A03 + A04).
 //!
-//! A mix scenario names files, a gain per deck, and commands bound to audio-clock samples. The
-//! renderer cuts every block at the next command, so a command takes effect exactly at the sample
-//! it names — the same rule the RT scheduler follows (A01), checked here without a sound card.
+//! A mix scenario names files, channel settings (fader, crossfader side, cue), and commands bound
+//! to audio-clock samples. The renderer cuts every block at the next command, renders each deck
+//! into its own block, feeds the channel strips, and writes the master bus — the same order the RT
+//! graph uses (DJP-ARCH-006), without a sound card.
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -10,29 +11,35 @@ use std::time::{Duration, Instant};
 use dj_codec::{CacheStorage, PcmCache, PrefetchConfig, Prefetcher, StreamDecoder};
 use dj_deck::Deck;
 use dj_domain::{DeckId, FrameRange, TrackMeta};
+use dj_mixer::{ChannelSettings, CrossAssign, CrossfaderCurve, Meter, Meters, Mixer};
 use serde::Deserialize;
 
-/// Default block size driven through the decks.
+/// Default block size driven through the mixer.
 pub const DEFAULT_BLOCK_FRAMES: usize = 256;
 /// Default prefetch window.
 pub const DEFAULT_WINDOW_SECONDS: f64 = 2.0;
 
-/// How long a deck may take to become ready before the run gives up.
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// One mix run.
 #[derive(Debug, Clone, Deserialize)]
 pub struct MixScenario {
-    /// Sample rate the render is produced at; files must match it (resampling is A04).
+    /// Sample rate the render is produced at; files must match it (resampling is A04/M2).
     pub sample_rate: u32,
     /// Frames to render.
     pub frames: u64,
-    /// Block size handed to the decks.
+    /// Block size handed to the decks and the mixer.
     #[serde(default = "default_block_frames")]
     pub block_frames: usize,
     /// Prefetch window per deck.
     #[serde(default = "default_window_seconds")]
     pub window_seconds: f64,
+    /// Initial crossfader position (0 = A, 1 = B); default 0.5.
+    #[serde(default)]
+    pub crossfader: Option<f32>,
+    /// Crossfader law: `linear` or `constant` (default).
+    #[serde(default)]
+    pub curve: Option<String>,
     /// Decks and their files.
     pub decks: Vec<DeckSpec>,
     /// Commands, each bound to an audio-clock sample.
@@ -40,25 +47,32 @@ pub struct MixScenario {
     pub commands: Vec<MixCommand>,
 }
 
-/// A deck and the file it plays.
+/// A deck and its channel strip settings.
 #[derive(Debug, Clone, Deserialize)]
 pub struct DeckSpec {
     /// Which deck.
     pub id: DeckId,
     /// File to play.
     pub file: PathBuf,
-    /// Channel gain, linear.
-    #[serde(default = "unity")]
-    pub gain: f32,
+    /// Channel fader, 0 … 1 (default 1).
+    #[serde(default)]
+    pub fader: Option<f32>,
+    /// Crossfader side: `A`, `B` or `thru` (default `thru`, i.e. unaffected).
+    #[serde(default)]
+    pub assign: Option<String>,
+    /// Send the channel to the cue bus (default false).
+    #[serde(default)]
+    pub cue: Option<bool>,
 }
 
 /// One command in a mix scenario.
 #[derive(Debug, Clone, Deserialize)]
 pub struct MixCommand {
-    /// Audio-clock sample (frames rendered so far) at which it applies.
+    /// Audio-clock sample at which it applies.
     pub at: u64,
-    /// Target deck.
-    pub deck: DeckId,
+    /// Target deck. Required for deck actions, ignored for mixer actions.
+    #[serde(default)]
+    pub deck: Option<DeckId>,
     /// What to do.
     pub action: MixAction,
     /// Frame argument for `Seek` and the hotcue actions.
@@ -73,9 +87,12 @@ pub struct MixCommand {
     /// Hotcue slot, 0-based.
     #[serde(default)]
     pub slot: Option<usize>,
+    /// Value for fader/master-gain actions.
+    #[serde(default)]
+    pub value: Option<f32>,
 }
 
-/// Deck actions a scenario can ask for.
+/// Deck and mixer actions a scenario can ask for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub enum MixAction {
     /// Start the transport.
@@ -94,6 +111,16 @@ pub enum MixAction {
     HotcueJump,
     /// Delete `slot`.
     HotcueDelete,
+    /// Set the channel fader to `value`.
+    SetFader,
+    /// Move the crossfader to `value` (0 = A, 1 = B).
+    SetCrossfader,
+    /// Send a channel to the cue bus.
+    CueOn,
+    /// Remove a channel from the cue bus.
+    CueOff,
+    /// Set the master gain to `value`.
+    SetMasterGain,
 }
 
 /// What one deck did during the run.
@@ -113,20 +140,45 @@ pub struct DeckReport {
     pub hotcue_jumps: u64,
     /// Time from open to ready, milliseconds.
     pub ready_ms: f64,
+    /// Channel fader at the end.
+    pub fader: f32,
+    /// Crossfader side.
+    pub assign: &'static str,
+    /// Whether the channel is cued.
+    pub cue: bool,
+    /// Channel meter of the last block.
+    pub meter: Meter,
 }
 
 /// Result of a mix render.
 #[derive(Debug, Clone)]
 pub struct MixReport {
-    /// Interleaved stereo output.
+    /// Interleaved stereo master bus.
     pub samples: Vec<f32>,
+    /// Cue bus, when the scenario asked for it.
+    pub cue_samples: Option<Vec<f32>>,
     /// Per-deck state.
     pub decks: Vec<DeckReport>,
     /// Commands that were applied.
     pub applied: usize,
+    /// Mixer metering of the whole run.
+    pub meters: RunMeters,
 }
 
-/// Render a mix scenario into interleaved stereo.
+/// Mixer figures accumulated over the run.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RunMeters {
+    /// Highest master peak seen.
+    pub master_peak: f32,
+    /// Samples over full scale before the limiter.
+    pub clipped_samples: u64,
+    /// Smallest limiter gain applied.
+    pub limiter_gain: f32,
+    /// Adapted non-finite input samples.
+    pub non_finite_samples: u64,
+}
+
+/// Render a mix scenario.
 pub fn render(scenario: &MixScenario, cache: Option<&mut PcmCache>) -> Result<MixReport, String> {
     if scenario.decks.is_empty() {
         return Err("a mix scenario needs at least one deck".to_string());
@@ -138,9 +190,21 @@ pub fn render(scenario: &MixScenario, cache: Option<&mut PcmCache>) -> Result<Mi
     let block = scenario.block_frames.max(1);
     let mut decks: Vec<(DeckId, Deck)> = Vec::with_capacity(scenario.decks.len());
     let mut reports = Vec::with_capacity(scenario.decks.len());
+    let mut mixer = Mixer::new(scenario.decks.len());
+    mixer.prepare(scenario.sample_rate, block);
+    if let Some(position) = scenario.crossfader {
+        mixer.set_crossfader(position);
+    }
+    if let Some(curve) = scenario.curve.as_deref() {
+        mixer.set_curve(match curve.to_ascii_lowercase().as_str() {
+            "linear" => CrossfaderCurve::Linear,
+            "constant" | "constant-power" => CrossfaderCurve::ConstantPower,
+            other => return Err(format!("unknown crossfader curve {other:?}")),
+        });
+    }
 
     let mut cache = cache;
-    for spec in &scenario.decks {
+    for (index, spec) in scenario.decks.iter().enumerate() {
         let opened = Instant::now();
         let info = StreamDecoder::open(&spec.file)
             .map_err(|err| format!("{}: {err}", spec.file.display()))?
@@ -181,7 +245,26 @@ pub fn render(scenario: &MixScenario, cache: Option<&mut PcmCache>) -> Result<Mi
 
         let mut deck = Deck::new(spec.id);
         deck.attach(Box::new(prefetcher), Some(track));
-        deck.set_gain(spec.gain);
+        deck.set_gain(1.0);
+
+        let assign = match spec.assign.as_deref() {
+            Some(value) if value.eq_ignore_ascii_case("a") => CrossAssign::A,
+            Some(value) if value.eq_ignore_ascii_case("b") => CrossAssign::B,
+            Some(value) if value.eq_ignore_ascii_case("thru") => CrossAssign::Thru,
+            Some(other) => return Err(format!("unknown crossfader assignment {other:?}")),
+            None => CrossAssign::Thru,
+        };
+        let fader = spec.fader.unwrap_or(1.0);
+        let cue = spec.cue.unwrap_or(false);
+        mixer.set_channel(
+            index,
+            ChannelSettings {
+                trim_db: 0.0,
+                fader,
+                assign,
+                cue,
+            },
+        );
 
         reports.push(DeckReport {
             deck: deck_name(spec.id),
@@ -191,12 +274,17 @@ pub fn render(scenario: &MixScenario, cache: Option<&mut PcmCache>) -> Result<Mi
             loop_wraps: 0,
             hotcue_jumps: 0,
             ready_ms: opened.elapsed().as_secs_f64() * 1000.0,
+            fader,
+            assign: assign_name(assign),
+            cue,
+            meter: Meter::default(),
         });
         decks.push((spec.id, deck));
     }
 
     let total = usize::try_from(scenario.frames).map_err(|_| "frames do not fit".to_string())?;
-    let mut out = vec![0.0f32; total * 2];
+    let mut master = vec![0.0f32; total * 2];
+    let mut cue = vec![0.0f32; total * 2];
     let mut deck_block = vec![0.0f32; block * 2];
 
     let mut commands: Vec<&MixCommand> = scenario.commands.iter().collect();
@@ -204,14 +292,17 @@ pub fn render(scenario: &MixScenario, cache: Option<&mut PcmCache>) -> Result<Mi
     let mut next_command = 0usize;
     let mut applied = 0usize;
     let mut written = 0usize;
+    let mut run = RunMeters {
+        limiter_gain: 1.0,
+        ..RunMeters::default()
+    };
 
     while written < total {
-        // Commands due exactly here apply before the next sample is rendered.
         while let Some(command) = commands.get(next_command) {
             if command.at > written as u64 {
                 break;
             }
-            apply(command, &mut decks)?;
+            apply(command, &mut decks, &mut mixer)?;
             applied += 1;
             next_command += 1;
         }
@@ -222,13 +313,24 @@ pub fn render(scenario: &MixScenario, cache: Option<&mut PcmCache>) -> Result<Mi
         let until = boundary.min((written + block) as u64).min(total as u64);
         let count = usize::try_from(until.saturating_sub(written as u64))
             .unwrap_or(0)
-            .max(1);
-        let count = count.min(total - written);
+            .max(1)
+            .min(total - written);
 
-        for (_, deck) in decks.iter_mut() {
+        mixer.begin_block(count);
+        for (index, (_, deck)) in decks.iter_mut().enumerate() {
             deck.render(&mut deck_block[..count * 2]);
-            for (index, sample) in deck_block[..count * 2].iter().enumerate() {
-                out[written * 2 + index] += *sample;
+            mixer.mix_channel(index, &deck_block[..count * 2]);
+        }
+        mixer.finish_block();
+
+        master[written * 2..(written + count) * 2].copy_from_slice(mixer.master());
+        cue[written * 2..(written + count) * 2].copy_from_slice(mixer.cue());
+
+        accumulate(&mut run, mixer.meters());
+        for (index, report) in reports.iter_mut().enumerate() {
+            if let Some(meter) = mixer.meters().channels.get(index) {
+                report.meter.peak = report.meter.peak.max(meter.peak);
+                report.meter.rms = report.meter.rms.max(meter.rms);
             }
         }
         written += count;
@@ -242,25 +344,96 @@ pub fn render(scenario: &MixScenario, cache: Option<&mut PcmCache>) -> Result<Mi
         report.loop_wraps = stats.loop_wraps;
         report.hotcue_jumps = stats.hotcue_jumps;
     }
+    for (index, report) in reports.iter_mut().enumerate() {
+        if let Some(settings) = mixer.channel(index) {
+            report.fader = settings.fader;
+            report.assign = assign_name(settings.assign);
+            report.cue = settings.cue;
+        }
+    }
 
     Ok(MixReport {
-        samples: out,
+        samples: master,
+        cue_samples: Some(cue),
         decks: reports,
         applied,
+        meters: run,
     })
 }
 
-fn apply(command: &MixCommand, decks: &mut [(DeckId, Deck)]) -> Result<(), String> {
-    let Some((_, deck)) = decks.iter_mut().find(|(id, _)| *id == command.deck) else {
-        return Err(format!(
-            "command targets an unknown deck {:?}",
-            command.deck
-        ));
+fn accumulate(run: &mut RunMeters, meters: &Meters) {
+    run.master_peak = run.master_peak.max(meters.master.peak);
+    run.clipped_samples += meters.clipped_samples;
+    run.non_finite_samples += meters.non_finite_samples;
+    if meters.limiter_gain < run.limiter_gain {
+        run.limiter_gain = meters.limiter_gain;
+    }
+}
+
+fn apply(
+    command: &MixCommand,
+    decks: &mut [(DeckId, Deck)],
+    mixer: &mut Mixer,
+) -> Result<(), String> {
+    // Mixer-wide actions first: they do not need a deck.
+    match command.action {
+        MixAction::SetCrossfader => {
+            let value = command
+                .value
+                .ok_or_else(|| "SetCrossfader needs a value".to_string())?;
+            mixer.set_crossfader(value);
+            return Ok(());
+        }
+        MixAction::SetMasterGain => {
+            let value = command
+                .value
+                .ok_or_else(|| "SetMasterGain needs a value".to_string())?;
+            mixer.set_master_gain(value);
+            return Ok(());
+        }
+        _ => {}
+    }
+
+    let deck_id = command
+        .deck
+        .ok_or_else(|| format!("{:?} needs a deck", command.action))?;
+    let Some(index) = decks.iter().position(|(id, _)| *id == deck_id) else {
+        return Err(format!("command targets an unknown deck {deck_id:?}"));
+    };
+
+    // Channel actions apply to the strip of that deck.
+    match command.action {
+        MixAction::SetFader => {
+            let value = command
+                .value
+                .ok_or_else(|| "SetFader needs a value".to_string())?;
+            let mut settings = mixer
+                .channel(index)
+                .copied()
+                .ok_or_else(|| "channel strip missing".to_string())?;
+            settings.fader = value;
+            mixer.set_channel(index, settings);
+            return Ok(());
+        }
+        MixAction::CueOn | MixAction::CueOff => {
+            let mut settings = mixer
+                .channel(index)
+                .copied()
+                .ok_or_else(|| "channel strip missing".to_string())?;
+            settings.cue = command.action == MixAction::CueOn;
+            mixer.set_channel(index, settings);
+            return Ok(());
+        }
+        _ => {}
+    }
+
+    let Some((_, deck)) = decks.get_mut(index) else {
+        return Err(format!("deck {deck_id:?} is missing"));
     };
     match command.action {
         MixAction::Play => {
             if !deck.play() {
-                return Err(format!("deck {} is not loaded", deck_name(command.deck)));
+                return Err(format!("deck {deck_id:?} is not loaded"));
             }
         }
         MixAction::Pause => deck.pause(),
@@ -297,6 +470,11 @@ fn apply(command: &MixCommand, decks: &mut [(DeckId, Deck)]) -> Result<(), Strin
         MixAction::HotcueDelete => {
             deck.delete_hotcue(command.slot.unwrap_or(0));
         }
+        MixAction::SetFader
+        | MixAction::SetCrossfader
+        | MixAction::CueOn
+        | MixAction::CueOff
+        | MixAction::SetMasterGain => unreachable!("handled above"),
     }
     Ok(())
 }
@@ -324,8 +502,12 @@ pub fn deck_name(id: DeckId) -> &'static str {
     }
 }
 
-fn unity() -> f32 {
-    1.0
+fn assign_name(assign: CrossAssign) -> &'static str {
+    match assign {
+        CrossAssign::A => "A",
+        CrossAssign::B => "B",
+        CrossAssign::Thru => "thru",
+    }
 }
 
 fn default_block_frames() -> usize {

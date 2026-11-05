@@ -15,7 +15,7 @@
 | `dj-codec` | media | A02 | R0 | DJP-MEDIA-001, -002 — **реализовано в A02**: декодирование, seek, bounded prefetch, PCM-кэш по формату (ADR-0008) |
 | `dj-deck` | audio-core | A03 | R0 | DJP-DECK-001…004 — **реализовано в A03**: transport, loop на точном сэмпле, 8 hotcue, снимок для дисплеев |
 | `dj-dsp` | dsp | A04 | R0 | DJP-ARCH-006, -009; DJP-NFR-008 |
-| `dj-mixer` | dsp | A04 | R0 | DJP-MIX-001; DJP-ARCH-006, -007 |
+| `dj-mixer` | dsp | A04 | R0 | DJP-MIX-001; DJP-ARCH-006, -007 — **реализовано в A04**: канальные стрипы, кроссфейдер, лимитер, метры, шина cue |
 | `dj-analysis` | media | A07 | R0 | DJP-MEDIA-003 |
 | `dj-library` | media | A08 | R0 | DJP-DATA-001, -003, -004, -005 |
 | `dj-session` | media | A08 | R0 | DJP-ENV-006; DJP-SET-002, -003 |

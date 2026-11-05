@@ -1,0 +1,382 @@
+warning: Git tree '/home/hermes/projects/RUST/Hauler-DJ-Platform' is dirty
+dj-platform dev shell — rust 1.95.0, qt 6.11.2, cmake 4.1.6
+  cargo test --workspace    bash scripts/check.sh    bash scripts/ui.sh --smoke
+toolchain: rustc 1.95.0 (matches rust-toolchain.toml)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.04s
+   Compiling dj-headless v0.1.0 (/home/hermes/projects/RUST/Hauler-DJ-Platform/apps/dj-headless)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.85s
+     Running unittests src/lib.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_analysis-5507a6b26b09e24b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_audio_core-85b07dac44f4d3cf)
+
+running 18 tests
+test bench::tests::an_empty_render_has_no_summary ... ok
+test engine::tests::a_bad_ratio_is_rejected_without_changing_state ... ok
+test engine::tests::a_snapshot_carries_revision_clock_and_deck_state ... ok
+test engine::tests::play_and_stop_take_effect_at_the_exact_sample ... ok
+test bench::tests::every_block_is_timed_and_the_summary_is_sane ... ok
+test engine::tests::the_ack_reports_the_exact_application_sample ... ok
+test engine::tests::unimplemented_commands_are_rejected_at_submit ... ok
+test queue::tests::a_command_in_the_future_is_not_returned_early ... ok
+test queue::tests::a_full_critical_lane_rejects_explicitly ... ok
+test queue::tests::a_flood_of_controls_does_not_drop_transport ... ok
+test queue::tests::commands_are_returned_in_sample_order ... ok
+test queue::tests::several_decks_keep_their_own_coalesced_value ... ok
+test wav::tests::samples_are_scaled_and_clipped ... ok
+test wav::tests::the_header_describes_the_payload ... ok
+test engine::tests::two_runs_of_the_same_scenario_are_identical ... ok
+test engine::tests::the_frame_count_is_exact_for_awkward_block_sizes ... ok
+test sine::tests::a_440_hz_sine_completes_440_cycles_per_second ... ok
+test sine::tests::the_phase_stays_bounded_and_samples_stay_in_range ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/no_forbidden_primitives.rs (/home/hermes/.cache/dj-platform-target/debug/deps/no_forbidden_primitives-5f9f05187a10f346)
+
+running 1 test
+test the_core_crate_holds_no_blocking_primitives ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/rt_contract.rs (/home/hermes/.cache/dj-platform-target/debug/deps/rt_contract-ababf7a6785a8e41)
+
+running 3 tests
+test the_instrumentation_sees_a_deliberate_allocation ... ok
+test the_offline_renderer_only_allocates_outside_the_callback ... ok
+test processing_a_block_does_not_allocate ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_audio_io-b5fb2ff0c7cc3345)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_audio_probe-181c44258b764a5c)
+
+running 14 tests
+test asound::tests::card_name_drops_the_pci_address_and_trailing_colon ... ok
+test asound::tests::a_capture_only_card_has_no_playback_altsets ... ok
+test asound::tests::range_style_rates_are_expanded ... ok
+test asound::tests::parses_playback_and_capture_channels ... ok
+test tests::args_parse_the_documented_flags ... ok
+test tests::device_filter_is_case_insensitive ... ok
+test tests::a_fast_operation_still_returns_its_value ... ok
+test tests::percentile_uses_nearest_rank ... ok
+test tests::seconds_outside_the_range_is_an_error ... ok
+test tests::summarize_counts_intervals_and_gaps ... ok
+test tests::unknown_flag_is_an_error ... ok
+test tests::json_report_carries_all_three_sources ... ok
+test tests::pw_dump_is_summarized_into_nodes_with_ports ... ok
+test tests::a_blocked_operation_times_out_instead_of_hanging ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running unittests src/lib.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_bridge-e0edf0f264e257e7)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_cli-0efdc1c475a4ae7e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cli.rs (/home/hermes/.cache/dj-platform-target/debug/deps/cli-ef485f2fc9ae6196)
+
+running 3 tests
+test help_exits_zero ... ok
+test import_is_not_wired_yet_and_says_so ... ok
+test version_reports_package_version ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_codec-8a1b0f3e3342f586)
+
+running 6 tests
+test cache::tests::sample_formats_round_trip_within_their_precision ... ok
+test cache::tests::the_internal_hash_is_sha256 ... ok
+test cache::tests::the_policy_reads_the_format_only ... ok
+test info::tests::duration_comes_from_frames_and_rate ... ok
+test info::tests::extensions_are_matched_case_insensitively ... ok
+test info::tests::the_cache_policy_is_a_property_of_the_format ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cache.rs (/home/hermes/.cache/dj-platform-target/debug/deps/cache-c86898a1d689d720)
+
+running 8 tests
+test a_lossless_file_is_not_cached ... ok
+test an_mp3_is_built_once_then_reused ... ok
+test seeking_inside_the_entry_is_exact_and_cheap ... ok
+test a_corrupt_entry_is_dropped_on_scan_instead_of_being_played ... ok
+test memory_storage_never_touches_the_disk ... ok
+test the_entry_plays_the_same_audio_as_the_decoder ... ok
+test a_prefetch_over_the_cache_plays_without_a_decoder ... ok
+test the_limit_evicts_the_least_recently_used_and_spares_pinned_entries ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/decode.rs (/home/hermes/.cache/dj-platform-target/debug/deps/decode-1c69997fe5303204)
+
+running 10 tests
+test garbage_is_an_error_and_not_a_panic ... ok
+test a_vbr_mp3_still_reports_a_usable_duration ... ok
+test reading_past_the_end_returns_zero_rather_than_padding ... ok
+test a_seek_in_flac_lands_on_or_before_the_target ... ok
+test a_seek_in_mp3_lands_within_one_codec_frame ... ok
+test a_seek_in_wav_lands_on_the_exact_sample ... ok
+test a_wav_is_fully_read_and_reports_its_shape ... ok
+test flac_decodes_to_the_same_samples_as_the_wav_it_came_from ... ok
+test mp3_arrives_with_the_encoder_delay_already_trimmed ... ok
+test ogg_vorbis_decodes ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/prefetch.rs (/home/hermes/.cache/dj-platform-target/debug/deps/prefetch-43e859916c498459)
+
+running 4 tests
+test a_seek_inside_the_window_never_calls_the_decoder ... ok
+test the_window_delivers_the_same_samples_as_the_decoder ... ok
+test a_seek_outside_the_window_refills_from_the_new_position ... ok
+test an_mp3_window_reports_the_format_and_reaches_the_end ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running unittests src/lib.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_controller_core-96bcf3ba8362f26f)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_deck-44e2d2b63577a4c5)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/deck.rs (/home/hermes/.cache/dj-platform-target/debug/deps/deck-3550b2f9ae83e0f6)
+
+running 9 tests
+test a_failed_load_is_a_state_not_a_silent_empty_deck ... ok
+test a_hotcue_jumps_to_the_stored_frame ... ok
+test a_deck_is_silent_until_the_transport_runs ... ok
+test a_snapshot_carries_everything_a_display_needs ... ok
+test eight_hotcues_are_independent ... ok
+test an_empty_read_is_an_underrun_not_a_panic ... ok
+test gain_scales_the_block ... ok
+test a_loop_wraps_at_the_exact_sample ... ok
+test a_real_file_plays_through_the_prefetcher ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running unittests src/lib.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_domain-0a9d353623085e9f)
+
+running 5 tests
+test tests::a_command_survives_a_json_round_trip ... ok
+test tests::an_empty_or_inverted_range_is_rejected ... ok
+test tests::a_scheduled_command_keeps_its_sample_and_id ... ok
+test tests::coalesced_slots_are_per_deck_and_never_collide ... ok
+test tests::commands_are_classified_for_the_queue ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/wire_format.rs (/home/hermes/.cache/dj-platform-target/debug/deps/wire_format-9c57dc2a65492d5d)
+
+running 8 tests
+test a_loop_region_is_a_pair_of_source_frames ... ok
+test a_continuous_control_names_its_deck_and_units ... ok
+test a_scheduled_command_carries_id_sample_and_command ... ok
+test a_transport_command_is_tagged_with_its_variant_name ... ok
+test acks_report_applied_sample_and_rejection_reason ... ok
+test a_snapshot_is_self_describing_enough_to_be_refused ... ok
+test an_unknown_variant_is_rejected_instead_of_ignored ... ok
+test the_pinned_strings_parse_back_into_the_same_values ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_dsp-ed963e00664e7948)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_headless-cfa07e1181d0b63c)
+
+running 3 tests
+test scenario::tests::a_minimal_scenario_gets_the_documented_defaults ... ok
+test scenario::tests::a_command_is_read_the_way_the_protocol_serialises_it ... ok
+test scenario::tests::an_unknown_field_is_an_error_not_a_silent_default ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cli.rs (/home/hermes/.cache/dj-platform-target/debug/deps/cli-34e8195e7ba5402c)
+
+running 7 tests
+test a_missing_scenario_file_exits_with_three ... ok
+test help_documents_both_modes_and_the_exit_codes ... ok
+test version_reports_package_version ... ok
+test a_scenario_applies_play_and_stop_at_the_named_samples ... ok
+test sine_renders_exactly_the_requested_number_of_frames ... ok
+test two_renders_of_one_scenario_are_byte_identical ... ok
+test bad_usage_exits_with_two ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/mix.rs (/home/hermes/.cache/dj-platform-target/debug/deps/mix-b55f3b37e8c2746f)
+
+running 4 tests
+test a_rate_mismatch_is_refused_instead_of_silently_sped_up ... ok
+test the_crossfader_routes_only_the_selected_side ... ok
+test two_decks_render_together_with_commands_on_their_samples ... ok
+test the_same_mix_renders_identical_bytes ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+     Running unittests src/lib.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_library-7b1dc9cf6b5f2ce3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_media_bench-f51ae0e23dace322)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_mixer-6f3572f53a1652c0)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/mixer.rs (/home/hermes/.cache/dj-platform-target/debug/deps/mixer-d9480e7226fdbef0)
+
+running 10 tests
+test clipping_is_reported_when_the_input_is_over_full_scale ... ok
+test meters_report_peak_and_rms_of_the_channel ... ok
+test non_finite_parameters_keep_the_previous_value ... ok
+test the_constant_power_crossfader_isolates_the_extremes ... ok
+test non_finite_samples_become_silence_and_are_counted ... ok
+test routing_puts_each_channel_only_where_it_belongs ... ok
+test the_linear_curve_is_linear ... ok
+test the_mixer_declares_no_latency ... ok
+test trim_is_a_decibel_gain ... ok
+test the_limiter_keeps_the_master_below_full_scale ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/rt_contract.rs (/home/hermes/.cache/dj-platform-target/debug/deps/rt_contract-c1291a44a63b1d88)
+
+running 1 test
+test mixing_a_block_does_not_allocate ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_session-7d4c719fc355fbae)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/hermes/.cache/dj-platform-target/debug/deps/dj_testkit-6fe02543aca694a9)
+
+running 1 test
+test rt::tests::the_guard_restores_the_previous_state ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests dj_analysis
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests dj_audio_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests dj_audio_io
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests dj_bridge
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests dj_codec
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests dj_controller_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests dj_deck
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests dj_domain
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests dj_dsp
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests dj_library
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests dj_mixer
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests dj_session
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests dj_testkit
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+traceability: every DJP-* requirement has an owned row
+-- Configuring done (0.3s)
+-- Generating done (0.0s)
+-- Build files have been written to: /tmp/dj-ui-build
+[1/13] Automatic MOC and UIC for target dj-ui
+[2/12] Running AUTOMOC file extraction for target dj-ui
+dj-ui: QML scene loaded, no Qt warnings
+check.sh: all gates passed

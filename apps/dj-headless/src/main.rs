@@ -42,6 +42,7 @@ Options:
   --block N        block size driven through the callback, default 256
   --measure        also time every callback and report p50/p99/max
   --cache-dir DIR  use a PCM cache for lossy files (ADR-0008)
+  --cue-out FILE   mix mode: also write the cue (headphone) bus
 
 Exit codes: 0 ok, 2 bad usage, 3 I/O or parse error.
 ";
@@ -63,6 +64,7 @@ enum Action {
 struct MixRun {
     path: PathBuf,
     out: PathBuf,
+    cue_out: Option<PathBuf>,
     cache_dir: Option<PathBuf>,
 }
 
@@ -141,6 +143,7 @@ fn parse(argv: &[String]) -> Result<Action, CliError> {
     let mut block: Option<usize> = None;
     let mut measure = false;
     let mut cache_dir: Option<PathBuf> = None;
+    let mut cue_out: Option<PathBuf> = None;
     let mut out: Option<PathBuf> = None;
     let mut file: Option<PathBuf> = None;
 
@@ -185,6 +188,10 @@ fn parse(argv: &[String]) -> Result<Action, CliError> {
                 cache_dir = Some(PathBuf::from(value()?));
                 index += 2;
             }
+            "--cue-out" => {
+                cue_out = Some(PathBuf::from(value()?));
+                index += 2;
+            }
             "--help" | "-h" => return Ok(Action::Help),
             other => return Err(CliError::Usage(format!("unknown option {other:?}"))),
         }
@@ -196,6 +203,7 @@ fn parse(argv: &[String]) -> Result<Action, CliError> {
         return Ok(Action::Mix(MixRun {
             path,
             out,
+            cue_out,
             cache_dir,
         }));
     }
@@ -379,6 +387,14 @@ fn run_mix(run: MixRun) -> Result<String, String> {
             .map_err(|err| format!("cannot write {}: {err}", run.out.display()))?;
     }
 
+    if let (Some(path), Some(cue)) = (&run.cue_out, report.cue_samples.as_ref()) {
+        let file =
+            File::create(path).map_err(|err| format!("cannot create {}: {err}", path.display()))?;
+        let mut writer = BufWriter::new(&file);
+        write_pcm16_interleaved(&mut writer, scenario.sample_rate, 2, cue)
+            .map_err(|err| format!("cannot write {}: {err}", path.display()))?;
+    }
+
     let peak = report
         .samples
         .iter()
@@ -396,12 +412,17 @@ fn run_mix(run: MixRun) -> Result<String, String> {
                 "loop_wraps": deck.loop_wraps,
                 "hotcue_jumps": deck.hotcue_jumps,
                 "ready_ms": deck.ready_ms,
+                "fader": deck.fader,
+                "assign": deck.assign,
+                "cue": deck.cue,
+                "channel_peak": deck.meter.peak,
             })
         })
         .collect();
 
     Ok(json!({
         "out": run.out.display().to_string(),
+        "cue_out": run.cue_out.as_ref().map(|path| path.display().to_string()),
         "frames": frames,
         "sample_rate": scenario.sample_rate,
         "block_frames": scenario.block_frames,
@@ -409,6 +430,12 @@ fn run_mix(run: MixRun) -> Result<String, String> {
         "applied": report.applied,
         "peak": peak,
         "decks": decks,
+        "mixer": {
+            "master_peak": report.meters.master_peak,
+            "clipped_samples": report.meters.clipped_samples,
+            "limiter_gain": report.meters.limiter_gain,
+            "non_finite_samples": report.meters.non_finite_samples,
+        },
     })
     .to_string())
 }

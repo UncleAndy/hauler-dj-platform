@@ -1,6 +1,6 @@
 [package]
 name = "dj-mixer"
-description = "Channel gain, faders, crossfader, bus routing and metering."
+description = "Mixer: channel strips, crossfader, master limiter, metering and the cue bus."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,6 +8,9 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+
+[dev-dependencies]
+dj-testkit = { path = "../dj-testkit" }
 
 [lints]
 workspace = true

@@ -301,6 +301,7 @@ dependencies = [
  "dj-codec",
  "dj-deck",
  "dj-domain",
+ "dj-mixer",
  "serde",
  "serde_json",
 ]
@@ -320,6 +321,9 @@ dependencies = [
 [[package]]
 name = "dj-mixer"
 version = "0.1.0"
+dependencies = [
+ "dj-testkit",
+]
 
 [[package]]
 name = "dj-session"

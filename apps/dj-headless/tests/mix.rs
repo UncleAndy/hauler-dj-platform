@@ -195,3 +195,101 @@ fn a_rate_mismatch_is_refused_instead_of_silently_sped_up() {
         "the message must say why: {stderr}"
     );
 }
+
+#[test]
+fn the_crossfader_routes_only_the_selected_side() {
+    let dir = std::env::temp_dir().join(format!("dj-mix-xf-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap_or_else(|err| panic!("mkdir: {err}"));
+
+    // Two decks with distinct levels, so "who is heard" is measurable from the peak alone.
+    let a = dir.join("loud.wav");
+    let b = dir.join("quiet.wav");
+    write_tone_at(&a, 44_100, 2.0, 440.0, 0.5);
+    write_tone_at(&b, 44_100, 2.0, 660.0, 0.2);
+
+    let scenario = dir.join("xf.json");
+    std::fs::write(
+        &scenario,
+        format!(
+            r#"{{
+  "sample_rate": 44100,
+  "frames": 88200,
+  "block_frames": 256,
+  "crossfader": 0.0,
+  "decks": [
+    {{ "id": "A", "file": "{}", "assign": "A" }},
+    {{ "id": "B", "file": "{}", "assign": "B" }}
+  ],
+  "commands": [
+    {{ "at": 0, "deck": "A", "action": "Play" }},
+    {{ "at": 0, "deck": "B", "action": "Play" }},
+    {{ "at": 44100, "action": "SetCrossfader", "value": 1.0 }}
+  ]
+}}"#,
+            a.display(),
+            b.display()
+        ),
+    )
+    .unwrap_or_else(|err| panic!("write: {err}"));
+
+    let out = dir.join("xf.wav");
+    let output = run(&[
+        "mix",
+        "--file",
+        scenario.to_str().unwrap_or_default(),
+        "--out",
+        out.to_str().unwrap_or_default(),
+    ]);
+    assert!(
+        output.status.success(),
+        "mix failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let bytes = std::fs::read(&out).unwrap_or_else(|err| panic!("read: {err}"));
+    let samples: Vec<i16> = bytes[44..]
+        .chunks_exact(2)
+        .map(|pair| i16::from_le_bytes([pair[0], pair[1]]))
+        .collect();
+    let peak_of = |slice: &[i16]| slice.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0);
+
+    let first_half = peak_of(&samples[..44_100 * 2]);
+    let second_half = peak_of(&samples[44_100 * 2..]);
+    assert!(
+        first_half > 12_000,
+        "channel A must be heard at crossfader 0, peak {first_half}"
+    );
+    assert!(
+        second_half < 9_000,
+        "after moving to B only the quiet deck may be heard, peak {second_half}"
+    );
+    assert!(
+        second_half > 3_000,
+        "deck B must actually be audible, peak {second_half}"
+    );
+}
+
+fn write_tone_at(path: &Path, rate: u32, seconds: f64, frequency: f32, amplitude: f32) {
+    let frames = (f64::from(rate) * seconds) as u32;
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"RIFF");
+    bytes.extend_from_slice(&(36 + frames * 4).to_le_bytes());
+    bytes.extend_from_slice(b"WAVEfmt ");
+    bytes.extend_from_slice(&16u32.to_le_bytes());
+    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(&2u16.to_le_bytes());
+    bytes.extend_from_slice(&rate.to_le_bytes());
+    bytes.extend_from_slice(&(rate * 4).to_le_bytes());
+    bytes.extend_from_slice(&4u16.to_le_bytes());
+    bytes.extend_from_slice(&16u16.to_le_bytes());
+    bytes.extend_from_slice(b"data");
+    bytes.extend_from_slice(&(frames * 4).to_le_bytes());
+    for frame in 0..frames {
+        let value =
+            amplitude * (std::f32::consts::TAU * frequency * frame as f32 / rate as f32).sin();
+        let sample = (value * 32_000.0) as i16;
+        bytes.extend_from_slice(&sample.to_le_bytes());
+        bytes.extend_from_slice(&sample.to_le_bytes());
+    }
+    std::fs::write(path, bytes).unwrap_or_else(|err| panic!("write: {err}"));
+}

@@ -4,8 +4,8 @@ DJP-ARCH-002,audio-core,P0,R0,DJP-SRS-001 §4,crates/dj-audio-core/src/queue.rs,
 DJP-ARCH-003,audio-core,P0,R0,DJP-SRS-001 §4,crates/dj-audio-core/src/queue.rs,queue::a_full_critical_lane_rejects_explicitly; queue::several_decks_keep_their_own_coalesced_value,passing,docs/qa/evidence/A01/summary.md,,2026-11-05
 DJP-ARCH-004,audio-core,P0,R0,DJP-SRS-001 §4,,,unverified,,,
 DJP-ARCH-005,audio-core,P0,R0,DJP-SRS-001 §4,crates/dj-audio-core/src/engine.rs; crates/dj-audio-core/tests/rt_contract.rs,rt_contract::processing_a_block_does_not_allocate,passing,docs/qa/evidence/A01/summary.md,,2026-11-05
-DJP-ARCH-006,audio-core,P0,R0,DJP-SRS-001 §4,,,unverified,docs/adr/0005-audio-devices-and-routes.md,,2026-11-05
-DJP-ARCH-007,audio-core,P1,R1,DJP-SRS-001 §4,,,unverified,docs/adr/0005-audio-devices-and-routes.md,,2026-11-05
+DJP-ARCH-006,audio-core,P0,R0,DJP-SRS-001 §4,partial: crates/dj-mixer (deck gain → trim/fader → crossfader → master/limiter); EQ, FX и send-маршрутизация отсутствуют,mixer::routing_puts_each_channel_only_where_it_belongs,unverified,docs/qa/evidence/A04/summary.md,,2026-11-05
+DJP-ARCH-007,audio-core,P1,R1,DJP-SRS-001 §4,partial: crates/dj-mixer (шины master и cue); booth, external, recording, aux — нет,mixer::routing_puts_each_channel_only_where_it_belongs,unverified,docs/qa/evidence/A04/summary.md,,2026-11-05
 DJP-ARCH-008,audio-core,P1,R1,DJP-SRS-001 §4,,,unverified,docs/adr/0005-audio-devices-and-routes.md,,2026-11-05
 DJP-ARCH-009,audio-core,P1,R1,DJP-SRS-001 §4,,,unverified,,,
 DJP-ARCH-010,audio-core,P1,R1,DJP-SRS-001 §4,,,unverified,,,
@@ -73,10 +73,10 @@ DJP-MEDIA-008,media,P1,R1,DJP-SRS-001 §5,,,unverified,,,
 DJP-MEDIA-009,media,P2,R2,DJP-SRS-001 §5,,,unverified,,,
 DJP-MEDIA-010,media,P2,R3,DJP-SRS-001 §5,,,unverified,,,
 DJP-MEDIA-011,media,P3,R3,DJP-SRS-001 §5,,,unverified,,,
-DJP-MIX-001,dsp,P0,R0,DJP-SRS-001 §5,,,unverified,,,
+DJP-MIX-001,dsp,P0,R0,DJP-SRS-001 §5,crates/dj-mixer/src/lib.rs,mixer::routing_puts_each_channel_only_where_it_belongs; mixer::the_limiter_keeps_the_master_below_full_scale; mixer::meters_report_peak_and_rms_of_the_channel; rt_contract::mixing_a_block_does_not_allocate,passing,docs/qa/evidence/A04/summary.md,,2026-11-05
 DJP-MIX-002,dsp,P1,R1,DJP-SRS-001 §5,,,unverified,,,
-DJP-MIX-003,dsp,P1,R1,DJP-SRS-001 §5,,,unverified,docs/adr/0005-audio-devices-and-routes.md,,2026-11-05
-DJP-MIX-004,dsp,P1,R1,DJP-SRS-001 §5,,,unverified,,,
+DJP-MIX-003,dsp,P1,R1,DJP-SRS-001 §5,partial: crates/dj-mixer (шина cue с PFL и cue_gain; cue-mix, booth и независимые шины — нет),mixer::routing_puts_each_channel_only_where_it_belongs,unverified,docs/qa/evidence/A04/summary.md,,2026-11-05
+DJP-MIX-004,dsp,P1,R1,DJP-SRS-001 §5,partial: crates/dj-mixer (два закона кривой и назначение A/B/thru; пресеты и sharp-кривые — R1),mixer::the_constant_power_crossfader_isolates_the_extremes; mixer::the_linear_curve_is_linear,unverified,docs/qa/evidence/A04/summary.md,,2026-11-05
 DJP-MIX-005,dsp,P1,R1,DJP-SRS-001 §5,,,unverified,,,
 DJP-MIX-006,dsp,P1,R1,DJP-SRS-001 §5,,,unverified,,,
 DJP-MIX-007,dsp,P2,R2,DJP-SRS-001 §5,,,unverified,,,
