@@ -13,6 +13,41 @@
 #include <QString>
 #include <QVariantMap>
 
+// Lists a directory for the load dialog.
+//
+// Written by hand because both alternatives fail here: Qt's FileDialog is the GTK/portal dialog
+// (a missing gsettings schema aborts the process) and Qt.labs.folderlistmodel is not built into
+// this Qt. QDir cannot crash the UI and needs nothing installed.
+class FileBrowser : public QObject
+{
+    Q_OBJECT
+    Q_PROPERTY(QString folder READ folder NOTIFY changed)
+    Q_PROPERTY(QVariantList entries READ entries NOTIFY changed)
+    Q_PROPERTY(QString error READ error NOTIFY changed)
+
+public:
+    explicit FileBrowser(QObject *parent = nullptr);
+
+    QString folder() const { return m_folder; }
+    QVariantList entries() const { return m_entries; }
+    QString error() const { return m_error; }
+
+    // Show `path`, or the default music folder when it is empty.
+    Q_INVOKABLE void open(const QString &path);
+    Q_INVOKABLE void up();
+    Q_INVOKABLE QString defaultFolder() const;
+
+signals:
+    void changed();
+
+private:
+    void load(const QString &path);
+
+    QString m_folder;
+    QVariantList m_entries;
+    QString m_error;
+};
+
 class BridgeClient : public QObject
 {
     Q_OBJECT
@@ -24,6 +59,8 @@ class BridgeClient : public QObject
     Q_PROPERTY(QVariantMap snapshot READ snapshot NOTIFY snapshotChanged)
     // Engine epoch from the handshake; a change means the engine restarted.
     Q_PROPERTY(qulonglong epoch READ epoch NOTIFY connectedChanged)
+    // Where the load dialog starts: $HOME/Music when it exists, otherwise the home directory.
+    Q_PROPERTY(QString homeFolder READ homeFolder CONSTANT)
 
 public:
     explicit BridgeClient(QObject *parent = nullptr);
@@ -32,6 +69,7 @@ public:
     QString status() const { return m_status; }
     QVariantMap snapshot() const { return m_snapshot; }
     qulonglong epoch() const { return m_epoch; }
+    QString homeFolder() const;
 
     // Connect to the engine's socket and start the handshake. Safe to call again after a failure.
     void connectToEngine(const QString &path);

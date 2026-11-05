@@ -6,7 +6,6 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import QtQuick.Dialogs
 
 Pane {
     id: panel
@@ -198,10 +197,10 @@ Pane {
         }
     }
 
-    FileDialog {
+    LoadDialog {
         id: loadDialog
-        title: qsTr("Load a track into %1").arg(panel.deckLabel)
-        nameFilters: [qsTr("Audio (*.wav *.flac *.mp3 *.ogg *.m4a)"), qsTr("All files (*)")]
-        onAccepted: Bridge.load(panel.deckId, selectedFile.toString().replace("file://", ""))
+        deckId: panel.deckId
+        deckLabel: panel.deckLabel
+        onPicked: function (path) { Bridge.load(panel.deckId, path) }
     }
 }

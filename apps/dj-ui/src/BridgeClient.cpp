@@ -1,6 +1,9 @@
 #include "BridgeClient.h"
 
 #include <QDebug>
+#include <QDir>
+#include <QFileInfo>
+#include <QFileInfoList>
 #include <QJsonDocument>
 #include <QJsonValue>
 #include <QTimer>
@@ -34,6 +37,83 @@ quint32 readLength(const char *bytes)
 
 } // namespace
 
+namespace {
+
+bool looksLikeAudio(const QString &name)
+{
+    static const QStringList suffixes = {QStringLiteral("wav"), QStringLiteral("flac"),
+                                         QStringLiteral("mp3"), QStringLiteral("ogg"),
+                                         QStringLiteral("m4a"), QStringLiteral("aiff"),
+                                         QStringLiteral("aif")};
+    return suffixes.contains(QFileInfo(name).suffix().toLower());
+}
+
+} // namespace
+
+FileBrowser::FileBrowser(QObject *parent)
+    : QObject(parent)
+{
+}
+
+QString FileBrowser::defaultFolder() const
+{
+    const QString home = QDir::homePath();
+    for (const QString &candidate : {QStringLiteral("/Music"), QStringLiteral("/Музыка")}) {
+        if (QFileInfo(home + candidate).isDir()) {
+            return home + candidate;
+        }
+    }
+    return home;
+}
+
+void FileBrowser::open(const QString &path)
+{
+    load(path.isEmpty() ? defaultFolder() : path);
+}
+
+void FileBrowser::up()
+{
+    if (m_folder.isEmpty()) {
+        load(defaultFolder());
+        return;
+    }
+    QDir dir(m_folder);
+    if (dir.cdUp()) {
+        load(dir.absolutePath());
+    }
+}
+
+void FileBrowser::load(const QString &path)
+{
+    QDir dir(path);
+    m_error.clear();
+    if (!dir.exists()) {
+        m_error = QStringLiteral("%1 is not a directory").arg(path);
+        emit changed();
+        return;
+    }
+    m_folder = dir.absolutePath();
+
+    QVariantList entries;
+    const QFileInfoList dirs = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+    for (const QFileInfo &info : dirs) {
+        entries.append(QVariantMap{{QStringLiteral("name"), info.fileName()},
+                                   {QStringLiteral("path"), info.absoluteFilePath()},
+                                   {QStringLiteral("dir"), true}});
+    }
+    const QFileInfoList files = dir.entryInfoList(QDir::Files, QDir::Name);
+    for (const QFileInfo &info : files) {
+        if (!looksLikeAudio(info.fileName())) {
+            continue;
+        }
+        entries.append(QVariantMap{{QStringLiteral("name"), info.fileName()},
+                                   {QStringLiteral("path"), info.absoluteFilePath()},
+                                   {QStringLiteral("dir"), false}});
+    }
+    m_entries = entries;
+    emit changed();
+}
+
 BridgeClient::BridgeClient(QObject *parent)
     : QObject(parent)
 {
@@ -47,6 +127,20 @@ BridgeClient::BridgeClient(QObject *parent)
             this, &BridgeClient::onSocketError);
 #endif
     setStatus(QStringLiteral("offline"));
+}
+
+QString BridgeClient::homeFolder() const
+{
+    const QString home = QDir::homePath();
+    const QString music = home + QStringLiteral("/Music");
+    if (QFileInfo(music).isDir()) {
+        return music;
+    }
+    const QString localised = home + QStringLiteral("/Музыка");
+    if (QFileInfo(localised).isDir()) {
+        return localised;
+    }
+    return home;
 }
 
 void BridgeClient::connectToEngine(const QString &path)

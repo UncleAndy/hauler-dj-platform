@@ -19,6 +19,8 @@
 #include <QEventLoop>
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
+#include <QQmlComponent>
+#include <QQmlEngine>
 #include <QQmlContext>
 #include <QString>
 #include <QTimer>
@@ -286,6 +288,10 @@ int main(int argc, char *argv[])
     const QCommandLineOption selfCheckOption(
         QStringLiteral("self-check"),
         QStringLiteral("Connect, press Play, require the ack and the snapshot, then exit."));
+    const QCommandLineOption dialogCheckOption(
+        QStringLiteral("dialog-check"),
+        QStringLiteral("Check the in-app file browser without a display: the QML module loads and "
+                       "lists a directory."));
     const QCommandLineOption loadOption(
         QStringLiteral("load"),
         QStringLiteral("With --self-check: load this file into deck A first."),
@@ -294,16 +300,33 @@ int main(int argc, char *argv[])
     parser.addOption(connectOption);
     parser.addOption(selfCheckOption);
     parser.addOption(loadOption);
+    parser.addOption(dialogCheckOption);
     parser.process(app);
 
     auto bridge = std::make_unique<BridgeClient>();
     qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "Bridge", bridge.get());
+    FileBrowser browser;
+    qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "Browser", &browser);
 
     if (parser.isSet(selfCheckOption)) {
         const QString path = parser.isSet(connectOption) ? parser.value(connectOption)
                                                          : defaultSocketPath();
         return runSelfCheck(*bridge, path, 15000,
                             parser.isSet(loadOption) ? parser.value(loadOption) : QString());
+    }
+
+    if (parser.isSet(dialogCheckOption)) {
+        // The load dialog must list a directory without any desktop package: no GTK, no portal and
+        // no QML extras, because a missing schema or module otherwise aborts the whole UI.
+        browser.open(QString());
+        const QVariantList entries = browser.entries();
+        if (!browser.error().isEmpty()) {
+            std::fprintf(stderr, "dj-ui: the file browser failed: %s\n", qPrintable(browser.error()));
+            return 1;
+        }
+        std::fprintf(stdout, "dj-ui: file browser lists %d entries in %s\n",
+                     static_cast<int>(entries.size()), qPrintable(browser.folder()));
+        return 0;
     }
 
     QQmlApplicationEngine engine;

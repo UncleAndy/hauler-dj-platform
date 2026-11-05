@@ -16,6 +16,7 @@ qt_add_qml_module(dj-ui
     QML_FILES
         qml/Main.qml
         qml/decks/DeckPanel.qml
+        qml/decks/LoadDialog.qml
         qml/mixer/Crossfader.qml
 )
 

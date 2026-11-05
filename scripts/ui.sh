@@ -32,6 +32,9 @@ case "${1:-}" in
   --build-only) exit 0 ;;
   --smoke)
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --smoke
+    # The load dialog must not depend on a desktop package: a missing GTK schema aborts the
+    # process, and that only shows when a user clicks. Checked here, headless.
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --dialog-check
     ;;
   --engine-check)
     # The A06 acceptance, without a display or a sound card: run the real engine on a null sink,
