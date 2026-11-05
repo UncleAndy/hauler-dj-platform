@@ -85,8 +85,9 @@ assets/, benchmarks/  own graphics/audio only; measurement scripts and results
 ```bash
 nix develop                  # enters the pinned shell (rust 1.95.0, qt 6.11.2, cmake)
 bash scripts/check.sh        # fmt, clippy, tests, toolchain pin, traceability, QML smoke
-bash scripts/ui.sh           # build and open the blank two-deck window (needs a display)
+bash scripts/ui.sh           # build and open the two-deck window (needs a display and an engine)
 bash scripts/ui.sh --smoke   # build, load QML offscreen, fail on any Qt warning
+bash scripts/ui.sh --engine-check  # run a real engine and a real UI: Play and Cue must be acked
 cargo run -p dj-audio-probe  # what CPAL sees on this machine (audio backend evidence, ADR-002)
 
 # A01: render without a sound card and inspect the result

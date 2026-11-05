@@ -36,9 +36,18 @@ case "${1:-}" in
   --engine-check)
     # The A06 acceptance, without a display or a sound card: run the real engine on a null sink,
     # let the real UI press Play, and require the ack and the published state to agree.
-    engine_bin="${CARGO_TARGET_DIR:-$HOME/.cache/dj-platform-target}/debug/dj-engine"
+    # Build the engine rather than demand it: `cargo test` does not always leave the binary behind,
+    # and a missing artefact is not the operator's problem to solve by hand.
+    if [ -z "${DJ_ENGINE_BIN:-}" ]; then
+      if ! command -v cargo >/dev/null 2>&1; then
+        echo "ui.sh: cargo is not in PATH; run this inside the dev shell" >&2
+        exit 1
+      fi
+      cargo build --quiet -p dj-engine
+    fi
+    engine_bin="${DJ_ENGINE_BIN:-${CARGO_TARGET_DIR:-$HOME/.cache/dj-platform-target}/debug/dj-engine}"
     if [ ! -x "$engine_bin" ]; then
-      echo "ui.sh: dj-engine is not built at $engine_bin" >&2
+      echo "ui.sh: dj-engine is not executable at $engine_bin" >&2
       exit 1
     fi
     run_dir="$(mktemp -d)"
