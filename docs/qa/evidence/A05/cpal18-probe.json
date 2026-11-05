@@ -1,0 +1,3113 @@
+{
+  "budget_exhausted": false,
+  "channel_trials": [
+    {
+      "buffer": "256",
+      "callbacks": 28,
+      "channels": 2,
+      "device": "default_sink",
+      "error": null,
+      "ok": true,
+      "timed_out": false
+    },
+    {
+      "buffer": "256",
+      "callbacks": 28,
+      "channels": 4,
+      "device": "default_sink",
+      "error": null,
+      "ok": true,
+      "timed_out": false
+    },
+    {
+      "buffer": "256",
+      "callbacks": 28,
+      "channels": 6,
+      "device": "default_sink",
+      "error": null,
+      "ok": true,
+      "timed_out": false
+    },
+    {
+      "buffer": "256",
+      "callbacks": 28,
+      "channels": 8,
+      "device": "default_sink",
+      "error": null,
+      "ok": true,
+      "timed_out": false
+    },
+    {
+      "buffer": "256",
+      "callbacks": 28,
+      "channels": 2,
+      "device": "default_output",
+      "error": null,
+      "ok": true,
+      "timed_out": false
+    },
+    {
+      "buffer": "256",
+      "callbacks": 28,
+      "channels": 4,
+      "device": "default_output",
+      "error": null,
+      "ok": true,
+      "timed_out": false
+    },
+    {
+      "buffer": "256",
+      "callbacks": 28,
+      "channels": 6,
+      "device": "default_output",
+      "error": null,
+      "ok": true,
+      "timed_out": false
+    },
+    {
+      "buffer": "256",
+      "callbacks": 28,
+      "channels": 8,
+      "device": "default_output",
+      "error": null,
+      "ok": true,
+      "timed_out": false
+    },
+    {
+      "buffer": "256",
+      "callbacks": 28,
+      "channels": 2,
+      "device": "the t.bone SC460 USB Аналоговый стерео",
+      "error": null,
+      "ok": true,
+      "timed_out": false
+    },
+    {
+      "buffer": "256",
+      "callbacks": 28,
+      "channels": 4,
+      "device": "the t.bone SC460 USB Аналоговый стерео",
+      "error": null,
+      "ok": true,
+      "timed_out": false
+    },
+    {
+      "buffer": "256",
+      "callbacks": 28,
+      "channels": 6,
+      "device": "the t.bone SC460 USB Аналоговый стерео",
+      "error": null,
+      "ok": true,
+      "timed_out": false
+    },
+    {
+      "buffer": "256",
+      "callbacks": 28,
+      "channels": 8,
+      "device": "the t.bone SC460 USB Аналоговый стерео",
+      "error": null,
+      "ok": true,
+      "timed_out": false
+    },
+    {
+      "buffer": "256",
+      "callbacks": 28,
+      "channels": 2,
+      "device": "Steinberg UR22C Stereo Line (output)",
+      "error": null,
+      "ok": true,
+      "timed_out": false
+    },
+    {
+      "buffer": "256",
+      "callbacks": 28,
+      "channels": 4,
+      "device": "Steinberg UR22C Stereo Line (output)",
+      "error": null,
+      "ok": true,
+      "timed_out": false
+    },
+    {
+      "buffer": "256",
+      "callbacks": 28,
+      "channels": 6,
+      "device": "Steinberg UR22C Stereo Line (output)",
+      "error": null,
+      "ok": true,
+      "timed_out": false
+    },
+    {
+      "buffer": "256",
+      "callbacks": 28,
+      "channels": 8,
+      "device": "Steinberg UR22C Stereo Line (output)",
+      "error": null,
+      "ok": true,
+      "timed_out": false
+    },
+    {
+      "buffer": "256",
+      "callbacks": 27,
+      "channels": 2,
+      "device": "Встроенное аудио Цифровой стерео (HDMI)",
+      "error": null,
+      "ok": true,
+      "timed_out": false
+    },
+    {
+      "buffer": "256",
+      "callbacks": 28,
+      "channels": 4,
+      "device": "Встроенное аудио Цифровой стерео (HDMI)",
+      "error": null,
+      "ok": true,
+      "timed_out": false
+    },
+    {
+      "buffer": "256",
+      "callbacks": 28,
+      "channels": 6,
+      "device": "Встроенное аудио Цифровой стерео (HDMI)",
+      "error": null,
+      "ok": true,
+      "timed_out": false
+    },
+    {
+      "buffer": "256",
+      "callbacks": 28,
+      "channels": 8,
+      "device": "Встроенное аудио Цифровой стерео (HDMI)",
+      "error": null,
+      "ok": true,
+      "timed_out": false
+    },
+    {
+      "buffer": "256",
+      "callbacks": 28,
+      "channels": 2,
+      "device": "Traktor Kontrol S4 MK3 Аналоговый объёмный 4.0",
+      "error": null,
+      "ok": true,
+      "timed_out": false
+    },
+    {
+      "buffer": "256",
+      "callbacks": 28,
+      "channels": 4,
+      "device": "Traktor Kontrol S4 MK3 Аналоговый объёмный 4.0",
+      "error": null,
+      "ok": true,
+      "timed_out": false
+    },
+    {
+      "buffer": "256",
+      "callbacks": 28,
+      "channels": 6,
+      "device": "Traktor Kontrol S4 MK3 Аналоговый объёмный 4.0",
+      "error": null,
+      "ok": true,
+      "timed_out": false
+    },
+    {
+      "buffer": "256",
+      "callbacks": 27,
+      "channels": 8,
+      "device": "Traktor Kontrol S4 MK3 Аналоговый объёмный 4.0",
+      "error": null,
+      "ok": true,
+      "timed_out": false
+    }
+  ],
+  "cpal": {
+    "hosts": [
+      {
+        "devices": [
+          {
+            "buffer_frames": {
+              "max": 2048,
+              "min": 32
+            },
+            "default": false,
+            "name": "default_sink",
+            "plugin_channels": [
+              2
+            ],
+            "plugin_sample_rates": [
+              48000
+            ],
+            "sample_formats": [
+              "F32",
+              "F64",
+              "I16",
+              "I24",
+              "I32",
+              "I8",
+              "U16",
+              "U24",
+              "U32",
+              "U8"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 2048,
+              "min": 32
+            },
+            "default": true,
+            "name": "default_output",
+            "plugin_channels": [
+              2
+            ],
+            "plugin_sample_rates": [
+              48000
+            ],
+            "sample_formats": [
+              "F32",
+              "F64",
+              "I16",
+              "I24",
+              "I32",
+              "I8",
+              "U16",
+              "U24",
+              "U32",
+              "U8"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 2048,
+              "min": 32
+            },
+            "default": false,
+            "name": "the t.bone SC460 USB Аналоговый стерео",
+            "plugin_channels": [
+              2
+            ],
+            "plugin_sample_rates": [
+              48000
+            ],
+            "sample_formats": [
+              "F32",
+              "F64",
+              "I16",
+              "I24",
+              "I32",
+              "I8",
+              "U16",
+              "U24",
+              "U32",
+              "U8"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 2048,
+              "min": 32
+            },
+            "default": false,
+            "name": "Steinberg UR22C Stereo Line (output)",
+            "plugin_channels": [
+              2
+            ],
+            "plugin_sample_rates": [
+              48000
+            ],
+            "sample_formats": [
+              "F32",
+              "F64",
+              "I16",
+              "I24",
+              "I32",
+              "I8",
+              "U16",
+              "U24",
+              "U32",
+              "U8"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 2048,
+              "min": 32
+            },
+            "default": false,
+            "name": "Встроенное аудио Цифровой стерео (HDMI)",
+            "plugin_channels": [
+              2
+            ],
+            "plugin_sample_rates": [
+              48000
+            ],
+            "sample_formats": [
+              "F32",
+              "F64",
+              "I16",
+              "I24",
+              "I32",
+              "I8",
+              "U16",
+              "U24",
+              "U32",
+              "U8"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 2048,
+              "min": 32
+            },
+            "default": false,
+            "name": "Traktor Kontrol S4 MK3 Аналоговый объёмный 4.0",
+            "plugin_channels": [
+              4
+            ],
+            "plugin_sample_rates": [
+              48000
+            ],
+            "sample_formats": [
+              "F32",
+              "F64",
+              "I16",
+              "I24",
+              "I32",
+              "I8",
+              "U16",
+              "U24",
+              "U32",
+              "U8"
+            ]
+          }
+        ],
+        "host": "PipeWire"
+      },
+      {
+        "devices": [
+          {
+            "buffer_frames": {
+              "max": 2147483647,
+              "min": 1
+            },
+            "default": false,
+            "name": "Discard all samples (playback) or generate zero samples (capture)",
+            "plugin_channels": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24,
+              25,
+              26,
+              27,
+              28,
+              29,
+              30,
+              31,
+              32,
+              33,
+              34,
+              35,
+              36,
+              37,
+              38,
+              39,
+              40,
+              41,
+              42,
+              43,
+              44,
+              45,
+              46,
+              47,
+              48,
+              49,
+              50,
+              51,
+              52,
+              53,
+              54,
+              55,
+              56,
+              57,
+              58,
+              59,
+              60,
+              61,
+              62,
+              63,
+              64
+            ],
+            "plugin_sample_rates": [
+              1,
+              4294967295
+            ],
+            "sample_formats": [
+              "DsdU16",
+              "DsdU32",
+              "DsdU8",
+              "F32",
+              "F64",
+              "I16",
+              "I24",
+              "I32",
+              "I8",
+              "U16",
+              "U24",
+              "U32",
+              "U8"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 91628833,
+              "min": 85
+            },
+            "default": true,
+            "name": "Default Audio Device",
+            "plugin_channels": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24,
+              25,
+              26,
+              27,
+              28,
+              29,
+              30,
+              31,
+              32,
+              33,
+              34,
+              35,
+              36,
+              37,
+              38,
+              39,
+              40,
+              41,
+              42,
+              43,
+              44,
+              45,
+              46,
+              47,
+              48,
+              49,
+              50,
+              51,
+              52,
+              53,
+              54,
+              55,
+              56,
+              57,
+              58,
+              59,
+              60,
+              61,
+              62,
+              63,
+              64
+            ],
+            "plugin_sample_rates": [
+              4000,
+              4294967295
+            ],
+            "sample_formats": [
+              "F32",
+              "F64",
+              "I16",
+              "I24",
+              "I32",
+              "I8",
+              "U16",
+              "U24",
+              "U32",
+              "U8"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 2097152,
+              "min": 128
+            },
+            "default": false,
+            "name": "PipeWire Sound Server",
+            "plugin_channels": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24,
+              25,
+              26,
+              27,
+              28,
+              29,
+              30,
+              31,
+              32,
+              33,
+              34,
+              35,
+              36,
+              37,
+              38,
+              39,
+              40,
+              41,
+              42,
+              43,
+              44,
+              45,
+              46,
+              47,
+              48,
+              49,
+              50,
+              51,
+              52,
+              53,
+              54,
+              55,
+              56,
+              57,
+              58,
+              59,
+              60,
+              61,
+              62,
+              63,
+              64
+            ],
+            "plugin_sample_rates": [
+              1,
+              384000
+            ],
+            "sample_formats": [
+              "F32",
+              "I16",
+              "I24",
+              "I32",
+              "U8"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 2097152,
+              "min": 128
+            },
+            "default": false,
+            "name": "Default ALSA Output (currently PipeWire Media Server)",
+            "plugin_channels": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24,
+              25,
+              26,
+              27,
+              28,
+              29,
+              30,
+              31,
+              32,
+              33,
+              34,
+              35,
+              36,
+              37,
+              38,
+              39,
+              40,
+              41,
+              42,
+              43,
+              44,
+              45,
+              46,
+              47,
+              48,
+              49,
+              50,
+              51,
+              52,
+              53,
+              54,
+              55,
+              56,
+              57,
+              58,
+              59,
+              60,
+              61,
+              62,
+              63,
+              64
+            ],
+            "plugin_sample_rates": [
+              1,
+              384000
+            ],
+            "sample_formats": [
+              "F32",
+              "I16",
+              "I24",
+              "I32",
+              "U8"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 91628833,
+              "min": 85
+            },
+            "default": false,
+            "name": "Steinberg UR22C, USB Audio",
+            "plugin_channels": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24,
+              25,
+              26,
+              27,
+              28,
+              29,
+              30,
+              31,
+              32,
+              33,
+              34,
+              35,
+              36,
+              37,
+              38,
+              39,
+              40,
+              41,
+              42,
+              43,
+              44,
+              45,
+              46,
+              47,
+              48,
+              49,
+              50,
+              51,
+              52,
+              53,
+              54,
+              55,
+              56,
+              57,
+              58,
+              59,
+              60,
+              61,
+              62,
+              63,
+              64
+            ],
+            "plugin_sample_rates": [
+              4000,
+              4294967295
+            ],
+            "sample_formats": [
+              "F32",
+              "F64",
+              "I16",
+              "I24",
+              "I32",
+              "I8",
+              "U16",
+              "U24",
+              "U32",
+              "U8"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 192000,
+              "min": 8
+            },
+            "default": false,
+            "name": "Steinberg UR22C, USB Audio",
+            "plugin_channels": [
+              2
+            ],
+            "plugin_sample_rates": [
+              44100,
+              48000,
+              88200,
+              96000,
+              176400,
+              192000
+            ],
+            "sample_formats": [
+              "I32"
+            ]
+          },
+          {
+            "buffer_frames": null,
+            "default": false,
+            "name": "Steinberg UR22C, USB Audio",
+            "plugin_channels": [],
+            "plugin_sample_rates": [],
+            "sample_formats": []
+          },
+          {
+            "buffer_frames": {
+              "max": 192000,
+              "min": 8
+            },
+            "default": false,
+            "name": "Steinberg UR22C, USB Audio",
+            "plugin_channels": [
+              2
+            ],
+            "plugin_sample_rates": [
+              44100,
+              48000,
+              88200,
+              96000,
+              176400,
+              192000
+            ],
+            "sample_formats": [
+              "I32"
+            ]
+          },
+          {
+            "buffer_frames": null,
+            "default": false,
+            "name": "Steinberg UR22C, USB Audio",
+            "plugin_channels": [],
+            "plugin_sample_rates": [],
+            "sample_formats": []
+          },
+          {
+            "buffer_frames": null,
+            "default": false,
+            "name": "Steinberg UR22C, USB Audio",
+            "plugin_channels": [],
+            "plugin_sample_rates": [],
+            "sample_formats": []
+          },
+          {
+            "buffer_frames": null,
+            "default": false,
+            "name": "Steinberg UR22C, USB Audio",
+            "plugin_channels": [],
+            "plugin_sample_rates": [],
+            "sample_formats": []
+          },
+          {
+            "buffer_frames": null,
+            "default": false,
+            "name": "Steinberg UR22C, USB Audio",
+            "plugin_channels": [],
+            "plugin_sample_rates": [],
+            "sample_formats": []
+          },
+          {
+            "buffer_frames": {
+              "max": 192000,
+              "min": 8
+            },
+            "default": false,
+            "name": "Steinberg UR22C, USB Audio",
+            "plugin_channels": [
+              2
+            ],
+            "plugin_sample_rates": [
+              44100,
+              48000,
+              88200,
+              96000,
+              176400,
+              192000
+            ],
+            "sample_formats": [
+              "I32"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 91628833,
+              "min": 85
+            },
+            "default": false,
+            "name": "the t.bone SC460 USB, USB Audio",
+            "plugin_channels": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24,
+              25,
+              26,
+              27,
+              28,
+              29,
+              30,
+              31,
+              32,
+              33,
+              34,
+              35,
+              36,
+              37,
+              38,
+              39,
+              40,
+              41,
+              42,
+              43,
+              44,
+              45,
+              46,
+              47,
+              48,
+              49,
+              50,
+              51,
+              52,
+              53,
+              54,
+              55,
+              56,
+              57,
+              58,
+              59,
+              60,
+              61,
+              62,
+              63,
+              64
+            ],
+            "plugin_sample_rates": [
+              4000,
+              4294967295
+            ],
+            "sample_formats": [
+              "F32",
+              "F64",
+              "I16",
+              "I24",
+              "I32",
+              "I8",
+              "U16",
+              "U24",
+              "U32",
+              "U8"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 48000,
+              "min": 16
+            },
+            "default": false,
+            "name": "the t.bone SC460 USB, USB Audio",
+            "plugin_channels": [
+              2
+            ],
+            "plugin_sample_rates": [
+              8000,
+              11025,
+              16000,
+              22050,
+              32000,
+              44100,
+              48000
+            ],
+            "sample_formats": [
+              "I16"
+            ]
+          },
+          {
+            "buffer_frames": null,
+            "default": false,
+            "name": "the t.bone SC460 USB, USB Audio",
+            "plugin_channels": [],
+            "plugin_sample_rates": [],
+            "sample_formats": []
+          },
+          {
+            "buffer_frames": {
+              "max": 48000,
+              "min": 16
+            },
+            "default": false,
+            "name": "the t.bone SC460 USB, USB Audio",
+            "plugin_channels": [
+              2
+            ],
+            "plugin_sample_rates": [
+              8000,
+              11025,
+              16000,
+              22050,
+              32000,
+              44100,
+              48000
+            ],
+            "sample_formats": [
+              "I16"
+            ]
+          },
+          {
+            "buffer_frames": null,
+            "default": false,
+            "name": "the t.bone SC460 USB, USB Audio",
+            "plugin_channels": [],
+            "plugin_sample_rates": [],
+            "sample_formats": []
+          },
+          {
+            "buffer_frames": null,
+            "default": false,
+            "name": "the t.bone SC460 USB, USB Audio",
+            "plugin_channels": [],
+            "plugin_sample_rates": [],
+            "sample_formats": []
+          },
+          {
+            "buffer_frames": null,
+            "default": false,
+            "name": "the t.bone SC460 USB, USB Audio",
+            "plugin_channels": [],
+            "plugin_sample_rates": [],
+            "sample_formats": []
+          },
+          {
+            "buffer_frames": null,
+            "default": false,
+            "name": "the t.bone SC460 USB, USB Audio",
+            "plugin_channels": [],
+            "plugin_sample_rates": [],
+            "sample_formats": []
+          },
+          {
+            "buffer_frames": {
+              "max": 48000,
+              "min": 16
+            },
+            "default": false,
+            "name": "the t.bone SC460 USB, USB Audio",
+            "plugin_channels": [
+              2
+            ],
+            "plugin_sample_rates": [
+              8000,
+              11025,
+              16000,
+              22050,
+              32000,
+              44100,
+              48000
+            ],
+            "sample_formats": [
+              "I16"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 91628833,
+              "min": 85
+            },
+            "default": false,
+            "name": "HDA Intel PCH, ALC897 Analog",
+            "plugin_channels": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24,
+              25,
+              26,
+              27,
+              28,
+              29,
+              30,
+              31,
+              32,
+              33,
+              34,
+              35,
+              36,
+              37,
+              38,
+              39,
+              40,
+              41,
+              42,
+              43,
+              44,
+              45,
+              46,
+              47,
+              48,
+              49,
+              50,
+              51,
+              52,
+              53,
+              54,
+              55,
+              56,
+              57,
+              58,
+              59,
+              60,
+              61,
+              62,
+              63,
+              64
+            ],
+            "plugin_sample_rates": [
+              4000,
+              4294967295
+            ],
+            "sample_formats": [
+              "F32",
+              "F64",
+              "I16",
+              "I24",
+              "I32",
+              "I8",
+              "U16",
+              "U24",
+              "U32",
+              "U8"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 524288,
+              "min": 32
+            },
+            "default": false,
+            "name": "HDA Intel PCH, ALC897 Analog",
+            "plugin_channels": [
+              2
+            ],
+            "plugin_sample_rates": [
+              44100,
+              48000,
+              96000,
+              192000
+            ],
+            "sample_formats": [
+              "I16",
+              "I32"
+            ]
+          },
+          {
+            "buffer_frames": null,
+            "default": false,
+            "name": "HDA Intel PCH, ALC897 Analog",
+            "plugin_channels": [],
+            "plugin_sample_rates": [],
+            "sample_formats": []
+          },
+          {
+            "buffer_frames": {
+              "max": 524288,
+              "min": 32
+            },
+            "default": false,
+            "name": "HDA Intel PCH, ALC897 Analog",
+            "plugin_channels": [
+              2
+            ],
+            "plugin_sample_rates": [
+              44100,
+              48000,
+              96000,
+              192000
+            ],
+            "sample_formats": [
+              "I16",
+              "I32"
+            ]
+          },
+          {
+            "buffer_frames": null,
+            "default": false,
+            "name": "HDA Intel PCH, ALC897 Analog",
+            "plugin_channels": [],
+            "plugin_sample_rates": [],
+            "sample_formats": []
+          },
+          {
+            "buffer_frames": null,
+            "default": false,
+            "name": "HDA Intel PCH, ALC897 Analog",
+            "plugin_channels": [],
+            "plugin_sample_rates": [],
+            "sample_formats": []
+          },
+          {
+            "buffer_frames": {
+              "max": 524288,
+              "min": 32
+            },
+            "default": false,
+            "name": "HDA Intel PCH, ALC897 Analog",
+            "plugin_channels": [
+              2
+            ],
+            "plugin_sample_rates": [
+              44100,
+              48000,
+              96000,
+              192000
+            ],
+            "sample_formats": [
+              "I16",
+              "I32"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 524288,
+              "min": 32
+            },
+            "default": false,
+            "name": "HDA Intel PCH, ALC897 Analog",
+            "plugin_channels": [
+              2
+            ],
+            "plugin_sample_rates": [
+              44100,
+              48000,
+              96000,
+              192000
+            ],
+            "sample_formats": [
+              "I16",
+              "I32"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 524288,
+              "min": 32
+            },
+            "default": false,
+            "name": "HDA Intel PCH, ALC897 Digital",
+            "plugin_channels": [
+              2
+            ],
+            "plugin_sample_rates": [
+              32000,
+              44100,
+              48000,
+              88200,
+              96000,
+              192000
+            ],
+            "sample_formats": [
+              "I16",
+              "I32"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 524288,
+              "min": 32
+            },
+            "default": false,
+            "name": "HDA Intel PCH, DELL S2721HGF",
+            "plugin_channels": [
+              2
+            ],
+            "plugin_sample_rates": [
+              32000,
+              44100,
+              48000,
+              88200,
+              96000,
+              176400,
+              192000
+            ],
+            "sample_formats": [
+              "I16",
+              "I32"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 524288,
+              "min": 32
+            },
+            "default": false,
+            "name": "HDA Intel PCH, HDMI 1",
+            "plugin_channels": [
+              2,
+              4,
+              6,
+              8
+            ],
+            "plugin_sample_rates": [
+              32000,
+              44100,
+              48000,
+              88200,
+              96000,
+              176400,
+              192000
+            ],
+            "sample_formats": [
+              "I16",
+              "I32"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 524288,
+              "min": 32
+            },
+            "default": false,
+            "name": "HDA Intel PCH, HDMI 2",
+            "plugin_channels": [
+              2,
+              4,
+              6,
+              8
+            ],
+            "plugin_sample_rates": [
+              32000,
+              44100,
+              48000,
+              88200,
+              96000,
+              176400,
+              192000
+            ],
+            "sample_formats": [
+              "I16",
+              "I32"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 524288,
+              "min": 32
+            },
+            "default": false,
+            "name": "HDA Intel PCH, HDMI 3",
+            "plugin_channels": [
+              2,
+              4,
+              6,
+              8
+            ],
+            "plugin_sample_rates": [
+              32000,
+              44100,
+              48000,
+              88200,
+              96000,
+              176400,
+              192000
+            ],
+            "sample_formats": [
+              "I16",
+              "I32"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 91628833,
+              "min": 85
+            },
+            "default": false,
+            "name": "Traktor Kontrol S4 MK3, USB Audio",
+            "plugin_channels": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24,
+              25,
+              26,
+              27,
+              28,
+              29,
+              30,
+              31,
+              32,
+              33,
+              34,
+              35,
+              36,
+              37,
+              38,
+              39,
+              40,
+              41,
+              42,
+              43,
+              44,
+              45,
+              46,
+              47,
+              48,
+              49,
+              50,
+              51,
+              52,
+              53,
+              54,
+              55,
+              56,
+              57,
+              58,
+              59,
+              60,
+              61,
+              62,
+              63,
+              64
+            ],
+            "plugin_sample_rates": [
+              4000,
+              4294967295
+            ],
+            "sample_formats": [
+              "F32",
+              "F64",
+              "I16",
+              "I24",
+              "I32",
+              "I8",
+              "U16",
+              "U24",
+              "U32",
+              "U8"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 96000,
+              "min": 6
+            },
+            "default": false,
+            "name": "Traktor Kontrol S4 MK3, USB Audio",
+            "plugin_channels": [
+              4
+            ],
+            "plugin_sample_rates": [
+              44100,
+              48000,
+              88200,
+              96000
+            ],
+            "sample_formats": [
+              "I32"
+            ]
+          },
+          {
+            "buffer_frames": null,
+            "default": false,
+            "name": "Traktor Kontrol S4 MK3, USB Audio",
+            "plugin_channels": [],
+            "plugin_sample_rates": [],
+            "sample_formats": []
+          },
+          {
+            "buffer_frames": {
+              "max": 96000,
+              "min": 6
+            },
+            "default": false,
+            "name": "Traktor Kontrol S4 MK3, USB Audio",
+            "plugin_channels": [
+              4
+            ],
+            "plugin_sample_rates": [
+              44100,
+              48000,
+              88200,
+              96000
+            ],
+            "sample_formats": [
+              "I32"
+            ]
+          },
+          {
+            "buffer_frames": null,
+            "default": false,
+            "name": "Traktor Kontrol S4 MK3, USB Audio",
+            "plugin_channels": [],
+            "plugin_sample_rates": [],
+            "sample_formats": []
+          },
+          {
+            "buffer_frames": null,
+            "default": false,
+            "name": "Traktor Kontrol S4 MK3, USB Audio",
+            "plugin_channels": [],
+            "plugin_sample_rates": [],
+            "sample_formats": []
+          },
+          {
+            "buffer_frames": null,
+            "default": false,
+            "name": "Traktor Kontrol S4 MK3, USB Audio",
+            "plugin_channels": [],
+            "plugin_sample_rates": [],
+            "sample_formats": []
+          },
+          {
+            "buffer_frames": null,
+            "default": false,
+            "name": "Traktor Kontrol S4 MK3, USB Audio",
+            "plugin_channels": [],
+            "plugin_sample_rates": [],
+            "sample_formats": []
+          },
+          {
+            "buffer_frames": {
+              "max": 96000,
+              "min": 6
+            },
+            "default": false,
+            "name": "Traktor Kontrol S4 MK3, USB Audio",
+            "plugin_channels": [
+              4
+            ],
+            "plugin_sample_rates": [
+              44100,
+              48000,
+              88200,
+              96000
+            ],
+            "sample_formats": [
+              "I32"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 192000,
+              "min": 8
+            },
+            "default": false,
+            "name": "Steinberg UR22C, USB Audio",
+            "plugin_channels": [
+              2
+            ],
+            "plugin_sample_rates": [
+              44100,
+              48000,
+              88200,
+              96000,
+              176400,
+              192000
+            ],
+            "sample_formats": [
+              "I32"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 2147483647,
+              "min": 1
+            },
+            "default": false,
+            "name": "Steinberg UR22C, USB Audio",
+            "plugin_channels": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24,
+              25,
+              26,
+              27,
+              28,
+              29,
+              30,
+              31,
+              32,
+              33,
+              34,
+              35,
+              36,
+              37,
+              38,
+              39,
+              40,
+              41,
+              42,
+              43,
+              44,
+              45,
+              46,
+              47,
+              48,
+              49,
+              50,
+              51,
+              52,
+              53,
+              54,
+              55,
+              56,
+              57,
+              58,
+              59,
+              60,
+              61,
+              62,
+              63,
+              64
+            ],
+            "plugin_sample_rates": [
+              4000,
+              4294967295
+            ],
+            "sample_formats": [
+              "F32",
+              "F64",
+              "I16",
+              "I24",
+              "I32",
+              "I8",
+              "U16",
+              "U24",
+              "U32",
+              "U8"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 48000,
+              "min": 16
+            },
+            "default": false,
+            "name": "the t.bone SC460 USB, USB Audio",
+            "plugin_channels": [
+              2
+            ],
+            "plugin_sample_rates": [
+              8000,
+              11025,
+              16000,
+              22050,
+              32000,
+              44100,
+              48000
+            ],
+            "sample_formats": [
+              "I16"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 2147483647,
+              "min": 4
+            },
+            "default": false,
+            "name": "the t.bone SC460 USB, USB Audio",
+            "plugin_channels": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24,
+              25,
+              26,
+              27,
+              28,
+              29,
+              30,
+              31,
+              32,
+              33,
+              34,
+              35,
+              36,
+              37,
+              38,
+              39,
+              40,
+              41,
+              42,
+              43,
+              44,
+              45,
+              46,
+              47,
+              48,
+              49,
+              50,
+              51,
+              52,
+              53,
+              54,
+              55,
+              56,
+              57,
+              58,
+              59,
+              60,
+              61,
+              62,
+              63,
+              64
+            ],
+            "plugin_sample_rates": [
+              4000,
+              4294967295
+            ],
+            "sample_formats": [
+              "F32",
+              "F64",
+              "I16",
+              "I24",
+              "I32",
+              "I8",
+              "U16",
+              "U24",
+              "U32",
+              "U8"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 524288,
+              "min": 32
+            },
+            "default": false,
+            "name": "HDA Intel PCH, ALC897 Analog",
+            "plugin_channels": [
+              2
+            ],
+            "plugin_sample_rates": [
+              44100,
+              48000,
+              96000,
+              192000
+            ],
+            "sample_formats": [
+              "I16",
+              "I32"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 2147483647,
+              "min": 1
+            },
+            "default": false,
+            "name": "HDA Intel PCH, ALC897 Analog",
+            "plugin_channels": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24,
+              25,
+              26,
+              27,
+              28,
+              29,
+              30,
+              31,
+              32,
+              33,
+              34,
+              35,
+              36,
+              37,
+              38,
+              39,
+              40,
+              41,
+              42,
+              43,
+              44,
+              45,
+              46,
+              47,
+              48,
+              49,
+              50,
+              51,
+              52,
+              53,
+              54,
+              55,
+              56,
+              57,
+              58,
+              59,
+              60,
+              61,
+              62,
+              63,
+              64
+            ],
+            "plugin_sample_rates": [
+              4000,
+              4294967295
+            ],
+            "sample_formats": [
+              "F32",
+              "F64",
+              "I16",
+              "I24",
+              "I32",
+              "I8",
+              "U16",
+              "U24",
+              "U32",
+              "U8"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 524288,
+              "min": 32
+            },
+            "default": false,
+            "name": "HDA Intel PCH, ALC897 Digital",
+            "plugin_channels": [
+              2
+            ],
+            "plugin_sample_rates": [
+              32000,
+              44100,
+              48000,
+              88200,
+              96000,
+              192000
+            ],
+            "sample_formats": [
+              "I16",
+              "I32"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 2147483647,
+              "min": 1
+            },
+            "default": false,
+            "name": "HDA Intel PCH, ALC897 Digital",
+            "plugin_channels": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24,
+              25,
+              26,
+              27,
+              28,
+              29,
+              30,
+              31,
+              32,
+              33,
+              34,
+              35,
+              36,
+              37,
+              38,
+              39,
+              40,
+              41,
+              42,
+              43,
+              44,
+              45,
+              46,
+              47,
+              48,
+              49,
+              50,
+              51,
+              52,
+              53,
+              54,
+              55,
+              56,
+              57,
+              58,
+              59,
+              60,
+              61,
+              62,
+              63,
+              64
+            ],
+            "plugin_sample_rates": [
+              4000,
+              4294967295
+            ],
+            "sample_formats": [
+              "F32",
+              "F64",
+              "I16",
+              "I24",
+              "I32",
+              "I8",
+              "U16",
+              "U24",
+              "U32",
+              "U8"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 524288,
+              "min": 32
+            },
+            "default": false,
+            "name": "HDA Intel PCH, DELL S2721HGF",
+            "plugin_channels": [
+              2
+            ],
+            "plugin_sample_rates": [
+              32000,
+              44100,
+              48000,
+              88200,
+              96000,
+              176400,
+              192000
+            ],
+            "sample_formats": [
+              "I16",
+              "I32"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 2147483647,
+              "min": 1
+            },
+            "default": false,
+            "name": "HDA Intel PCH, DELL S2721HGF",
+            "plugin_channels": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24,
+              25,
+              26,
+              27,
+              28,
+              29,
+              30,
+              31,
+              32,
+              33,
+              34,
+              35,
+              36,
+              37,
+              38,
+              39,
+              40,
+              41,
+              42,
+              43,
+              44,
+              45,
+              46,
+              47,
+              48,
+              49,
+              50,
+              51,
+              52,
+              53,
+              54,
+              55,
+              56,
+              57,
+              58,
+              59,
+              60,
+              61,
+              62,
+              63,
+              64
+            ],
+            "plugin_sample_rates": [
+              4000,
+              4294967295
+            ],
+            "sample_formats": [
+              "F32",
+              "F64",
+              "I16",
+              "I24",
+              "I32",
+              "I8",
+              "U16",
+              "U24",
+              "U32",
+              "U8"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 524288,
+              "min": 32
+            },
+            "default": false,
+            "name": "HDA Intel PCH, HDMI 1",
+            "plugin_channels": [
+              2,
+              4,
+              6,
+              8
+            ],
+            "plugin_sample_rates": [
+              32000,
+              44100,
+              48000,
+              88200,
+              96000,
+              176400,
+              192000
+            ],
+            "sample_formats": [
+              "I16",
+              "I32"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 2147483647,
+              "min": 1
+            },
+            "default": false,
+            "name": "HDA Intel PCH, HDMI 1",
+            "plugin_channels": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24,
+              25,
+              26,
+              27,
+              28,
+              29,
+              30,
+              31,
+              32,
+              33,
+              34,
+              35,
+              36,
+              37,
+              38,
+              39,
+              40,
+              41,
+              42,
+              43,
+              44,
+              45,
+              46,
+              47,
+              48,
+              49,
+              50,
+              51,
+              52,
+              53,
+              54,
+              55,
+              56,
+              57,
+              58,
+              59,
+              60,
+              61,
+              62,
+              63,
+              64
+            ],
+            "plugin_sample_rates": [
+              4000,
+              4294967295
+            ],
+            "sample_formats": [
+              "F32",
+              "F64",
+              "I16",
+              "I24",
+              "I32",
+              "I8",
+              "U16",
+              "U24",
+              "U32",
+              "U8"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 524288,
+              "min": 32
+            },
+            "default": false,
+            "name": "HDA Intel PCH, HDMI 2",
+            "plugin_channels": [
+              2,
+              4,
+              6,
+              8
+            ],
+            "plugin_sample_rates": [
+              32000,
+              44100,
+              48000,
+              88200,
+              96000,
+              176400,
+              192000
+            ],
+            "sample_formats": [
+              "I16",
+              "I32"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 2147483647,
+              "min": 1
+            },
+            "default": false,
+            "name": "HDA Intel PCH, HDMI 2",
+            "plugin_channels": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24,
+              25,
+              26,
+              27,
+              28,
+              29,
+              30,
+              31,
+              32,
+              33,
+              34,
+              35,
+              36,
+              37,
+              38,
+              39,
+              40,
+              41,
+              42,
+              43,
+              44,
+              45,
+              46,
+              47,
+              48,
+              49,
+              50,
+              51,
+              52,
+              53,
+              54,
+              55,
+              56,
+              57,
+              58,
+              59,
+              60,
+              61,
+              62,
+              63,
+              64
+            ],
+            "plugin_sample_rates": [
+              4000,
+              4294967295
+            ],
+            "sample_formats": [
+              "F32",
+              "F64",
+              "I16",
+              "I24",
+              "I32",
+              "I8",
+              "U16",
+              "U24",
+              "U32",
+              "U8"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 524288,
+              "min": 32
+            },
+            "default": false,
+            "name": "HDA Intel PCH, HDMI 3",
+            "plugin_channels": [
+              2,
+              4,
+              6,
+              8
+            ],
+            "plugin_sample_rates": [
+              32000,
+              44100,
+              48000,
+              88200,
+              96000,
+              176400,
+              192000
+            ],
+            "sample_formats": [
+              "I16",
+              "I32"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 2147483647,
+              "min": 1
+            },
+            "default": false,
+            "name": "HDA Intel PCH, HDMI 3",
+            "plugin_channels": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24,
+              25,
+              26,
+              27,
+              28,
+              29,
+              30,
+              31,
+              32,
+              33,
+              34,
+              35,
+              36,
+              37,
+              38,
+              39,
+              40,
+              41,
+              42,
+              43,
+              44,
+              45,
+              46,
+              47,
+              48,
+              49,
+              50,
+              51,
+              52,
+              53,
+              54,
+              55,
+              56,
+              57,
+              58,
+              59,
+              60,
+              61,
+              62,
+              63,
+              64
+            ],
+            "plugin_sample_rates": [
+              4000,
+              4294967295
+            ],
+            "sample_formats": [
+              "F32",
+              "F64",
+              "I16",
+              "I24",
+              "I32",
+              "I8",
+              "U16",
+              "U24",
+              "U32",
+              "U8"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 96000,
+              "min": 6
+            },
+            "default": false,
+            "name": "Traktor Kontrol S4 MK3, USB Audio",
+            "plugin_channels": [
+              4
+            ],
+            "plugin_sample_rates": [
+              44100,
+              48000,
+              88200,
+              96000
+            ],
+            "sample_formats": [
+              "I32"
+            ]
+          },
+          {
+            "buffer_frames": {
+              "max": 2147483647,
+              "min": 1
+            },
+            "default": false,
+            "name": "Traktor Kontrol S4 MK3, USB Audio",
+            "plugin_channels": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24,
+              25,
+              26,
+              27,
+              28,
+              29,
+              30,
+              31,
+              32,
+              33,
+              34,
+              35,
+              36,
+              37,
+              38,
+              39,
+              40,
+              41,
+              42,
+              43,
+              44,
+              45,
+              46,
+              47,
+              48,
+              49,
+              50,
+              51,
+              52,
+              53,
+              54,
+              55,
+              56,
+              57,
+              58,
+              59,
+              60,
+              61,
+              62,
+              63,
+              64
+            ],
+            "plugin_sample_rates": [
+              4000,
+              4294967295
+            ],
+            "sample_formats": [
+              "F32",
+              "F64",
+              "I16",
+              "I24",
+              "I32",
+              "I8",
+              "U16",
+              "U24",
+              "U32",
+              "U8"
+            ]
+          }
+        ],
+        "host": "Alsa"
+      }
+    ],
+    "output_devices": 68
+  },
+  "generated_at_unix": 1793860675,
+  "open_timeout_ms": 4000,
+  "pipewire_nodes": [
+    {
+      "channels": null,
+      "id": 31,
+      "in_ports": [],
+      "media_class": "",
+      "name": "Dummy-Driver",
+      "out_ports": []
+    },
+    {
+      "channels": null,
+      "id": 32,
+      "in_ports": [],
+      "media_class": "",
+      "name": "Freewheel-Driver",
+      "out_ports": []
+    },
+    {
+      "channels": 2,
+      "id": 48,
+      "in_ports": [],
+      "media_class": "Audio/Source/Internal",
+      "name": "alsa_input.hw_UR22C_0",
+      "out_ports": [
+        "capture_AUX0",
+        "capture_AUX1"
+      ]
+    },
+    {
+      "channels": 2,
+      "id": 49,
+      "in_ports": [
+        "playback_FL",
+        "playback_FR"
+      ],
+      "media_class": "Audio/Sink",
+      "name": "alsa_output.usb-Yamaha_Corporation_Steinberg_UR22C-00.HiFi__Line1__sink",
+      "out_ports": [
+        "monitor_FL",
+        "monitor_FR"
+      ]
+    },
+    {
+      "channels": null,
+      "id": 59,
+      "in_ports": [
+        "Midi Through: Port-0 (playback)",
+        "Steinberg UR22C: MIDI 1 (playback)",
+        "Steinberg UR22C: MIDI 2 (playback)"
+      ],
+      "media_class": "Midi/Bridge",
+      "name": "Midi-Bridge",
+      "out_ports": [
+        "Midi Through: Port-0 (capture)",
+        "Steinberg UR22C: MIDI 1 (capture)",
+        "Steinberg UR22C: MIDI 2 (capture)"
+      ]
+    },
+    {
+      "channels": null,
+      "id": 66,
+      "in_ports": [
+        "in"
+      ],
+      "media_class": "Midi/Bridge",
+      "name": "bluez_midi.server",
+      "out_ports": [
+        "out"
+      ]
+    },
+    {
+      "channels": 2,
+      "id": 69,
+      "in_ports": [],
+      "media_class": "Audio/Source",
+      "name": "alsa_input.usb-Sonix_Technology_Co.__Ltd._REDRAGON_Live_Camera_SN0001-03.analog-stereo",
+      "out_ports": [
+        "capture_FL",
+        "capture_FR"
+      ]
+    },
+    {
+      "channels": 2,
+      "id": 74,
+      "in_ports": [
+        "playback_FL",
+        "playback_FR"
+      ],
+      "media_class": "Audio/Sink",
+      "name": "alsa_output.usb-the_t.bone_SC460_USB_the_t.bone_SC460_USB-00.analog-stereo",
+      "out_ports": [
+        "monitor_FL",
+        "monitor_FR"
+      ]
+    },
+    {
+      "channels": 2,
+      "id": 75,
+      "in_ports": [],
+      "media_class": "Audio/Source",
+      "name": "alsa_input.usb-the_t.bone_SC460_USB_the_t.bone_SC460_USB-00.analog-stereo",
+      "out_ports": [
+        "capture_FL",
+        "capture_FR"
+      ]
+    },
+    {
+      "channels": 1,
+      "id": 76,
+      "in_ports": [],
+      "media_class": "Audio/Source",
+      "name": "alsa_input.usb-Yamaha_Corporation_Steinberg_UR22C-00.HiFi__Line3__source",
+      "out_ports": [
+        "capture_MONO"
+      ]
+    },
+    {
+      "channels": null,
+      "id": 77,
+      "in_ports": [
+        "input_AUX1"
+      ],
+      "media_class": "Stream/Input/Audio/Internal",
+      "name": "alsa_input.usb-Yamaha_Corporation_Steinberg_UR22C-00.HiFi__Line3__source.split",
+      "out_ports": [
+        "monitor_AUX1"
+      ]
+    },
+    {
+      "channels": 1,
+      "id": 78,
+      "in_ports": [],
+      "media_class": "Audio/Source",
+      "name": "alsa_input.usb-Yamaha_Corporation_Steinberg_UR22C-00.HiFi__Line2__source",
+      "out_ports": [
+        "capture_MONO"
+      ]
+    },
+    {
+      "channels": null,
+      "id": 79,
+      "in_ports": [
+        "input_AUX0"
+      ],
+      "media_class": "Stream/Input/Audio/Internal",
+      "name": "alsa_input.usb-Yamaha_Corporation_Steinberg_UR22C-00.HiFi__Line2__source.split",
+      "out_ports": [
+        "monitor_AUX0"
+      ]
+    },
+    {
+      "channels": 2,
+      "id": 103,
+      "in_ports": [],
+      "media_class": "Audio/Source",
+      "name": "alsa_input.pci-0000_00_1f.3.analog-stereo",
+      "out_ports": [
+        "capture_FL",
+        "capture_FR"
+      ]
+    },
+    {
+      "channels": 2,
+      "id": 106,
+      "in_ports": [
+        "playback_FL",
+        "playback_FR"
+      ],
+      "media_class": "Audio/Sink",
+      "name": "alsa_output.pci-0000_00_1f.3.hdmi-stereo",
+      "out_ports": [
+        "monitor_FL",
+        "monitor_FR"
+      ]
+    },
+    {
+      "channels": null,
+      "id": 110,
+      "in_ports": [],
+      "media_class": "Video/Source",
+      "name": "v4l2_input.pci-0000_00_14.0-usb-0_11.1_1.0",
+      "out_ports": [
+        "capture_1"
+      ]
+    },
+    {
+      "channels": null,
+      "id": 112,
+      "in_ports": [],
+      "media_class": "Video/Source",
+      "name": "v4l2_input.pci-0000_00_14.0-usb-0_11.1_1.0.3",
+      "out_ports": [
+        "capture_1"
+      ]
+    },
+    {
+      "channels": 4,
+      "id": 120,
+      "in_ports": [
+        "playback_FL",
+        "playback_FR",
+        "playback_RL",
+        "playback_RR"
+      ],
+      "media_class": "Audio/Sink",
+      "name": "alsa_output.usb-Native_Instruments_Traktor_Kontrol_S4_MK3_6231754A-00.analog-surround-40",
+      "out_ports": [
+        "monitor_FL",
+        "monitor_FR",
+        "monitor_RL",
+        "monitor_RR"
+      ]
+    },
+    {
+      "channels": 8,
+      "id": 128,
+      "in_ports": [],
+      "media_class": "Audio/Source",
+      "name": "alsa_input.usb-Native_Instruments_Traktor_Kontrol_S4_MK3_6231754A-00.analog-surround-71",
+      "out_ports": [
+        "capture_FL",
+        "capture_FR",
+        "capture_RL",
+        "capture_RR",
+        "capture_FC",
+        "capture_LFE",
+        "capture_SL",
+        "capture_SR"
+      ]
+    }
+  ],
+  "schema_version": 2,
+  "timing_trial": {
+    "avg_ms": 5.334284441176467,
+    "callbacks": 375,
+    "channels": 2,
+    "device": "default_output",
+    "effective_frames": 256.0456531764704,
+    "effective_period_ms": 5.334284441176467,
+    "error": null,
+    "frames": 256,
+    "gaps_over_1_5x_period": 0,
+    "max_ms": 7.180631,
+    "p99_ms": 5.349332,
+    "period_ms": 5.333333333333333,
+    "requested_size_honoured": true,
+    "sample_rate": 48000
+  },
+  "trial_budget_s": 20,
+  "usb_cards": [
+    {
+      "capture": [
+        {
+          "altset": 1,
+          "channel_map": "FL FR",
+          "channels": 2,
+          "format": "S32_LE",
+          "interface": 2,
+          "rates": [
+            44100,
+            48000,
+            88200,
+            96000,
+            176400,
+            192000
+          ]
+        }
+      ],
+      "capture_max_channels": 2,
+      "id": "card0",
+      "name": "Yamaha Corporation Steinberg UR22C",
+      "playback": [
+        {
+          "altset": 1,
+          "channel_map": "FL FR",
+          "channels": 2,
+          "format": "S32_LE",
+          "interface": 1,
+          "rates": [
+            44100,
+            48000,
+            88200,
+            96000,
+            176400,
+            192000
+          ],
+          "supports_48k": true
+        }
+      ],
+      "playback_max_channels": 2
+    },
+    {
+      "capture": [
+        {
+          "altset": 1,
+          "channel_map": "FL FR",
+          "channels": 2,
+          "format": "S16_LE",
+          "interface": 4,
+          "rates": [
+            11025,
+            44100,
+            48000
+          ]
+        }
+      ],
+      "capture_max_channels": 2,
+      "id": "card1",
+      "name": "Sonix Technology Co., Ltd. REDRAGON Live Camera",
+      "playback": [],
+      "playback_max_channels": 0
+    },
+    {
+      "capture": [
+        {
+          "altset": 1,
+          "channel_map": "FL FR",
+          "channels": 2,
+          "format": "S16_LE",
+          "interface": 2,
+          "rates": [
+            8000,
+            11025,
+            16000,
+            22050,
+            32000,
+            44100,
+            48000
+          ]
+        },
+        {
+          "altset": 2,
+          "channel_map": "FL FR",
+          "channels": 2,
+          "format": "S24_3LE",
+          "interface": 2,
+          "rates": [
+            8000,
+            11025,
+            16000,
+            22050,
+            32000,
+            44100,
+            48000
+          ]
+        },
+        {
+          "altset": 3,
+          "channel_map": "FL FR",
+          "channels": 2,
+          "format": "S16_LE",
+          "interface": 2,
+          "rates": [
+            88200,
+            96000
+          ]
+        },
+        {
+          "altset": 4,
+          "channel_map": "FL FR",
+          "channels": 2,
+          "format": "S24_3LE",
+          "interface": 2,
+          "rates": [
+            88200,
+            96000
+          ]
+        }
+      ],
+      "capture_max_channels": 2,
+      "id": "card2",
+      "name": "the t.bone SC460 USB the t.bone SC460 USB",
+      "playback": [
+        {
+          "altset": 1,
+          "channel_map": "FL FR",
+          "channels": 2,
+          "format": "S16_LE",
+          "interface": 1,
+          "rates": [
+            8000,
+            11025,
+            16000,
+            22050,
+            32000,
+            44100,
+            48000
+          ],
+          "supports_48k": true
+        }
+      ],
+      "playback_max_channels": 2
+    },
+    {
+      "capture": [
+        {
+          "altset": 1,
+          "channel_map": "FL FR FC LFE RL RR FLC FRC",
+          "channels": 8,
+          "format": "S32_LE",
+          "interface": 2,
+          "rates": [
+            44100,
+            48000,
+            88200,
+            96000
+          ]
+        }
+      ],
+      "capture_max_channels": 8,
+      "id": "card4",
+      "name": "Native Instruments Traktor Kontrol S4 MK3",
+      "playback": [
+        {
+          "altset": 1,
+          "channel_map": "FL FR FC LFE",
+          "channels": 4,
+          "format": "S32_LE",
+          "interface": 1,
+          "rates": [
+            44100,
+            48000,
+            88200,
+            96000
+          ],
+          "supports_48k": true
+        }
+      ],
+      "playback_max_channels": 4
+    }
+  ]
+}

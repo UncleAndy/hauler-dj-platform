@@ -49,6 +49,9 @@ Usage:
   dj-audio-probe --devices SUBSTR    only devices whose name contains SUBSTR (case-insensitive)
   dj-audio-probe --open-timeout-ms N give up on one stream open after N ms (default 2000)
   dj-audio-probe --trial-budget-s N  stop starting new channel trials after N s (default 25)
+  dj-audio-probe --tone-device SUBSTR  run the trial on that device (default: system default)
+  dj-audio-probe --tone-pair K        audible mapping check: 440 Hz only on channel pair K
+                                      (0 = first two channels, 1 = channels 3-4, ...)
   dj-audio-probe --help | --version
 
 What the sections mean:
@@ -76,6 +79,8 @@ struct Args {
     devices: Option<String>,
     open_timeout_ms: u64,
     budget_s: u64,
+    tone_pair: Option<u16>,
+    tone_device: Option<String>,
 }
 
 impl Args {
@@ -128,6 +133,24 @@ impl Args {
                         return Err("--open-timeout-ms must be between 200 and 30000".to_string());
                     }
                     args.open_timeout_ms = parsed;
+                }
+                "--tone-pair" => {
+                    let value = iter
+                        .next()
+                        .ok_or_else(|| "--tone-pair needs a channel pair index".to_string())?;
+                    let parsed: u16 = value
+                        .parse()
+                        .map_err(|_| format!("--tone-pair expects a number, got {value:?}"))?;
+                    if parsed > 3 {
+                        return Err("--tone-pair must be 0..3 (channel pair index)".to_string());
+                    }
+                    args.tone_pair = Some(parsed);
+                }
+                "--tone-device" => {
+                    let value = iter
+                        .next()
+                        .ok_or_else(|| "--tone-device needs a name substring".to_string())?;
+                    args.tone_device = Some(value.to_lowercase());
                 }
                 "--trial-budget-s" => {
                     let value = iter
@@ -451,6 +474,7 @@ struct TrialReport {
     max_ms: f64,
     gaps: usize,
     error: Option<String>,
+    tone_pair: Option<u16>,
 }
 
 impl TrialReport {
@@ -518,6 +542,7 @@ fn summarize(
         max_ms: intervals.last().copied().unwrap_or(0.0),
         gaps,
         error: None,
+        tone_pair: None,
     }
 }
 
@@ -533,11 +558,20 @@ fn failed_trial(device: String, error: String) -> TrialReport {
         max_ms: 0.0,
         gaps: 0,
         error: Some(error),
+        tone_pair: None,
     }
 }
 
-fn run_trial(seconds: u64, silent: bool, timeout: Duration) -> TrialReport {
-    match bounded(timeout, move || run_trial_inner(seconds, silent)) {
+fn run_trial(
+    seconds: u64,
+    silent: bool,
+    timeout: Duration,
+    tone_pair: Option<u16>,
+    tone_device: Option<String>,
+) -> TrialReport {
+    match bounded(timeout, move || {
+        run_trial_inner(seconds, silent, tone_pair, tone_device.as_deref())
+    }) {
         Some(report) => report,
         None => failed_trial(
             "<timing trial>".to_string(),
@@ -549,18 +583,54 @@ fn run_trial(seconds: u64, silent: bool, timeout: Duration) -> TrialReport {
     }
 }
 
-fn run_trial_inner(seconds: u64, silent: bool) -> TrialReport {
+fn run_trial_inner(
+    seconds: u64,
+    silent: bool,
+    tone_pair: Option<u16>,
+    tone_device: Option<&str>,
+) -> TrialReport {
     let host = cpal::default_host();
-    let Some(device) = host.default_output_device() else {
-        return failed_trial(
-            "<no default output>".to_string(),
-            "no default output device".to_string(),
-        );
+
+    let device = match tone_device {
+        Some(needle) => {
+            let devices: Vec<cpal::Device> = match host.output_devices() {
+                Ok(iter) => iter.collect(),
+                Err(err) => {
+                    return failed_trial("<enumeration failed>".to_string(), err.to_string());
+                }
+            };
+            match devices
+                .into_iter()
+                .find(|device| matches_filter(&device.to_string(), Some(needle)))
+            {
+                Some(device) => device,
+                None => {
+                    return failed_trial(
+                        format!("<no device matching {needle:?}>"),
+                        "no output device matched --tone-device".to_string(),
+                    );
+                }
+            }
+        }
+        None => match host.default_output_device() {
+            Some(device) => device,
+            None => {
+                return failed_trial(
+                    "<no default output>".to_string(),
+                    "no default output device".to_string(),
+                );
+            }
+        },
     };
     let name = device.to_string();
 
+    // An audible mapping check needs the full width up to the requested pair.
+    let channels = match tone_pair {
+        Some(pair) => (pair + 1) * 2,
+        None => TRIAL_CHANNELS,
+    };
     let config = cpal::StreamConfig {
-        channels: TRIAL_CHANNELS,
+        channels,
         sample_rate: TRIAL_RATE,
         buffer_size: cpal::BufferSize::Fixed(TRIAL_FRAMES),
     };
@@ -574,11 +644,23 @@ fn run_trial_inner(seconds: u64, silent: bool) -> TrialReport {
     // applies to dj-audio-core).
     let data_fn = move |buffer: &mut [f32], _: &cpal::OutputCallbackInfo| {
         let _ = tx.send(started.elapsed().as_nanos() as u64);
-        for frame in buffer.chunks_mut(usize::from(TRIAL_CHANNELS)) {
+        for frame in buffer.chunks_mut(usize::from(channels)) {
             let sample = if silent { 0.0 } else { phase.sin() * 0.1 };
             phase = (phase + step) % std::f32::consts::TAU;
-            for channel in frame.iter_mut() {
-                *channel = sample;
+            for (index, channel) in frame.iter_mut().enumerate() {
+                // With --tone-pair only that pair is audible; everything else stays silent
+                // so the listener can tell which physical output the pair reaches.
+                *channel = match tone_pair {
+                    Some(pair) => {
+                        let first = usize::from(pair) * 2;
+                        if index == first || index == first + 1 {
+                            sample
+                        } else {
+                            0.0
+                        }
+                    }
+                    None => sample,
+                };
             }
         }
     };
@@ -608,7 +690,11 @@ fn run_trial_inner(seconds: u64, silent: bool) -> TrialReport {
     }
     drop(stream);
 
-    summarize(&name, &timestamps, TRIAL_FRAMES, TRIAL_RATE, TRIAL_CHANNELS)
+    let report = summarize(&name, &timestamps, TRIAL_FRAMES, TRIAL_RATE, channels);
+    TrialReport {
+        tone_pair,
+        ..report
+    }
 }
 
 // --------------------------------------------------------------- PipeWire
@@ -877,6 +963,15 @@ fn human_report(
                     trial.frames
                 );
             }
+            if let Some(pair) = trial.tone_pair {
+                let _ = writeln!(
+                    out,
+                    "  tone pair: {} (channels {} and {} only — LISTEN to which output it reaches)",
+                    pair,
+                    pair * 2,
+                    pair * 2 + 1
+                );
+            }
             let _ = writeln!(out, "  gaps > 1.5x requested period: {}", trial.gaps);
             if let Some(error) = &trial.error {
                 let _ = writeln!(out, "  error: {error}");
@@ -1034,6 +1129,7 @@ fn json_report(
             "p99_ms": trial.p99_ms,
             "max_ms": trial.max_ms,
             "gaps_over_1_5x_period": trial.gaps,
+            "tone_pair": trial.tone_pair,
             "error": trial.error,
         }),
         None => Value::Null,
@@ -1104,6 +1200,8 @@ fn main() -> ExitCode {
             args.seconds,
             args.silent,
             Duration::from_secs(args.seconds + 5),
+            args.tone_pair,
+            args.tone_device.clone(),
         ))
     };
     let nodes = pipewire_nodes();
