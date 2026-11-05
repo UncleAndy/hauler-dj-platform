@@ -13,5 +13,6 @@ fi
 bash scripts/check-rust.sh
 bash scripts/check-docs.sh
 bash scripts/ui.sh --smoke
+bash scripts/ui.sh --engine-check
 
 echo "check.sh: all gates passed"

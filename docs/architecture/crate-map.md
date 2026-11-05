@@ -24,7 +24,7 @@
 | `dj-testkit` | qa | A11 | R0 | DJP-NFR-001 — `rt::CountingAllocator`/`RtScope` уже в A01; фикстуры и остальная инструментация — A11 |
 
 Приложения: `apps/dj-headless` (A01/A13, audio-core), `apps/dj-cli` (A08, media),
-`apps/dj-ui` (A06, ui; Qt/C++ + QML, собирается CMake, вне cargo-воркспейса),
+`apps/dj-ui` (A06, ui; Qt/C++ + QML, собирается CMake, вне cargo-воркспейса; содержит клиент моста `BridgeClient`, который говорит по command-v1/state-v1 и не владеет ни звуком, ни состоянием),
 `apps/dj-controller` (A09, hardware; сервис контроллера — отдельный процесс, ADR-0006).
 
 * `apps/dj-audio-probe` (A05, architect/audio-platform) — read-only перечисление устройств и короткий прогон для ADR-002: что видит CPAL, сколько каналов, как ведут себя callback'и. Уже в репозитории.

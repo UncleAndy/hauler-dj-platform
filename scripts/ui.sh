@@ -22,6 +22,34 @@ case "${1:-}" in
   --smoke)
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --smoke
     ;;
+  --engine-check)
+    # The A06 acceptance, without a display or a sound card: run the real engine on a null sink,
+    # let the real UI press Play, and require the ack and the published state to agree.
+    engine_bin="${CARGO_TARGET_DIR:-$HOME/.cache/dj-platform-target}/debug/dj-engine"
+    if [ ! -x "$engine_bin" ]; then
+      echo "ui.sh: dj-engine is not built at $engine_bin" >&2
+      exit 1
+    fi
+    run_dir="$(mktemp -d)"
+    socket="$run_dir/engine.sock"
+    "$engine_bin" --null-sink --socket "$socket" --block 256 &
+    engine_pid=$!
+    cleanup() {
+      kill "$engine_pid" 2>/dev/null || true
+      wait "$engine_pid" 2>/dev/null || true
+      rm -rf "$run_dir"
+    }
+    trap cleanup EXIT
+    for _ in $(seq 1 100); do
+      [ -S "$socket" ] && break
+      sleep 0.05
+    done
+    if [ ! -S "$socket" ]; then
+      echo "ui.sh: the engine did not create $socket" >&2
+      exit 1
+    fi
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --self-check
+    ;;
   *)
     exec "$build_dir/apps/dj-ui/dj-ui" "$@"
     ;;

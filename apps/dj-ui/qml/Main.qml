@@ -1,4 +1,5 @@
-// Root window of the M0 scaffold: two track decks and a crossfader, no engine yet.
+// Root window: two decks and a crossfader, all driven by the engine's published state.
+// The shell owns no audio and no domain logic (DJP-ARCH-001, DJP-UI-001, ADR-0003).
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -13,7 +14,8 @@ ApplicationWindow {
     minimumWidth: 1366
     minimumHeight: 768
     visible: true
-    title: qsTr("DJ Platform — M0 shell")
+    title: qsTr("DJ Platform — %1").arg(Bridge.connected ? qsTr("engine connected")
+                                                        : qsTr("engine offline"))
     color: "#14161a"
 
     header: ToolBar {
@@ -25,8 +27,15 @@ ApplicationWindow {
             }
             Item { Layout.fillWidth: true }
             Label {
-                // Honest about the state of the build: nothing is wired to audio yet.
-                text: qsTr("M0 scaffold — no audio engine connected")
+                // The link state and the engine's own words, not a guess.
+                text: Bridge.status
+                color: Bridge.connected ? "#9be29b" : "#e2a09b"
+            }
+            Label {
+                text: Bridge.connected
+                      ? qsTr("rev %1").arg(Bridge.snapshot.revision !== undefined
+                                           ? Bridge.snapshot.revision : 0)
+                      : qsTr("no engine")
                 opacity: 0.6
             }
         }
@@ -45,11 +54,13 @@ ApplicationWindow {
             DeckPanel {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                deckId: "A"
                 deckLabel: qsTr("Deck A")
             }
             DeckPanel {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                deckId: "B"
                 deckLabel: qsTr("Deck B")
             }
         }
