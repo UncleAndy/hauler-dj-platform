@@ -11,6 +11,7 @@
 //! that asks for the past gets now, never a silent no-op.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -340,6 +341,12 @@ fn run(argv: &[String]) -> Result<(), String> {
         });
     }
 
+    // Ctrl-C must stop the engine. PipeWire's thread loop installs its own SIGINT handling when the
+    // stream starts, so after that a signal no longer ends the process — the flag is set again once
+    // the stream is up (see run_device).
+    let stop = Arc::new(AtomicBool::new(false));
+    register_signals(&stop)?;
+
     let graph = EngineGraph::new(
         decks,
         mixer,
@@ -351,14 +358,26 @@ fn run(argv: &[String]) -> Result<(), String> {
 
     match (device, device_channels) {
         (Some(requested), Some(channels)) => {
-            run_device(graph, &requested, channels, block, rate, seconds)
+            run_device(graph, &requested, channels, block, rate, seconds, &stop)
         }
         _ => {
             let _ = null_sink;
-            run_null(graph, block, rate, seconds);
+            run_null(graph, block, rate, seconds, &stop);
             Ok(())
         }
     }
+}
+
+/// Ask for SIGINT and SIGTERM to set the stop flag instead of killing the process outright.
+///
+/// A hard kill would skip the clean shutdown: the stream would stop mid-block and the socket would
+/// be left behind for the next engine to clean up.
+fn register_signals(stop: &Arc<AtomicBool>) -> Result<(), String> {
+    for signal in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
+        signal_hook::flag::register(signal, Arc::clone(stop))
+            .map_err(|err| format!("cannot install a signal handler: {err}"))?;
+    }
+    Ok(())
 }
 
 /// The device path: the graph lives inside the callback, which is the only place it may run.
@@ -369,6 +388,7 @@ fn run_device(
     block: usize,
     rate: u32,
     seconds: Option<f64>,
+    stop: &Arc<AtomicBool>,
 ) -> Result<(), String> {
     let plan = dj_audio_io::RoutePlan::for_channels(channels);
     let config = dj_audio_io::LiveConfig {
@@ -432,22 +452,30 @@ fn run_device(
         return Ok(());
     }
 
-    // The engine is the owner of the device for as long as it lives; the stream stops when this
-    // value drops, so holding it is the whole job of this thread.
-    loop {
-        std::thread::sleep(std::time::Duration::from_secs(1));
-        let report = output.snapshot();
-        if report.callbacks > 0 && report.callbacks % 20_000 == 0 {
-            eprintln!(
-                "dj-engine: {} callbacks, {} frames, late {}",
-                report.callbacks, report.frames, report.late_callbacks
-            );
-        }
+    // PipeWire's thread loop takes the signal when the stream starts, so the handlers are installed
+    // again now that it exists; otherwise Ctrl-C reaches nobody and the engine runs until killed.
+    register_signals(stop)?;
+
+    // The engine owns the device for as long as it lives; the stream stops when this value drops.
+    while !stop.load(Ordering::Relaxed) {
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
+    let report = output.snapshot();
+    eprintln!(
+        "dj-engine: stopping — {} callbacks, {} frames, late {}, render p99 {:.1} us",
+        report.callbacks, report.frames, report.late_callbacks, report.render_p99_us
+    );
+    Ok(())
 }
 
 /// The null path: same graph, same rules, paced by a clock instead of a sound card.
-fn run_null(mut graph: EngineGraph, block: usize, rate: u32, seconds: Option<f64>) {
+fn run_null(
+    mut graph: EngineGraph,
+    block: usize,
+    rate: u32,
+    seconds: Option<f64>,
+    stop: &Arc<AtomicBool>,
+) {
     let period = Duration::from_secs_f64(f64::from(block as u32) / f64::from(rate));
     let mut master = vec![0.0f32; block * 2];
     let mut cue = vec![0.0f32; block * 2];
@@ -456,7 +484,7 @@ fn run_null(mut graph: EngineGraph, block: usize, rate: u32, seconds: Option<f64
     let mut callbacks: u64 = 0;
     let limit = seconds.map(|seconds| (seconds * f64::from(rate)) as u64);
 
-    loop {
+    while !stop.load(Ordering::Relaxed) {
         graph.render_pair(&mut master, &mut cue, block);
         callbacks += 1;
         if let Some(limit) = limit
