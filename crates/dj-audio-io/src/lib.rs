@@ -335,6 +335,56 @@ fn parse_schedstat(schedstat: &str) -> Option<(u64, u64, u64)> {
     Some((cpu, delay, slices))
 }
 
+/// How the kernel schedules the thread the callback runs on.
+///
+/// Preemptions are inevitable for `SCHED_OTHER` and rare for `SCHED_FIFO`; which one we got decides
+/// whether the fix is ours or the deployment's, so it is measured rather than assumed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ThreadScheduling {
+    /// `other`, `fifo`, `round-robin`, `batch`, `idle` or `unknown`.
+    pub policy: &'static str,
+    /// Real-time priority, 0 when the thread is not a real-time one.
+    pub rt_priority: u64,
+    /// Nice value, from -20 to 19.
+    pub nice: i64,
+}
+
+/// Parse `/proc/<pid>/task/<tid>/stat`: fields 19 (nice), 40 (rt_priority) and 41 (policy).
+///
+/// The command name in field 2 may contain spaces and parentheses, so parsing starts after the
+/// last `)` — the classic trap in this file.
+fn parse_scheduling(stat: &str) -> Option<ThreadScheduling> {
+    let tail = stat.rsplit_once(')')?.1;
+    let fields: Vec<&str> = tail.split_whitespace().collect();
+    // After the command name field, `nice` is the 17th token and `rt_priority` the 38th.
+    let nice: i64 = fields.get(16)?.parse().ok()?;
+    let rt_priority: u64 = fields.get(37)?.parse().ok()?;
+    let policy: u64 = fields.get(38)?.parse().ok()?;
+    let policy = match policy {
+        0 => "other",
+        1 => "fifo",
+        2 => "round-robin",
+        3 => "batch",
+        5 => "idle",
+        6 => "deadline",
+        _ => "unknown",
+    };
+    Some(ThreadScheduling {
+        policy,
+        rt_priority,
+        nice,
+    })
+}
+
+/// Scheduling policy and priority of one thread.
+pub fn thread_scheduling(tid: u64) -> Option<ThreadScheduling> {
+    if tid == 0 {
+        return None;
+    }
+    let stat = std::fs::read_to_string(format!("/proc/self/task/{tid}/stat")).ok()?;
+    parse_scheduling(&stat)
+}
+
 /// Kernel counters for one thread. `None` when the platform has no procfs.
 pub fn thread_pressure(tid: u64) -> Option<ThreadPressure> {
     if tid == 0 {
@@ -718,6 +768,11 @@ impl LiveOutput {
         thread_pressure(self.audio_thread_id())
     }
 
+    /// Scheduling policy the audio thread ended up with.
+    pub fn audio_thread_scheduling(&self) -> Option<ThreadScheduling> {
+        thread_scheduling(self.audio_thread_id())
+    }
+
     /// Report on the run so far, without stopping it.
     ///
     /// A two-hour run has to be observable while it happens: if it ends badly, the numbers up to
@@ -811,6 +866,53 @@ mod tests {
 
         let many = RoutePlan::for_channels(8);
         assert_eq!(many.channels(), 4, "R0 opens at most master + cue");
+    }
+
+    /// Build a `/proc/<pid>/task/<tid>/stat` line with the fields this parser reads.
+    ///
+    /// The layout is the point: `nice` is field 19, `rt_priority` 40, `policy` 41, and the command
+    /// name in field 2 may contain spaces and parentheses — which is why parsing starts at the last
+    /// `)` rather than by splitting the whole line.
+    fn stat_line(nice: i64, rt_priority: u64, policy: u64) -> String {
+        let mut fields = vec!["0".to_string(); 40];
+        fields[0] = "S".to_string();
+        fields[16] = nice.to_string();
+        fields[37] = rt_priority.to_string();
+        fields[38] = policy.to_string();
+        format!("1234 (cpal audio thread) {}", fields.join(" "))
+    }
+
+    #[test]
+    fn the_scheduling_fields_are_parsed() {
+        let Some(ordinary) = parse_scheduling(&stat_line(0, 0, 0)) else {
+            panic!("the fields must parse");
+        };
+        assert_eq!(ordinary.policy, "other");
+        assert_eq!(ordinary.rt_priority, 0);
+        assert_eq!(ordinary.nice, 0);
+
+        let Some(realtime) = parse_scheduling(&stat_line(-10, 20, 1)) else {
+            panic!("the fields must parse");
+        };
+        assert_eq!(realtime.policy, "fifo");
+        assert_eq!(realtime.rt_priority, 20);
+        assert_eq!(realtime.nice, -10);
+
+        assert_eq!(parse_scheduling("garbage"), None);
+    }
+
+    #[test]
+    fn our_own_thread_scheduling_is_readable() {
+        let tid = current_thread_id();
+        let Some(scheduling) = thread_scheduling(tid) else {
+            panic!("procfs describes this thread");
+        };
+        assert!(
+            ["other", "fifo", "round-robin", "batch", "idle", "deadline"]
+                .contains(&scheduling.policy),
+            "unexpected policy name {:?}",
+            scheduling.policy
+        );
     }
 
     #[test]

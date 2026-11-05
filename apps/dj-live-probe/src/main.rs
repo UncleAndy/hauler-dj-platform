@@ -340,6 +340,7 @@ fn run(argv: &[String]) -> Result<String, Error> {
                         timeline: &timeline,
                         audio_tid: output.audio_thread_id(),
                         pressure: output.audio_thread_pressure(),
+                        scheduling: output.audio_thread_scheduling(),
                     },
                 ),
             );
@@ -358,6 +359,7 @@ fn run(argv: &[String]) -> Result<String, Error> {
             timeline: &timeline,
             audio_tid: output.audio_thread_id(),
             pressure: output.audio_thread_pressure(),
+            scheduling: output.audio_thread_scheduling(),
         },
     );
     if let Some(path) = &options.out {
@@ -375,6 +377,7 @@ struct RunFacts<'a> {
     timeline: &'a [serde_json::Value],
     audio_tid: u64,
     pressure: Option<dj_audio_io::ThreadPressure>,
+    scheduling: Option<dj_audio_io::ThreadScheduling>,
 }
 
 fn report_json(
@@ -389,6 +392,7 @@ fn report_json(
     let timeline = facts.timeline;
     let audio_tid = facts.audio_tid;
     let pressure = facts.pressure;
+    let scheduling = facts.scheduling;
     json!({
         "device": report.device,
         "channels": report.channels,
@@ -440,6 +444,11 @@ fn report_json(
         } else {
             None
         },
+        "thread_scheduling": scheduling.map(|seen| json!({
+            "policy": seen.policy,
+            "rt_priority": seen.rt_priority,
+            "nice": seen.nice,
+        })),
         "thread_pressure": pressure.map(|seen| json!({
             "nonvoluntary_switches": seen.nonvoluntary,
             "run_delay_ms": seen.run_delay_ns as f64 / 1_000_000.0,
