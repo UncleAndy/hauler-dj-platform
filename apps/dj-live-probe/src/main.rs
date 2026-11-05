@@ -278,6 +278,9 @@ fn run(argv: &[String]) -> Result<String, Error> {
     // Where in time the outliers happened: a total and a ring of the last 32 cannot answer "did it
     // get worse", and that question comes after every long run.
     let mut timeline: Vec<serde_json::Value> = Vec::new();
+    // Kernel view of the audio thread: a slow block and a preempted thread look identical from
+    // inside the callback, so the counters come from procfs instead of from guesswork.
+    let mut previous_pressure: Option<dj_audio_io::ThreadPressure> = None;
 
     loop {
         let elapsed = started.elapsed().as_secs_f64();
@@ -298,6 +301,17 @@ fn run(argv: &[String]) -> Result<String, Error> {
             report.interval_max_ms,
             rss_kb().map_or_else(|| "?".to_string(), |kb| kb.to_string()),
         );
+        let pressure = output.audio_thread_pressure();
+        let (preemptions_delta, run_delay_delta_ms) = match (pressure, previous_pressure) {
+            (Some(now), Some(before)) => (
+                now.nonvoluntary.saturating_sub(before.nonvoluntary),
+                (now.run_delay_ns.saturating_sub(before.run_delay_ns)) as f64 / 1_000_000.0,
+            ),
+            _ => (0, 0.0),
+        };
+        if pressure.is_some() {
+            previous_pressure = pressure;
+        }
         timeline.push(json!({
             "at_s": started.elapsed().as_secs(),
             "callbacks": report.callbacks,
@@ -309,6 +323,8 @@ fn run(argv: &[String]) -> Result<String, Error> {
             "interval_max_ms": report.interval_max_ms,
             "render_max_us": report.render_max_us,
             "rss_kb": rss_kb(),
+            "preemptions": preemptions_delta,
+            "run_delay_ms": run_delay_delta_ms,
         }));
         if let Some(path) = &options.out {
             let _ = std::fs::write(
@@ -317,10 +333,14 @@ fn run(argv: &[String]) -> Result<String, Error> {
                     &report,
                     &options,
                     plan,
-                    &underruns,
-                    &loop_wraps,
-                    rss_start,
-                    &timeline,
+                    &RunFacts {
+                        underruns: &underruns,
+                        loop_wraps: &loop_wraps,
+                        rss_start_kb: rss_start,
+                        timeline: &timeline,
+                        audio_tid: output.audio_thread_id(),
+                        pressure: output.audio_thread_pressure(),
+                    },
                 ),
             );
         }
@@ -331,10 +351,14 @@ fn run(argv: &[String]) -> Result<String, Error> {
         &final_report,
         &options,
         plan,
-        &underruns,
-        &loop_wraps,
-        rss_start,
-        &timeline,
+        &RunFacts {
+            underruns: &underruns,
+            loop_wraps: &loop_wraps,
+            rss_start_kb: rss_start,
+            timeline: &timeline,
+            audio_tid: output.audio_thread_id(),
+            pressure: output.audio_thread_pressure(),
+        },
     );
     if let Some(path) = &options.out {
         let _ = std::fs::write(path, &json);
@@ -343,15 +367,28 @@ fn run(argv: &[String]) -> Result<String, Error> {
 }
 
 /// The JSON the run is judged by, printed and optionally written to `--out`.
+/// Everything the report says that does not live inside the audio library.
+struct RunFacts<'a> {
+    underruns: &'a Arc<AtomicU64>,
+    loop_wraps: &'a Arc<AtomicU64>,
+    rss_start_kb: Option<u64>,
+    timeline: &'a [serde_json::Value],
+    audio_tid: u64,
+    pressure: Option<dj_audio_io::ThreadPressure>,
+}
+
 fn report_json(
     report: &dj_audio_io::LiveReport,
     options: &Options,
     plan: RoutePlan,
-    underruns: &Arc<AtomicU64>,
-    loop_wraps: &Arc<AtomicU64>,
-    rss_start_kb: Option<u64>,
-    timeline: &[serde_json::Value],
+    facts: &RunFacts<'_>,
 ) -> String {
+    let underruns = facts.underruns;
+    let loop_wraps = facts.loop_wraps;
+    let rss_start_kb = facts.rss_start_kb;
+    let timeline = facts.timeline;
+    let audio_tid = facts.audio_tid;
+    let pressure = facts.pressure;
     json!({
         "device": report.device,
         "channels": report.channels,
@@ -387,6 +424,12 @@ fn report_json(
             .collect::<Vec<_>>(),
         "outliers_dropped": report.outliers_dropped,
         "timeline": timeline,
+        "audio_thread_id": audio_tid,
+        "thread_pressure": pressure.map(|seen| json!({
+            "nonvoluntary_switches": seen.nonvoluntary,
+            "run_delay_ms": seen.run_delay_ns as f64 / 1_000_000.0,
+            "cpu_ms": seen.cpu_ns as f64 / 1_000_000.0,
+        })),
         "deck_underruns": underruns.load(Ordering::Relaxed),
         "loop_wraps": loop_wraps.load(Ordering::Relaxed),
         "route": {

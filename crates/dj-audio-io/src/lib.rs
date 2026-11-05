@@ -281,6 +281,54 @@ fn percentiles(histogram: &[AtomicU32], low: f64, high: f64) -> (f64, f64) {
     (low_value, high_value)
 }
 
+/// What the kernel says about the thread the callback runs on.
+///
+/// A block that costs 3 ms may be slow code or a thread that was taken off the CPU. The two look
+/// identical from inside the callback, because it cannot observe its own absence — so the kernel is
+/// asked instead: `nonvoluntary` counts times it was descheduled, `run_delay_ns` is how long it
+/// waited to be scheduled again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ThreadPressure {
+    /// Involuntary context switches.
+    pub nonvoluntary: u64,
+    /// Nanoseconds spent waiting on a run queue.
+    pub run_delay_ns: u64,
+    /// Nanoseconds spent running on a CPU.
+    pub cpu_ns: u64,
+}
+
+/// Parse `nonvoluntary_ctxt_switches` out of `/proc/<pid>/task/<tid>/status`.
+fn parse_nonvoluntary(status: &str) -> Option<u64> {
+    status
+        .lines()
+        .find_map(|line| line.strip_prefix("nonvoluntary_ctxt_switches:"))
+        .and_then(|value| value.trim().parse().ok())
+}
+
+/// Parse `/proc/<pid>/task/<tid>/schedstat`: cpu nanoseconds, run-queue delay, timeslices.
+fn parse_schedstat(schedstat: &str) -> Option<(u64, u64, u64)> {
+    let mut fields = schedstat.split_whitespace();
+    let cpu = fields.next()?.parse().ok()?;
+    let delay = fields.next()?.parse().ok()?;
+    let slices = fields.next()?.parse().ok()?;
+    Some((cpu, delay, slices))
+}
+
+/// Kernel counters for one thread. `None` when the platform has no procfs.
+pub fn thread_pressure(tid: u64) -> Option<ThreadPressure> {
+    if tid == 0 {
+        return None;
+    }
+    let status = std::fs::read_to_string(format!("/proc/self/task/{tid}/status")).ok()?;
+    let schedstat = std::fs::read_to_string(format!("/proc/self/task/{tid}/schedstat")).ok()?;
+    let (cpu_ns, run_delay_ns, _) = parse_schedstat(&schedstat)?;
+    Some(ThreadPressure {
+        nonvoluntary: parse_nonvoluntary(&status)?,
+        run_delay_ns,
+        cpu_ns,
+    })
+}
+
 /// Number of outlier records kept for diagnosis.
 const OUTLIER_SLOTS: usize = 32;
 
@@ -425,6 +473,8 @@ pub struct LiveOutput {
     _stream: cpal::Stream,
     counters: Arc<Counters>,
     outliers: Arc<Outliers>,
+    /// Thread the callback runs on, captured from inside it on the first block.
+    audio_tid: u64,
     device: String,
     channels: usize,
     sample_rate: u32,
@@ -479,12 +529,18 @@ impl LiveOutput {
         let mut last: Option<Instant> = None;
         let outliers = Arc::new(Outliers::default());
         let callback_outliers = Arc::clone(&outliers);
+        let tid = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let callback_tid = Arc::clone(&tid);
         let mut frames_total = 0u64;
         let mut callbacks = 0u64;
         let period_us =
             config.block_frames.max(1) as f64 / f64::from(config.sample_rate) * 1_000_000.0;
 
         let data_fn = move |buffer: &mut [f32], _: &cpal::OutputCallbackInfo| {
+            // The thread's identity is unambiguous only from inside it, and only worth reading once.
+            if callback_tid.load(Ordering::Relaxed) == 0 {
+                callback_tid.store(current_thread_id(), Ordering::Relaxed);
+            }
             let now = Instant::now();
             // The interval before the first callback measures stream start-up, not the callback
             // cadence: counting it would report a fake stall at the beginning of every run.
@@ -588,6 +644,7 @@ impl LiveOutput {
             _stream: stream,
             counters,
             outliers,
+            audio_tid: tid.load(Ordering::Relaxed),
             device: name,
             channels: usize::from(channels),
             sample_rate: config.sample_rate,
@@ -599,6 +656,16 @@ impl LiveOutput {
     pub fn finish(self, seconds: f64) -> LiveReport {
         std::thread::sleep(Duration::from_secs_f64(seconds.max(0.0)));
         self.snapshot()
+    }
+
+    /// Thread the audio callback runs on, or 0 when it has not run yet.
+    pub fn audio_thread_id(&self) -> u64 {
+        self.audio_tid
+    }
+
+    /// Kernel view of that thread: preemptions and run-queue delay.
+    pub fn audio_thread_pressure(&self) -> Option<ThreadPressure> {
+        thread_pressure(self.audio_tid)
     }
 
     /// Report on the run so far, without stopping it.
@@ -662,6 +729,18 @@ impl LiveOutput {
     }
 }
 
+/// This thread's id as the kernel numbers it.
+fn current_thread_id() -> u64 {
+    std::fs::read_link("/proc/thread-self")
+        .ok()
+        .and_then(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.parse().ok())
+        })
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -680,6 +759,34 @@ mod tests {
 
         let many = RoutePlan::for_channels(8);
         assert_eq!(many.channels(), 4, "R0 opens at most master + cue");
+    }
+
+    #[test]
+    fn the_kernel_counters_are_parsed() {
+        let status = "Name:\tcpal\nState:\tS (sleeping)\nvoluntary_ctxt_switches:\t12\nnonvoluntary_ctxt_switches:\t7\n";
+        assert_eq!(parse_nonvoluntary(status), Some(7));
+        assert_eq!(parse_nonvoluntary("no counters here"), None);
+
+        assert_eq!(parse_schedstat("1000 250 3\n"), Some((1000, 250, 3)));
+        assert_eq!(parse_schedstat("1000 250"), None);
+    }
+
+    #[test]
+    fn this_thread_has_a_kernel_counters_entry() {
+        let tid = current_thread_id();
+        assert!(
+            tid > 0,
+            "procfs must be readable on the platform we support"
+        );
+        // The counters exist and parse. `cpu_ns` is deliberately not asserted positive: the kernel
+        // charges a timeslice only once the thread has used one, so a short test thread reads zero.
+        let Some(pressure) = thread_pressure(tid) else {
+            panic!("counters for our own thread must exist");
+        };
+        assert!(
+            pressure.run_delay_ns < 1_000_000_000,
+            "a sane run-queue delay"
+        );
     }
 
     #[test]
