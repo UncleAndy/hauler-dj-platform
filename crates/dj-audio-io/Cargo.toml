@@ -1,6 +1,6 @@
 [package]
 name = "dj-audio-io"
-description = "Audio device adapter: enumeration, stream configuration, xrun telemetry."
+description = "Device output over CPAL: route plans, bounded callback, xrun and timing counters."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,6 +8,9 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+# Same backend decision as ADR-0002: CPAL with the native PipeWire host on Linux, WASAPI/CoreAudio
+# elsewhere.
+cpal = { version = "0.18.2", features = ["pipewire"] }
 
 [lints]
 workspace = true

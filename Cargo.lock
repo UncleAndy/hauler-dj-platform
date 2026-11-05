@@ -245,6 +245,9 @@ dependencies = [
 [[package]]
 name = "dj-audio-io"
 version = "0.1.0"
+dependencies = [
+ "cpal",
+]
 
 [[package]]
 name = "dj-audio-probe"
@@ -309,6 +312,18 @@ dependencies = [
 [[package]]
 name = "dj-library"
 version = "0.1.0"
+
+[[package]]
+name = "dj-live-probe"
+version = "0.1.0"
+dependencies = [
+ "dj-audio-io",
+ "dj-codec",
+ "dj-deck",
+ "dj-domain",
+ "dj-mixer",
+ "serde_json",
+]
 
 [[package]]
 name = "dj-media-bench"

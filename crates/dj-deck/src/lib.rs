@@ -86,6 +86,8 @@ pub struct Deck {
     track: Option<TrackMeta>,
     levels: Levels,
     stats: DeckStats,
+    /// Whether rendering may wait for the prefetch window.
+    blocking: bool,
 }
 
 impl std::fmt::Debug for Deck {
@@ -116,6 +118,7 @@ impl Deck {
             track: None,
             levels: Levels::SILENT,
             stats: DeckStats::default(),
+            blocking: true,
         }
     }
 
@@ -132,6 +135,15 @@ impl Deck {
     /// Preparation state.
     pub fn load_state(&self) -> &DeckLoad {
         &self.load
+    }
+
+    /// Allow or forbid waiting for the prefetch window while rendering.
+    ///
+    /// Offline rendering waits (otherwise the same scenario would produce different bytes
+    /// depending on thread timing). The audio callback must not: there a short ring is an
+    /// underrun to count and fill with silence, never a stall.
+    pub fn set_blocking(&mut self, blocking: bool) {
+        self.blocking = blocking;
     }
 
     /// True while the transport runs.
@@ -321,7 +333,9 @@ impl Deck {
             // Wait for the prefetch window instead of rendering a momentarily empty ring as
             // silence: otherwise the same scenario would produce different bytes depending on
             // thread timing. A short wait is not an underrun; zero frames is.
-            if let Some(source) = self.source.as_mut() {
+            if self.blocking
+                && let Some(source) = self.source.as_mut()
+            {
                 match source.wait_for(take) {
                     Ok(available) => take = take.min(available.max(1)),
                     Err(_) => {
