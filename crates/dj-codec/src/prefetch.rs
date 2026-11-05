@@ -60,6 +60,11 @@ pub enum SeekOutcome {
         /// Wall-clock time until the first frame at the new position was available.
         waited: Duration,
     },
+    /// Target was outside the ring and the producer was asked to refill, without waiting.
+    ///
+    /// The audio thread gets this: it must not wait for a decoder. The ring stays empty until the
+    /// producer answers, so the next read underruns and the block is rendered as silence.
+    Requested,
 }
 
 /// Counters and state of the prefetch thread.
@@ -355,12 +360,27 @@ impl Prefetcher {
         take
     }
 
-    /// Move the read cursor to `frame`.
-    pub fn seek(&mut self, frame: u64) -> Result<SeekOutcome, MediaError> {
+    /// Ask the producer for `frame` without waiting for it.
+    ///
+    /// This is the audio-thread seek. [`Prefetcher::seek`] answers the same question but spins
+    /// until the producer replies — inside a callback that spin is a stall of milliseconds, which
+    /// is exactly what the RT contract forbids. A request that leaves the window therefore returns
+    /// immediately and the deck plays silence (and counts an underrun) until the ring refills.
+    pub fn request_seek(&mut self, frame: u64) -> Result<SeekOutcome, MediaError> {
         let start = self.ring.consumed.load(Ordering::Acquire);
         let end = self.ring.produced.load(Ordering::Acquire);
         if frame >= start && frame < end {
             self.ring.consumed.store(frame, Ordering::Release);
+            return Ok(SeekOutcome::InsideWindow);
+        }
+        self.ring.seek_request.store(frame, Ordering::Release);
+        Ok(SeekOutcome::Requested)
+    }
+
+    /// Move the read cursor to `frame`, waiting for the producer when the target is outside the
+    /// window. Offline rendering uses this for determinism; the audio callback must not.
+    pub fn seek(&mut self, frame: u64) -> Result<SeekOutcome, MediaError> {
+        if let SeekOutcome::InsideWindow = self.request_seek(frame)? {
             return Ok(SeekOutcome::InsideWindow);
         }
 

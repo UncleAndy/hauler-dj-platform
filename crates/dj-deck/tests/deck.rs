@@ -265,3 +265,120 @@ fn write_tone(path: &std::path::Path) {
     }
     std::fs::write(path, bytes).unwrap_or_else(|err| panic!("write: {err}"));
 }
+
+/// A source whose blocking seek is slow and whose deferred seek is instant.
+///
+/// It stands in for the prefetcher: outside the window a real seek spins until the decoder
+/// answers, which is fine offline and unacceptable in the audio callback.
+struct SlowSeekSource {
+    position: u64,
+    frames: u64,
+    blocking_seeks: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    deferred_seeks: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl DeckSource for SlowSeekSource {
+    fn sample_rate(&self) -> u32 {
+        48_000
+    }
+
+    fn frames(&self) -> Option<u64> {
+        Some(self.frames)
+    }
+
+    fn read(&mut self, out: &mut [f32]) -> Result<usize, String> {
+        let want = out.len() / 2;
+        let available = usize::try_from(self.frames.saturating_sub(self.position)).unwrap_or(0);
+        let take = want.min(available);
+        for sample in &mut out[..take * 2] {
+            *sample = 0.25;
+        }
+        self.position += take as u64;
+        Ok(take)
+    }
+
+    fn seek(&mut self, frame: u64) -> Result<u64, String> {
+        self.blocking_seeks
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        std::thread::sleep(std::time::Duration::from_millis(1_500));
+        self.position = frame;
+        Ok(frame)
+    }
+
+    fn request_seek(&mut self, frame: u64) -> Result<u64, String> {
+        self.deferred_seeks
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.position = frame;
+        Ok(frame)
+    }
+}
+
+#[test]
+fn a_live_deck_never_waits_for_a_seek() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    let blocking = Arc::new(AtomicU64::new(0));
+    let deferred = Arc::new(AtomicU64::new(0));
+    let source = SlowSeekSource {
+        position: 0,
+        frames: 480_000,
+        blocking_seeks: Arc::clone(&blocking),
+        deferred_seeks: Arc::clone(&deferred),
+    };
+
+    let mut deck = Deck::new(DeckId::A);
+    deck.attach(Box::new(source), None);
+    // A short loop forces a wrap inside one block, which is where the deck seeks.
+    let Some(region) = dj_domain::FrameRange::new(0, 200) else {
+        panic!("a 0..200 loop region must be valid");
+    };
+    deck.set_loop(Some(region));
+    // The live path: the deck must ask, not wait.
+    deck.set_blocking(false);
+    assert!(deck.play());
+
+    let started = std::time::Instant::now();
+    let mut out = vec![0.0f32; 512];
+    deck.render(&mut out);
+    let elapsed = started.elapsed();
+
+    assert!(
+        elapsed < std::time::Duration::from_millis(500),
+        "a live render must not wait for a seek, took {elapsed:?}"
+    );
+    assert!(
+        deferred.load(Ordering::Relaxed) >= 1,
+        "the wrap must ask for a seek"
+    );
+    assert_eq!(
+        blocking.load(Ordering::Relaxed),
+        0,
+        "the callback must never take the blocking path"
+    );
+}
+
+#[test]
+fn an_offline_deck_still_waits_for_a_seek() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    let blocking = Arc::new(AtomicU64::new(0));
+    let deferred = Arc::new(AtomicU64::new(0));
+    let source = SlowSeekSource {
+        position: 0,
+        frames: 480_000,
+        blocking_seeks: Arc::clone(&blocking),
+        deferred_seeks: Arc::clone(&deferred),
+    };
+
+    let mut deck = Deck::new(DeckId::A);
+    deck.attach(Box::new(source), None);
+    assert!(deck.play());
+    deck.seek(1_000);
+
+    // Offline rendering trades time for determinism, and that is deliberate.
+    assert_eq!(blocking.load(Ordering::Relaxed), 1);
+    assert_eq!(deferred.load(Ordering::Relaxed), 0);
+    assert_eq!(deck.position(), 1_000);
+}

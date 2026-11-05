@@ -252,6 +252,8 @@ fn run(argv: &[String]) -> Result<String, Error> {
     // A two-hour run must be observable while it happens: the report is rewritten at every tick,
     // so a crash or Ctrl-C still leaves the numbers up to that moment on disk.
     let started = Instant::now();
+    // Baseline for the leak question: without a starting value a final RSS says nothing.
+    let rss_start = rss_kb();
     let tick = Duration::from_secs_f64(options.progress_seconds.max(1.0));
     let total = options.seconds.max(0.0);
     let mut final_report = output.snapshot();
@@ -278,13 +280,20 @@ fn run(argv: &[String]) -> Result<String, Error> {
         if let Some(path) = &options.out {
             let _ = std::fs::write(
                 path,
-                report_json(&report, &options, plan, &underruns, &loop_wraps),
+                report_json(&report, &options, plan, &underruns, &loop_wraps, rss_start),
             );
         }
         final_report = report;
     }
 
-    let json = report_json(&final_report, &options, plan, &underruns, &loop_wraps);
+    let json = report_json(
+        &final_report,
+        &options,
+        plan,
+        &underruns,
+        &loop_wraps,
+        rss_start,
+    );
     if let Some(path) = &options.out {
         let _ = std::fs::write(path, &json);
     }
@@ -298,6 +307,7 @@ fn report_json(
     plan: RoutePlan,
     underruns: &Arc<AtomicU64>,
     loop_wraps: &Arc<AtomicU64>,
+    rss_start_kb: Option<u64>,
 ) -> String {
     json!({
         "device": report.device,
@@ -322,6 +332,17 @@ fn report_json(
         "render_max_us": report.render_max_us,
         "render_budget": report.render_budget,
         "rss_kb": rss_kb(),
+        "rss_start_kb": rss_start_kb,
+        "outliers": report
+            .outliers
+            .iter()
+            .map(|outlier| json!({
+                "at_s": outlier.elapsed_ms / 1000,
+                "interval_us": outlier.interval_us,
+                "render_us": outlier.render_us,
+            }))
+            .collect::<Vec<_>>(),
+        "outliers_dropped": report.outliers_dropped,
         "deck_underruns": underruns.load(Ordering::Relaxed),
         "loop_wraps": loop_wraps.load(Ordering::Relaxed),
         "route": {

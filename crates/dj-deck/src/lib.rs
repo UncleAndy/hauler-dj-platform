@@ -24,7 +24,19 @@ pub trait DeckSource: Send {
     /// Read up to `out.len() / 2` stereo frames; returns frames written, 0 at the end.
     fn read(&mut self, out: &mut [f32]) -> Result<usize, String>;
     /// Seek to a source frame; returns the frame the source landed on.
+    ///
+    /// This may wait for the source to be ready. Offline rendering needs that; the audio callback
+    /// does not — see [`DeckSource::request_seek`].
     fn seek(&mut self, frame: u64) -> Result<u64, String>;
+
+    /// Ask for a seek without waiting for it.
+    ///
+    /// Sources that refill asynchronously (the prefetcher) return at once and leave the data to
+    /// arrive later; the deck then plays silence for the blocks it did not get. Sources that read
+    /// straight through fall back to [`DeckSource::seek`], where waiting costs nothing.
+    fn request_seek(&mut self, frame: u64) -> Result<u64, String> {
+        self.seek(frame)
+    }
 
     /// Wait until at least `frames` are available, returning how many actually are.
     ///
@@ -50,8 +62,14 @@ impl DeckSource for Prefetcher {
     }
 
     fn seek(&mut self, frame: u64) -> Result<u64, String> {
-        self.seek(frame)
-            .map(|_| self.info().frames.map_or(frame, |_| frame))
+        Prefetcher::seek(self, frame)
+            .map(|_| frame)
+            .map_err(|err| err.to_string())
+    }
+
+    fn request_seek(&mut self, frame: u64) -> Result<u64, String> {
+        self.request_seek(frame)
+            .map(|_| frame)
             .map_err(|err| err.to_string())
     }
 
@@ -209,7 +227,14 @@ impl Deck {
             Some(total) => frame.min(total.saturating_sub(1)),
             None => frame,
         };
-        match source.seek(clamped) {
+        // A command seeks now; the audio thread only asks, so a decoder outside the prefetch
+        // window cannot stall the callback for however long the file needs to be re-read.
+        let result = if self.blocking {
+            source.seek(clamped)
+        } else {
+            source.request_seek(clamped)
+        };
+        match result {
             Ok(landed) => {
                 self.position = landed;
                 landed
@@ -374,7 +399,13 @@ impl Deck {
                 && self.position >= region.end.0
             {
                 if let Some(source) = self.source.as_mut() {
-                    let _ = source.seek(region.start.0);
+                    // Measured on the S4 run: a blocking wrap seek cost 3.8 ms inside the callback
+                    // and produced late intervals. Offline waits (deterministic WAV), live asks.
+                    let _ = if self.blocking {
+                        source.seek(region.start.0)
+                    } else {
+                        source.request_seek(region.start.0)
+                    };
                 }
                 self.position = region.start.0;
                 self.stats.loop_wraps += 1;

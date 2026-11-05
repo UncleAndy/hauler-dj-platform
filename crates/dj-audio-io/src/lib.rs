@@ -169,6 +169,10 @@ pub struct LiveReport {
     pub render_max_us: f64,
     /// Share of the period the p99 render took: the figure DJP-NFR-003 judges.
     pub render_budget: f64,
+    /// Blocks that were late, early, or expensive, with the moment they happened.
+    pub outliers: Vec<Outlier>,
+    /// Outlier records dropped because the log filled up.
+    pub outliers_dropped: u64,
 }
 
 impl LiveReport {
@@ -277,6 +281,66 @@ fn percentiles(histogram: &[AtomicU32], low: f64, high: f64) -> (f64, f64) {
     (low_value, high_value)
 }
 
+/// Number of outlier records kept for diagnosis.
+const OUTLIER_SLOTS: usize = 32;
+
+/// One block that misbehaved, with the time it happened.
+///
+/// A count alone cannot be attributed after the fact: "22 late callbacks" over two hours says
+/// nothing about whether they clustered at loop wraps, at a device event, or at random. The time
+/// makes the difference visible.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Outlier {
+    /// Milliseconds since the stream started.
+    pub elapsed_ms: u64,
+    /// Interval since the previous callback, microseconds.
+    pub interval_us: u32,
+    /// Time spent inside the renderer for this block, microseconds.
+    pub render_us: u32,
+}
+
+/// Fixed-size log of misbehaving blocks, written with atomics only.
+#[derive(Debug)]
+struct Outliers {
+    index: AtomicU32,
+    elapsed_us: Vec<AtomicU32>,
+    interval_us: Vec<AtomicU32>,
+    render_us: Vec<AtomicU32>,
+}
+
+impl Default for Outliers {
+    fn default() -> Self {
+        Self {
+            index: AtomicU32::new(0),
+            elapsed_us: (0..OUTLIER_SLOTS).map(|_| AtomicU32::new(0)).collect(),
+            interval_us: (0..OUTLIER_SLOTS).map(|_| AtomicU32::new(0)).collect(),
+            render_us: (0..OUTLIER_SLOTS).map(|_| AtomicU32::new(0)).collect(),
+        }
+    }
+}
+
+impl Outliers {
+    fn note(&self, elapsed_us: u32, interval_us: u32, render_us: u32) {
+        let slot = self.index.fetch_add(1, Ordering::Relaxed) as usize % OUTLIER_SLOTS;
+        self.elapsed_us[slot].store(elapsed_us, Ordering::Relaxed);
+        self.interval_us[slot].store(interval_us, Ordering::Relaxed);
+        self.render_us[slot].store(render_us, Ordering::Relaxed);
+    }
+
+    fn collected(&self) -> (Vec<Outlier>, u64) {
+        let total = u64::from(self.index.load(Ordering::Relaxed));
+        let kept = (total as usize).min(OUTLIER_SLOTS);
+        let outliers = (0..kept)
+            .map(|slot| Outlier {
+                elapsed_ms: u64::from(self.elapsed_us[slot].load(Ordering::Relaxed)) / 1000,
+                interval_us: self.interval_us[slot].load(Ordering::Relaxed),
+                render_us: self.render_us[slot].load(Ordering::Relaxed),
+            })
+            .collect();
+        (outliers, total.saturating_sub(kept as u64))
+    }
+}
+
 /// How a callback interval compares to the expected period.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IntervalKind {
@@ -360,6 +424,7 @@ impl Default for LiveConfig {
 pub struct LiveOutput {
     _stream: cpal::Stream,
     counters: Arc<Counters>,
+    outliers: Arc<Outliers>,
     device: String,
     channels: usize,
     sample_rate: u32,
@@ -410,7 +475,10 @@ impl LiveOutput {
         let mut renderer = renderer;
         let mut master = vec![0.0f32; config.block_frames.max(1) * 2];
         let mut cue = vec![0.0f32; config.block_frames.max(1) * 2];
+        let started = Instant::now();
         let mut last: Option<Instant> = None;
+        let outliers = Arc::new(Outliers::default());
+        let callback_outliers = Arc::clone(&outliers);
         let mut frames_total = 0u64;
         let mut callbacks = 0u64;
         let period_us =
@@ -420,10 +488,11 @@ impl LiveOutput {
             let now = Instant::now();
             // The interval before the first callback measures stream start-up, not the callback
             // cadence: counting it would report a fake stall at the beginning of every run.
+            let mut interval_us = 0u32;
             if let Some(previous) = last {
                 let micros = now.duration_since(previous).as_micros();
-                callback_counters
-                    .note_interval(u32::try_from(micros).unwrap_or(u32::MAX), period_us);
+                interval_us = u32::try_from(micros).unwrap_or(u32::MAX);
+                callback_counters.note_interval(interval_us, period_us);
             }
             last = Some(now);
 
@@ -476,6 +545,18 @@ impl LiveOutput {
                 }
             }
 
+            // Record what would otherwise be an unexplained count: a late arrival and an
+            // expensive block are different faults and the timestamp tells them apart.
+            let interval_kind = classify_interval(interval_us, period_us);
+            let expensive = period_us > 0.0 && f64::from(spent) * 100.0 >= period_us;
+            if interval_us != 0 && (interval_kind != IntervalKind::OnTime || expensive) {
+                callback_outliers.note(
+                    u32::try_from(started.elapsed().as_micros()).unwrap_or(u32::MAX),
+                    interval_us,
+                    spent,
+                );
+            }
+
             callbacks += 1;
             frames_total += frames as u64;
             callback_counters
@@ -506,6 +587,7 @@ impl LiveOutput {
         Ok(Self {
             _stream: stream,
             counters,
+            outliers,
             device: name,
             channels: usize::from(channels),
             sample_rate: config.sample_rate,
@@ -536,6 +618,7 @@ impl LiveOutput {
         let p99 = p99_us / 1000.0;
 
         let (render_p50, render_p99) = percentiles(&self.counters.render_histogram, 0.5, 0.99);
+        let (outliers, outliers_dropped) = self.outliers.collected();
         let render_max = f64::from(self.counters.render_max_us.load(Ordering::Relaxed));
         let period_us = if frames_per_callback > 0.0 {
             frames_per_callback / f64::from(self.sample_rate) * 1_000_000.0
@@ -573,6 +656,8 @@ impl LiveOutput {
             } else {
                 0.0
             },
+            outliers,
+            outliers_dropped,
         }
     }
 }
