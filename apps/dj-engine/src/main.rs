@@ -327,6 +327,7 @@ fn run(argv: &[String]) -> Result<(), String> {
     }
 
     // The loader: one thread, because a load is a second of work that must not touch the callback.
+    let waveform_cache = dj_analysis::WaveformCache::new(peaks_directory());
     {
         let prepared = graph_loads.clone();
         let updates = deck_updates.clone();
@@ -339,6 +340,7 @@ fn run(argv: &[String]) -> Result<(), String> {
                         load: dj_domain::DeckLoad::Loading { progress: 0.0 },
                         track: None,
                         total_frames: None,
+                        waveform: None,
                     },
                 });
                 let path = std::path::PathBuf::from(&request.path);
@@ -346,6 +348,14 @@ fn run(argv: &[String]) -> Result<(), String> {
                     Ok(mut prepared_track) => {
                         prepared_track.deck = request.deck;
                         prepared_track.static_info.deck = request.deck;
+                        // Second decode of the file, off the audio path: this is why a load is a
+                        // worker job and not something the callback can do.
+                        match dj_engine::prepare_waveform(&path, &waveform_cache) {
+                            Ok(waveform) => prepared_track.static_info.waveform = Some(waveform),
+                            Err(message) => {
+                                eprintln!("dj-engine: no waveform for {}: {message}", request.path)
+                            }
+                        }
                         let _ = updates.send(DeckUpdate {
                             deck: request.deck,
                             static_info: prepared_track.static_info.clone(),
@@ -361,6 +371,7 @@ fn run(argv: &[String]) -> Result<(), String> {
                                 load: dj_domain::DeckLoad::Failed { message },
                                 track: None,
                                 total_frames: None,
+                                waveform: None,
                             },
                         });
                     }
@@ -564,6 +575,17 @@ fn run_null(
             next_block = now;
         }
     }
+}
+
+/// Where waveform envelopes are cached: the user's cache directory, never the collection.
+fn peaks_directory() -> PathBuf {
+    let base = std::env::var("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+            PathBuf::from(home).join(".cache")
+        });
+    base.join("hauler-dj").join("peaks")
 }
 
 /// Remove the socket file the accept thread still holds open.

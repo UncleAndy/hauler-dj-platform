@@ -84,6 +84,7 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
         sample_rate: 48_000,
         crossfader: 0.25,
         decks: vec![DeckSnapshot {
+            waveform: None,
             deck: DeckId::A,
             load: DeckLoad::Ready,
             playing: true,

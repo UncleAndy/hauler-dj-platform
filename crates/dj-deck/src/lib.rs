@@ -653,6 +653,7 @@ impl Deck {
             }
         });
         DeckSnapshot {
+            waveform: None,
             deck: self.id,
             load: self.load.clone(),
             playing: self.playing,

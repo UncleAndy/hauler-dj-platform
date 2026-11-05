@@ -417,10 +417,33 @@ pub struct DeckSnapshot {
     pub hotcues: Vec<Option<SourceFrame>>,
     /// Current output peaks.
     pub levels: Levels,
+    /// Waveform envelope, once the deck has one.
+    ///
+    /// Absent from the wire when there is none: a client from an older build keeps working, and a
+    /// deck without a picture is not a protocol error.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waveform: Option<Waveform>,
     /// Current linear gain.
     pub linear_gain: f32,
     /// Current tempo ratio.
     pub tempo_ratio: f64,
+}
+
+/// Where a deck's waveform envelope lives (DJP-MEDIA-003).
+///
+/// The envelope itself is a file: a five-minute track is a few hundred kilobytes of extremes, which
+/// does not belong in a snapshot that is published twenty times a second. The UI reads the file once
+/// and draws it; the timebase is source frames, so no scaling is needed to place the playhead.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Waveform {
+    /// Cached envelope file, as an absolute path.
+    pub path: String,
+    /// Frames each column covers: the timebase.
+    pub frames_per_bucket: u32,
+    /// Number of columns in the file.
+    pub buckets: u32,
+    /// Source sample rate, so a client can turn columns into seconds.
+    pub sample_rate: u32,
 }
 
 /// Read-only state published to the UI and controllers (DJP-ARCH-004).

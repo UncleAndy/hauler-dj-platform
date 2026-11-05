@@ -8,6 +8,7 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+dj-codec = { path = "../dj-codec" }
 
 [lints]
 workspace = true

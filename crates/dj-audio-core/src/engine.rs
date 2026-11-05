@@ -234,6 +234,7 @@ impl Engine {
             sample_rate: self.sample_rate,
             crossfader: self.crossfader,
             decks: vec![DeckSnapshot {
+                waveform: None,
                 deck: DeckId::A,
                 // The A01 engine plays a generated tone, not a file: it is ready by construction
                 // and has no track, loop or hotcues. Decks arrive in A03 (`dj-deck`).

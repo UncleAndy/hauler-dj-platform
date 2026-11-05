@@ -177,6 +177,8 @@ pub struct DeckStatic {
     pub track: Option<TrackMeta>,
     /// Total frames, when the duration is known.
     pub total_frames: Option<u64>,
+    /// Waveform envelope, once the loader has built it.
+    pub waveform: Option<dj_domain::Waveform>,
 }
 
 impl DeckStatic {
@@ -196,6 +198,7 @@ impl DeckStatic {
             load: snapshot.load.clone(),
             track: snapshot.track.clone(),
             total_frames,
+            waveform: snapshot.waveform.clone(),
         }
     }
 }
@@ -321,6 +324,7 @@ impl StateCells {
                     .filter(|total| *total > 0)
                     .map(|total| (frame as f32 / total as f32).clamp(0.0, 1.0)),
                 track: fixed.track.clone(),
+                waveform: fixed.waveform.clone(),
                 loop_region: (loop_start != EMPTY && loop_end != EMPTY).then_some(FrameRange {
                     start: SourceFrame(loop_start),
                     end: SourceFrame(loop_end),
@@ -405,6 +409,26 @@ pub struct DeckUpdate {
     pub static_info: DeckStatic,
 }
 
+/// Build and cache the waveform for a file, returning the reference the UI needs.
+///
+/// Runs on the loader thread: it is a second decode of the file, which is exactly why it cannot
+/// happen where the audio callback lives.
+pub fn prepare_waveform(
+    path: &std::path::Path,
+    cache: &dj_analysis::WaveformCache,
+) -> Result<dj_domain::Waveform, String> {
+    let (peaks, _from_cache) = cache
+        .get_or_analyse(path, dj_analysis::OVERVIEW_FRAMES_PER_BUCKET)
+        .map_err(|err| err.to_string())?;
+    let entry = cache.entry_for(path, peaks.frames_per_bucket);
+    Ok(dj_domain::Waveform {
+        path: entry.to_string_lossy().to_string(),
+        frames_per_bucket: peaks.frames_per_bucket,
+        buckets: u32::try_from(peaks.buckets.len()).unwrap_or(u32::MAX),
+        sample_rate: peaks.sample_rate,
+    })
+}
+
 /// Where a command has to go.
 ///
 /// `Load` and `Eject` must not run in the audio callback: opening a file, decoding and building a
@@ -468,6 +492,7 @@ pub fn prepare_track(
         load: DeckLoad::Ready,
         track: Some(track.clone()),
         total_frames: info.frames,
+        waveform: None, // filled by the caller, which knows the cache directory
     };
     Ok(PreparedTrack {
         deck: DeckId::A,

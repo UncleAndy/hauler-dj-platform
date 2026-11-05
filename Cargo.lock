@@ -233,6 +233,9 @@ dependencies = [
 [[package]]
 name = "dj-analysis"
 version = "0.1.0"
+dependencies = [
+ "dj-codec",
+]
 
 [[package]]
 name = "dj-audio-core"
@@ -314,6 +317,7 @@ version = "0.1.0"
 name = "dj-engine"
 version = "0.1.0"
 dependencies = [
+ "dj-analysis",
  "dj-audio-core",
  "dj-audio-io",
  "dj-bridge",
