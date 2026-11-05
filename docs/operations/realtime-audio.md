@@ -80,6 +80,35 @@ CPUSchedulingPriority=20
 Это предпочтительный путь для упаковки в дистрибутиве: привилегия нужна один раз при установке, а
 не при каждом запуске.
 
+### Что именно делает модуль
+
+- `imports = [ ... ]` — только делает доступной опцию `services.dj-audio-rt`. Сам по себе ничего не
+  меняет.
+- `services.dj-audio-rt.enable = true;` — добавляет в `security.pam.loginLimits` две записи для
+  группы `@audio` (`rtprio <приоритет>`, `memlock unlimited`) и включает `security.rtkit` через
+  `mkDefault`, то есть не перебивает уже заданное значение.
+- `users.users.<имя>.extraGroups = [ "audio" ];` — нужен только тем, кого в группе `audio` ещё нет.
+  Если пользователь уже в ней, строку можно не писать.
+
+Лимиты PAM применяются **при входе в систему**, а не к текущей сессии: после `nixos-rebuild switch`
+нужно выйти и войти заново, иначе `ulimit -r` в старом терминале останется `0`.
+
+### Проверка без правки конфигурации (разово, через root)
+
+Если менять систему не хочется, RT можно проверить сразу — root создаёт transient-сервис, который
+сам ставит политику и работает от имени пользователя:
+
+```
+sudo systemd-run --pipe --wait --uid=andy --gid=andy \
+  -p CPUSchedulingPolicy=fifo -p CPUSchedulingPriority=20 -- \
+  nix develop --command cargo run --release -p dj-live-probe -- \
+    --file "/home/andy/Музыка/Плов и Кодецы.mp3" --seconds 900 --loop-seconds 2 \
+    --out /home/andy/projects/RUST/Hauler-DJ-Platform/docs/qa/evidence/A05/ab-rt.json
+```
+
+Это проверка, а не поставка: привилегия нужна на каждый запуск, поэтому в продукте приоритет даёт
+упаковка.
+
 ### Проверка
 
 В отчёте должно быть `thread_scheduling.policy = "fifo"` и `realtime.ok = true`. Если там `other`
