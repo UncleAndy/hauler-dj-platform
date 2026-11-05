@@ -14,7 +14,16 @@ pub fn write_pcm16_mono<W: Write>(
     sample_rate: u32,
     samples: &[f32],
 ) -> io::Result<()> {
-    let channels: u16 = 1;
+    write_pcm16_interleaved(writer, sample_rate, 1, samples)
+}
+
+/// Write interleaved `samples` as a 16-bit PCM WAV with `channels` channels.
+pub fn write_pcm16_interleaved<W: Write>(
+    writer: &mut W,
+    sample_rate: u32,
+    channels: u16,
+    samples: &[f32],
+) -> io::Result<()> {
     let data_len = u32::try_from(samples.len().saturating_mul(2)).unwrap_or(u32::MAX);
     let byte_rate = sample_rate
         .saturating_mul(u32::from(channels))

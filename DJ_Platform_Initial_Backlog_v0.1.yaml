@@ -76,9 +76,10 @@ tasks:
     release: R0
     depends_on: [A01, A02]
     requirements: [DJP-DECK-001, DJP-DECK-002, DJP-DECK-003, DJP-DECK-004]
-    deliverables: [crates/dj-deck]
+    decisions: [ADR-0006]
+    deliverables: [crates/dj-deck, apps/dj-headless]
     acceptance:
-      - 'Two sample-accurate deck tracks render together headlessly'
+      - 'Two sample-accurate deck tracks render together headlessly (dj-headless mix)'
       - 'Eight hotcues, seek and loop boundary fixtures pass'
       - 'state-v1 carries the fields controller displays need (track meta, remaining, position, bpm, key, hotcues, levels) with golden wire tests (ADR-0006)'
   - id: A04

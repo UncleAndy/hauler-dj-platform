@@ -320,15 +320,86 @@ impl Ack {
     }
 }
 
+/// Hotcue slots a deck exposes (DJP-DECK-003).
+pub const HOTCUE_SLOTS: usize = 8;
+
+/// How far a deck has got with preparing its material.
+///
+/// `Ready` is what ADR-0008 calls the moment a deck may be played: index built and window filled
+/// for lossless, PCM written for lossy.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum DeckLoad {
+    /// Nothing loaded.
+    Empty,
+    /// Decoding, indexing or building the PCM cache.
+    Loading {
+        /// 0.0 … 1.0, as reported by the loader.
+        progress: f32,
+    },
+    /// Playable.
+    Ready,
+    /// The file could not be prepared; the message is shown to the user as-is.
+    Failed {
+        /// Short, already user-facing reason.
+        message: String,
+    },
+}
+
+/// Track metadata a display needs. Unknown fields stay `None` rather than a guess.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TrackMeta {
+    /// Track title.
+    pub title: String,
+    /// Artist, empty when unknown.
+    pub artist: String,
+    /// Duration in source frames, when the container states it.
+    pub duration_frames: Option<u64>,
+    /// Beats per minute, once analysis exists (DJP-MEDIA-006).
+    pub bpm: Option<f64>,
+    /// Musical key, once analysis exists.
+    pub key: Option<String>,
+}
+
+/// Peak levels for meters, linear 0.0 … 1.0.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Levels {
+    /// Left channel peak.
+    pub peak_left: f32,
+    /// Right channel peak.
+    pub peak_right: f32,
+}
+
+impl Levels {
+    /// Silence.
+    pub const SILENT: Levels = Levels {
+        peak_left: 0.0,
+        peak_right: 0.0,
+    };
+}
+
 /// State of one deck in a snapshot.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeckSnapshot {
     /// Which deck this describes.
     pub deck: DeckId,
+    /// Preparation state: whether the deck can be played at all (ADR-0008 `Ready`).
+    pub load: DeckLoad,
     /// Transport state.
     pub playing: bool,
     /// Source position in frames (not seconds, not the device clock).
     pub source_frame: SourceFrame,
+    /// Frames left to the end of the track, when the duration is known.
+    pub remaining_frames: Option<u64>,
+    /// Position as a fraction of the track, when the duration is known; drives the position bar.
+    pub position_ratio: Option<f32>,
+    /// Track metadata for the display; `None` when nothing is loaded.
+    pub track: Option<TrackMeta>,
+    /// Active loop region, if any.
+    pub loop_region: Option<FrameRange>,
+    /// Stored hotcues; slot order is stable across snapshots.
+    pub hotcues: Vec<Option<SourceFrame>>,
+    /// Current output peaks.
+    pub levels: Levels,
     /// Current linear gain.
     pub linear_gain: f32,
     /// Current tempo ratio.

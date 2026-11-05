@@ -8,6 +8,7 @@
 //! Status: **A01**. Decoding, decks and effects arrive in A02+; this runner keeps working
 //! against whatever the engine implements.
 
+mod mix;
 mod scenario;
 
 use std::fs::File;
@@ -15,7 +16,10 @@ use std::io::BufWriter;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use dj_audio_core::{Engine, TimingSummary, render_measured, render_offline, write_pcm16_mono};
+use dj_audio_core::{
+    Engine, TimingSummary, render_measured, render_offline, write_pcm16_interleaved,
+    write_pcm16_mono,
+};
 use dj_domain::{Ack, AckStatus, DeckId, DjCommand, ScheduledCommand};
 use scenario::Scenario;
 use serde_json::json;
@@ -26,6 +30,7 @@ dj-headless — offline renderer and scenario runner
 Usage:
   dj-headless sine --frames N [--rate HZ] [--frequency HZ] --out FILE
   dj-headless scenario --file S.json [--out FILE] [--block N]
+  dj-headless mix --file MIX.json [--out FILE] [--cache-dir DIR]
   dj-headless --help | --version
 
 Options:
@@ -36,6 +41,7 @@ Options:
   --out FILE       output WAV (scenario: defaults to the scenario's own path with .wav)
   --block N        block size driven through the callback, default 256
   --measure        also time every callback and report p50/p99/max
+  --cache-dir DIR  use a PCM cache for lossy files (ADR-0008)
 
 Exit codes: 0 ok, 2 bad usage, 3 I/O or parse error.
 ";
@@ -50,6 +56,14 @@ enum Action {
     Help,
     Version,
     Render(Render),
+    Mix(MixRun),
+}
+
+/// A two-deck mix render (A03).
+struct MixRun {
+    path: PathBuf,
+    out: PathBuf,
+    cache_dir: Option<PathBuf>,
 }
 
 struct Render {
@@ -77,6 +91,16 @@ fn main() -> ExitCode {
             println!("dj-headless {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }
+        Ok(Action::Mix(run)) => match run_mix(run) {
+            Ok(report) => {
+                println!("{report}");
+                ExitCode::SUCCESS
+            }
+            Err(message) => {
+                eprintln!("dj-headless: {message}");
+                ExitCode::from(EXIT_IO)
+            }
+        },
         Ok(Action::Render(render)) => match run(render) {
             Ok(report) => {
                 println!("{report}");
@@ -107,7 +131,7 @@ fn parse(argv: &[String]) -> Result<Action, CliError> {
     match command.as_str() {
         "--help" | "-h" | "help" => return Ok(Action::Help),
         "--version" | "-V" => return Ok(Action::Version),
-        "sine" | "scenario" => {}
+        "sine" | "scenario" | "mix" => {}
         other => return Err(CliError::Usage(format!("unknown command {other:?}"))),
     }
 
@@ -116,6 +140,7 @@ fn parse(argv: &[String]) -> Result<Action, CliError> {
     let mut frequency = scenario::DEFAULT_FREQUENCY_HZ;
     let mut block: Option<usize> = None;
     let mut measure = false;
+    let mut cache_dir: Option<PathBuf> = None;
     let mut out: Option<PathBuf> = None;
     let mut file: Option<PathBuf> = None;
 
@@ -156,9 +181,23 @@ fn parse(argv: &[String]) -> Result<Action, CliError> {
                 measure = true;
                 index += 1;
             }
+            "--cache-dir" => {
+                cache_dir = Some(PathBuf::from(value()?));
+                index += 2;
+            }
             "--help" | "-h" => return Ok(Action::Help),
             other => return Err(CliError::Usage(format!("unknown option {other:?}"))),
         }
+    }
+
+    if command == "mix" {
+        let path = file.ok_or_else(|| CliError::Usage("mix needs --file".into()))?;
+        let out = out.unwrap_or_else(|| path.with_extension("wav"));
+        return Ok(Action::Mix(MixRun {
+            path,
+            out,
+            cache_dir,
+        }));
     }
 
     let render = match command.as_str() {
@@ -313,4 +352,63 @@ fn run(render: Render) -> Result<String, String> {
         "timing": timing_json,
     });
     Ok(report.to_string())
+}
+
+/// Render a two-deck mix scenario to a stereo WAV and report what the decks did.
+fn run_mix(run: MixRun) -> Result<String, String> {
+    let text = std::fs::read_to_string(&run.path)
+        .map_err(|err| format!("cannot read {}: {err}", run.path.display()))?;
+    let scenario: mix::MixScenario = serde_json::from_str(&text).map_err(|err| {
+        format!(
+            "cannot parse {} as a mix scenario: {err}",
+            run.path.display()
+        )
+    })?;
+
+    let mut cache = match &run.cache_dir {
+        Some(dir) => Some(mix::cache_for(dir.clone())?),
+        None => None,
+    };
+    let report = mix::render(&scenario, cache.as_mut())?;
+
+    let file = File::create(&run.out)
+        .map_err(|err| format!("cannot create {}: {err}", run.out.display()))?;
+    {
+        let mut writer = BufWriter::new(&file);
+        write_pcm16_interleaved(&mut writer, scenario.sample_rate, 2, &report.samples)
+            .map_err(|err| format!("cannot write {}: {err}", run.out.display()))?;
+    }
+
+    let peak = report
+        .samples
+        .iter()
+        .fold(0.0f32, |acc, sample| acc.max(sample.abs()));
+    let frames = report.samples.len() / 2;
+    let decks: Vec<serde_json::Value> = report
+        .decks
+        .iter()
+        .map(|deck| {
+            json!({
+                "deck": deck.deck,
+                "load": deck.load,
+                "position": deck.position,
+                "underruns": deck.underruns,
+                "loop_wraps": deck.loop_wraps,
+                "hotcue_jumps": deck.hotcue_jumps,
+                "ready_ms": deck.ready_ms,
+            })
+        })
+        .collect();
+
+    Ok(json!({
+        "out": run.out.display().to_string(),
+        "frames": frames,
+        "sample_rate": scenario.sample_rate,
+        "block_frames": scenario.block_frames,
+        "commands": scenario.commands.len(),
+        "applied": report.applied,
+        "peak": peak,
+        "decks": decks,
+    })
+    .to_string())
 }

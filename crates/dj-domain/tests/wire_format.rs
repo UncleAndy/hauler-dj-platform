@@ -6,8 +6,8 @@
 //! bumping the protocol version, which is exactly the conversation we want to force.
 
 use dj_domain::{
-    Ack, CommandId, DeckId, DeckSnapshot, DjCommand, FrameRange, RejectReason, STATE_PROTOCOL,
-    ScheduledCommand, Snapshot, SourceFrame,
+    Ack, CommandId, DeckId, DeckLoad, DeckSnapshot, DjCommand, FrameRange, Levels, RejectReason,
+    STATE_PROTOCOL, ScheduledCommand, Snapshot, SourceFrame, TrackMeta,
 };
 
 fn play() -> DjCommand {
@@ -85,8 +85,33 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
         crossfader: 0.25,
         decks: vec![DeckSnapshot {
             deck: DeckId::A,
+            load: DeckLoad::Ready,
             playing: true,
             source_frame: SourceFrame(4_800),
+            remaining_frames: Some(120_000),
+            position_ratio: Some(0.0384),
+            track: Some(TrackMeta {
+                title: "Track".to_string(),
+                artist: "Artist".to_string(),
+                duration_frames: Some(124_800),
+                bpm: Some(128.0),
+                key: Some("8A".to_string()),
+            }),
+            loop_region: None,
+            hotcues: vec![
+                Some(SourceFrame(1_000)),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ],
+            levels: Levels {
+                peak_left: 0.5,
+                peak_right: 0.25,
+            },
             linear_gain: 1.0,
             tempo_ratio: 1.0,
         }],
@@ -95,8 +120,13 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
         serde_json::to_string(&snapshot).unwrap_or_default(),
         concat!(
             r#"{"protocol":"state-v1","revision":3,"epoch":1,"audio_clock_samples":4800,"#,
-            r#""sample_rate":48000,"crossfader":0.25,"decks":[{"deck":"A","playing":true,"#,
-            r#""source_frame":4800,"linear_gain":1.0,"tempo_ratio":1.0}]}"#
+            r#""sample_rate":48000,"crossfader":0.25,"decks":[{"deck":"A","#,
+            r#""load":"Ready","playing":true,"source_frame":4800,"remaining_frames":120000,"#,
+            r#""position_ratio":0.0384,"track":{"title":"Track","artist":"Artist","#,
+            r#""duration_frames":124800,"bpm":128.0,"key":"8A"},"loop_region":null,"#,
+            r#""hotcues":[1000,null,null,null,null,null,null,null],"#,
+            r#""levels":{"peak_left":0.5,"peak_right":0.25},"#,
+            r#""linear_gain":1.0,"tempo_ratio":1.0}]}"#
         )
     );
 }

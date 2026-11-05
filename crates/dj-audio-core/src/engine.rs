@@ -231,8 +231,17 @@ impl Engine {
             crossfader: self.crossfader,
             decks: vec![DeckSnapshot {
                 deck: DeckId::A,
+                // The A01 engine plays a generated tone, not a file: it is ready by construction
+                // and has no track, loop or hotcues. Decks arrive in A03 (`dj-deck`).
+                load: dj_domain::DeckLoad::Ready,
                 playing: self.playing,
                 source_frame: SourceFrame(self.source_frame),
+                remaining_frames: None,
+                position_ratio: None,
+                track: None,
+                loop_region: None,
+                hotcues: vec![None; dj_domain::HOTCUE_SLOTS],
+                levels: dj_domain::Levels::SILENT,
                 linear_gain: self.gain,
                 tempo_ratio: self.tempo_ratio,
             }],

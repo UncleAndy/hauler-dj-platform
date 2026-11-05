@@ -13,7 +13,7 @@
 | `dj-audio-core` | audio-core | A01 | R0 | DJP-ARCH-001, -003, -005; DJP-NFR-001 — **реализовано в A01**: очередь, scheduler, рендер, замер блока |
 | `dj-audio-io` | architect (audio-platform) | A05 | R0 | DJP-NFR-002, -003; DJP-ARCH-007 — CPAL 0.18, на Linux PipeWire-бэкенд (ADR-002) |
 | `dj-codec` | media | A02 | R0 | DJP-MEDIA-001, -002 — **реализовано в A02**: декодирование, seek, bounded prefetch, PCM-кэш по формату (ADR-0008) |
-| `dj-deck` | audio-core | A03 | R0 | DJP-DECK-001…004 |
+| `dj-deck` | audio-core | A03 | R0 | DJP-DECK-001…004 — **реализовано в A03**: transport, loop на точном сэмпле, 8 hotcue, снимок для дисплеев |
 | `dj-dsp` | dsp | A04 | R0 | DJP-ARCH-006, -009; DJP-NFR-008 |
 | `dj-mixer` | dsp | A04 | R0 | DJP-MIX-001; DJP-ARCH-006, -007 |
 | `dj-analysis` | media | A07 | R0 | DJP-MEDIA-003 |

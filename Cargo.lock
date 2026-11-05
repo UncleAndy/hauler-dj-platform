@@ -276,6 +276,10 @@ version = "0.1.0"
 [[package]]
 name = "dj-deck"
 version = "0.1.0"
+dependencies = [
+ "dj-codec",
+ "dj-domain",
+]
 
 [[package]]
 name = "dj-domain"
@@ -294,6 +298,8 @@ name = "dj-headless"
 version = "0.1.0"
 dependencies = [
  "dj-audio-core",
+ "dj-codec",
+ "dj-deck",
  "dj-domain",
  "serde",
  "serde_json",

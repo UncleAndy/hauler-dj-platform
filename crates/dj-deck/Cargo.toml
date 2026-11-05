@@ -1,6 +1,6 @@
 [package]
 name = "dj-deck"
-description = "Track deck transport, hotcues, loops and source positions."
+description = "Deck state machine: transport, loop and hotcues over a decoded source."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,6 +8,8 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+dj-codec = { path = "../dj-codec" }
+dj-domain = { path = "../dj-domain" }
 
 [lints]
 workspace = true

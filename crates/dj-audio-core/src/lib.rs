@@ -21,4 +21,4 @@ pub use bench::{BlockTimings, TimingSummary, render_measured};
 pub use engine::{ACK_CAPACITY, Engine, render_offline, scheduled};
 pub use queue::{CRITICAL_CAPACITY, CommandQueue, QueueStats};
 pub use sine::SineSource;
-pub use wav::{BITS_PER_SAMPLE, RenderInfo, write_pcm16_mono};
+pub use wav::{BITS_PER_SAMPLE, RenderInfo, write_pcm16_interleaved, write_pcm16_mono};
