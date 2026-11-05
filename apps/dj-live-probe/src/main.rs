@@ -1,3 +1,5 @@
+#![recursion_limit = "512"]
+
 //! Live output check (A05): plays a deck through the mixer into the system output.
 //!
 //! This is the first time the engine makes a sound outside a WAV file, and it is deliberately the
@@ -272,6 +274,7 @@ fn run(argv: &[String]) -> Result<String, Error> {
     let started = Instant::now();
     // Baseline for the leak question: without a starting value a final RSS says nothing.
     let rss_start = rss_kb();
+    let load_start = load_average();
     let tick = Duration::from_secs_f64(options.progress_seconds.max(1.0));
     let total = options.seconds.max(0.0);
     let mut final_report = output.snapshot();
@@ -323,6 +326,7 @@ fn run(argv: &[String]) -> Result<String, Error> {
             "interval_max_ms": report.interval_max_ms,
             "render_max_us": report.render_max_us,
             "rss_kb": rss_kb(),
+            "load1": load_average().map(|load| load[0]),
             "preemptions": preemptions_delta,
             "run_delay_ms": run_delay_delta_ms,
         }));
@@ -338,6 +342,7 @@ fn run(argv: &[String]) -> Result<String, Error> {
                         loop_wraps: &loop_wraps,
                         rss_start_kb: rss_start,
                         timeline: &timeline,
+                        load_start,
                         audio_tid: output.audio_thread_id(),
                         pressure: output.audio_thread_pressure(),
                         scheduling: output.audio_thread_scheduling(),
@@ -357,6 +362,7 @@ fn run(argv: &[String]) -> Result<String, Error> {
             loop_wraps: &loop_wraps,
             rss_start_kb: rss_start,
             timeline: &timeline,
+            load_start,
             audio_tid: output.audio_thread_id(),
             pressure: output.audio_thread_pressure(),
             scheduling: output.audio_thread_scheduling(),
@@ -381,6 +387,7 @@ struct RunFacts<'a> {
     loop_wraps: &'a Arc<AtomicU64>,
     rss_start_kb: Option<u64>,
     timeline: &'a [serde_json::Value],
+    load_start: Option<[f64; 3]>,
     audio_tid: u64,
     pressure: Option<dj_audio_io::ThreadPressure>,
     scheduling: Option<dj_audio_io::ThreadScheduling>,
@@ -395,6 +402,7 @@ fn report_json(
     let underruns = facts.underruns;
     let loop_wraps = facts.loop_wraps;
     let rss_start_kb = facts.rss_start_kb;
+    let load_start = facts.load_start;
     let timeline = facts.timeline;
     let audio_tid = facts.audio_tid;
     let pressure = facts.pressure;
@@ -426,6 +434,7 @@ fn report_json(
         "off_cpu_max_us": report.off_cpu_max_us,
         "rss_kb": rss_kb(),
         "rss_start_kb": rss_start_kb,
+        "load_average_at_start": load_start,
         "outliers": report
             .outliers
             .iter()
@@ -479,6 +488,20 @@ fn report_json(
         "note": "live run through the system output; not the reference rig (DJP-NFR-003 needs A11)",
     })
     .to_string()
+}
+
+/// Load average of the machine, because a measurement without its load is not comparable.
+///
+/// Today's lesson: every run so far happened on a machine that was also being used, and two of
+/// them competed with a cargo build. Without the load in the report nobody can tell a clean
+/// baseline from a busy one afterwards.
+fn load_average() -> Option<[f64; 3]> {
+    let text = std::fs::read_to_string("/proc/loadavg").ok()?;
+    let mut fields = text.split_whitespace();
+    let one = fields.next()?.parse().ok()?;
+    let five = fields.next()?.parse().ok()?;
+    let fifteen = fields.next()?.parse().ok()?;
+    Some([one, five, fifteen])
 }
 
 /// Resident set size in kilobytes, so a long run can show whether memory grows.
