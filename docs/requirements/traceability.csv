@@ -4,7 +4,7 @@ DJP-ARCH-002,audio-core,P0,R0,DJP-SRS-001 §4,crates/dj-audio-core/src/queue.rs,
 DJP-ARCH-003,audio-core,P0,R0,DJP-SRS-001 §4,crates/dj-audio-core/src/queue.rs,queue::a_full_critical_lane_rejects_explicitly; queue::several_decks_keep_their_own_coalesced_value,passing,docs/qa/evidence/A01/summary.md,,2026-11-05
 DJP-ARCH-004,audio-core,P0,R0,DJP-SRS-001 §4,dj-bridge + apps/dj-engine: снапшоты публикует отдельный поток из атомарных ячеек рендер-поток не блокирует и не аллоцирует,bridge::a_split_connection_writes_while_its_reader_is_blocked; engine::publishing_a_block_does_not_allocate,review,docs/architecture/rt-contract.md,,2026-11-05
 DJP-ARCH-005,audio-core,P0,R0,DJP-SRS-001 §4,crates/dj-audio-core/src/engine.rs; crates/dj-audio-core/tests/rt_contract.rs,rt_contract::processing_a_block_does_not_allocate,passing,docs/qa/evidence/A01/summary.md,,2026-11-05
-DJP-ARCH-006,audio-core,P0,R0,DJP-SRS-001 §4,partial: crates/dj-mixer (deck gain → trim/fader → crossfader → master/limiter; EQ / FX / send-маршрутизация отсутствуют),mixer::routing_puts_each_channel_only_where_it_belongs,unverified,docs/qa/evidence/A04/summary.md,,2026-11-05
+DJP-ARCH-006,audio-core,P0,R0,DJP-SRS-001 §4,порядок сигнала на устройстве: деки → канальные стрипы → микшер → master/cue; master на первую пару выходов; cue на вторую при 4+ каналах,dj-engine --device default_output --seconds 60 --autoplay: пики 0.4 на обоих каналах; 48 000 кадров/с; late 0 early 0 errors 0,review,docs/qa/evidence/A04/summary.md,docs/qa/evidence/A06/device-output.md,2026-11-05
 DJP-ARCH-007,audio-core,P1,R1,DJP-SRS-001 §4,partial: crates/dj-mixer (шины master и cue; booth / external / recording / aux — нет),mixer::routing_puts_each_channel_only_where_it_belongs,unverified,docs/qa/evidence/A04/summary.md,,2026-11-05
 DJP-ARCH-008,audio-core,P1,R1,DJP-SRS-001 §4,,,unverified,docs/adr/0005-audio-devices-and-routes.md,,2026-11-05
 DJP-ARCH-009,audio-core,P1,R1,DJP-SRS-001 §4,,,unverified,,,
@@ -87,7 +87,7 @@ DJP-MIX-011,dsp,P2,R3,DJP-SRS-001 §5,,,unverified,,,
 DJP-MIX-012,dsp,P2,R3,DJP-SRS-001 §5,,,unverified,,,
 DJP-NFR-001,qa,,,DJP-SRS-001 §7,crates/dj-testkit/src/rt.rs; crates/dj-audio-core/tests/no_forbidden_primitives.rs,rt_contract::the_instrumentation_sees_a_deliberate_allocation; no_forbidden_primitives::the_core_crate_holds_no_blocking_primitives,passing,docs/qa/evidence/A01/summary.md,,2026-11-05
 DJP-NFR-002,qa,,,DJP-SRS-001 §7,,,unverified,,,
-DJP-NFR-003,qa,,,DJP-SRS-001 §7,живой прогон 20 с (1 дека / MP3 / системное устройство): p99 блока 7 мкс при периоде 5333 мкс = 0.13% против порога 60%; max 28 мкс против 85%; late/early/errors 0,,review,docs/qa/evidence/A05/live-output.md,,2026-11-05
+DJP-NFR-003,qa,P0,R0,DJP-SRS-001 §7,стоимость обработки блока: p50 8 мкс; p99 12 мкс; max 22 мкс при периоде 5 333 мкс — 0.225 %,docs/qa/evidence/A06/device-output-signal.json; engine::the_callback_path_does_not_allocate,review,docs/qa/evidence/A06/device-output.md,,2026-11-05
 DJP-NFR-004,qa,,,DJP-SRS-001 §7,,,unverified,,,
 DJP-NFR-005,qa,,,DJP-SRS-001 §7,,,unverified,,,
 DJP-NFR-006,qa,,,DJP-SRS-001 §7,,,unverified,,,
