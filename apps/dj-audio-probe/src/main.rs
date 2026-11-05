@@ -458,8 +458,25 @@ struct TrialReport {
 }
 
 impl TrialReport {
+    /// Period we asked for — what a 256-frame block would take.
     fn period_ms(&self) -> f64 {
         f64::from(self.frames) * 1000.0 / f64::from(self.sample_rate)
+    }
+
+    /// Period the backend actually delivered, derived from the callback intervals.
+    /// The ALSA plugin layer routinely ignores the requested buffer size, so this is
+    /// the number that describes the measurement.
+    fn effective_period_ms(&self) -> f64 {
+        self.avg_ms
+    }
+
+    fn effective_frames(&self) -> f64 {
+        self.avg_ms * f64::from(self.sample_rate) / 1000.0
+    }
+
+    fn requested_size_was_honoured(&self) -> bool {
+        let requested = self.period_ms();
+        requested > 0.0 && (self.effective_period_ms() - requested).abs() / requested < 0.2
     }
 }
 
@@ -846,7 +863,22 @@ fn human_report(
                 trial.max_ms,
                 trial.period_ms()
             );
-            let _ = writeln!(out, "  gaps > 1.5x period: {}", trial.gaps);
+            let _ = writeln!(
+                out,
+                "  effective block: {:.1} ms ≈ {:.0} frames (requested {} frames)",
+                trial.effective_period_ms(),
+                trial.effective_frames(),
+                trial.frames
+            );
+            if !trial.requested_size_was_honoured() {
+                let _ = writeln!(
+                    out,
+                    "  NOTE: the backend ignored the requested buffer size — these numbers do not \
+                     describe a {}-frame block",
+                    trial.frames
+                );
+            }
+            let _ = writeln!(out, "  gaps > 1.5x requested period: {}", trial.gaps);
             if let Some(error) = &trial.error {
                 let _ = writeln!(out, "  error: {error}");
             }
@@ -996,6 +1028,9 @@ fn json_report(
             "channels": trial.channels,
             "callbacks": trial.callbacks,
             "period_ms": trial.period_ms(),
+            "effective_period_ms": trial.effective_period_ms(),
+            "effective_frames": trial.effective_frames(),
+            "requested_size_honoured": trial.requested_size_was_honoured(),
             "avg_ms": trial.avg_ms,
             "p99_ms": trial.p99_ms,
             "max_ms": trial.max_ms,
@@ -1211,6 +1246,18 @@ mod tests {
         assert_eq!(report.callbacks, 7);
         assert_eq!(report.gaps, 1);
         assert!((report.period_ms() - 5.333_333).abs() < 1e-5);
+        // The fixture carries one 20 ms stall, so the mean interval is 7.775 ms
+        // (~373 frames at 48 kHz) and the requested 256-frame block was not honoured.
+        assert!((report.effective_frames() - 373.0).abs() < 2.0);
+        assert!(!report.requested_size_was_honoured());
+
+        let clean = [0.0, 5.33, 10.66, 15.99]
+            .iter()
+            .map(|ms| ns(*ms))
+            .collect::<Vec<_>>();
+        let clean_report = summarize("test", &clean, 256, 48_000, 2);
+        assert!((clean_report.effective_frames() - 256.0).abs() < 1.0);
+        assert!(clean_report.requested_size_was_honoured());
         assert!(report.max_ms > 19.0 && report.max_ms < 21.0);
     }
 

@@ -9,7 +9,7 @@
 |---|---|---|---|---|
 | `dj-domain` | audio-core | A01 | R0 | DJP-ARCH-001, -002, -004; DJP-DATA-002 |
 | `dj-audio-core` | audio-core | A01 | R0 | DJP-ARCH-001, -003, -005; DJP-NFR-001 |
-| `dj-audio-io` | architect (audio-platform) | A05 | R0 | DJP-NFR-002, -003; DJP-ARCH-007 |
+| `dj-audio-io` | architect (audio-platform) | A05 | R0 | DJP-NFR-002, -003; DJP-ARCH-007 — клиент PipeWire (ADR-002), CPAL только офлайн |
 | `dj-codec` | media | A02 | R0 | DJP-MEDIA-001, -002 |
 | `dj-deck` | audio-core | A03 | R0 | DJP-DECK-001…004 |
 | `dj-dsp` | dsp | A04 | R0 | DJP-ARCH-006, -009; DJP-NFR-008 |
