@@ -1,6 +1,6 @@
 [package]
 name = "dj-codec"
-description = "Decoders, indexed seek and bounded PCM prefetch."
+description = "Media probing, streaming decode, indexed seek and bounded PCM prefetch."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,6 +8,16 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+# MPL-2.0, file-level copyleft: compatible as a dependency (see THIRD_PARTY.md).
+# The mp3 feature is not on by default upstream; enabling it is a deliberate decision (ADR-0008).
+symphonia = { version = "0.6", default-features = false, features = [
+    "wav",
+    "flac",
+    "mp3",
+    "ogg",
+    "vorbis",
+    "pcm",
+] }
 
 [lints]
 workspace = true

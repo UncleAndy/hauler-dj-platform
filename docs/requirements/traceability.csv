@@ -62,8 +62,8 @@ DJP-LIC-003,compliance,,,DJP-SRS-001 §3,,,review,docs/adr/0001-license.md,,
 DJP-LIC-004,compliance,,,DJP-SRS-001 §3,,,review,docs/adr/0001-license.md,,
 DJP-LIC-005,compliance,,,DJP-SRS-001 §3,,,unverified,,,
 DJP-LIC-006,compliance,,,DJP-SRS-001 §3,,,review,THIRD_PARTY.md,,
-DJP-MEDIA-001,media,P0,R0,DJP-SRS-001 §5,,,unverified,,,
-DJP-MEDIA-002,media,P0,R0,DJP-SRS-001 §5,,,unverified,,,
+DJP-MEDIA-001,media,P0,R0,DJP-SRS-001 §5,crates/dj-codec/src/info.rs; crates/dj-codec/src/decode.rs,decode::a_wav_is_fully_read_and_reports_its_shape; decode::flac_decodes_to_the_same_samples_as_the_wav_it_came_from; decode::mp3_arrives_with_the_encoder_delay_already_trimmed; decode::a_vbr_mp3_still_reports_a_usable_duration; decode::ogg_vorbis_decodes,passing,docs/qa/evidence/A02/summary.md,,2026-11-05
+DJP-MEDIA-002,media,P0,R0,DJP-SRS-001 §5,crates/dj-codec/src/prefetch.rs,prefetch::the_window_delivers_the_same_samples_as_the_decoder; prefetch::a_seek_inside_the_window_never_calls_the_decoder; prefetch::a_seek_outside_the_window_refills_from_the_new_position,passing,docs/qa/evidence/A02/summary.md,,2026-11-05
 DJP-MEDIA-003,media,P0,R0,DJP-SRS-001 §5,,,unverified,,,
 DJP-MEDIA-004,media,P1,R1,DJP-SRS-001 §5,,,unverified,,,
 DJP-MEDIA-005,media,P1,R1,DJP-SRS-001 §5,,,unverified,,,

@@ -61,10 +61,13 @@ tasks:
     release: R0
     depends_on: [A00, A01]
     requirements: [DJP-MEDIA-001, DJP-MEDIA-002]
-    deliverables: [crates/dj-codec]
+    decisions: [ADR-0008]
+    deliverables: [crates/dj-codec, apps/dj-media-bench]
     acceptance:
-      - 'WAV and FLAC decode and seek correctly; MP3 support after license review'
-      - 'Audio callback reads only prebuffered PCM'
+      - 'WAV, FLAC, MP3 (CBR and VBR) and Ogg Vorbis decode and seek correctly; the MP3 licence review is closed (Symphonia MPL-2.0, MP3 patents expired)'
+      - 'Audio callback reads only prebuffered PCM from a bounded ring; the decoder never runs on the audio thread'
+      - 'Lossless formats stream with an index; lossy formats are decoded to the PCM cache at load, the policy decided from the file format alone (ADR-0008)'
+      - 'Measured: decode speed x realtime per format, t_ready cold/warm, p99 seek outside the window, zero decoder calls for a seek inside it'
       - 'EOF, corrupted media and underrun produce defined non-crashing outcomes'
   - id: A03
     title: 'Deck A/B transport, hotcue and loop state machine'

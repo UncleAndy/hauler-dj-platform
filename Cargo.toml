@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "apps/dj-headless", "apps/dj-cli", "apps/dj-audio-probe"]
+members = ["crates/*", "apps/dj-headless", "apps/dj-cli", "apps/dj-audio-probe", "apps/dj-media-bench"]
 
 [workspace.package]
 version = "0.1.0"

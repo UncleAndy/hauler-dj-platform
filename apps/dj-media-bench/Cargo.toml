@@ -1,0 +1,15 @@
+[package]
+name = "dj-media-bench"
+description = "Measures decode speed, load-to-ready time and seek latency per media format (A02)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+dj-codec = { path = "../../crates/dj-codec" }
+serde_json.workspace = true
+
+[lints]
+workspace = true
