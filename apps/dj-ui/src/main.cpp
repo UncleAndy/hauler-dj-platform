@@ -14,6 +14,7 @@
 #include "BridgeClient.h"
 #include "UiSettings.h"
 #include "LayoutSettings.h"
+#include "SessionState.h"
 #include "Waveform.h"
 #include "WaveformItem.h"
 #include "WaveformPainter.h"
@@ -763,6 +764,11 @@ int main(int argc, char *argv[])
         QStringLiteral("Where the layout is remembered (default $XDG_CONFIG_HOME/hauler-dj/"
                        "layout.json). A preset on the command line overrides the file."),
         QStringLiteral("path"));
+    const QCommandLineOption sessionFileOption(
+        QStringLiteral("session-file"),
+        QStringLiteral("Where the shell remembers the last folder it loaded from (default "
+                       "$XDG_CONFIG_HOME/hauler-dj/session.json)."),
+        QStringLiteral("path"));
     const QCommandLineOption channelOrderOption(
         QStringLiteral("channel-order"),
         QStringLiteral("Order of the mixer strips, left to right (default CABD). A permutation of "
@@ -791,6 +797,10 @@ int main(int argc, char *argv[])
         QStringLiteral("ui-theme-check"),
         QStringLiteral("Grab the shell and fail unless it is dark: a light panel means the palette "
                        "was lost."));
+    const QCommandLineOption browserStartOption(
+        QStringLiteral("browser-start-check"),
+        QStringLiteral("Prove the browser opens the folder remembered from the last load, and that a "
+                       "new load moves it."));
     const QCommandLineOption browserCheckOption(
         QStringLiteral("browser-check"),
         QStringLiteral("Load the shell, pick a track in the browser and act on it, the way a click "
@@ -840,6 +850,7 @@ int main(int argc, char *argv[])
     parser.addOption(spanOption);
     parser.addOption(screenshotOption);
     parser.addOption(browserCheckOption);
+    parser.addOption(browserStartOption);
     parser.addOption(themeCheckOption);
     parser.addOption(benchOption);
     parser.addOption(frameRateOption);
@@ -848,6 +859,7 @@ int main(int argc, char *argv[])
     parser.addOption(layoutFileOption);
     parser.addOption(layoutCheckOption);
     parser.addOption(channelOrderOption);
+    parser.addOption(sessionFileOption);
     parser.addOption(bandGainOption);
     parser.addOption(barWidthOption);
     parser.addOption(barGapOption);
@@ -857,6 +869,21 @@ int main(int argc, char *argv[])
     auto bridge = std::make_unique<BridgeClient>();
     qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "Bridge", bridge.get());
     FileBrowser browser;
+    SessionState session;
+    if (parser.isSet(sessionFileOption)) {
+        session.setFile(parser.value(sessionFileOption));
+    }
+    session.load();
+    // The browser opens where the last track came from; an empty state falls back to the music
+    // folder, which is what FileBrowser does when given no path.
+    browser.open(session.folder());
+    // Every load, from the browser or from a deck's dialog, moves that folder.
+    bridge->setLoadFolderHandler([&session, &browser](const QString &folder) {
+        if (session.rememberFolder(folder)) {
+            session.save();
+            browser.open(folder);
+        }
+    });
     qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "Browser", &browser);
     // A type, not a singleton: two decks hold two envelopes, and a singleton made the second deck
     // paint the first deck's waveform.
@@ -1462,6 +1489,75 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: the strip never received an envelope\n");
             return 1;
         }
+        return 0;
+    }
+
+    if (parser.isSet(browserStartOption)) {
+        // Where the browser opens matters to a working DJ more than any pixel: it is the difference
+        // between two clicks and a walk through the file system.
+        const QString sessionFile = parser.value(sessionFileOption);
+        if (sessionFile.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: --browser-start-check needs --session-file\n");
+            return 2;
+        }
+        QTemporaryDir first;
+        QTemporaryDir second;
+        if (!first.isValid() || !second.isValid()) {
+            std::fprintf(stderr, "dj-ui: cannot make temporary folders\n");
+            return 1;
+        }
+        for (const QString &folder : {first.path(), second.path()}) {
+            QFile file(folder + QStringLiteral("/track.wav"));
+            if (!file.open(QIODevice::WriteOnly)) {
+                std::fprintf(stderr, "dj-ui: cannot write into %s\n", qPrintable(folder));
+                return 1;
+            }
+            file.write("RIFF", 4);
+        }
+        QJsonObject remembered;
+        remembered.insert(QStringLiteral("folder"), first.path());
+        QFile state(sessionFile);
+        if (!state.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            std::fprintf(stderr, "dj-ui: cannot write %s\n", qPrintable(sessionFile));
+            return 1;
+        }
+        state.write(QJsonDocument(remembered).toJson());
+        state.close();
+
+        // The check needs its own run of the startup path, so the file it wrote is read now.
+        SessionState reloaded;
+        reloaded.setFile(sessionFile);
+        if (!reloaded.load()) {
+            std::fprintf(stderr, "dj-ui: the session file was not readable\n");
+            return 1;
+        }
+        browser.open(reloaded.folder());
+        std::fprintf(stdout, "dj-ui: browser opened %s (remembered)\n", qPrintable(browser.folder()));
+        if (browser.folder() != first.path()) {
+            std::fprintf(stderr, "dj-ui: the browser did not open the remembered folder\n");
+            return 1;
+        }
+
+        // A load elsewhere has to move both the browser and the file.
+        const QString elsewhere = second.path() + QStringLiteral("/track.wav");
+        bridge->load(QStringLiteral("A"), elsewhere);
+        std::fprintf(stdout, "dj-ui: browser moved to %s after a load\n", qPrintable(browser.folder()));
+        if (browser.folder() != second.path()) {
+            std::fprintf(stderr, "dj-ui: a load did not move the browser\n");
+            return 1;
+        }
+        QFile written(sessionFile);
+        if (!written.open(QIODevice::ReadOnly)) {
+            std::fprintf(stderr, "dj-ui: the session file vanished\n");
+            return 1;
+        }
+        const QString stored =
+            QJsonDocument::fromJson(written.readAll()).object().value(QStringLiteral("folder")).toString();
+        if (stored != second.path()) {
+            std::fprintf(stderr, "dj-ui: the session file still says %s\n", qPrintable(stored));
+            return 1;
+        }
+        std::fprintf(stdout, "dj-ui: the folder survives a restart and follows the last load\n");
         return 0;
     }
 

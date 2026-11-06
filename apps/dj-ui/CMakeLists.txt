@@ -18,6 +18,8 @@ qt_add_executable(dj-ui
     src/UiSettings.h
     src/LayoutSettings.cpp
     src/LayoutSettings.h
+    src/SessionState.cpp
+    src/SessionState.h
 )
 
 qt_add_qml_module(dj-ui

@@ -34,6 +34,9 @@ case "${1:-}" in
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --smoke
     # The strip repaints every frame while scrolling: a frame must fit well inside 60 Hz.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --waveform-bench 60
+    # The browser must open where the last track came from, and follow a new load.
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" \
+        --session-file "${TMPDIR:-/tmp}/dj-session-check.json" --browser-start-check
     # The browser must select a row with a click and act on it: a list you cannot pick from is a
     # picture of a list.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --browser-check

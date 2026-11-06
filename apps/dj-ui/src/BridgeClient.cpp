@@ -319,6 +319,11 @@ int BridgeClient::cue(const QString &deck, const QString &action, int slot)
 
 int BridgeClient::load(const QString &deck, const QString &path)
 {
+    // Remembered before the command is sent and regardless of its fate: the folder is where the
+    // person was looking, which stays true even if the engine refuses the track.
+    if (m_loadFolder && !path.isEmpty()) {
+        m_loadFolder(QFileInfo(path).absolutePath());
+    }
     QJsonObject options;
     options.insert(QStringLiteral("deck"), deck);
     options.insert(QStringLiteral("path"), path);

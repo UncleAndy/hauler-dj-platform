@@ -10,6 +10,8 @@
 #include <QJsonObject>
 #include <QLocalSocket>
 #include <QObject>
+
+#include <functional>
 #include <QString>
 #include <QVariantMap>
 
@@ -80,6 +82,11 @@ public:
     // Prepare a file into a deck. Acknowledged as accepted, not applied: the deck is playable when
     // a snapshot reports `Ready` (ADR-0008).
     Q_INVOKABLE int load(const QString &deck, const QString &path);
+
+    // Called with the folder a track was loaded from, so the browser can open there next time.
+    void setLoadFolderHandler(std::function<void(const QString &)> handler) {
+        m_loadFolder = std::move(handler);
+    }
     Q_INVOKABLE int eject(const QString &deck);
     Q_INVOKABLE int seek(const QString &deck, qulonglong frame);
     Q_INVOKABLE int setLoop(const QString &deck, bool enabled, qulonglong start, qulonglong end);
@@ -113,6 +120,8 @@ private:
     bool m_connected = false;
     bool m_handshakeSent = false;
     QString m_status;
+    // Called with the folder a track was loaded from, so the browser can open there next time.
+    std::function<void(const QString &)> m_loadFolder;
     QVariantMap m_snapshot;
     qulonglong m_epoch = 0;
     int m_nextCommandId = 1;
