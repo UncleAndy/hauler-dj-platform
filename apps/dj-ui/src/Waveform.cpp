@@ -144,6 +144,7 @@ void Waveform::measure()
         m_bandTypical[band] = qMax(typical, 1e-6);
     }
     m_maxChannel[0] = m_maxChannel[1] = m_maxChannel[2] = 1.0;
+    m_colours = columnColours();
 }
 
 QVariantList Waveform::profile(int columns, double windowStart, double span) const
@@ -196,32 +197,23 @@ QVariantList Waveform::profile(int columns, double windowStart, double span) con
         for (int band = 0; band < 3; ++band) {
             bands[band] = std::sqrt(energy[band] / divisor) * m_bandGain[band];
         }
-        // Perceptual weighting: treble and mids carry far less energy than bass in any recording,
-        // so they are lifted before anything else happens. Without this the picture is red only.
-        static const double perception[3] = {1.0, 1.5, 2.5};
-        double raw[3] = {0.0, 0.0, 0.0};
-        for (int band = 0; band < 3; ++band) {
-            // Against the SQUARE ROOT of the band's typical level. Full equalisation makes every
-            // band lead a third of the columns, which paints a bass-heavy track blue; none at all
-            // paints everything red because bass carries an order of magnitude more energy. Half
-            // way, measured against the reference distribution, is where the balance sits: on a
-            // synthetic mix this gives green 27, red 24, orange 19, blue 22, yellow 5 — the same
-            // shape as the reference screenshot.
-            const double balanced = bands[band] / std::sqrt(m_bandTypical[band]);
-            raw[band] = std::pow(balanced * perception[band], 1.8);
+        // The colour of a bar is the average of the columns it covers, taken from the table that
+        // was computed once at load. Deriving it here instead made it depend on the visible window:
+        // as the waveform scrolled, every frame re-smoothed a different set of neighbours and the
+        // whole strip shimmered in time with the music.
+        double red = 0.0;
+        double green = 0.0;
+        double blue = 0.0;
+        int counted = 0;
+        for (int index = first; index <= last && index < int(m_colours.size()); ++index) {
+            red += m_colours[std::size_t(index)].redF();
+            green += m_colours[std::size_t(index)].greenF();
+            blue += m_colours[std::size_t(index)].blueF();
+            ++counted;
         }
-        // Normalise by the strongest channel of this very bar, then force saturation and brightness
-        // to full: that is what turns three mixed levels into a clean neon hue instead of grey.
-        const double strongest = qMax(raw[0], qMax(raw[1], raw[2]));
-        QColor colour(0, 0, 0);
-        if (strongest > 1e-12) {
-            const double red = raw[0] / strongest;
-            const double green = raw[1] / strongest;
-            const double blue = raw[2] / strongest;
-            const QColor mixed = QColor::fromRgbF(qBound(0.0, red, 1.0), qBound(0.0, green, 1.0),
-                                                  qBound(0.0, blue, 1.0));
-            colour = QColor::fromHsvF(mixed.hsvHueF(), 1.0, 1.0);
-        }
+        const QColor colour = counted > 0
+            ? QColor::fromRgbF(red / counted, green / counted, blue / counted)
+            : QColor(0, 0, 0);
         // Height: the peak of the block against the loudest peak in the track.
         double peak = 0.0;
         for (int index = first; index <= last && index < total; ++index) {
@@ -232,51 +224,6 @@ QVariantList Waveform::profile(int columns, double windowStart, double span) con
         bars.append(QVariantMap{
             {QStringLiteral("amplitude"), qBound(0.0, peak / m_maxAmplitude, 1.0)},
             {QStringLiteral("rgb"), colour.name()}});
-    }
-    // Smooth the hue across neighbouring bars. Samples of a real track change colour over roughly
-    // twenty pixels, not between two of them: without this every colour boundary is a hard step,
-    // which reads as stripes instead of a continuous spectrum.
-    if (bars.size() > 3) {
-        QVariantList smoothed;
-        smoothed.reserve(bars.size());
-        // A wide kernel on purpose: measured on the reference, a colour boundary takes about
-        // twenty pixels to cross, so smoothing over three bars does nothing visible.
-        constexpr int radius = 12;
-        double kernel[2 * radius + 1];
-        double kernelSum = 0.0;
-        for (int step = -radius; step <= radius; ++step) {
-            const double weight = std::exp(-0.5 * (step / 5.0) * (step / 5.0));
-            kernel[step + radius] = weight;
-            kernelSum += weight;
-        }
-        Q_UNUSED(kernelSum)
-        for (int index = 0; index < bars.size(); ++index) {
-            const QVariantMap bar = bars.at(index).toMap();
-            double red = 0.0;
-            double green = 0.0;
-            double blue = 0.0;
-            double weight = 0.0;
-            for (int step = -radius; step <= radius; ++step) {
-                const int neighbour = index + step;
-                if (neighbour < 0 || neighbour >= bars.size()) {
-                    continue;
-                }
-                const QColor colour(
-                    bars.at(neighbour).toMap().value(QStringLiteral("rgb")).toString());
-                const double amount = kernel[step + radius];
-                red += colour.redF() * amount;
-                green += colour.greenF() * amount;
-                blue += colour.blueF() * amount;
-                weight += amount;
-            }
-            const QColor blended = weight > 0.0
-                ? QColor::fromRgbF(red / weight, green / weight, blue / weight)
-                : QColor(0, 0, 0);
-            smoothed.append(QVariantMap{
-                {QStringLiteral("amplitude"), bar.value(QStringLiteral("amplitude"))},
-                {QStringLiteral("rgb"), blended.name()}});
-        }
-        return smoothed;
     }
     return bars;
 }
@@ -293,4 +240,61 @@ void Waveform::setBandGain(double low, double mid, double high)
     m_bandGain[0] = low;
     m_bandGain[1] = mid;
     m_bandGain[2] = high;
+}
+
+std::vector<QColor> Waveform::columnColours() const
+{
+    // One colour per envelope column, from that column's own band balance. Nothing here depends on
+    // the view, so scrolling cannot change a colour that has already been drawn.
+    static const double perception[3] = {1.0, 1.5, 2.5};
+    std::vector<QColor> colours;
+    colours.reserve(std::size_t(m_columns.size()));
+    for (const QVariant &entry : m_columns) {
+        const QVariantMap column = entry.toMap();
+        const double bands[3] = {column.value(QStringLiteral("low")).toDouble(),
+                                 column.value(QStringLiteral("mid")).toDouble(),
+                                 column.value(QStringLiteral("high")).toDouble()};
+        double raw[3] = {0.0, 0.0, 0.0};
+        for (int band = 0; band < 3; ++band) {
+            // Against the square root of the band's typical level: full equalisation paints a
+            // bass-heavy track blue, none at all paints everything red.
+            const double balanced = bands[band] / std::sqrt(qMax(m_bandTypical[band], 1e-6));
+            raw[band] = std::pow(balanced * perception[band] * m_bandGain[band], 1.8);
+        }
+        const double strongest = qMax(raw[0], qMax(raw[1], raw[2]));
+        if (strongest <= 1e-12) {
+            colours.push_back(QColor(0, 0, 0));
+            continue;
+        }
+        const QColor mixed = QColor::fromRgbF(qBound(0.0, raw[0] / strongest, 1.0),
+                                              qBound(0.0, raw[1] / strongest, 1.0),
+                                              qBound(0.0, raw[2] / strongest, 1.0));
+        colours.push_back(QColor::fromHsvF(mixed.hsvHueF(), 1.0, 1.0));
+    }
+
+    // Blend across neighbours once, over the whole track: a colour boundary spans about twenty
+    // pixels in the reference, and doing it here keeps that independent of scrolling.
+    constexpr int radius = 12;
+    std::vector<QColor> smoothed(colours.size());
+    for (int index = 0; index < int(colours.size()); ++index) {
+        double red = 0.0;
+        double green = 0.0;
+        double blue = 0.0;
+        double weight = 0.0;
+        for (int step = -radius; step <= radius; ++step) {
+            const int neighbour = index + step;
+            if (neighbour < 0 || neighbour >= int(colours.size())) {
+                continue;
+            }
+            const double kernel = std::exp(-0.5 * (step / 5.0) * (step / 5.0));
+            red += colours[std::size_t(neighbour)].redF() * kernel;
+            green += colours[std::size_t(neighbour)].greenF() * kernel;
+            blue += colours[std::size_t(neighbour)].blueF() * kernel;
+            weight += kernel;
+        }
+        smoothed[std::size_t(index)] = weight > 0.0
+            ? QColor::fromRgbF(red / weight, green / weight, blue / weight)
+            : QColor(0, 0, 0);
+    }
+    return smoothed;
 }

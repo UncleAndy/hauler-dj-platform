@@ -11,6 +11,7 @@
 #include <QObject>
 #include <QString>
 #include <QVariantList>
+#include <vector>
 
 class Waveform : public QObject
 {
@@ -59,8 +60,12 @@ signals:
     void changed();
 
 private:
-    // Recompute the whole-track maxima the normalisation needs: amplitude and each colour channel.
+    // Recompute the whole-track maxima the normalisation needs, and the colour table.
     void measure();
+
+    // One colour per envelope column, computed once; smoothing included. Independent of the view,
+    // so scrolling cannot make the strip shimmer.
+    std::vector<QColor> columnColours() const;
 
     QVariantList m_columns;
     int m_framesPerBucket = 0;
@@ -74,4 +79,5 @@ private:
     double m_maxChannel[3] = {1.0, 1.0, 1.0};
     // Median level of each band in this track: what the colour balances against.
     double m_bandTypical[3] = {1.0, 1.0, 1.0};
+    std::vector<QColor> m_colours;
 };

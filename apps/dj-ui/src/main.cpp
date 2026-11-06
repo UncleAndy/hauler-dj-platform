@@ -268,6 +268,56 @@ int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socket
             }
             std::fprintf(stdout, "dj-ui: profile tiles the track at 640, 901 and 1280 px\n");
 
+            // The colours must not depend on where the window happens to sit. They did while the
+            // smoothing was recomputed per paint: as the waveform scrolled, every frame re-smoothed
+            // a different set of neighbours and the strip shimmered in time with the music.
+            {
+                const QVariantList left = waveform.profile(400, 0.0, 0.5);
+                const QVariantList right = waveform.profile(400, 0.1, 0.5);
+                // Both windows span 0.5 of the track over 400 bars, so one bar covers 0.00125 and
+                // the 0.1 offset is exactly 80 bars. Bar i of the left window is bar i-80 of the
+                // right one, and that is the whole point: the same moment must keep its colour.
+                int compared = 0;
+                double worstHue = 0.0;
+                for (int index = 0; index < 320; ++index) {
+                    const int leftIndex = 80 + index;
+                    const int rightIndex = index;
+                    if (leftIndex >= left.size() || rightIndex >= right.size()) {
+                        break;
+                    }
+                    const QColor a(left.at(leftIndex).toMap().value(QStringLiteral("rgb")).toString());
+                    const QColor b(right.at(rightIndex).toMap().value(QStringLiteral("rgb")).toString());
+                    // Only bars that carry colour on both sides: on sparse material a bar can pick
+                    // up a silent column in one window and not in the other, and comparing black
+                    // with a hue says nothing about shimmering.
+                    if (qMax(a.red(), qMax(a.green(), a.blue())) < 40
+                        || qMax(b.red(), qMax(b.green(), b.blue())) < 40) {
+                        continue;
+                    }
+                    double difference = qAbs(a.hsvHueF() - b.hsvHueF()) * 360.0;
+                    difference = qMin(difference, 360.0 - difference);
+                    worstHue = qMax(worstHue, difference);
+                    ++compared;
+                }
+                if (compared < 20) {
+                    std::fprintf(stdout,
+                                 "dj-ui: window comparison skipped, only %d comparable bars\n",
+                                 compared);
+                } else if (worstHue > 25.0) {
+                    failure = QStringLiteral("colour depends on the window: hue moves up to %1 "
+                                             "degrees")
+                                  .arg(worstHue, 0, 'f', 1);
+                    loop.quit();
+                    return;
+                } else {
+                    std::fprintf(stdout,
+                                 "dj-ui: colour does not depend on the window (max %.1f degrees over "
+                                 "%d bars)\n",
+                                 worstHue, compared);
+                }
+            }
+
+
             // Which band wins each column of the whole track. Printed, not asserted, because a
             // real track has its own balance; but if one band takes everything on music too, the
             // colouring is broken and this line says so before anyone looks at the screen.
