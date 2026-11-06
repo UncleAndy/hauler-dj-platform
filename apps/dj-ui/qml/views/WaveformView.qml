@@ -15,6 +15,7 @@ Item {
 
     required property var deckState
 
+
     // Visible fraction of the track. The default is a tenth — tenfold zoom — so a deck opens on the
     // seconds around the playhead rather than on the whole track; the overview strip below carries
     // the whole track.
@@ -126,7 +127,7 @@ Item {
 
     // Zoom is always about the playhead: it is the centre, so only the span changes.
     function zoomBy(factor) {
-        view.zoomSpan = Math.min(1.0, Math.max(0.02, view.zoomSpan / factor));
+        view.zoomSpan = Math.min(1.0, Math.max(0.01, view.zoomSpan / factor));
     }
 
 

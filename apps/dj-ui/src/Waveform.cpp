@@ -152,6 +152,15 @@ void Waveform::measure()
     m_maxChannel[0] = m_maxChannel[1] = m_maxChannel[2] = 1.0;
     m_colours = columnColours();
     m_peakRamps = peakRamps();
+    m_rampLoudest.clear();
+    m_rampLoudest.reserve(m_peakRamps.size());
+    for (const std::vector<double> &ramp : m_peakRamps) {
+        double loudest = 0.0;
+        for (const double value : ramp) {
+            loudest = qMax(loudest, value);
+        }
+        m_rampLoudest.push_back(loudest);
+    }
 }
 
 void Waveform::loadSynthetic(int columns)
@@ -197,21 +206,24 @@ std::vector<Waveform::Bar> Waveform::bars(int columns, double windowStart, doubl
     m_lastCovered = qMax(0, coveredTo - coveredFrom);
     const double columnsPerBar = double(m_lastCovered) / double(columns);
 
-    // How much time one bar stands for. Zoomed in, a bar is a few milliseconds of music and a drum
-    // hit has to stay a spike: averaging over the neighbourhood would flatten exactly the transients
-    // a person is looking for. Zoomed out, a bar is a large slice and the outline needs smoothing or
-    // it grains. So the choice is made in seconds, not in columns — seconds are what a beat lives in.
-    const double trackSeconds = m_framesPerBucket > 0 && m_sampleRate > 0
-        ? double(m_raw.size()) * double(m_framesPerBucket) / double(m_sampleRate)
-        : 0.0;
-    const double barSeconds = trackSeconds > 0.0 ? span * trackSeconds / double(columns) : 0.0;
-    // The whole track is always smoothed: that is the view where a grain of one pixel per bar is
-    // noise rather than music. Zooms are sharp unless a bar still covers a long slice of time.
-    const bool wholeTrack = span >= 0.9;
-    const bool smooth = wholeTrack || barSeconds > 0.2;
-    const double *ramp = (smooth && !m_peakRamps.empty())
-        ? m_peakRamps.at(std::size_t(rampForZoom(columnsPerBar))).data()
+    // How much of the ramp to mix in, by how wide the window is. Zoomed out, a bar covers a long
+    // slice and the outline needs ironing or it grains; zoomed in, a bar is a few milliseconds and
+    // ironing would flatten the hits. Between the two the ramp fades in with the window, so every
+    // step of the wheel changes the amount of smoothing instead of flipping it on at one zoom.
+    const double smoothWeight = qBound(0.0, (span - 0.35) / 0.55, 1.0);
+    const int level = rampForZoom(columnsPerBar);
+    const double *ramp = (!m_peakRamps.empty() && smoothWeight > 0.0)
+        ? m_peakRamps.at(std::size_t(level)).data()
         : nullptr;
+    // The scale of this zoom level: a smoothed outline is shorter than the raw peaks, so it is
+    // normalised against its own loudest value — a constant of the level, not of the window.
+    const double rampScale = (level < int(m_rampLoudest.size()) && m_rampLoudest[std::size_t(level)] > 0.0)
+        ? m_rampLoudest[std::size_t(level)]
+        : m_maxAmplitude;
+    const double scale = m_maxAmplitude > 0.0
+        ? (1.0 - smoothWeight) * m_maxAmplitude + smoothWeight * rampScale
+        : 1.0;
+
 
     int previous = coveredFrom;
     for (int bar = 0; bar < columns; ++bar) {
@@ -262,24 +274,34 @@ std::vector<Waveform::Bar> Waveform::bars(int columns, double windowStart, doubl
         // jumps from bar to bar — that is the moiré. The smoothing is prepared once for the whole
         // track, per zoom level, so it cannot depend on where the window sits.
         double height = 0.0;
-        if (ramp != nullptr) {
-            double rampSum = 0.0;
-            int rampSeen = 0;
-            for (int index = first; index <= last && index < total; ++index) {
-                rampSum += ramp[index];
-                ++rampSeen;
-            }
-            height = rampSeen > 0 ? (rampSum / rampSeen) / m_maxAmplitude : 0.0;
-        } else if (m_maxAmplitude > 0.0) {
-            // Sharp: the loudest column in the bar, untouched. A hit stays as tall as it is.
-            double peak = 0.0;
+        if (m_maxAmplitude > 0.0) {
+            // Between the whole track and a real zoom, a bar still spans several envelope columns.
+            // Taking the loudest of them is what produced the beat pattern: the bar grid and the
+            // column grid drift against each other and the winner jumps from bar to bar. Averaging the
+            // columns the bar owns is the honest downsample — the bar shows its own slice, not the
+            // luckiest column in it. Only when the bar is narrower than a column is there nothing to
+            // average and the single column is used.
+            double sum = 0.0;
             int seen = 0;
             for (int index = first; index <= last && index < total; ++index) {
-                peak = qMax(peak, qMax(qAbs(double(m_raw[std::size_t(index)].minimum)),
-                                       qAbs(double(m_raw[std::size_t(index)].maximum))));
+                const double peak = qMax(qAbs(double(m_raw[std::size_t(index)].minimum)),
+                                         qAbs(double(m_raw[std::size_t(index)].maximum)));
+                sum += peak;
                 ++seen;
             }
-            height = seen > 0 ? peak / m_maxAmplitude : 0.0;
+            height = seen > 0 ? (sum / seen) / scale : 0.0;
+            if (ramp != nullptr && smoothWeight > 0.0 && seen > 0) {
+                double rampSum = 0.0;
+                int rampSeen = 0;
+                for (int index = first; index <= last && index < total; ++index) {
+                    rampSum += ramp[index];
+                    ++rampSeen;
+                }
+                if (rampSeen > 0) {
+                    height = (1.0 - smoothWeight) * (sum / seen)
+                             + smoothWeight * (rampSum / rampSeen);
+                }
+            }
         }
 
         Bar entry;

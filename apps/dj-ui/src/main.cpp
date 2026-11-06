@@ -1599,6 +1599,22 @@ int main(int argc, char *argv[])
             }
         }
 
+        // The wheel has to reach 100x, not 50x: the deepest step is the one a person tries when they
+        // want a single beat across the strip.
+        if (auto *viewA = findItem(content, QStringLiteral("deckDetail_A")); viewA != nullptr) {
+            for (int step = 0; step < 12; ++step) {
+                QMetaObject::invokeMethod(viewA, "zoomBy", Q_ARG(QVariant, QVariant(2.0)));
+            }
+            const double deepest = viewA->property("zoomSpan").toDouble();
+            std::fprintf(stdout, "dj-ui: the wheel reaches %.1fx zoom\n",
+                         deepest > 0.0 ? 1.0 / deepest : 0.0);
+            if (std::abs(deepest - 0.01) > 1e-6) {
+                std::fprintf(stderr, "dj-ui: the deepest zoom is %.4f, wanted 0.01 (100x)\n", deepest);
+                return 1;
+            }
+            QMetaObject::invokeMethod(viewA, "zoomBy", Q_ARG(QVariant, QVariant(0.000001)));
+        }
+
         // The wheel trims a channel — over the knob and over the meter, because that is where the
         // pointer actually is when a person scrolls. A handler on the strip missed both.
         if (auto *stripA = findItem(content, QStringLiteral("strip_A")); stripA != nullptr) {

@@ -114,4 +114,8 @@ private:
     double m_bandTypical[3] = {1.0, 1.0, 1.0};
     std::vector<QColor> m_colours;
     std::vector<std::vector<double>> m_peakRamps;
+    // Loudest value of each ramp, taken once for the whole track. Dividing by the loudest bar of the
+    // *visible window* would make every bar's height depend on where the window sits — the strip
+    // would pump as it scrolled, which the self-check refuses.
+    std::vector<double> m_rampLoudest;
 };
