@@ -31,6 +31,7 @@ Usage:
   dj-headless sine --frames N [--rate HZ] [--frequency HZ] --out FILE
   dj-headless scenario --file S.json [--out FILE] [--block N]
   dj-headless mix --file MIX.json [--out FILE] [--cache-dir DIR]
+  dj-headless waveform --in AUDIO --out FILE.wave [--frames-per-bucket N]
   dj-headless --help | --version
 
 Options:
@@ -54,6 +55,7 @@ const EXIT_IO: u8 = 3;
 const MAX_REPORTED_ACKS: usize = 64;
 
 enum Action {
+    Waveform(WaveformRun),
     Help,
     Version,
     Render(Render),
@@ -103,6 +105,7 @@ fn main() -> ExitCode {
                 ExitCode::from(EXIT_IO)
             }
         },
+        Ok(Action::Waveform(waveform)) => run_waveform(&waveform),
         Ok(Action::Render(render)) => match run(render) {
             Ok(report) => {
                 println!("{report}");
@@ -133,6 +136,7 @@ fn parse(argv: &[String]) -> Result<Action, CliError> {
     match command.as_str() {
         "--help" | "-h" | "help" => return Ok(Action::Help),
         "--version" | "-V" => return Ok(Action::Version),
+        "waveform" => return parse_waveform(&argv[1..]),
         "sine" | "scenario" | "mix" => {}
         other => return Err(CliError::Usage(format!("unknown command {other:?}"))),
     }
@@ -438,4 +442,76 @@ fn run_mix(run: MixRun) -> Result<String, String> {
         },
     })
     .to_string())
+}
+
+/// Analyse a file and write its waveform envelope where the caller asks.
+struct WaveformRun {
+    input: PathBuf,
+    output: PathBuf,
+    frames_per_bucket: u32,
+}
+
+fn run_waveform(run: &WaveformRun) -> ExitCode {
+    let peaks = match dj_analysis::analyse(&run.input, run.frames_per_bucket) {
+        Ok(peaks) => peaks,
+        Err(err) => {
+            eprintln!("dj-headless: {}: {err}", run.input.display());
+            return ExitCode::from(EXIT_IO);
+        }
+    };
+    if let Err(err) = dj_analysis::write_envelope(&run.input, &peaks, &run.output) {
+        eprintln!("dj-headless: {}: {err}", run.output.display());
+        return ExitCode::from(EXIT_IO);
+    }
+    println!(
+        "dj-headless: {} columns of {} frames at {} Hz -> {}",
+        peaks.buckets.len(),
+        peaks.frames_per_bucket,
+        peaks.sample_rate,
+        run.output.display()
+    );
+    ExitCode::SUCCESS
+}
+
+fn parse_waveform(argv: &[String]) -> Result<Action, CliError> {
+    let mut input: Option<PathBuf> = None;
+    let mut output: Option<PathBuf> = None;
+    let mut frames_per_bucket = 512u32;
+    let mut index = 0;
+    while index < argv.len() {
+        let flag = argv[index].as_str();
+        let value = || {
+            argv.get(index + 1)
+                .cloned()
+                .ok_or_else(|| CliError::Usage(format!("{flag} needs a value")))
+        };
+        match flag {
+            "--in" => {
+                input = Some(PathBuf::from(value()?));
+                index += 2;
+            }
+            "--out" => {
+                output = Some(PathBuf::from(value()?));
+                index += 2;
+            }
+            "--frames-per-bucket" => {
+                let text = value()?;
+                frames_per_bucket = text
+                    .parse::<u32>()
+                    .map_err(|_| CliError::Usage(format!("bad resolution {text:?}")))?;
+                if frames_per_bucket == 0 {
+                    return Err(CliError::Usage("resolution must be positive".to_string()));
+                }
+                index += 2;
+            }
+            other => return Err(CliError::Usage(format!("unknown option {other:?}"))),
+        }
+    }
+    let input = input.ok_or_else(|| CliError::Usage("waveform needs --in".to_string()))?;
+    let output = output.ok_or_else(|| CliError::Usage("waveform needs --out".to_string()))?;
+    Ok(Action::Waveform(WaveformRun {
+        input,
+        output,
+        frames_per_bucket,
+    }))
 }

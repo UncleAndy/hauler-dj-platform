@@ -132,31 +132,7 @@ impl WaveformCache {
     pub fn store(&self, path: &Path, peaks: &Peaks) -> std::io::Result<PathBuf> {
         std::fs::create_dir_all(&self.root)?;
         let entry = self.entry_for(path, peaks.frames_per_bucket);
-        let fingerprint = Fingerprint::of(path)?;
-        let mut writer = std::io::BufWriter::new(std::fs::File::create(&entry)?);
-        writer.write_all(MAGIC)?;
-        writer.write_all(&fingerprint.size.to_le_bytes())?;
-        writer.write_all(&fingerprint.modified_ns.to_le_bytes())?;
-        writer.write_all(&u64::from(peaks.sample_rate).to_le_bytes())?;
-        writer.write_all(&u64::from(peaks.frames_per_bucket).to_le_bytes())?;
-        writer.write_all(&(peaks.buckets.len() as u64).to_le_bytes())?;
-        writer.write_all(&[
-            quantise_band(peaks.band_reference[0]),
-            quantise_band(peaks.band_reference[1]),
-            quantise_band(peaks.band_reference[2]),
-        ])?;
-        for bucket in &peaks.buckets {
-            let min = quantise(bucket.min);
-            let max = quantise(bucket.max);
-            writer.write_all(&min.to_le_bytes())?;
-            writer.write_all(&max.to_le_bytes())?;
-            writer.write_all(&[
-                quantise_band(bucket.low),
-                quantise_band(bucket.mid),
-                quantise_band(bucket.high),
-            ])?;
-        }
-        writer.flush()?;
+        write_envelope(path, peaks, &entry)?;
         Ok(entry)
     }
 
@@ -203,4 +179,37 @@ fn fnv1a(bytes: &[u8]) -> u64 {
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
     hash
+}
+
+/// Write an envelope for `source` to `entry`, whatever the destination is called.
+///
+/// The cache names its files by fingerprint and resolution, but a caller that wants to look at one
+/// envelope — a command-line render, a test — needs to pick the path itself.
+pub fn write_envelope(source: &Path, peaks: &Peaks, entry: &Path) -> std::io::Result<()> {
+    let fingerprint = Fingerprint::of(source)?;
+    let mut writer = std::io::BufWriter::new(std::fs::File::create(entry)?);
+    writer.write_all(MAGIC)?;
+    writer.write_all(&fingerprint.size.to_le_bytes())?;
+    writer.write_all(&fingerprint.modified_ns.to_le_bytes())?;
+    writer.write_all(&u64::from(peaks.sample_rate).to_le_bytes())?;
+    writer.write_all(&u64::from(peaks.frames_per_bucket).to_le_bytes())?;
+    writer.write_all(&(peaks.buckets.len() as u64).to_le_bytes())?;
+    writer.write_all(&[
+        quantise_band(peaks.band_reference[0]),
+        quantise_band(peaks.band_reference[1]),
+        quantise_band(peaks.band_reference[2]),
+    ])?;
+    for bucket in &peaks.buckets {
+        let min = quantise(bucket.min);
+        let max = quantise(bucket.max);
+        writer.write_all(&min.to_le_bytes())?;
+        writer.write_all(&max.to_le_bytes())?;
+        writer.write_all(&[
+            quantise_band(bucket.low),
+            quantise_band(bucket.mid),
+            quantise_band(bucket.high),
+        ])?;
+    }
+    writer.flush()?;
+    Ok(())
 }

@@ -12,5 +12,5 @@
 pub mod cache;
 pub mod waveform;
 
-pub use cache::{Fingerprint, WaveformCache};
+pub use cache::{Fingerprint, WaveformCache, write_envelope};
 pub use waveform::{Bucket, OVERVIEW_FRAMES_PER_BUCKET, Peaks, analyse};

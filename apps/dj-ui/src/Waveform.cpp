@@ -169,15 +169,11 @@ QVariantList Waveform::profile(int width, double windowStart, double span) const
             ++seen;
         }
         const double divisor = seen > 0 ? seen : 1;
-        // Each band against the track's OWN median for that band. Over a whole track every band
-        // therefore averages 1, so no band can claim the picture by spanning more octaves — which
-        // is what the mid band did — and the colour follows only what changes locally. This is the
-        // segment shares; the wave's height comes from the envelope's amplitude.
-        const double heights[3] = {
-            qMin(8.0, (bass / divisor) / qMax(m_bandReference[0], 1e-6)),
-            qMin(8.0, (mids / divisor) / qMax(m_bandReference[1], 1e-6)),
-            qMin(8.0, (treble / divisor) / qMax(m_bandReference[2], 1e-6)),
-        };
+        // Loudness of each band in this column, as the owner asked: the loudest one sets the hue
+        // at full brightness and the other two tint it in proportion. Nothing is normalised
+        // against the track, so the picture follows the music at this moment, not its average.
+        const double heights[3] = {bass / divisor, mids / divisor, treble / divisor};
+        const QColor colour = pixelColor(heights[0], heights[1], heights[2]);
         pixels.append(QVariantMap{{QStringLiteral("min"), low},
                                   {QStringLiteral("max"), high},
                                   {QStringLiteral("low"), bass / divisor},
@@ -185,7 +181,8 @@ QVariantList Waveform::profile(int width, double windowStart, double span) const
                                   {QStringLiteral("high"), treble / divisor},
                                   {QStringLiteral("h0"), heights[0]},
                                   {QStringLiteral("h1"), heights[1]},
-                                  {QStringLiteral("h2"), heights[2]}});
+                                  {QStringLiteral("h2"), heights[2]},
+                                  {QStringLiteral("rgb"), colour.name()}});
     }
     // A column whose bands are nearly equal has no dominant colour, and tiny measurement noise
     // would then flip it between red, green and violet from one pixel to the next. Averaging the
@@ -224,4 +221,40 @@ QVariantList Waveform::profile(int width, double windowStart, double span) const
 QVariantList Waveform::reference() const
 {
     return {m_bandReference[0], m_bandReference[1], m_bandReference[2]};
+}
+
+void Waveform::setPalette(const QColor &low, const QColor &mid, const QColor &high)
+{
+    m_palette[0] = low;
+    m_palette[1] = mid;
+    m_palette[2] = high;
+}
+
+QColor Waveform::pixelColor(double loud, double mid, double high) const
+{
+    const double levels[3] = {qMax(0.0, loud), qMax(0.0, mid), qMax(0.0, high)};
+    const double leader = qMax(levels[0], qMax(levels[1], levels[2]));
+    if (leader <= 1e-6) {
+        return m_palette[1];
+    }
+    // The loudest band contributes with weight 1 — full brightness of its colour — and the others
+    // in proportion to their loudness against it. A weighted average, not a sum: the result stays
+    // as bright as the leader and no band can wash the picture out.
+    double weights[3] = {0.0, 0.0, 0.0};
+    double total = 0.0;
+    for (int band = 0; band < 3; ++band) {
+        weights[band] = levels[band] / leader;
+        total += weights[band];
+    }
+    double red = 0.0;
+    double green = 0.0;
+    double blue = 0.0;
+    for (int band = 0; band < 3; ++band) {
+        const QColor &colour = m_palette[band];
+        const double share = weights[band] / total;
+        red += colour.redF() * share;
+        green += colour.greenF() * share;
+        blue += colour.blueF() * share;
+    }
+    return QColor::fromRgbF(qBound(0.0, red, 1.0), qBound(0.0, green, 1.0), qBound(0.0, blue, 1.0));
 }

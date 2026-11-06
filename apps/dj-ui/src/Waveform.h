@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <QColor>
 #include <QObject>
 #include <QVariantList>
 #include <QString>
@@ -51,6 +52,13 @@ public:
     // Shares of the column that the three bands claim, in [0, 1]; what the renderer mixes with.
     Q_INVOKABLE QVariantList reference() const;
 
+    // Colors of the three bands, brightest red for bass, yellow for mids, bright blue for highs.
+    void setPalette(const QColor &low, const QColor &mid, const QColor &high);
+
+    // The color of one column at its loudness share: the loudest band sets the hue at full
+    // brightness, the other two tint it in proportion to how loud they are against that leader.
+    QColor pixelColor(double loud, double mid, double high) const;
+
 signals:
     void changed();
 
@@ -63,4 +71,5 @@ private:
     mutable int m_lastCovered = 0;
     // Typical level of low, mid and high across the loaded track, from the envelope header.
     double m_bandReference[3] = {0.0, 0.0, 0.0};
+    QColor m_palette[3];
 };

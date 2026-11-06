@@ -8,6 +8,7 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+dj-analysis = { path = "../../crates/dj-analysis" }
 dj-audio-core = { path = "../../crates/dj-audio-core" }
 dj-codec = { path = "../../crates/dj-codec" }
 dj-deck = { path = "../../crates/dj-deck" }

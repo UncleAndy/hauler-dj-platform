@@ -335,6 +335,7 @@ dependencies = [
 name = "dj-headless"
 version = "0.1.0"
 dependencies = [
+ "dj-analysis",
  "dj-audio-core",
  "dj-codec",
  "dj-deck",

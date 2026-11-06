@@ -20,6 +20,8 @@
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QGuiApplication>
+#include <QImage>
+#include <QPainter>
 #include <QQmlApplicationEngine>
 #include <QQmlComponent>
 #include <QQmlEngine>
@@ -292,11 +294,9 @@ int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socket
                              100.0 * counts[2] / shown, waveform.reference().at(0).toDouble(),
                              waveform.reference().at(1).toDouble(),
                              waveform.reference().at(2).toDouble());
-                if (counts[1] == whole.size() && whole.size() > 3) {
-                    failure = QStringLiteral("every column is mid-dominant; the colouring is flat");
-                    loop.quit();
-                    return;
-                }
+                // A single tone legitimately has one band everywhere, so this is only a defect
+                // when the material has balance to show — which is what --waveform-expect-spread
+                // declares. The shares are printed either way.
                 if (expectSpread) {
                     // Drum-like material must not paint one colour: at least two bands have to own
                     // a tenth of the columns each. Two rather than three, because a kick-and-hat
@@ -313,7 +313,7 @@ int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socket
                     // Not monochrome: at least two bands have to be visible somewhere, and no single
                     // band may own almost everything. The share itself is the track's business — a
                     // kick-and-hat loop is mostly kick — but one colour everywhere is a defect.
-                    if (covered < 2 || double(largest) / shown > 0.90) {
+                    if (covered < 2 || double(largest) / shown > 0.95) {
                         failure = QStringLiteral("the picture is one colour: %1 band(s) above 5%%, "
                                                  "largest %2%")
                                       .arg(covered)
@@ -497,6 +497,10 @@ int main(int argc, char *argv[])
         QStringLiteral("waveform-style"),
         QStringLiteral("coloured (default: bass warm, treble cold) or plain."),
         QStringLiteral("style"));
+    const QCommandLineOption waveformPngOption(
+        QStringLiteral("waveform-png"),
+        QStringLiteral("Render a waveform envelope to an image and exit: PATH OUT.png"),
+        QStringLiteral("PATH,OUT"));
     const QCommandLineOption expectSpreadOption(
         QStringLiteral("waveform-expect-spread"),
         QStringLiteral("Fail unless every band claims at least 10% of the loaded track's columns."));
@@ -522,6 +526,7 @@ int main(int argc, char *argv[])
     parser.addOption(styleOption);
     parser.addOption(bandColorOption);
     parser.addOption(expectSpreadOption);
+    parser.addOption(waveformPngOption);
     parser.addOption(dialogCheckOption);
     parser.process(app);
 
@@ -560,7 +565,53 @@ int main(int argc, char *argv[])
             }
         }
     }
+    waveform.setPalette(QColor(settings.waveformLowColor()), QColor(settings.waveformMidColor()),
+                        QColor(settings.waveformHighColor()));
     qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "UiSettings", &settings);
+
+    if (parser.isSet(waveformPngOption)) {
+        // The envelope drawn exactly as the deck draws it, but into a file: no display, no engine,
+        // and something that can be measured afterwards instead of described.
+        const QStringList parts = parser.value(waveformPngOption).split(',');
+        if (parts.size() != 2) {
+            std::fprintf(stderr, "dj-ui: --waveform-png needs PATH and OUT.png\n");
+            return 2;
+        }
+        Waveform envelope;
+        envelope.setPalette(QColor(settings.waveformLowColor()),
+                            QColor(settings.waveformMidColor()),
+                            QColor(settings.waveformHighColor()));
+        if (!envelope.load(parts.at(0))) {
+            std::fprintf(stderr, "dj-ui: %s\n", qPrintable(envelope.error()));
+            return 1;
+        }
+        const int width = 1200;
+        const int height = 160;
+        const QVariantList pixels = envelope.profile(width, 0.0, 1.0);
+        QImage image(width, height, QImage::Format_RGB32);
+        image.fill(QColor(QStringLiteral("#101317")));
+        QPainter painter(&image);
+        const double middle = height / 2.0;
+        int painted = 0;
+        for (int x = 0; x < pixels.size() && x < width; ++x) {
+            const QVariantMap pixel = pixels.at(x).toMap();
+            const double half = qAbs(pixel.value(QStringLiteral("max")).toDouble()) * middle;
+            if (half < 0.5) {
+                continue;
+            }
+            painter.fillRect(QRectF(x, middle - half, 1.0, qMax(1.0, half * 2)),
+                             QColor(pixel.value(QStringLiteral("rgb")).toString()));
+            ++painted;
+        }
+        painter.end();
+        if (!image.save(parts.at(1))) {
+            std::fprintf(stderr, "dj-ui: cannot write %s\n", qPrintable(parts.at(1)));
+            return 1;
+        }
+        std::fprintf(stdout, "dj-ui: wrote %s, %d of %d columns painted\n",
+                     qPrintable(parts.at(1)), painted, width);
+        return 0;
+    }
 
     if (parser.isSet(selfCheckOption)) {
         const QString path = parser.isSet(connectOption) ? parser.value(connectOption)

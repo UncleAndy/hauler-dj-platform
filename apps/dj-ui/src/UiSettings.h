@@ -44,10 +44,9 @@ signals:
 private:
     QString m_waveformOutsideColor = QStringLiteral("#101317");
     QString m_waveformStyle = QStringLiteral("coloured");
-    // Values measured from the owner's TRAKTOR PRO 4 screenshots (median hue of the strip): bass
-    // dark red, mids green, highs violet-blue, lifted slightly so they read on our darker strip.
-    // Numbers, not assets — ADR-001 forbids taking graphics, and a colour is not a graphic.
-    QString m_waveformLowColor = QStringLiteral("#c33a26");
-    QString m_waveformMidColor = QStringLiteral("#7aca4c");
-    QString m_waveformHighColor = QStringLiteral("#9b6bd8");
+    // Bright red, bright yellow, bright blue: the three references the owner asked for, so the
+    // hue of a column is decided by which band is loudest and the rest tint it.
+    QString m_waveformLowColor = QStringLiteral("#ff3a1e");
+    QString m_waveformMidColor = QStringLiteral("#ffd21a");
+    QString m_waveformHighColor = QStringLiteral("#2f6bff");
 };
