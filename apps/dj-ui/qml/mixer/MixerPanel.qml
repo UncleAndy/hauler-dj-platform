@@ -60,13 +60,21 @@ Pane {
                     // One notch is one decibel: fine enough to trim by ear, coarse enough to move.
                     readonly property real wheelStepDb: 1.0
 
+                    // The value the wheel has already asked for. A fast spin sends several events
+                    // before the engine answers; without this, each one would start from the same
+                    // number and the gain would not move.
+                    property real pendingGain: -1
+
                     function stepGain(notches) {
-                        const from = strip.deck !== null && strip.deck.linear_gain !== undefined
-                                     ? strip.deck.linear_gain : 1.0;
+                        const from = strip.pendingGain > 0.0
+                                     ? strip.pendingGain
+                                     : (strip.deck !== null && strip.deck.linear_gain !== undefined
+                                        ? strip.deck.linear_gain : 1.0);
                         const decibels = from > 0.0 ? 20.0 * Math.log(from) / Math.LN10 : -40.0;
                         const wanted = Math.max(-40.0, Math.min(6.0, decibels + notches * strip.wheelStepDb));
                         const gain = Math.pow(10.0, wanted / 20.0);
                         strip.lastWheelGain = gain;
+                        strip.pendingGain = gain;
                         Bridge.setChannelGain(strip.modelData, gain);
                         return gain;
                     }
@@ -86,20 +94,6 @@ Pane {
                         Layout.alignment: Qt.AlignHCenter
                     }
 
-                    // The wheel trims the channel without a drag: a handler, not a MouseArea, so it
-                    // does not take the press the knob needs.
-                    WheelHandler {
-                        acceptedDevices: PointerDevice.Mouse
-                        onWheel: function (event) {
-                            // A wheel sends 120 units per notch; a fast spin can send more at once.
-                            const notches = Math.max(-3, Math.min(3,
-                                Math.round(event.angleDelta.y / 120)));
-                            if (notches !== 0) {
-                                strip.stepGain(notches);
-                            }
-                        }
-                    }
-
                     // Knob and meter, mirrored: the row runs left to right for the left-hand decks
                     // and right to left for the right-hand ones, so nothing but the direction differs.
                     RowLayout {
@@ -113,13 +107,21 @@ Pane {
                             Layout.fillHeight: true
                             deckId: strip.modelData
                             gain: strip.gain
+                            onScrolled: function (notches) { strip.stepGain(notches) }
                         }
                         LevelMeter {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             deckId: strip.modelData
                             peak: strip.peak
+                            onScrolled: function (notches) { strip.stepGain(notches) }
                         }
+                    }
+
+                    // The engine has answered: from here the snapshot is the truth again.
+                    Connections {
+                        target: Bridge
+                        function onSnapshotChanged() { strip.pendingGain = -1 }
                     }
 
                     Label {

@@ -833,6 +833,10 @@ int main(int argc, char *argv[])
         QStringLiteral("strip-check"),
         QStringLiteral("With --connect and --load: load the track into deck A and require the deck's "
                        "strip to receive the envelope the engine published."));
+    const QCommandLineOption wheelCheckOption(
+        QStringLiteral("wheel-check"),
+        QStringLiteral("With --connect: scroll over a channel knob and require the deck's gain to "
+                       "change in the engine."));
     const QCommandLineOption spaceCheckOption(
         QStringLiteral("space-check"),
         QStringLiteral("With --connect and --load: prove Space no longer touches playback and folds "
@@ -966,6 +970,7 @@ int main(int argc, char *argv[])
     parser.addOption(busyCheckOption);
     parser.addOption(refusalCheckOption);
     parser.addOption(spaceCheckOption);
+    parser.addOption(wheelCheckOption);
     parser.addOption(stripCheckOption);
     parser.addOption(loadOption);
     parser.addOption(loadSecondOption);
@@ -1565,23 +1570,35 @@ int main(int argc, char *argv[])
             }
         }
 
-        // The wheel trims a channel: one notch, one decibel, without a drag.
+        // The wheel trims a channel — over the knob and over the meter, because that is where the
+        // pointer actually is when a person scrolls. A handler on the strip missed both.
         if (auto *stripA = findItem(content, QStringLiteral("strip_A")); stripA != nullptr) {
-            const QPointF centre =
-                stripA->mapToScene(QPointF(stripA->width() / 2.0, stripA->height() / 2.0));
-            const auto wheel = [&](int notches) {
+            const auto wheelAt = [&](QQuickItem *target) {
+                const QPointF centre =
+                    target->mapToScene(QPointF(target->width() / 2.0, target->height() / 2.0));
                 QWheelEvent event(centre, window->mapToGlobal(centre.toPoint()), QPoint(),
-                                  QPoint(0, 120 * notches), Qt::NoButton, Qt::NoModifier,
+                                  QPoint(0, 120), Qt::NoButton, Qt::NoModifier,
                                   Qt::NoScrollPhase, false);
                 QCoreApplication::sendEvent(window, &event);
                 QCoreApplication::processEvents();
                 return stripA->property("lastWheelGain").toDouble();
             };
-            const double up = wheel(1);
-            const double down = wheel(-3);
-            std::fprintf(stdout, "dj-ui: wheel on strip A: up %.3f, then down %.3f\n", up, down);
-            if (!(up > 1.0) || !(down < up)) {
-                std::fprintf(stderr, "dj-ui: the wheel does not trim the channel\n");
+            auto *knobA = findItem(content, QStringLiteral("knob_A"));
+            auto *meterA = findItem(content, QStringLiteral("meter_A"));
+            if (knobA == nullptr || meterA == nullptr) {
+                std::fprintf(stderr, "dj-ui: strip A has no knob or meter\n");
+                return 1;
+            }
+            const double overKnob = wheelAt(knobA);
+            const double overMeter = wheelAt(meterA);
+            std::fprintf(stdout, "dj-ui: wheel over knob %.3f, over meter %.3f\n", overKnob,
+                         overMeter);
+            if (!(overKnob > 1.0)) {
+                std::fprintf(stderr, "dj-ui: the wheel does nothing over the knob\n");
+                return 1;
+            }
+            if (!(overMeter > 1.0) || overMeter == overKnob) {
+                std::fprintf(stderr, "dj-ui: the wheel does nothing over the meter\n");
                 return 1;
             }
         }
@@ -1606,6 +1623,72 @@ int main(int argc, char *argv[])
             }
         }
         std::fprintf(stdout, "dj-ui: layout %s applied as set\n", qPrintable(layout.preset()));
+        return 0;
+    }
+
+    if (parser.isSet(wheelCheckOption)) {
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        bridge->connectToEngine(parser.value(connectOption));
+        QElapsedTimer linking;
+        linking.start();
+        while (!bridge->isConnected() && linking.elapsed() < 3000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QThread::msleep(10);
+        }
+        if (!bridge->isConnected()) {
+            std::fprintf(stderr, "dj-ui: no engine\n");
+            return 1;
+        }
+        QEventLoop settle;
+        QTimer::singleShot(600, &settle, &QEventLoop::quit);
+        settle.exec();
+
+        auto *knobA = findItem(window->contentItem(), QStringLiteral("knob_A"));
+        if (knobA == nullptr) {
+            std::fprintf(stderr, "dj-ui: no knob for deck A\n");
+            return 1;
+        }
+        const auto gainOfA = [&]() {
+            const QVariantList decks = bridge->snapshot().value(QStringLiteral("decks")).toList();
+            for (const QVariant &entry : decks) {
+                const QVariantMap deck = entry.toMap();
+                if (deck.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                    return deck.value(QStringLiteral("linear_gain")).toDouble();
+                }
+            }
+            return 0.0;
+        };
+        const double before = gainOfA();
+        const QPointF centre = knobA->mapToScene(QPointF(knobA->width() / 2.0, knobA->height() / 2.0));
+        for (int notch = 0; notch < 3; ++notch) {
+            QWheelEvent event(centre, window->mapToGlobal(centre.toPoint()), QPoint(),
+                              QPoint(0, 120), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+            QCoreApplication::sendEvent(window, &event);
+            QCoreApplication::processEvents();
+            QThread::msleep(60);
+        }
+        QElapsedTimer waiting;
+        waiting.start();
+        double after = before;
+        while (waiting.elapsed() < 3000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            after = gainOfA();
+            if (std::abs(after - before) > 0.05) {
+                break;
+            }
+            QThread::msleep(20);
+        }
+        std::fprintf(stdout, "dj-ui: wheel over knob A: gain %.3f -> %.3f\n", before, after);
+        if (std::abs(after - before) <= 0.05) {
+            std::fprintf(stderr, "dj-ui: the wheel did not reach the engine\n");
+            return 1;
+        }
+        bridge->setChannelGain(QStringLiteral("A"), 1.0);
+        std::fprintf(stdout, "dj-ui: the wheel trims a channel through the engine\n");
         return 0;
     }
 

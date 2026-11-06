@@ -32,6 +32,9 @@ Item {
     function gainFor(decibels) {
         return Math.pow(10.0, decibels / 20.0);
     }
+    // Wheel: one notch is one decibel, from the value the knob currently shows.
+    signal scrolled(int notches)
+
     function set(y) {
         const share = 1.0 - Math.max(0.0, Math.min(1.0, y / height));
         const decibels = minimumDb + share * (maximumDb - minimumDb);
@@ -85,5 +88,13 @@ Item {
         }
         onReleased: knob.dragging = false
         onCanceled: knob.dragging = false
+        // The wheel is taken here, where the pointer actually is: a handler on the strip never saw a
+        // wheel that this area had already claimed.
+        onWheel: function (wheel) {
+            const notches = Math.max(-3, Math.min(3, Math.round(wheel.angleDelta.y / 120)));
+            if (notches !== 0) {
+                knob.scrolled(notches);
+            }
+        }
     }
 }
