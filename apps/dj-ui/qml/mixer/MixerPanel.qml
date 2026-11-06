@@ -1,8 +1,8 @@
 // Mixer: one strip per deck and the crossfader below them (DJP-MIX-001).
 //
-// A strip is a gain knob beside a level meter, both as tall as the column: the meter shows what the
-// engine reports, the knob sets the deck's own trim and reads back the same number the snapshot
-// carries, so it cannot drift from the sound.
+// A strip is a gain knob beside a level meter, both as tall as the column. The knob sits on the inner
+// side: the left-hand decks (A and C) keep theirs on the left, the right-hand ones (B and D) on the
+// right, so the two halves of the mixer mirror each other instead of every knob crowding the middle.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -11,12 +11,8 @@ Pane {
     id: mixer
 
     readonly property var decks: Bridge.snapshot.decks !== undefined ? Bridge.snapshot.decks : []
-    // The order is a setting (LayoutState.channelOrder); C first by default, as the owner asked — the
-    // decks that are not the two outer ones still deserve a reachable strip.
+    // The order is a setting (LayoutState.channelOrder); C first by default, as the owner asked.
     readonly property var order: LayoutState.channelOrder.split("")
-    // The travel of a channel knob, in decibels. 0 dB is unity, the top is a little headroom.
-    readonly property int minimumDb: -40
-    readonly property int maximumDb: 6
 
     function deckOf(id) {
         for (let index = 0; index < mixer.decks.length; ++index) {
@@ -26,12 +22,8 @@ Pane {
         }
         return null;
     }
-
     function toDb(gain) {
-        return gain > 0.0 ? 20.0 * Math.log(gain) / Math.LN10 : mixer.minimumDb;
-    }
-    function toGain(db) {
-        return Math.pow(10.0, db / 20.0);
+        return gain > 0.0 ? 20.0 * Math.log(gain) / Math.LN10 : -40;
     }
 
     background: Rectangle {
@@ -63,6 +55,9 @@ Pane {
                     readonly property real gain: strip.deck !== null
                                                  && strip.deck.linear_gain !== undefined
                                                  ? strip.deck.linear_gain : 1.0
+                    // The decks that live to the left of the mixer keep their knob on the left.
+                    readonly property bool knobLeft: strip.modelData === "A"
+                                                     || strip.modelData === "C"
 
                     Layout.fillWidth: true
                     Layout.fillHeight: true
@@ -75,125 +70,37 @@ Pane {
                         Layout.alignment: Qt.AlignHCenter
                     }
 
-                    // Knob and meter side by side, both full height.
+                    // Knob and meter, mirrored: the row runs left to right for the left-hand decks
+                    // and right to left for the right-hand ones, so nothing but the direction differs.
                     RowLayout {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         spacing: 4
+                        layoutDirection: strip.knobLeft ? Qt.LeftToRight : Qt.RightToLeft
 
-                        // The gain knob: vertical travel in decibels, dragging anywhere in the track.
-                        Item {
-                            id: knob
-                            objectName: "knob_" + strip.modelData
-                            // What the last gesture asked for, so a check can tell a knob that is
-                            // dead from a knob whose command the engine refused.
-                            property real lastY: -1
-                            property real lastGain: -1
-                            // While the mouse is down the handle follows the hand, not the round trip
-                            // through the engine: a control that lags by a snapshot feels dead.
-                            property bool dragging: false
-                            property real dragged: 0.0
+                        GainKnob {
                             Layout.preferredWidth: 22
                             Layout.fillHeight: true
-
-                            Rectangle {
-                                anchors.fill: parent
-                                radius: 2
-                                color: UiSettings.themeBackground
-                                border.color: UiSettings.themeBorder
-                                border.width: 1
-                            }
-                            Rectangle {
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.bottom: parent.bottom
-                                height: parent.height * (knob.dragging ? knob.dragged
-                                                                       : strip.fraction)
-                                color: UiSettings.themeAccentDim
-                            }
-                            // Unity: where the knob lives when nothing has been touched.
-                            Rectangle {
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                y: parent.height * (1.0 - strip.unityFraction)
-                                height: 1
-                                color: UiSettings.themeBorder
-                            }
-                            Rectangle {
-                                width: parent.width
-                                height: 8
-                                radius: 1
-                                y: parent.height * (1.0 - (knob.dragging ? knob.dragged
-                                                                         : strip.fraction)) - height / 2
-                                color: strip.deck !== null ? UiSettings.themeRaised
-                                                           : UiSettings.themePanel
-                                border.color: UiSettings.themeTextDim
-                                border.width: 1
-                            }
-                            MouseArea {
-                                anchors.fill: parent
-                                // The knob always takes the hand: it shows the drag at once, and the
-                                // command is sent when there is a deck to send it for. Disabling it
-                                // when the link was down made a live control look broken.
-                                enabled: true
-                                onPressed: function (mouse) {
-                                    knob.dragging = true;
-                                    knob.set(mouse.y);
-                                }
-                                onPositionChanged: function (mouse) {
-                                    if (knob.dragging) {
-                                        knob.set(mouse.y);
-                                    }
-                                }
-                                onReleased: knob.dragging = false
-                                onCanceled: knob.dragging = false
-                            }
-
-                            function set(y) {
-                                const share = 1.0 - Math.max(0.0, Math.min(1.0, y / height));
-                                const db = mixer.minimumDb + share * (mixer.maximumDb - mixer.minimumDb);
-                                knob.lastY = y;
-                                knob.lastGain = mixer.toGain(db);
-                                knob.dragged = share;
-                                if (strip.deck !== null) {
-                                    Bridge.setChannelGain(strip.modelData, knob.lastGain);
-                                }
-                            }
+                            deckId: strip.modelData
+                            gain: strip.gain
                         }
-
-                        // The meter: the engine's peak, from the strip's bottom up.
-                        Rectangle {
-                            objectName: "meter_" + strip.modelData
+                        LevelMeter {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
-                            color: UiSettings.themeBackground
-                            border.color: UiSettings.themeBorder
-                            border.width: 1
-                            Rectangle {
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.bottom: parent.bottom
-                                height: parent.height * Math.min(1.0, strip.peak)
-                                color: strip.peak > 0.95 ? UiSettings.themeDanger
-                                                         : UiSettings.themeAccent
-                            }
+                            deckId: strip.modelData
+                            peak: strip.peak
                         }
                     }
 
                     Label {
                         text: strip.gain > 0.0
-                              ? (mixer.toDb(strip.gain) >= 0 ? "+" : "") + mixer.toDb(strip.gain).toFixed(1)
+                              ? (mixer.toDb(strip.gain) >= 0 ? "+" : "")
+                                + mixer.toDb(strip.gain).toFixed(1)
                               : "-∞"
                         color: UiSettings.themeTextDim
                         font.pixelSize: 9
                         Layout.alignment: Qt.AlignHCenter
                     }
-
-                    readonly property real fraction: Math.max(0.0, Math.min(1.0,
-                        (mixer.toDb(strip.gain) - mixer.minimumDb)
-                        / (mixer.maximumDb - mixer.minimumDb)))
-                    readonly property real unityFraction: (0.0 - mixer.minimumDb)
-                                                         / (mixer.maximumDb - mixer.minimumDb)
                 }
             }
         }
@@ -204,4 +111,5 @@ Pane {
             Layout.preferredHeight: 30
         }
     }
+
 }

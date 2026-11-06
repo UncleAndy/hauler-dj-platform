@@ -1331,6 +1331,27 @@ int main(int argc, char *argv[])
         }
         std::fprintf(stdout, "dj-ui: deck frames at rest: %s\n",
                      qPrintable(framed.join(QStringLiteral(", "))));
+        // Knobs mirror: the left-hand decks keep theirs on the left of the meter, the right-hand ones
+        // on the right.
+        for (const char *id : {"A", "B", "C", "D"}) {
+            auto *stripKnob = findItem(content, QStringLiteral("knob_%1").arg(QString::fromLatin1(id)));
+            auto *stripMeter = findItem(content, QStringLiteral("meter_%1").arg(QString::fromLatin1(id)));
+            if (stripKnob == nullptr || stripMeter == nullptr) {
+                std::fprintf(stderr, "dj-ui: deck %s has no knob or meter\n", id);
+                return 1;
+            }
+            const double knobX = stripKnob->mapToScene(QPointF(0, 0)).x();
+            const double meterX = stripMeter->mapToScene(QPointF(0, 0)).x();
+            const bool left = QString::fromLatin1(id) == QStringLiteral("A")
+                || QString::fromLatin1(id) == QStringLiteral("C");
+            std::fprintf(stdout, "dj-ui: deck %s knob at %.0f, meter at %.0f, %s\n", id, knobX, meterX,
+                         (knobX < meterX) == left ? "as placed" : "WRONG SIDE");
+            if ((knobX < meterX) != left) {
+                std::fprintf(stderr, "dj-ui: deck %s has its knob on the wrong side\n", id);
+                return 1;
+            }
+        }
+
         // A knob the mouse cannot reach is not a knob. Send a real press at three quarters of its
         // height and read back what it decided to send.
         if (knob != nullptr) {
