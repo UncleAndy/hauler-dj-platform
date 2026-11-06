@@ -8,6 +8,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import "../views"
+import "../mixer"
 
 Pane {
     id: panel
@@ -167,15 +168,22 @@ Pane {
             Layout.fillWidth: true
             spacing: 4
 
-            Button {
+            RefusalButton {
+                objectName: "deckLoad_" + panel.deckId
                 text: qsTr("Load")
                 font.pixelSize: 11
-                // A deck that is playing is not a destination: stop it first. The engine refuses
-                // such a load as well, so this is the visible half of the same rule.
-                enabled: panel.live && !panel.playing
-                ToolTip.visible: hovered && !enabled && panel.playing
+                // A deck that is playing is not a destination. The button stays live so the refusal
+                // can be seen: three red blinks say why, and the engine refuses the same load too.
+                enabled: panel.live
+                ToolTip.visible: hovered && panel.playing
                 ToolTip.text: qsTr("stop the deck to load another track")
-                onClicked: loadDialog.open()
+                onClicked: {
+                    if (panel.playing) {
+                        refuse();
+                        return;
+                    }
+                    loadDialog.open();
+                }
             }
             Button {
                 text: panel.playing ? qsTr("Pause") : qsTr("Play")

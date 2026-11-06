@@ -7,6 +7,8 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
+import "../mixer"
+
 Pane {
     id: browser
     objectName: "browserPanel"
@@ -126,7 +128,7 @@ Pane {
             }
             Repeater {
                 model: ["A", "B", "C", "D"]
-                delegate: Button {
+                delegate: RefusalButton {
                     required property string modelData
                     objectName: "deckButton_" + modelData
                     text: modelData
@@ -136,12 +138,15 @@ Pane {
                     implicitHeight: 18
                     checkable: true
                     checked: browser.target === modelData
-                    // A playing deck is not a destination: the button says so instead of taking the
-                    // click and cutting the track.
-                    enabled: !browser.deckIsPlaying(modelData)
-                    ToolTip.visible: hovered && !enabled
+                    // Not disabled: pressing a playing deck's button is how a person learns why
+                    // nothing happened. It blinks red instead of doing nothing at all.
+                    ToolTip.visible: hovered && browser.deckIsPlaying(modelData)
                     ToolTip.text: qsTr("deck %1 is playing").arg(modelData)
-                    onClicked: browser.loadInto(modelData)
+                    onClicked: {
+                        if (!browser.loadInto(modelData)) {
+                            refuse();
+                        }
+                    }
                 }
             }
         }

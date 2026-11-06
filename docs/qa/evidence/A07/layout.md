@@ -295,3 +295,21 @@ dj-ui: a playing deck refuses a load, a stopped one takes it
 ```
 
 Обе проверки в `scripts/ui.sh` (`--browser-check` и `--load-busy-check`), то есть в гейте.
+
+## Отказ виден: кнопка мигает красным
+
+Отказ без сигнала — это тихая ошибка: человек нажал, ничего не произошло, и он не знает почему.
+Поэтому кнопки дек в браузере и кнопка Load в самой деке больше не гаснут у играющей деки — они
+принимают нажатие и **мигают красным** три раза.
+
+Кнопка сделана отдельным компонентом `RefusalButton`: считает отказы (`refusals`), держит флаг
+`flashing` и гасит/зажигает фон таймером на 90 мс. Фон в мигании — `themeDanger`, текст —
+`themeBackground`, чтобы читалось и в темноте.
+
+Проверка `--refusal-check` (в гейте): играет дека A, браузер открыт на папке с треком, трек выбран,
+затем нажимаются кнопка деки в браузере и кнопка Load в деке.
+
+```
+dj-ui: refused load: browser button 1, deck button 1, flashing yes
+dj-ui: a load into a playing deck is refused and the button blinks
+```

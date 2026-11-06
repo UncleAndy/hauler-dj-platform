@@ -833,6 +833,10 @@ int main(int argc, char *argv[])
         QStringLiteral("strip-check"),
         QStringLiteral("With --connect and --load: load the track into deck A and require the deck's "
                        "strip to receive the envelope the engine published."));
+    const QCommandLineOption refusalCheckOption(
+        QStringLiteral("refusal-check"),
+        QStringLiteral("With --connect and --load: play deck A, ask the shell to load into it, and "
+                       "require the deck's buttons to signal the refusal."));
     const QCommandLineOption busyCheckOption(
         QStringLiteral("load-busy-check"),
         QStringLiteral("With --connect and --load: prove a playing deck refuses a load (Busy) and "
@@ -956,6 +960,7 @@ int main(int argc, char *argv[])
     parser.addOption(selfCheckOption);
     parser.addOption(gainCheckOption);
     parser.addOption(busyCheckOption);
+    parser.addOption(refusalCheckOption);
     parser.addOption(stripCheckOption);
     parser.addOption(loadOption);
     parser.addOption(loadSecondOption);
@@ -1549,6 +1554,100 @@ int main(int argc, char *argv[])
         }
         std::fprintf(stdout, "dj-ui: layout %s applied as set\n", qPrintable(layout.preset()));
         return 0;
+    }
+
+    if (parser.isSet(refusalCheckOption)) {
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        const QString track = parser.value(loadOption);
+        if (track.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: --refusal-check needs --load\n");
+            return 2;
+        }
+        // The shell connects at the end of main; this mode returns before that.
+        bridge->connectToEngine(parser.value(connectOption));
+        QElapsedTimer linking;
+        linking.start();
+        while (!bridge->isConnected() && linking.elapsed() < 3000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QThread::msleep(10);
+        }
+        bridge->load(QStringLiteral("A"), track);
+
+        bool playing = false;
+        QElapsedTimer waiting;
+        waiting.start();
+        while (!playing && waiting.elapsed() < 10000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            const QVariantList decks = bridge->snapshot().value(QStringLiteral("decks")).toList();
+            for (const QVariant &entry : decks) {
+                const QVariantMap deck = entry.toMap();
+                if (deck.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                    playing = deck.value(QStringLiteral("playing")).toBool();
+                }
+            }
+            if (!playing && waiting.elapsed() > 1000) {
+                bridge->play(QStringLiteral("A"), true);
+            }
+            QThread::msleep(20);
+        }
+        if (!playing) {
+            std::fprintf(stderr, "dj-ui: deck A never started playing\n");
+            return 1;
+        }
+
+        // The browser, pointed at the track's own folder with the track selected.
+        browser.open(QFileInfo(track).absolutePath());
+        QCoreApplication::processEvents();
+        auto *panel = findItem(window->contentItem(), QStringLiteral("browserPanel"));
+        auto *list = findItem(window->contentItem(), QStringLiteral("browserList"));
+        if (panel == nullptr || list == nullptr) {
+            std::fprintf(stderr, "dj-ui: the shell has no browser\n");
+            return 1;
+        }
+        int fileIndex = -1;
+        const QVariantList entries = browser.entries();
+        for (int index = 0; index < entries.size(); ++index) {
+            if (entries.at(index).toMap().value(QStringLiteral("path")).toString() == track) {
+                fileIndex = index;
+            }
+        }
+        if (fileIndex < 0) {
+            std::fprintf(stderr, "dj-ui: the browser does not list the track\n");
+            return 1;
+        }
+        list->setProperty("currentIndex", fileIndex);
+        QVariant refused;
+        QMetaObject::invokeMethod(panel, "loadInto", Q_RETURN_ARG(QVariant, refused),
+                                  Q_ARG(QVariant, QStringLiteral("A")));
+        QCoreApplication::processEvents();
+
+        auto *deckButton = findItem(window->contentItem(), QStringLiteral("deckButton_A"));
+        auto *deckLoad = findItem(window->contentItem(), QStringLiteral("deckLoad_A"));
+        if (deckButton == nullptr || deckLoad == nullptr) {
+            std::fprintf(stderr, "dj-ui: the shell has no deck buttons\n");
+            return 1;
+        }
+        // Pressing the button is the way a person finds out; it has to blink.
+        QMetaObject::invokeMethod(deckButton, "clicked");
+        QMetaObject::invokeMethod(deckLoad, "clicked");
+        QCoreApplication::processEvents();
+        const int buttonRefusals = deckButton->property("refusals").toInt();
+        const int loadRefusals = deckLoad->property("refusals").toInt();
+        const bool flashing = deckButton->property("flashing").toBool()
+            || deckLoad->property("flashing").toBool();
+        std::fprintf(stdout, "dj-ui: refused load: browser button %d, deck button %d, flashing %s\n",
+                     buttonRefusals, loadRefusals, flashing ? "yes" : "no");
+        if (!refused.toBool() && buttonRefusals > 0 && loadRefusals > 0 && flashing) {
+            bridge->play(QStringLiteral("A"), false);
+            std::fprintf(stdout, "dj-ui: a load into a playing deck is refused and the button blinks\n");
+            return 0;
+        }
+        std::fprintf(stderr, "dj-ui: the refusal was not signalled\n");
+        return 1;
     }
 
     if (parser.isSet(stripCheckOption)) {

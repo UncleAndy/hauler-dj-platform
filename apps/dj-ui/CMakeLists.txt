@@ -38,6 +38,7 @@ qt_add_qml_module(dj-ui
         qml/mixer/MixerPanel.qml
         qml/mixer/GainKnob.qml
         qml/mixer/LevelMeter.qml
+        qml/mixer/RefusalButton.qml
 )
 
 target_link_libraries(dj-ui PRIVATE Qt6::Quick Qt6::Network)
