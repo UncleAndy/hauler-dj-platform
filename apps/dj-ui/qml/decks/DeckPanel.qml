@@ -19,9 +19,12 @@ Pane {
     signal chosen()
 
     background: Rectangle {
+        objectName: "deckFrame_" + panel.deckId
         color: UiSettings.themePanel
-        border.color: panel.targeted ? UiSettings.themeAccent : UiSettings.themeBorder
-        border.width: 1
+        // The frame answers one question — is this deck playing? A border that marks the browser's
+        // target instead sits on one deck for ever and says nothing about the sound.
+        border.color: panel.playing ? UiSettings.themeAccent : UiSettings.themeBorder
+        border.width: panel.playing ? 2 : 1
         radius: 2
 
         MouseArea {
@@ -117,7 +120,7 @@ Pane {
                 text: panel.deckId
                 font.pixelSize: 15
                 font.bold: true
-                color: panel.targeted ? UiSettings.themeAccent : UiSettings.themeText
+                color: panel.playing ? UiSettings.themeAccent : UiSettings.themeText
             }
             Label {
                 Layout.fillWidth: true
@@ -140,7 +143,7 @@ Pane {
             objectName: "deckDetail_" + panel.deckId
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.minimumHeight: 48
+            Layout.minimumHeight: 40
             deckState: panel.state
             envelope: envelope
         }
@@ -149,8 +152,10 @@ Pane {
         TrackOverview {
             objectName: "deckOverview_" + panel.deckId
             Layout.fillWidth: true
-            Layout.preferredHeight: 22
-            Layout.minimumHeight: 14
+            // Twice the detail strip's old overview height: the whole track is easier to aim at for a
+            // seek than a hairline, and the zoomed strip still keeps the most room.
+            Layout.preferredHeight: 44
+            Layout.minimumHeight: 28
             deckState: panel.state
             envelope: envelope
         }

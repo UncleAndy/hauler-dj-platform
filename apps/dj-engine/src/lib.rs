@@ -17,7 +17,7 @@ use dj_domain::{
     Ack, AckStatus, CueAction, DeckId, DeckLoad, DeckSnapshot, DjCommand, FrameRange, Levels,
     RejectReason, ScheduledCommand, Snapshot, SourceFrame, TrackMeta,
 };
-use dj_mixer::{ChannelSettings, Mixer};
+use dj_mixer::Mixer;
 
 pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, clock: u64) -> Ack {
     let id = command.id;
@@ -108,24 +108,19 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
             Ack::applied(id, at)
         }
         DjCommand::SetChannelGain { deck, linear_gain } => {
-            let index = match deck {
-                DeckId::A => 0,
-                _ => 1,
-            };
-            if let Some(settings) = mixer.channel(index).copied() {
-                mixer.set_channel(
-                    index,
-                    ChannelSettings {
-                        fader: linear_gain.clamp(0.0, 1.0),
-                        ..settings
-                    },
-                );
-                Ack::applied(id, at)
-            } else {
-                Ack {
+            // A channel's gain is its deck's own trim: it is what the deck applies to its output and
+            // what the snapshot reports back as `linear_gain`. This used to move a mixer channel
+            // fader instead — and every deck but A moved channel 1, so a knob on C changed B while the
+            // slider sprang back to a value nobody had set.
+            match decks.iter_mut().find(|candidate| candidate.id() == *deck) {
+                Some(target) => {
+                    target.set_gain(*linear_gain);
+                    Ack::applied(id, at)
+                }
+                None => Ack {
                     command_id: id,
                     status: AckStatus::Rejected(RejectReason::InvalidValue),
-                }
+                },
             }
         }
         _ => Ack {

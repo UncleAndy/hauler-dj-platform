@@ -681,6 +681,11 @@ int main(int argc, char *argv[])
         QStringLiteral("Where the layout is remembered (default $XDG_CONFIG_HOME/hauler-dj/"
                        "layout.json). A preset on the command line overrides the file."),
         QStringLiteral("path"));
+    const QCommandLineOption channelOrderOption(
+        QStringLiteral("channel-order"),
+        QStringLiteral("Order of the mixer strips, left to right (default CABD). A permutation of "
+                       "A, B, C and D."),
+        QStringLiteral("ABCD"));
     const QCommandLineOption layoutCheckOption(
         QStringLiteral("layout-check"),
         QStringLiteral("Load the shell, print each region's share of the window and fail when it "
@@ -752,6 +757,7 @@ int main(int argc, char *argv[])
     parser.addOption(layoutOption);
     parser.addOption(layoutFileOption);
     parser.addOption(layoutCheckOption);
+    parser.addOption(channelOrderOption);
     parser.addOption(bandGainOption);
     parser.addOption(barWidthOption);
     parser.addOption(barGapOption);
@@ -847,6 +853,11 @@ int main(int argc, char *argv[])
     layout.load();
     if (parser.isSet(layoutOption) && !layout.applyPreset(parser.value(layoutOption))) {
         std::fprintf(stderr, "dj-ui: --layout expects traktor or two-deck\n");
+        return 2;
+    }
+    if (parser.isSet(channelOrderOption)
+        && !layout.setChannelOrder(parser.value(channelOrderOption))) {
+        std::fprintf(stderr, "dj-ui: --channel-order needs each of A, B, C and D once\n");
         return 2;
     }
 
@@ -1159,6 +1170,78 @@ int main(int argc, char *argv[])
             std::fprintf(stdout, "dj-ui: deck %s %.0f px tall, strip %.0f px, overview %.0f px\n", id,
                          deck->height(), detail->height(), overview->height());
         }
+        // The mixer, measured: the strips in the order the setting names, and the crossfader handle
+        // resting in the middle at 0.5 rather than against the left stop.
+        QStringList placed;
+        for (const QChar letter : layout.channelOrder()) {
+            auto *strip = findItem(content, QStringLiteral("strip_%1").arg(letter));
+            if (strip == nullptr) {
+                std::fprintf(stderr, "dj-ui: the mixer has no strip %s\n", qPrintable(letter));
+                return 1;
+            }
+            placed.append(QStringLiteral("%1@%2").arg(letter).arg(int(strip->x())));
+        }
+        std::fprintf(stdout, "dj-ui: mixer order %s (wanted %s)\n", qPrintable(placed.join(QStringLiteral(" "))),
+                     qPrintable(layout.channelOrder()));
+
+        auto *handle = findItem(content, QStringLiteral("crossfaderHandle"));
+        if (handle == nullptr || handle->parentItem() == nullptr) {
+            std::fprintf(stderr, "dj-ui: the mixer has no crossfader handle\n");
+            return 1;
+        }
+        const double centre = handle->x() + handle->width() / 2.0;
+        const double travel = handle->parentItem()->width();
+        const double offset = centre - travel / 2.0;
+        std::fprintf(stdout, "dj-ui: crossfader handle %.1f px from the middle of %.0f px\n", offset,
+                     travel);
+        if (std::abs(offset) > 2.0) {
+            std::fprintf(stderr, "dj-ui: the crossfader does not sit in the middle at rest\n");
+            return 1;
+        }
+
+        // The crossfader belongs under the strips, not above them.
+        if (auto *stripA = findItem(content, QStringLiteral("strip_A")); stripA != nullptr) {
+            const double handleTop = handle->mapToScene(QPointF(0.0, 0.0)).y();
+            const double stripBottom = stripA->mapToScene(QPointF(0.0, stripA->height())).y();
+            std::fprintf(stdout, "dj-ui: crossfader top %.0f px, strips bottom %.0f px\n", handleTop,
+                         stripBottom);
+            if (handleTop < stripBottom) {
+                std::fprintf(stderr, "dj-ui: the crossfader is above the strips\n");
+                return 1;
+            }
+        }
+
+        // A knob must be as tall as the meter beside it, or "full height" is only a phrase.
+        auto *knob = findItem(content, QStringLiteral("knob_A"));
+        auto *meter = findItem(content, QStringLiteral("meter_A"));
+        if (knob != nullptr && meter != nullptr) {
+            std::fprintf(stdout, "dj-ui: knob %.0f px, meter %.0f px, difference %.0f px\n",
+                         knob->height(), meter->height(), std::abs(knob->height() - meter->height()));
+            if (std::abs(knob->height() - meter->height()) > 2.0) {
+                std::fprintf(stderr, "dj-ui: the knob is not the height of its meter\n");
+                return 1;
+            }
+        }
+        // At rest nothing is playing, so no deck frame may wear the accent: a highlight that sits on
+        // one deck for ever is the bug the owner saw.
+        const QColor accent = QColor(settings.themeAccent());
+        QStringList framed;
+        for (const char *id : {"A", "B", "C", "D"}) {
+            auto *frame = findItem(content, QStringLiteral("deckFrame_%1").arg(QString::fromLatin1(id)));
+            if (frame == nullptr) {
+                std::fprintf(stderr, "dj-ui: deck %s has no frame\n", id);
+                return 1;
+            }
+            auto *pen = frame->property("border").value<QObject *>();
+            const QColor colour = pen != nullptr ? pen->property("color").value<QColor>() : QColor();
+            if (colour == accent) {
+                std::fprintf(stderr, "dj-ui: deck %s is highlighted while nothing plays\n", id);
+                return 1;
+            }
+            framed.append(QStringLiteral("%1 %2").arg(QString::fromLatin1(id), colour.name()));
+        }
+        std::fprintf(stdout, "dj-ui: deck frames at rest: %s\n",
+                     qPrintable(framed.join(QStringLiteral(", "))));
         std::fprintf(stdout, "dj-ui: layout %s applied as set\n", qPrintable(layout.preset()));
         return 0;
     }
@@ -1258,6 +1341,21 @@ int main(int argc, char *argv[])
         std::fprintf(stdout, "dj-ui: browser click at row %d selected %d\n", fileIndex, clicked);
         if (clicked != fileIndex) {
             std::fprintf(stderr, "dj-ui: a click on the browser row did not select it\n");
+            return 1;
+        }
+        // A deck button is also a load button when something is chosen.
+        list->setProperty("currentIndex", fileIndex);
+        auto *buttonB = findItem(window->contentItem(), QStringLiteral("deckButton_B"));
+        if (buttonB == nullptr) {
+            std::fprintf(stderr, "dj-ui: the browser has no deck buttons\n");
+            return 1;
+        }
+        QMetaObject::invokeMethod(buttonB, "clicked");
+        QCoreApplication::processEvents();
+        const QString onDeckButton = panel->property("lastAction").toString();
+        std::fprintf(stdout, "dj-ui: browser deck B button -> %s\n", qPrintable(onDeckButton));
+        if (!onDeckButton.startsWith(QStringLiteral("loaded ")) || !onDeckButton.endsWith(QStringLiteral("into B"))) {
+            std::fprintf(stderr, "dj-ui: a deck button did not load the chosen track\n");
             return 1;
         }
         std::fprintf(stdout, "dj-ui: browser selects and acts, selection follows the click\n");

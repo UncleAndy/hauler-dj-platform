@@ -670,3 +670,47 @@ fn an_eject_clears_the_deck_inside_the_block() {
     assert_eq!(deck_a.snapshot().load, dj_domain::DeckLoad::Empty);
     assert!(deck_a.snapshot().track.is_none());
 }
+
+#[test]
+fn a_gain_command_moves_the_deck_it_names_and_no_other() {
+    // Every deck but A used to move mixer channel 1, so a knob on C changed B; and the deck's own
+    // gain, which is what the snapshot reports, was never touched, so the control sprang back.
+    let mut decks = vec![
+        deck_with_tone(DeckId::A, 48_000),
+        deck_with_tone(DeckId::B, 48_000),
+        deck_with_tone(DeckId::C, 48_000),
+        deck_with_tone(DeckId::D, 48_000),
+    ];
+    let mut mixer = mixer_for(48_000);
+
+    for deck in [DeckId::B, DeckId::C, DeckId::D] {
+        let ack = apply(
+            &mut decks,
+            &mut mixer,
+            &command(
+                7,
+                DjCommand::SetChannelGain {
+                    deck,
+                    linear_gain: 0.25,
+                },
+            ),
+            0,
+        );
+        assert!(
+            matches!(ack.status, AckStatus::Applied { .. }),
+            "{deck:?} must be accepted, got {:?}",
+            ack.status
+        );
+    }
+
+    let state = snapshot(&decks, &mixer, 1, 0, 48_000, 0);
+    for deck in state.decks {
+        let wanted = if deck.deck == DeckId::A { 1.0 } else { 0.25 };
+        assert!(
+            (deck.linear_gain - wanted).abs() < 1e-6,
+            "{:?} has gain {}, wanted {wanted}",
+            deck.deck,
+            deck.linear_gain
+        );
+    }
+}

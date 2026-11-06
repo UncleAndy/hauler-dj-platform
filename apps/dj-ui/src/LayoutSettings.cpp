@@ -79,6 +79,27 @@ void LayoutSettings::setMixerPercent(double percent)
     emit changed();
 }
 
+bool LayoutSettings::setChannelOrder(const QString &order)
+{
+    // A permutation of A, B, C, D and nothing else: a repeated letter would draw one deck twice and
+    // hide another, which is a layout that lies about the mixer.
+    const QString normalised = order.trimmed().toUpper();
+    if (normalised.size() != 4) {
+        return false;
+    }
+    for (const QChar letter : {'A', 'B', 'C', 'D'}) {
+        if (normalised.count(letter) != 1) {
+            return false;
+        }
+    }
+    if (normalised == m_channelOrder) {
+        return true;
+    }
+    m_channelOrder = normalised;
+    emit changed();
+    return true;
+}
+
 void LayoutSettings::normalise()
 {
     // The rows fill the window between them: the deck area is what the global strip and the browser
@@ -113,6 +134,7 @@ bool LayoutSettings::load()
     m_globalPercent = root.value(QStringLiteral("global_percent")).toDouble(m_globalPercent);
     m_browserPercent = root.value(QStringLiteral("browser_percent")).toDouble(m_browserPercent);
     m_mixerPercent = root.value(QStringLiteral("mixer_percent")).toDouble(m_mixerPercent);
+    setChannelOrder(root.value(QStringLiteral("channel_order")).toString(m_channelOrder));
     normalise();
     emit changed();
     return true;
@@ -131,6 +153,7 @@ bool LayoutSettings::save() const
 
     root.insert(QStringLiteral("browser_percent"), m_browserPercent);
     root.insert(QStringLiteral("mixer_percent"), m_mixerPercent);
+    root.insert(QStringLiteral("channel_order"), m_channelOrder);
     QFile file(m_file);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         return false;

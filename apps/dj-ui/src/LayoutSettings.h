@@ -23,6 +23,7 @@ class LayoutSettings : public QObject
     Q_PROPERTY(double deckRowsPercent READ deckRowsPercent NOTIFY changed)
     Q_PROPERTY(double browserPercent READ browserPercent WRITE setBrowserPercent NOTIFY changed)
     Q_PROPERTY(double mixerPercent READ mixerPercent WRITE setMixerPercent NOTIFY changed)
+    Q_PROPERTY(QString channelOrder READ channelOrder WRITE setChannelOrder NOTIFY changed)
     Q_PROPERTY(QString file READ file NOTIFY changed)
 
 public:
@@ -41,6 +42,10 @@ public:
     void setBrowserPercent(double percent);
     double mixerPercent() const { return m_mixerPercent; }
     void setMixerPercent(double percent);
+
+    // The order of channel strips in the mixer, left to right, e.g. "CABD".
+    QString channelOrder() const { return m_channelOrder; }
+    bool setChannelOrder(const QString &order);
 
     QString file() const { return m_file; }
     void setFile(const QString &path);
@@ -65,5 +70,6 @@ private:
     double m_deckRowsPercent = 63.5;
     double m_browserPercent = 28.5;
     double m_mixerPercent = 14.5;
+    QString m_channelOrder = QStringLiteral("CABD");
     QString m_file;
 };

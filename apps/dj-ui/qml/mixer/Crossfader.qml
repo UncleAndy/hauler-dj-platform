@@ -1,33 +1,97 @@
-// Crossfader (DJP-MIX-001). The knob does not own the value: it shows what the engine last
-// published and sends SetCrossfader while the user drags. If the engine refuses or the link drops,
-// the handle springs back to the published position on the next snapshot.
+// Crossfader (DJP-MIX-001).
+//
+// A plain slider fills its groove from the left, so a centred crossfader looks like one pushed against
+// the left stop. This one is drawn as what it is: a track with a centre mark and a handle that sits
+// where the value is — half way at 0.5 — so the picture and the sound agree.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-Pane {
-    id: panel
-    Layout.preferredHeight: 72
+Item {
+    id: crossfader
 
+    implicitHeight: 26
+
+    readonly property real value: Bridge.snapshot.crossfader !== undefined
+                                  ? Math.max(0.0, Math.min(1.0, Bridge.snapshot.crossfader)) : 0.5
     readonly property bool live: Bridge.connected
-    readonly property real published: Bridge.snapshot.crossfader !== undefined
-                                       ? Bridge.snapshot.crossfader : 0.5
+    readonly property int handleWidth: 20
 
-    RowLayout {
+    ColumnLayout {
         anchors.fill: parent
-        spacing: 12
+        spacing: 2
 
-        Label { text: qsTr("A") }
-        Slider {
-            id: fader
+        Item {
             Layout.fillWidth: true
-            from: 0.0
-            to: 1.0
-            // Engine state is the truth; the local value only leads while the user is dragging.
-            value: panel.published
-            enabled: panel.live
-            onMoved: Bridge.setCrossfader(value)
+            Layout.fillHeight: true
+
+            Rectangle {
+                id: track
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.left: parent.left
+                anchors.right: parent.right
+                height: 4
+                radius: 2
+                color: UiSettings.themeRaised
+                border.color: UiSettings.themeBorder
+                border.width: 1
+            }
+
+            // Where the two decks meet: the middle of the travel, marked so the rest position is
+            // visible without moving the handle.
+            Rectangle {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.verticalCenter: parent.verticalCenter
+                width: 1
+                height: 10
+                color: UiSettings.themeBorder
+            }
+
+            Rectangle {
+                id: handle
+                objectName: "crossfaderHandle"
+                width: crossfader.handleWidth
+                height: parent.height
+                radius: 2
+                color: crossfader.live ? UiSettings.themeRaised : UiSettings.themePanel
+                border.color: crossfader.live ? UiSettings.themeText : UiSettings.themeBorder
+                border.width: 1
+                x: (parent.width - width) * crossfader.value
+
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: 2
+                    height: parent.height * 0.5
+                    color: UiSettings.themeTextDim
+                }
+            }
+
+            MouseArea {
+                anchors.fill: parent
+                enabled: crossfader.live
+                onPositionChanged: function (mouse) { crossfader.apply(mouse.x) }
+                onPressed: function (mouse) { crossfader.apply(mouse.x) }
+            }
         }
-        Label { text: qsTr("B") }
+
+        RowLayout {
+            Layout.fillWidth: true
+            Label {
+                text: qsTr("A")
+                font.pixelSize: 9
+                color: crossfader.value < 0.5 ? UiSettings.themeText : UiSettings.themeTextDim
+            }
+            Item { Layout.fillWidth: true }
+            Label {
+                text: qsTr("B")
+                font.pixelSize: 9
+                color: crossfader.value > 0.5 ? UiSettings.themeText : UiSettings.themeTextDim
+            }
+        }
+    }
+
+    function apply(x) {
+        const travel = Math.max(1, width - handleWidth);
+        Bridge.setCrossfader(Math.max(0.0, Math.min(1.0, (x - handleWidth / 2) / travel)));
     }
 }

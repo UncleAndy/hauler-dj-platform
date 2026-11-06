@@ -78,6 +78,7 @@ Pane {
                 model: ["A", "B", "C", "D"]
                 delegate: Button {
                     required property string modelData
+                    objectName: "deckButton_" + modelData
                     text: modelData
                     font.pixelSize: 9
                     padding: 2
@@ -85,7 +86,14 @@ Pane {
                     implicitHeight: 18
                     checkable: true
                     checked: browser.target === modelData
-                    onClicked: browser.target = modelData
+                    onClicked: {
+                        browser.target = modelData;
+                        // A deck button is a load button when something is chosen: pick the deck and
+                        // the track together instead of asking for a second click.
+                        if (browser.selected !== null && browser.selected.dir !== true) {
+                            browser.activate(list.currentIndex);
+                        }
+                    }
                 }
             }
         }
