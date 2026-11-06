@@ -9,6 +9,7 @@ import QtQuick.Layouts
 
 Pane {
     id: mixer
+    objectName: "mixerPanel"
 
     readonly property var decks: Bridge.snapshot.decks !== undefined ? Bridge.snapshot.decks : []
     // The order is a setting (LayoutState.channelOrder); C first by default, as the owner asked.
@@ -143,15 +144,14 @@ Pane {
             Layout.preferredHeight: 30
         }
 
-        // The law in force, as four small squares. They show what the engine published — a selector
-        // that lights up on the click rather than on the ack would lie the moment a command is
-        // refused (DJP-ARCH-004). Squares, not bars: the choices are four, and width is better spent
-        // on the strips.
-        RowLayout {
+        // The law in force, as four buttons, each showing its own curve. The picture is the point:
+        // the shapes differ at a glance, the names do not. Two columns rather than four so the
+        // buttons can be the size a hand can hit inside a strip-width column.
+        Grid {
             id: curveRow
             objectName: "crossfaderCurves"
             Layout.alignment: Qt.AlignHCenter
-            Layout.preferredHeight: 16
+            columns: 2
             spacing: 4
 
             readonly property string current: Bridge.snapshot.crossfader_curve !== undefined
@@ -159,29 +159,30 @@ Pane {
 
             Repeater {
                 model: [
-                    { law: "constant_power", label: "CP", hint: qsTr("Constant power: −3 dB at the centre") },
-                    { law: "linear", label: "LN", hint: qsTr("Linear: each side falls linearly") },
-                    { law: "smooth", label: "SM", hint: qsTr("Smooth: holds level, falls in the middle") },
-                    { law: "sharp", label: "SH", hint: qsTr("Sharp: cut, both channels open in the middle") }
+                    { law: "constant_power", hint: qsTr("Constant power: the energy sum stays at unity") },
+                    { law: "linear", hint: qsTr("Linear: each side falls by the same step") },
+                    { law: "smooth", hint: qsTr("Smooth: holds its level, then falls through the middle") },
+                    { law: "sharp", hint: qsTr("Sharp: a cut — both sides open across the middle") }
                 ]
 
                 delegate: Rectangle {
                     required property var modelData
                     objectName: "curveButton_" + modelData.law
                     readonly property bool lit: curveRow.current === modelData.law
-                    // A square of the row's height, so four choices cost one row of sixteen pixels.
-                    Layout.preferredWidth: height
-                    Layout.preferredHeight: 16
+                    width: 64
+                    height: 32
                     radius: 2
                     color: lit ? UiSettings.themePanel : UiSettings.themeSurface
                     border.width: 1
                     border.color: lit ? UiSettings.themeAccent : UiSettings.themeBorder
 
-                    Text {
-                        anchors.centerIn: parent
-                        text: parent.modelData.label
-                        font.pixelSize: 8
-                        color: parent.lit ? UiSettings.themeText : UiSettings.themeTextDim
+                    CurveGlyph {
+                        anchors.fill: parent
+                        anchors.margins: 3
+                        law: parent.modelData.law
+                        open: parent.lit ? UiSettings.themeAccent : UiSettings.themeText
+                        closed: UiSettings.themeTextDim
+                        guide: UiSettings.themeBorder
                     }
 
                     MouseArea {
@@ -195,6 +196,6 @@ Pane {
                 }
             }
         }
-        }
+    }
 
 }
