@@ -1748,10 +1748,10 @@ int main(int argc, char *argv[])
             return meter->property("zone").toString();
         };
         const QString zoneLow = zoneAt(0.1);    // -20 dB
-        const QString zoneAt6 = zoneAt(0.49);   // -6.2 dB
+        const QString zoneAt6 = zoneAt(0.45);   // -6.9 dB
         const QString zoneNear = zoneAt(0.6);   // -4.4 dB
-        const QString zoneFull = zoneAt(1.0);   // 0 dB
-        std::fprintf(stdout, "dj-ui: master meter zones: -20 dB %s, -6.2 dB %s, -4.4 dB %s, 0 dB %s\n",
+        const QString zoneFull = zoneAt(1.0);   // 0 dB, the top edge
+        std::fprintf(stdout, "dj-ui: master meter zones: -20 dB %s, -6.9 dB %s, -4.4 dB %s, 0 dB %s\n",
                      qPrintable(zoneLow), qPrintable(zoneAt6), qPrintable(zoneNear),
                      qPrintable(zoneFull));
         if (zoneLow != QLatin1String("green") || zoneAt6 != QLatin1String("green")
@@ -1768,7 +1768,7 @@ int main(int argc, char *argv[])
         // bottom, so the colours can be logical in the properties and upside down on screen. Drive the
         // meter past 0 dB — that is the only place red exists — and read the pixels: red at the top,
         // yellow under it, green at the foot.
-        meter->setProperty("peak", QVariant(1.4));
+        meter->setProperty("peak", QVariant(1.0));
         QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
         const QImage frame = window->grabWindow();
         if (frame.isNull()) {
@@ -1783,10 +1783,10 @@ int main(int argc, char *argv[])
                 return frame.pixelColor(x, y);
             };
             const double height = meter->height();
-            const QColor head = sample(height * 0.08);
-            const QColor middle = sample(height * 0.18);
+            const QColor head = sample(height * 0.03);
+            const QColor middle = sample(height * 0.12);
             const QColor foot = sample(height * 0.90);
-            std::fprintf(stdout, "dj-ui: above 0 dB the master meter reads %s near the top, %s under "
+            std::fprintf(stdout, "dj-ui: at full scale the master meter reads %s at the top, %s under "
                                  "it and %s at the foot\n",
                          qPrintable(head.name()), qPrintable(middle.name()), qPrintable(foot.name()));
             if (!(head.red() > head.green() + 40 && head.red() > head.blue() + 40)) {

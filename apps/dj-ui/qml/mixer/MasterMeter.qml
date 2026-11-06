@@ -21,12 +21,14 @@ Item {
     // It is a strip, not a line: below this it stops reading as a scale.
     implicitHeight: 40
 
-    // The scale. +6 dB is past full scale on purpose: it is the space where the limiter works.
+    // The scale: silence at the foot, full scale at the top edge. 0 dB has to be the top edge —
+    // with headroom above it the loudest the master can be left the top of the meter dark, and a
+    // meter that never fills is a meter nobody trusts.
     readonly property real floorDb: -40.0
-    readonly property real ceilingDb: 6.0
-    // Where the colour changes: close to 0 dB, and 0 dB itself.
+    readonly property real ceilingDb: 0.0
+    // Where the colour changes: yellow for the last six decibels, red for the last three.
     readonly property real yellowFromDb: -6.0
-    readonly property real redFromDb: 0.0
+    readonly property real redFromDb: -3.0
 
     // The same thresholds as fractions of the scale, for drawing.
     readonly property real yellowFrom: fractionForDb(yellowFromDb)
