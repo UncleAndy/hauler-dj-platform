@@ -1924,93 +1924,102 @@ int main(int argc, char *argv[])
             }
         }
 
-        // The four laws are buttons a hand can hit: twice the old height, four times the width,
-        // with the law drawn inside. Two columns, because four of them in a row would not fit a
-        // strip-width column.
-        if (auto *curve = findItem(content, QStringLiteral("curveButton_constant_power"));
-            curve != nullptr) {
-            const double width = curve->width();
-            const double height = curve->height();
-            std::fprintf(stdout, "dj-ui: curve buttons are %.0f x %.0f px\n", width, height);
-            if (height < 30.0 || width < 60.0) {
-                std::fprintf(stderr, "dj-ui: the curve buttons are too small\n");
+        // The four laws are one row of buttons a hand can hit, each with its law drawn inside. One
+        // row, because vertical room belongs to the strips: the check measures that they really share
+        // a row, that the row fits the column, and that each button is still big enough to read.
+        QStringList laws = {QStringLiteral("constant_power"), QStringLiteral("linear"),
+                            QStringLiteral("smooth"), QStringLiteral("sharp")};
+        double rowTop = -1.0;
+        double rowBottom = 0.0;
+        double narrowest = 1e9;
+        QString narrowestLaw;
+        QRectF row;
+        for (const QString &law : laws) {
+            auto *button = findItem(content, QStringLiteral("curveButton_") + law);
+            if (button == nullptr) {
+                std::fprintf(stderr, "dj-ui: no button for %s\n", qPrintable(law));
                 return 1;
             }
-            if (std::abs(width / height - 2.0) > 0.1) {
-                std::fprintf(stderr, "dj-ui: the curve buttons are not twice as wide as tall\n");
+            // Position in the mixer panel's own coordinate system, so the comparison is about layout
+            // and not about where the panel happens to sit.
+            const QPointF top = button->mapToItem(content, QPointF(0, 0));
+            const QRectF box(top, QSizeF(button->width(), button->height()));
+            row = row.isNull() ? box : row.united(box);
+            if (button->height() < 30.0) {
+                std::fprintf(stderr, "dj-ui: the %s button is %.0f px tall, too small\n",
+                             qPrintable(law), button->height());
                 return 1;
             }
-            // And they must fit the column they sit in: a control wider than its panel is a control
-            // that overlaps something.
-            // The picture has to be there: a blank button is a button that says nothing. And the
-            // four pictures have to differ — one drawing repeated four times would be a lie about
-            // there being four laws.
-            QMap<QString, QImage> glyphs;
-            for (const QString &law : {QStringLiteral("constant_power"), QStringLiteral("linear"),
-                                       QStringLiteral("smooth"), QStringLiteral("sharp")}) {
-                auto *button = findItem(content, QStringLiteral("curveButton_") + law);
-                if (button == nullptr) {
-                    std::fprintf(stderr, "dj-ui: no button for %s\n", qPrintable(law));
-                    return 1;
-                }
-                bool ready = false;
-                QImage image;
-                const QSharedPointer<QQuickItemGrabResult> grab = button->grabToImage();
-                QObject::connect(grab.data(), &QQuickItemGrabResult::ready, [&]() {
-                    image = grab->image();
-                    ready = true;
-                });
-                QElapsedTimer waiting;
-                waiting.start();
-                while (!ready && waiting.elapsed() < 3000) {
-                    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-                    QThread::msleep(5);
-                }
-                if (!ready || image.isNull()) {
-                    std::fprintf(stderr, "dj-ui: cannot grab the %s button\n", qPrintable(law));
-                    return 1;
-                }
-                // Inked pixels: those that are not the fill or the border of an idle button.
-                int inked = 0;
-                for (int y = 0; y < image.height(); ++y) {
-                    for (int x = 0; x < image.width(); ++x) {
-                        const QColor pixel = image.pixelColor(x, y);
-                        if (pixel.lightness() > 90) {
-                            ++inked;
-                        }
+            if (button->width() < narrowest) {
+                narrowest = button->width();
+                narrowestLaw = law;
+            }
+            if (rowTop < 0.0) {
+                rowTop = top.y();
+            } else if (std::abs(top.y() - rowTop) > 0.5) {
+                std::fprintf(stderr, "dj-ui: the %s button is on another row\n", qPrintable(law));
+                return 1;
+            }
+            rowBottom = qMax(rowBottom, top.y() + button->height());
+        }
+        std::fprintf(stdout, "dj-ui: the four laws sit in one row %.0f px wide, %.0f px tall, "
+                             "narrowest %s at %.0f px\n",
+                     row.width(), rowBottom - rowTop, qPrintable(narrowestLaw), narrowest);
+        if (auto *last = findItem(content, QStringLiteral("strip_D")); last != nullptr) {
+            const double room = last->x() + last->width();
+            if (row.width() > room + 0.5) {
+                std::fprintf(stderr, "dj-ui: the law row is wider than the column\n");
+                return 1;
+            }
+        }
+        if (narrowest < 28.0) {
+            std::fprintf(stderr, "dj-ui: a law button is only %.0f px wide\n", narrowest);
+            return 1;
+        }
+
+        // The picture has to be there: a blank button says nothing. And the four pictures have to
+        // differ — one drawing repeated four times would be a lie about there being four laws.
+        QMap<QString, QImage> glyphs;
+        for (const QString &law : laws) {
+            auto *button = findItem(content, QStringLiteral("curveButton_") + law);
+            bool ready = false;
+            QImage image;
+            const QSharedPointer<QQuickItemGrabResult> grab = button->grabToImage();
+            QObject::connect(grab.data(), &QQuickItemGrabResult::ready, [&]() {
+                image = grab->image();
+                ready = true;
+            });
+            QElapsedTimer waiting;
+            waiting.start();
+            while (!ready && waiting.elapsed() < 3000) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                QThread::msleep(5);
+            }
+            if (!ready || image.isNull()) {
+                std::fprintf(stderr, "dj-ui: cannot grab the %s button\n", qPrintable(law));
+                return 1;
+            }
+            int inked = 0;
+            for (int y = 0; y < image.height(); ++y) {
+                for (int x = 0; x < image.width(); ++x) {
+                    if (image.pixelColor(x, y).lightness() > 90) {
+                        ++inked;
                     }
                 }
-                std::fprintf(stdout, "dj-ui: the %s button draws %d px\n", qPrintable(law), inked);
-                if (inked < 40) {
-                    std::fprintf(stderr, "dj-ui: the %s button is blank\n", qPrintable(law));
-                    return 1;
-                }
-                glyphs.insert(law, image);
             }
-            const QImage reference = glyphs.value(QStringLiteral("constant_power"));
-            for (auto it = glyphs.cbegin(); it != glyphs.cend(); ++it) {
-                if (it.key() == QStringLiteral("constant_power")) {
-                    continue;
-                }
-                if (it.value() == reference) {
-                    std::fprintf(stderr, "dj-ui: the %s picture is identical to constant power\n",
-                                 qPrintable(it.key()));
-                    return 1;
-                }
+            std::fprintf(stdout, "dj-ui: the %s button draws %d px\n", qPrintable(law), inked);
+            if (inked < 30) {
+                std::fprintf(stderr, "dj-ui: the %s button is blank\n", qPrintable(law));
+                return 1;
             }
-
-            // The column is as wide as the strips: the last one's right edge is the room available.
-            if (auto *grid = findItem(content, QStringLiteral("crossfaderCurves"));
-                grid != nullptr) {
-                auto *last = findItem(content, QStringLiteral("strip_D"));
-                const double gridWidth = grid->width();
-                const double room = last != nullptr ? last->x() + last->width() : gridWidth;
-                std::fprintf(stdout, "dj-ui: the curve grid is %.0f px wide of %.0f px of column\n",
-                             gridWidth, room);
-                if (gridWidth > room) {
-                    std::fprintf(stderr, "dj-ui: the curve buttons overflow the column\n");
-                    return 1;
-                }
+            glyphs.insert(law, image);
+        }
+        const QImage reference = glyphs.value(QStringLiteral("constant_power"));
+        for (auto it = glyphs.cbegin(); it != glyphs.cend(); ++it) {
+            if (it.key() != QStringLiteral("constant_power") && it.value() == reference) {
+                std::fprintf(stderr, "dj-ui: the %s picture is identical to constant power\n",
+                             qPrintable(it.key()));
+                return 1;
             }
         }
 

@@ -144,14 +144,14 @@ Pane {
             Layout.preferredHeight: 30
         }
 
-        // The law in force, as four buttons, each showing its own curve. The picture is the point:
-        // the shapes differ at a glance, the names do not. Two columns rather than four so the
-        // buttons can be the size a hand can hit inside a strip-width column.
-        Grid {
+        // The law in force, as four buttons in one row, each showing its own curve. The picture is
+        // the point: the shapes differ at a glance, the names do not. One row, not two: vertical room
+        // belongs to the strips and the crossfader.
+        RowLayout {
             id: curveRow
             objectName: "crossfaderCurves"
-            Layout.alignment: Qt.AlignHCenter
-            columns: 2
+            Layout.fillWidth: true
+            Layout.preferredHeight: 32
             spacing: 4
 
             readonly property string current: Bridge.snapshot.crossfader_curve !== undefined
@@ -169,8 +169,9 @@ Pane {
                     required property var modelData
                     objectName: "curveButton_" + modelData.law
                     readonly property bool lit: curveRow.current === modelData.law
-                    width: 64
-                    height: 32
+                    // The four share the column's width; the height stays the one a hand can hit.
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 32
                     radius: 2
                     color: lit ? UiSettings.themePanel : UiSettings.themeSurface
                     border.width: 1
