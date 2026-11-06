@@ -520,6 +520,35 @@ int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socket
                 }
                 const double roughness = compared > 0 ? total / compared : 0.0;
                 std::fprintf(stdout, "dj-ui: overview roughness %.2f px\n", roughness);
+
+                // A zoomed view must keep its detail: if the smoothed outline were used there too,
+                // the bars would be as flat as the overview and a beat would have no edge.
+                const QVariantList zoomed = waveform.profile(1200, 0.3, 0.1);
+                double zoomTotal = 0.0;
+                int zoomCompared = 0;
+                for (int index = 1; index + 1 < zoomed.size(); ++index) {
+                    if (zoomed.at(index).toMap().value(QStringLiteral("outside")).toBool()) {
+                        continue;
+                    }
+                    const double left = zoomed.at(index - 1).toMap()
+                                            .value(QStringLiteral("amplitude")).toDouble();
+                    const double right = zoomed.at(index + 1).toMap()
+                                             .value(QStringLiteral("amplitude")).toDouble();
+                    const double here = zoomed.at(index).toMap()
+                                            .value(QStringLiteral("amplitude")).toDouble();
+                    zoomTotal += qAbs(here - 0.5 * (left + right)) * 80.0;
+                    ++zoomCompared;
+                }
+                const double zoomRoughness = zoomCompared > 0 ? zoomTotal / zoomCompared : 0.0;
+                std::fprintf(stdout, "dj-ui: zoomed roughness %.2f px (overview %.2f)\n",
+                             zoomRoughness, roughness);
+                if (expectSpread && !(zoomRoughness > roughness)) {
+                    failure = QStringLiteral("the zoom is as flat as the overview: %.2f against %.2f px")
+                                  .arg(zoomRoughness, 0, 'f', 2)
+                                  .arg(roughness, 0, 'f', 2);
+                    loop.quit();
+                    return;
+                }
                 if (expectSpread && roughness > 1.0) {
                     failure = QStringLiteral("the overview is jagged: %.2f px between neighbours")
                                   .arg(roughness);

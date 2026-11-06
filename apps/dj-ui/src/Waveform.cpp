@@ -196,9 +196,22 @@ std::vector<Waveform::Bar> Waveform::bars(int columns, double windowStart, doubl
     const int coveredTo = qBound(0, int(std::ceil((windowStart + span) * total)), total);
     m_lastCovered = qMax(0, coveredTo - coveredFrom);
     const double columnsPerBar = double(m_lastCovered) / double(columns);
-    const double *ramp = m_peakRamps.empty()
-        ? nullptr
-        : m_peakRamps.at(std::size_t(rampForZoom(columnsPerBar))).data();
+
+    // How much time one bar stands for. Zoomed in, a bar is a few milliseconds of music and a drum
+    // hit has to stay a spike: averaging over the neighbourhood would flatten exactly the transients
+    // a person is looking for. Zoomed out, a bar is a large slice and the outline needs smoothing or
+    // it grains. So the choice is made in seconds, not in columns — seconds are what a beat lives in.
+    const double trackSeconds = m_framesPerBucket > 0 && m_sampleRate > 0
+        ? double(m_raw.size()) * double(m_framesPerBucket) / double(m_sampleRate)
+        : 0.0;
+    const double barSeconds = trackSeconds > 0.0 ? span * trackSeconds / double(columns) : 0.0;
+    // The whole track is always smoothed: that is the view where a grain of one pixel per bar is
+    // noise rather than music. Zooms are sharp unless a bar still covers a long slice of time.
+    const bool wholeTrack = span >= 0.9;
+    const bool smooth = wholeTrack || barSeconds > 0.2;
+    const double *ramp = (smooth && !m_peakRamps.empty())
+        ? m_peakRamps.at(std::size_t(rampForZoom(columnsPerBar))).data()
+        : nullptr;
 
     int previous = coveredFrom;
     for (int bar = 0; bar < columns; ++bar) {
@@ -257,6 +270,16 @@ std::vector<Waveform::Bar> Waveform::bars(int columns, double windowStart, doubl
                 ++rampSeen;
             }
             height = rampSeen > 0 ? (rampSum / rampSeen) / m_maxAmplitude : 0.0;
+        } else if (m_maxAmplitude > 0.0) {
+            // Sharp: the loudest column in the bar, untouched. A hit stays as tall as it is.
+            double peak = 0.0;
+            int seen = 0;
+            for (int index = first; index <= last && index < total; ++index) {
+                peak = qMax(peak, qMax(qAbs(double(m_raw[std::size_t(index)].minimum)),
+                                       qAbs(double(m_raw[std::size_t(index)].maximum))));
+                ++seen;
+            }
+            height = seen > 0 ? peak / m_maxAmplitude : 0.0;
         }
 
         Bar entry;
