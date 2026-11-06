@@ -75,10 +75,16 @@ case "${1:-}" in
     # covers loading and not only transport.
     headless_bin="${CARGO_TARGET_DIR:-$HOME/.cache/dj-platform-target}/debug/dj-headless"
     fixture="$run_dir/track.wav"
+    second="$run_dir/track-b.wav"
     if [ -x "$headless_bin" ]; then
       "$headless_bin" sine --frames 144000 --rate 48000 --out "$fixture" >/dev/null
+      # A different length for deck B: two decks must not share one envelope.
+      "$headless_bin" sine --frames 288000 --rate 48000 --out "$second" >/dev/null
     fi
-    if [ -f "$fixture" ]; then
+    if [ -f "$fixture" ] && [ -f "$second" ]; then
+      QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --self-check \
+        --load "$fixture" --load-b "$second"
+    elif [ -f "$fixture" ]; then
       QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --self-check \
         --load "$fixture"
     else

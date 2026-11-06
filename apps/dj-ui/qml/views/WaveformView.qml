@@ -19,8 +19,12 @@ Item {
     property real zoomStart: 0.0
     property real zoomSpan: 1.0
     // Columns drawn per pixel before the envelope runs out of detail.
-    readonly property real columnsPerPixel: (Waveform.buckets * zoomSpan) / Math.max(1, width)
-    readonly property bool atEnvelopeLimit: columnsPerPixel < 1.0 && Waveform.buckets > 0
+    readonly property real columnsPerPixel: (envelope.buckets * zoomSpan) / Math.max(1, width)
+    readonly property bool atEnvelopeLimit: columnsPerPixel < 1.0 && envelope.buckets > 0
+
+    // This deck's envelope, and only this deck's: each view owns one, so loading into A cannot
+    // repaint B.
+    WaveformEnvelope { id: envelope }
 
     readonly property var waveform: deckState !== undefined && deckState.waveform !== undefined
                                     ? deckState.waveform : null
@@ -74,16 +78,16 @@ Item {
         const reference = view.waveform !== null && view.waveform.path !== undefined
                           ? String(view.waveform.path) : "";
         if (reference.length === 0) {
-            if (Waveform.buckets > 0) {
-                Waveform.clear();
+            if (envelope.buckets > 0) {
+                envelope.clear();
             }
             return;
         }
-        if (Waveform.source === reference) {
+        if (envelope.source === reference) {
             return;
         }
-        if (!Waveform.load(reference)) {
-            console.warn("waveform:", Waveform.error);
+        if (!envelope.load(reference)) {
+            console.warn("waveform:", envelope.error);
         }
     }
 
@@ -112,7 +116,7 @@ Item {
                 context.lineTo(width, middle);
                 context.stroke();
 
-                const total = Waveform.buckets;
+                const total = envelope.buckets;
                 if (total === 0 || width <= 0) {
                     return;
                 }
@@ -131,7 +135,7 @@ Item {
                     let low = 0.0;
                     let high = 0.0;
                     for (let index = start; index < Math.min(start + group, lastColumn); ++index) {
-                        const column = Waveform.columns[index];
+                        const column = envelope.columns[index];
                         if (column === undefined) {
                             continue;
                         }
@@ -189,7 +193,7 @@ Item {
             }
 
             Connections {
-                target: Waveform
+                target: envelope
                 function onChanged() { canvas.requestPaint() }
             }
             Connections {
@@ -215,8 +219,8 @@ Item {
 
         Label {
             anchors.centerIn: parent
-            visible: Waveform.buckets === 0
-            text: Waveform.error.length > 0 ? Waveform.error : qsTr("no waveform")
+            visible: envelope.buckets === 0
+            text: envelope.error.length > 0 ? envelope.error : qsTr("no waveform")
             color: "#5b636d"
             font.pixelSize: 11
         }

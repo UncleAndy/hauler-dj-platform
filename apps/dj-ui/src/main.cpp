@@ -100,7 +100,7 @@ bool deckIsPlaying(const QVariantMap &snapshot, const QString &deck)
 // "applied at sample N", and a snapshot that then reports the deck as playing. The UI must never
 // assume either.
 int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socketPath,
-                 int timeoutMs, const QString &loadPath)
+                 int timeoutMs, const QString &loadPath, const QString &loadSecondPath)
 {
     QElapsedTimer elapsed;
     elapsed.start();
@@ -151,7 +151,7 @@ int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socket
 
     // A stage machine, because the acceptance names two controls: Play and Cue, plus the load
     // that makes a deck worth playing.
-    enum Stage { SendingLoad, SendingPlay, SendingSetCue, SendingJumpCue, Done };
+    enum Stage { SendingLoad, SendingLoadSecond, SendingPlay, SendingSetCue, SendingJumpCue, Done };
     auto stage = loadPath.isEmpty() ? SendingPlay : SendingLoad;
     QString loadTitle;
     bool sawCue = false;
@@ -216,6 +216,52 @@ int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socket
                          "of %.0f frames\n",
                          waveform.buckets(), waveform.framesPerBucket(), waveform.sampleRate(),
                          covered, duration);
+            if (!loadSecondPath.isEmpty()) {
+                stage = SendingLoadSecond;
+                commandId = bridge.load(QStringLiteral("B"), loadSecondPath);
+                std::fprintf(stdout, "dj-ui: sent Load(B) as command %d\n", commandId);
+                sawAck = false;
+                ackApplied = false;
+                ackRejected = false;
+                return;
+            }
+            stage = SendingPlay;
+            commandId = bridge.play(QStringLiteral("A"), true);
+            std::fprintf(stdout, "dj-ui: sent Play(A) as command %d\n", commandId);
+            sawAck = false;
+            ackApplied = false;
+            ackRejected = false;
+            return;
+        }
+        case SendingLoadSecond: {
+            // Two decks, two envelopes. A shared reader made deck B paint deck A's track; this is
+            // the check that would have caught it.
+            const QVariantMap deckB = deckById(snapshot, QStringLiteral("B"));
+            if (deckB.value(QStringLiteral("load")).toString() != QStringLiteral("Ready")) {
+                return;
+            }
+            const QVariantMap reference = deckB.value(QStringLiteral("waveform")).toMap();
+            if (reference.isEmpty()) {
+                return;
+            }
+            Waveform second;
+            if (!second.load(reference.value(QStringLiteral("path")).toString())) {
+                failure = second.error();
+                loop.quit();
+                return;
+            }
+            const int columnsA = waveform.buckets();
+            const int columnsB = second.buckets();
+            if (columnsA <= 0 || columnsB <= 0 || columnsA == columnsB) {
+                failure = QStringLiteral("envelopes are not independent: A=%1 B=%2")
+                              .arg(columnsA)
+                              .arg(columnsB);
+                loop.quit();
+                return;
+            }
+            std::fprintf(stdout,
+                         "dj-ui: two envelopes, kept apart: A %d columns, B %d columns\n",
+                         columnsA, columnsB);
             stage = SendingPlay;
             commandId = bridge.play(QStringLiteral("A"), true);
             std::fprintf(stdout, "dj-ui: sent Play(A) as command %d\n", commandId);
@@ -328,6 +374,10 @@ int main(int argc, char *argv[])
         QStringLiteral("dialog-check"),
         QStringLiteral("Check the in-app file browser without a display: the QML module loads and "
                        "lists a directory."));
+    const QCommandLineOption loadSecondOption(
+        QStringLiteral("load-b"),
+        QStringLiteral("With --self-check: load this file into deck B as well."),
+        QStringLiteral("path"));
     const QCommandLineOption loadOption(
         QStringLiteral("load"),
         QStringLiteral("With --self-check: load this file into deck A first."),
@@ -336,6 +386,7 @@ int main(int argc, char *argv[])
     parser.addOption(connectOption);
     parser.addOption(selfCheckOption);
     parser.addOption(loadOption);
+    parser.addOption(loadSecondOption);
     parser.addOption(dialogCheckOption);
     parser.process(app);
 
@@ -343,14 +394,18 @@ int main(int argc, char *argv[])
     qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "Bridge", bridge.get());
     FileBrowser browser;
     qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "Browser", &browser);
-    Waveform waveform;
-    qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "Waveform", &waveform);
+    // A type, not a singleton: two decks hold two envelopes, and a singleton made the second deck
+    // paint the first deck's waveform.
+    qmlRegisterType<Waveform>("DjPlatform.Ui", 1, 0, "WaveformEnvelope");
+    Waveform waveform; // used by the headless self-check
 
     if (parser.isSet(selfCheckOption)) {
         const QString path = parser.isSet(connectOption) ? parser.value(connectOption)
                                                          : defaultSocketPath();
-        return runSelfCheck(*bridge, waveform, path, 15000,
-                            parser.isSet(loadOption) ? parser.value(loadOption) : QString());
+        return runSelfCheck(
+            *bridge, waveform, path, 20000,
+            parser.isSet(loadOption) ? parser.value(loadOption) : QString(),
+            parser.isSet(loadSecondOption) ? parser.value(loadSecondOption) : QString());
     }
 
     if (parser.isSet(dialogCheckOption)) {
