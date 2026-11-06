@@ -512,7 +512,7 @@ int main(int argc, char *argv[])
     const QCommandLineOption bandColorOption(
         QStringLiteral("waveform-band-colors"),
         QStringLiteral("Three colours for bass, mids and treble, comma separated "
-                       "(default #c33a26,#7aca4c,#9b6bd8)."),
+                       "(default #ff2f1f,#35d13a,#2f6bff)."),
         QStringLiteral("low,mid,high"));
     const QCommandLineOption loadSecondOption(
         QStringLiteral("load-b"),
@@ -620,7 +620,8 @@ int main(int argc, char *argv[])
         int painted = 0;
         for (int x = 0; x < pixels.size() && x < width; ++x) {
             const QVariantMap pixel = pixels.at(x).toMap();
-            const double half = qAbs(pixel.value(QStringLiteral("max")).toDouble()) * middle;
+            const double half = qAbs(pixel.value(QStringLiteral("max")).toDouble())
+                / qMax(envelope.loudest(), 1e-6) * middle;
             if (half < 0.5) {
                 continue;
             }
@@ -635,28 +636,39 @@ int main(int argc, char *argv[])
         }
         // The numbers behind the picture: what a colour does globally is not visible by eye when
         // one band leads everywhere, and that is exactly the complaint to check for.
-        int hues[6] = {0, 0, 0, 0, 0, 0};
-        const char *names[6] = {"red", "orange", "yellow", "green", "blue", "violet"};
+        // Nine buckets, and "white" first: with the bands driving RGB directly, dense material
+        // legitimately comes out pale, and calling that "blue" because the blue channel is a shade
+        // higher would misreport the picture.
+        int hues[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+        const char *names[8] = {"white", "red", "orange", "yellow",
+                                "green", "cyan", "blue", "violet"};
         for (int x = 0; x < pixels.size() && x < width; ++x) {
             const QVariantMap pixel = pixels.at(x).toMap();
-            if (qAbs(pixel.value(QStringLiteral("max")).toDouble()) * middle < 0.5) {
+            if (qAbs(pixel.value(QStringLiteral("max")).toDouble()) / qMax(envelope.loudest(), 1e-6)
+                    * middle < 0.5) {
                 continue;
             }
             const QColor colour(pixel.value(QStringLiteral("rgb")).toString());
-            const int hue = int(colour.hsvHueF() * 360.0);
-            if (hue < 20 || hue >= 340) {
-                ++hues[0];
-            } else if (hue < 45) {
-                ++hues[1];
-            } else if (hue < 70) {
-                ++hues[2];
-            } else if (hue < 160) {
-                ++hues[3];
-            } else if (hue < 250) {
-                ++hues[4];
-            } else {
-                ++hues[5];
+            int bucket = 0;
+            if (colour.saturationF() > 0.15) {
+                const int hue = int(colour.hsvHueF() * 360.0);
+                if (hue < 20 || hue >= 340) {
+                    bucket = 1;
+                } else if (hue < 45) {
+                    bucket = 2;
+                } else if (hue < 70) {
+                    bucket = 3;
+                } else if (hue < 160) {
+                    bucket = 4;
+                } else if (hue < 210) {
+                    bucket = 5;
+                } else if (hue < 265) {
+                    bucket = 6;
+                } else {
+                    bucket = 7;
+                }
             }
+            ++hues[bucket];
         }
         std::fprintf(stdout, "dj-ui: wrote %s, %d of %d columns painted\n",
                      qPrintable(parts.at(1)), painted, width);
@@ -665,7 +677,7 @@ int main(int argc, char *argv[])
                      references.at(0).toDouble(), references.at(1).toDouble(),
                      references.at(2).toDouble());
         std::fprintf(stdout, "dj-ui: hues");
-        for (int index = 0; index < 6; ++index) {
+        for (int index = 0; index < 8; ++index) {
             if (hues[index] > 0) {
                 std::fprintf(stdout, " %s %d", names[index], hues[index]);
             }

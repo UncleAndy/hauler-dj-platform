@@ -29,10 +29,10 @@ pub struct Bucket {
 }
 
 /// Low band edge: everything below this counts as bass.
-pub const LOW_CUTOFF_HZ: f32 = 220.0;
+pub const LOW_CUTOFF_HZ: f32 = 250.0;
 
 /// High band edge: everything above this counts as treble.
-pub const HIGH_CUTOFF_HZ: f32 = 3_500.0;
+pub const HIGH_CUTOFF_HZ: f32 = 4_000.0;
 
 impl Bucket {
     /// Silence.

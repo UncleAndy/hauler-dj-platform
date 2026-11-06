@@ -52,6 +52,9 @@ public:
     // Shares of the column that the three bands claim, in [0, 1]; what the renderer mixes with.
     Q_INVOKABLE QVariantList reference() const;
 
+    // Loudest column of the track: it fills the strip, everything else scales against it.
+    Q_INVOKABLE double loudest() const { return m_loudest; }
+
     // Colors of the three bands, brightest red for bass, yellow for mids, bright blue for highs.
     void setPalette(const QColor &low, const QColor &mid, const QColor &high);
 
@@ -76,4 +79,5 @@ private:
     double m_bandReference[3] = {0.0, 0.0, 0.0};
     QColor m_palette[3];
     double m_bandGain[3] = {1.0, 1.0, 1.0};
+    double m_loudest = 1.0;
 };

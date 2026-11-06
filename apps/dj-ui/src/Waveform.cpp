@@ -60,7 +60,7 @@ bool Waveform::load(const QString &path)
     const QByteArray bytes = file.readAll();
     file.close();
 
-    if (bytes.size() < kHeaderBytes || std::memcmp(bytes.constData(), "DJWAVE06", 8) != 0) {
+    if (bytes.size() < kHeaderBytes || std::memcmp(bytes.constData(), "DJWAVE08", 8) != 0) {
         m_error = QStringLiteral("%1 is not a waveform file").arg(QFileInfo(path).fileName());
         emit changed();
         return false;
@@ -111,6 +111,13 @@ bool Waveform::load(const QString &path)
                                    {QStringLiteral("high"), treble}});
     }
 
+    double loudest = 0.0;
+    for (const QVariant &entry : columns) {
+        const QVariantMap column = entry.toMap();
+        loudest = qMax(loudest, qMax(qAbs(column.value(QStringLiteral("min")).toDouble()),
+                                     qAbs(column.value(QStringLiteral("max")).toDouble())));
+    }
+    m_loudest = qMax(loudest, 1e-6);
     m_columns = columns;
     m_framesPerBucket = static_cast<int>(framesPerBucket);
     m_sampleRate = static_cast<int>(sampleRate);
@@ -232,51 +239,37 @@ void Waveform::setPalette(const QColor &low, const QColor &mid, const QColor &hi
 
 QColor Waveform::pixelColor(double loud, double mid, double high) const
 {
-    const double levels[3] = {qMax(0.0, loud), qMax(0.0, mid), qMax(0.0, high)};
-    // Compare each band with its own usual level for this track, not with zero. A band that simply
-    // spans more octaves is loud everywhere, so measuring against zero makes whichever band is
-    // widest win the whole track: first the mids, then the bass, both times one flat colour.
-    // What makes a kick red is that the bass is louder THAN ITSELF usually is.
-    double deviations[3] = {0.0, 0.0, 0.0};
-    double rawTotal = 0.0;
+    // The three bands drive the red, green and blue channels directly, each scaled by its own
+    // loudest block in this track. That is the scheme the reference describes, and it is the only
+    // one of the five I tried that cannot collapse: no band is chosen as "the" colour, so no band
+    // can own the picture, and mixtures come out where music has them — bass plus mids is orange,
+    // mids plus treble is cyan, everything at once is white.
+    const double levels[3] = {qMax(0.0, loud) * m_bandGain[0], qMax(0.0, mid) * m_bandGain[1],
+                              qMax(0.0, high) * m_bandGain[2]};
+    // Against each band's own usual level in this track, so a band that spans more octaves cannot
+    // own a channel by being loud everywhere.
+    double relative[3] = {0.0, 0.0, 0.0};
     for (int band = 0; band < 3; ++band) {
-        rawTotal += levels[band];
+        relative[band] = levels[band] / qMax(m_bandReference[band], 1e-6);
     }
-    if (rawTotal <= 1e-6) {
-        return m_palette[1];
+    // The strongest band fills its channel completely and the others follow in proportion, so a
+    // kick is red with an orange edge, a hi-hat is blue, and dense material — where all three rise
+    // together — comes out pale, as the reference says it should.
+    const double strongest = qMax(relative[0], qMax(relative[1], relative[2]));
+    if (strongest <= 1e-6) {
+        return QColor(0, 0, 0);
     }
-    for (int band = 0; band < 3; ++band) {
-        const double usual = qMax(m_bandReference[band], 1e-6);
-        // Gain 1.0 keeps the measurement honest; the ceiling stops one huge hit from pinning a band.
-        const double relative = levels[band] * m_bandGain[band] / usual;
-        deviations[band] = qMax(0.0, qMin(8.0, relative - 1.0));
-    }
-    double leader = qMax(deviations[0], qMax(deviations[1], deviations[2]));
-    if (leader <= 1e-6) {
-        // Nothing stands out from the track's own average: fall back to the plain loudness mix so
-        // the column still carries information instead of turning grey.
-        for (int band = 0; band < 3; ++band) {
-            deviations[band] = levels[band];
-        }
-        leader = qMax(deviations[0], qMax(deviations[1], deviations[2]));
-    }
-    double weights[3] = {0.0, 0.0, 0.0};
-    double total = 0.0;
-    for (int band = 0; band < 3; ++band) {
-        // The leader contributes 1 — full brightness of its colour — the others in proportion to
-        // how much they rise above their own usual level against the leader, as the owner asked.
-        weights[band] = deviations[band] / leader;
-        total += weights[band];
-    }
+    // Each band adds its own colour in proportion to its share, so bass plus mids mixes into
+    // orange, mids plus highs into cyan, and a passage where all three are up turns pale — the
+    // additive channels of the reference, with the three colours still configurable.
     double red = 0.0;
     double green = 0.0;
     double blue = 0.0;
     for (int band = 0; band < 3; ++band) {
-        const QColor &colour = m_palette[band];
-        const double share = weights[band] / total;
-        red += colour.redF() * share;
-        green += colour.greenF() * share;
-        blue += colour.blueF() * share;
+        const double share = qBound(0.0, relative[band] / strongest, 1.0);
+        red += m_palette[band].redF() * share;
+        green += m_palette[band].greenF() * share;
+        blue += m_palette[band].blueF() * share;
     }
     return QColor::fromRgbF(qBound(0.0, red, 1.0), qBound(0.0, green, 1.0), qBound(0.0, blue, 1.0));
 }

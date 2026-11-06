@@ -44,9 +44,9 @@ signals:
 private:
     QString m_waveformOutsideColor = QStringLiteral("#101317");
     QString m_waveformStyle = QStringLiteral("coloured");
-    // Bright red, bright yellow, bright blue: the three references the owner asked for, so the
-    // hue of a column is decided by which band is loudest and the rest tint it.
-    QString m_waveformLowColor = QStringLiteral("#ff3a1e");
-    QString m_waveformMidColor = QStringLiteral("#ffd21a");
+    // Red, green and blue channels: bass drives red, mids green, highs blue. Mixed additively, so
+    // bass with mids reads orange and all three at once read pale.
+    QString m_waveformLowColor = QStringLiteral("#ff2f1f");
+    QString m_waveformMidColor = QStringLiteral("#35d13a");
     QString m_waveformHighColor = QStringLiteral("#2f6bff");
 };

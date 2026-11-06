@@ -154,7 +154,10 @@ Item {
                     // measured instead of argued about.
                     for (let x = 0; x < pixels.length; ++x) {
                         const pixel = pixels[x];
-                        const half = Math.abs(pixel.max) * middle;
+                        // The loudest column fills the strip; the rest scale against it, so a
+                        // quiet track still reads as a waveform instead of a thin line.
+                        const scale = envelope.loudest > 0.0 ? 1.0 / envelope.loudest : 1.0;
+                        const half = Math.abs(pixel.max) * scale * middle;
                         if (half < 0.5) {
                             continue;
                         }
