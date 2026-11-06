@@ -212,8 +212,10 @@ std::vector<Waveform::Bar> Waveform::bars(int columns, double windowStart, doubl
     // step of the wheel changes the amount of smoothing instead of flipping it on at one zoom.
     // Never zero. At the deepest zoom a little blend is what keeps the strip from turning into a
     // comb of repeated envelope columns; at the whole track it is full.
-    const double smoothWeight = qBound(0.5, 0.5 + 0.5 * (span - 0.05) / 0.85, 1.0);
-    const int level = rampForZoom(columnsPerBar);
+    const double zoom = span > 0.0 ? 1.0 / span : 1.0;
+    const double mediumWeight = qBound(0.5, 0.5 + 0.5 * (span - 0.05) / 0.85, 1.0);
+    const double smoothWeight = qMin(1.0, mediumWeight + 0.25 * (smoothingHeat(zoom) - 1.0));
+    const int level = rampForZoom(columnsPerBar, zoom);
     const double *ramp = (!m_peakRamps.empty() && smoothWeight > 0.0)
         ? m_peakRamps.at(std::size_t(level)).data()
         : nullptr;
@@ -440,24 +442,31 @@ std::vector<std::vector<double>> Waveform::peakRamps() const
     return ramps;
 }
 
-int Waveform::rampForZoom(double columnsPerBar) const
+int Waveform::rampForZoom(double columnsPerBar, double zoom) const
 {
-    // Zoomed in (a bar is one column or less) there is nothing to smooth: transients must stay
-    // needles. Zoomed out, the radius grows with the columns per bar, chosen from the fixed set.
+    // Up to fifteen times the radius is the medium one worked out earlier: eight bars' worth of
+    // columns, so a bar reads the trend around it instead of the jagged edge of its own few columns.
+    // Past fifteen the strip is showing fewer and fewer envelope columns per bar — the same column
+    // repeats across several bars and reads as a comb — so the smoothing grows with the zoom instead
+    // of shrinking with the bar.
     static const int radii[] = {1, 4, 8, 16, 32, 64};
-    if (columnsPerBar <= 1.5) {
-        // One bar is one column or less: blend the neighbours only, so the steps between envelope
-        // columns read as a slope rather than as a comb of equal-height runs.
-        return 0;
-    }
-    // Eight bars' worth of columns: a bar then reads the trend across its neighbourhood instead of
-    // the jagged edge of its own few columns. Pink noise — statistically the steadiest material there
-    // is — used to wander by ten pixels on the overview; that is the residual wave the eye catches.
-    const double wanted = columnsPerBar * 8.0;
-    for (int index = 1; index < int(sizeof(radii) / sizeof(radii[0])); ++index) {
+    const double wanted = qMax(1.0, columnsPerBar * 8.0 * smoothingHeat(zoom));
+    for (int index = 0; index < int(sizeof(radii) / sizeof(radii[0])); ++index) {
         if (radii[index] >= wanted) {
             return index;
         }
     }
     return int(sizeof(radii) / sizeof(radii[0])) - 1;
+}
+
+double Waveform::smoothingHeat(double zoom)
+{
+    // How much stronger than the medium setting the smoothing is. One up to 15x, then rising with the
+    // logarithm of the zoom so that 15x, 100x and 400x are visibly different steps rather than one
+    // cliff, and four times the medium radius at the deepest zoom.
+    if (!(zoom > 15.0)) {
+        return 1.0;
+    }
+    const double span = std::log(zoom / 15.0) / std::log(400.0 / 15.0);
+    return 1.0 + 3.0 * qBound(0.0, span, 1.0);
 }

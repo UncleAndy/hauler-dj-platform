@@ -97,7 +97,10 @@ private:
 
     // Peak per envelope column, smoothed with a fixed set of radii; one ramp per zoom level.
     std::vector<std::vector<double>> peakRamps() const;
-    int rampForZoom(double columnsPerBar) const;
+    int rampForZoom(double columnsPerBar, double zoom) const;
+
+    // 1.0 up to 15x, then up to 4.0 at 400x: how much stronger than "medium" the smoothing is.
+    static double smoothingHeat(double zoom);
 
     QVariantList m_columns;
     std::vector<Column> m_raw;
