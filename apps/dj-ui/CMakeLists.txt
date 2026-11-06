@@ -35,6 +35,8 @@ qt_add_qml_module(dj-ui
         qml/views/TrackOverview.qml
         qml/mixer/Crossfader.qml
         qml/mixer/CurveGlyph.qml
+        qml/mixer/MasterKnob.qml
+        qml/mixer/MasterMeter.qml
         qml/mixer/MixerPanel.qml
         qml/mixer/GainKnob.qml
         qml/mixer/LevelMeter.qml

@@ -152,6 +152,11 @@ impl CrossfaderCurve {
     }
 }
 
+/// One when the field is absent, so an older snapshot reads as unity gain rather than as silence.
+fn unity() -> f32 {
+    1.0
+}
+
 /// One command from a client to the engine.
 ///
 /// Every state change of the live engine goes through one of these (DJP-ARCH-001).
@@ -217,6 +222,11 @@ pub enum DjCommand {
         /// The law to use from the next block on.
         curve: CrossfaderCurve,
     },
+    /// Master output gain in linear units (1.0 = unity); the knob at the top of the mixer.
+    SetMasterGain {
+        /// Linear gain.
+        linear_gain: f32,
+    },
     /// Activate, move or clear a loop.
     SetLoop {
         /// Target deck.
@@ -242,7 +252,8 @@ impl DjCommand {
             DjCommand::SetTempoRatio { .. }
             | DjCommand::SetChannelGain { .. }
             | DjCommand::SetCrossfader { .. }
-            | DjCommand::SetCrossfaderCurve { .. } => false,
+            | DjCommand::SetCrossfaderCurve { .. }
+            | DjCommand::SetMasterGain { .. } => false,
         }
     }
 
@@ -271,6 +282,7 @@ impl DjCommand {
             DjCommand::SetChannelGain { .. } => Some(CoalesceKey::ChannelGain),
             DjCommand::SetCrossfader { .. } => Some(CoalesceKey::Crossfader),
             DjCommand::SetCrossfaderCurve { .. } => Some(CoalesceKey::CrossfaderCurve),
+            DjCommand::SetMasterGain { .. } => Some(CoalesceKey::MasterGain),
             _ => None,
         }
     }
@@ -287,6 +299,8 @@ pub enum CoalesceKey {
     Crossfader,
     /// Crossfader law: only the last choice matters.
     CrossfaderCurve,
+    /// Master gain: only the last value matters.
+    MasterGain,
 }
 
 impl CoalesceKey {
@@ -300,6 +314,7 @@ impl CoalesceKey {
             CoalesceKey::ChannelGain => 1,
             CoalesceKey::Crossfader => 2,
             CoalesceKey::CrossfaderCurve => 3,
+            CoalesceKey::MasterGain => 4,
         }
     }
 }
@@ -434,7 +449,7 @@ pub struct TrackMeta {
 }
 
 /// Peak levels for meters, linear 0.0 … 1.0.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct Levels {
     /// Left channel peak.
     pub peak_left: f32,
@@ -523,6 +538,12 @@ pub struct Snapshot {
     /// Crossfader law in force at the moment of publication.
     #[serde(default)]
     pub crossfader_curve: CrossfaderCurve,
+    /// Master output peak since the previous snapshot, after gain and the limiter.
+    #[serde(default)]
+    pub master: Levels,
+    /// Master gain in force, linear.
+    #[serde(default = "unity")]
+    pub master_gain: f32,
     /// One entry per deck.
     pub decks: Vec<DeckSnapshot>,
 }

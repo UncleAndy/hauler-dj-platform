@@ -149,6 +149,10 @@ case "${1:-}" in
     # it. A waveform that never arrives looks exactly like a track that never loaded.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --strip-check \
       --load "$fixture"
+    # The master knob and meter: the knob must move the published gain, the meter must see the
+    # signal, and the knob must sit above a shorter meter in the middle of the mixer.
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --master-check \
+        --load "$fixture"
     # Every crossfader law must reach the engine and come back in the snapshot, and the selector must
     # show the one in force — a selector that lights up on the click is a selector that lies.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --curve-check

@@ -214,6 +214,11 @@ impl Deck {
     }
 
     /// Preparation state.
+    /// True while a source is attached: what `eject` clears and what makes a deck playable.
+    pub fn has_source(&self) -> bool {
+        self.source.is_some()
+    }
+
     pub fn load_state(&self) -> &DeckLoad {
         &self.load
     }

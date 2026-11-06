@@ -380,6 +380,15 @@ int BridgeClient::setCrossfader(double position)
     return sendCommand(QString(), command);
 }
 
+int BridgeClient::setMasterGain(double gain)
+{
+    QJsonObject options;
+    options.insert(QStringLiteral("linear_gain"), gain);
+    QJsonObject command;
+    command.insert(QStringLiteral("SetMasterGain"), options);
+    return sendCommand(QStringLiteral("mixer"), command);
+}
+
 int BridgeClient::setCrossfaderCurve(const QString &curve)
 {
     QJsonObject options;

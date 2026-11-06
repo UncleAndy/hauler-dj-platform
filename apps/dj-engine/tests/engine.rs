@@ -6,7 +6,7 @@
 
 use dj_deck::Deck;
 use dj_domain::{
-    AckStatus, CueAction, DeckId, DjCommand, RejectReason, ScheduledCommand, SourceFrame,
+    AckStatus, CueAction, DeckId, DeckLoad, DjCommand, RejectReason, ScheduledCommand, SourceFrame,
 };
 use dj_engine::Routed;
 use dj_engine::{
@@ -669,6 +669,65 @@ fn an_eject_clears_the_deck_inside_the_block() {
         .unwrap_or_else(|| panic!("deck A"));
     assert_eq!(deck_a.snapshot().load, dj_domain::DeckLoad::Empty);
     assert!(deck_a.snapshot().track.is_none());
+}
+
+#[test]
+fn an_ejected_deck_reports_itself_empty() {
+    // The snapshot took the load state from the static section captured at attach, so an ejected deck
+    // kept saying "Ready" and the shell kept a track on screen that was gone. The state now travels
+    // through the cells, which is where a thing that changes belongs.
+    let mut decks = vec![deck_with_tone(DeckId::A, 48_000)];
+    let mut mixer = mixer_for(48_000);
+    let statics: Vec<DeckStatic> = decks
+        .iter()
+        .map(|deck| DeckStatic::from_snapshot(&deck.snapshot()))
+        .collect();
+    let cells = StateCells::new();
+    cells.publish(&decks, &mixer, 0);
+    assert_eq!(
+        cells.read(&statics, 48_000, 1, 1).decks[0].load,
+        DeckLoad::Ready
+    );
+
+    let ack = apply(
+        &mut decks,
+        &mut mixer,
+        &command(13, DjCommand::Eject { deck: DeckId::A }),
+        0,
+    );
+    assert!(matches!(ack.status, AckStatus::Applied { .. }));
+    cells.publish(&decks, &mixer, 0);
+    let published = cells.read(&statics, 48_000, 1, 2);
+    assert_eq!(published.decks[0].load, DeckLoad::Empty);
+    assert!(
+        published.decks[0].track.is_none(),
+        "an empty deck has no track"
+    );
+}
+
+#[test]
+fn a_master_gain_command_lands_in_the_published_gain() {
+    // The knob reads `master_gain` from the snapshot; a command that writes the mixer but publishes
+    // nothing makes the knob spring back, which is the same defect the channel gain had.
+    let mut decks = vec![deck_with_tone(DeckId::A, 48_000)];
+    let mut mixer = mixer_for(48_000);
+    let ack = apply(
+        &mut decks,
+        &mut mixer,
+        &command(11, DjCommand::SetMasterGain { linear_gain: 0.5 }),
+        0,
+    );
+    assert!(matches!(ack.status, AckStatus::Applied { .. }));
+    assert!((mixer.master_gain() - 0.5).abs() < 1e-6);
+
+    let cells = StateCells::new();
+    cells.publish(&decks, &mixer, 0);
+    let statics: Vec<DeckStatic> = decks
+        .iter()
+        .map(|deck| DeckStatic::from_snapshot(&deck.snapshot()))
+        .collect();
+    let published = cells.read(&statics, 48_000, 1, 1);
+    assert!((published.master_gain - 0.5).abs() < 1e-6);
 }
 
 #[test]

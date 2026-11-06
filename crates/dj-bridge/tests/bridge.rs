@@ -38,6 +38,8 @@ fn empty_snapshot(revision: u64) -> Snapshot {
         sample_rate: 48_000,
         crossfader: 0.5,
         crossfader_curve: dj_domain::CrossfaderCurve::default(),
+        master: dj_domain::Levels::default(),
+        master_gain: 1.0,
         decks: Vec::new(),
     }
 }
@@ -260,6 +262,8 @@ fn a_split_connection_writes_while_its_reader_is_blocked() {
         sample_rate: 48_000,
         crossfader: 0.5,
         crossfader_curve: dj_domain::CrossfaderCurve::default(),
+        master: dj_domain::Levels::default(),
+        master_gain: 1.0,
         decks: Vec::new(),
     }));
     writer

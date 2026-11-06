@@ -27,6 +27,9 @@ class UiSettings : public QObject
     Q_PROPERTY(QString themeAccentDim READ themeAccentDim CONSTANT)
     Q_PROPERTY(QString themeWarning READ themeWarning CONSTANT)
     Q_PROPERTY(QString themeDanger READ themeDanger CONSTANT)
+    Q_PROPERTY(QString themeMeterGreen READ themeMeterGreen CONSTANT)
+    Q_PROPERTY(QString themeMeterYellow READ themeMeterYellow CONSTANT)
+    Q_PROPERTY(QString themeMeterRed READ themeMeterRed CONSTANT)
     Q_PROPERTY(QString themeMarker READ themeMarker CONSTANT)
     Q_PROPERTY(QString themePlayhead READ themePlayhead CONSTANT)
     Q_PROPERTY(QString themeWaveBackground READ themeWaveBackground CONSTANT)
@@ -68,6 +71,11 @@ public:
     QString themeAccentDim() const { return QStringLiteral("#204070"); }
     QString themeWarning() const { return QStringLiteral("#e0a06a"); }
     QString themeDanger() const { return QStringLiteral("#e06a5a"); }
+    // The master meter is the only place in the shell with green and yellow, on purpose: they say
+    // "headroom, close, clipping" and nothing else in the window uses those words.
+    QString themeMeterGreen() const { return QStringLiteral("#3fbf5f"); }
+    QString themeMeterYellow() const { return QStringLiteral("#e0c020"); }
+    QString themeMeterRed() const { return QStringLiteral("#e05252"); }
     QString themeMarker() const { return QStringLiteral("#e2c07f"); }
     QString themePlayhead() const { return QStringLiteral("#f0f3f6"); }
     QString themeWaveBackground() const { return QStringLiteral("#141414"); }

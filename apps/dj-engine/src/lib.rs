@@ -107,6 +107,10 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
             mixer.set_curve(*curve);
             Ack::applied(id, at)
         }
+        DjCommand::SetMasterGain { linear_gain } => {
+            mixer.set_master_gain(*linear_gain);
+            Ack::applied(id, at)
+        }
         DjCommand::SetCrossfader { position } => {
             mixer.set_crossfader(*position);
             Ack::applied(id, at)
@@ -150,6 +154,11 @@ pub fn snapshot(
         sample_rate: rate,
         crossfader: mixer.crossfader(),
         crossfader_curve: mixer.curve(),
+        master: dj_domain::Levels {
+            peak_left: mixer.meters().master.peak,
+            peak_right: mixer.meters().master.peak,
+        },
+        master_gain: mixer.master_gain(),
         decks: decks.iter().map(|deck| deck.snapshot()).collect(),
     }
 }
@@ -224,6 +233,10 @@ impl DeckStatic {
 /// Per-deck scalar state, published without a lock.
 struct DeckCells {
     playing: AtomicBool,
+    // Whether a source is attached. This one belongs here, not in the static section: eject changes
+    // it, and a snapshot that kept saying "Ready" kept a track on screen that was no longer in the
+    // deck.
+    attached: AtomicBool,
     frame: AtomicU64,
     gain: AtomicU32,
     tempo: AtomicU64,
@@ -238,6 +251,7 @@ impl DeckCells {
     fn new() -> Self {
         Self {
             playing: AtomicBool::new(false),
+            attached: AtomicBool::new(false),
             frame: AtomicU64::new(0),
             gain: AtomicU32::new(1.0f32.to_bits()),
             tempo: AtomicU64::new(1.0f64.to_bits()),
@@ -280,6 +294,8 @@ pub struct StateCells {
     clock: AtomicU64,
     crossfader: AtomicU32,
     curve: AtomicU8,
+    master_peak: AtomicU32,
+    master_gain: AtomicU32,
     count: AtomicUsize,
     decks: [DeckCells; MAX_DECKS],
 }
@@ -297,6 +313,8 @@ impl StateCells {
             clock: AtomicU64::new(0),
             crossfader: AtomicU32::new(0.5f32.to_bits()),
             curve: AtomicU8::new(curve_index(CrossfaderCurve::default())),
+            master_peak: AtomicU32::new(0),
+            master_gain: AtomicU32::new(1.0f32.to_bits()),
             count: AtomicUsize::new(0),
             decks: std::array::from_fn(|_| DeckCells::new()),
         }
@@ -309,11 +327,16 @@ impl StateCells {
             .store(mixer.crossfader().to_bits(), Ordering::Relaxed);
         self.curve
             .store(curve_index(mixer.curve()), Ordering::Relaxed);
+        self.master_peak
+            .store(mixer.meters().master.peak.to_bits(), Ordering::Relaxed);
+        self.master_gain
+            .store(mixer.master_gain().to_bits(), Ordering::Relaxed);
         let count = decks.len().min(MAX_DECKS);
         self.count.store(count, Ordering::Release);
         for (index, deck) in decks.iter().take(MAX_DECKS).enumerate() {
             let cells = &self.decks[index];
             cells.playing.store(deck.is_playing(), Ordering::Relaxed);
+            cells.attached.store(deck.has_source(), Ordering::Relaxed);
             cells.frame.store(deck.position(), Ordering::Relaxed);
             cells.gain.store(deck.gain().to_bits(), Ordering::Relaxed);
             cells
@@ -352,21 +375,33 @@ impl StateCells {
         let mut decks = Vec::with_capacity(count);
         for (index, fixed) in statics.iter().take(count).enumerate() {
             let cells = &self.decks[index];
+            let attached = cells.attached.load(Ordering::Relaxed);
             let frame = cells.frame.load(Ordering::Relaxed);
-            let total = fixed.total_frames;
+            let total = if attached { fixed.total_frames } else { None };
+            // The state a client waits on is the loader's, and it only means anything while a source
+            // is attached: an ejected deck is empty however the last request ended.
+            let load = if attached {
+                fixed.load.clone()
+            } else {
+                DeckLoad::Empty
+            };
             let loop_start = cells.loop_start.load(Ordering::Relaxed);
             let loop_end = cells.loop_end.load(Ordering::Relaxed);
             decks.push(DeckSnapshot {
                 deck: fixed.deck,
-                load: fixed.load.clone(),
+                load,
                 playing: cells.playing.load(Ordering::Relaxed),
                 source_frame: SourceFrame(frame),
                 remaining_frames: total.map(|total| total.saturating_sub(frame)),
                 position_ratio: total
                     .filter(|total| *total > 0)
                     .map(|total| (frame as f32 / total as f32).clamp(0.0, 1.0)),
-                track: fixed.track.clone(),
-                waveform: fixed.waveform.clone(),
+                track: if attached { fixed.track.clone() } else { None },
+                waveform: if attached {
+                    fixed.waveform.clone()
+                } else {
+                    None
+                },
                 loop_region: (loop_start != EMPTY && loop_end != EMPTY).then_some(FrameRange {
                     start: SourceFrame(loop_start),
                     end: SourceFrame(loop_end),
@@ -395,6 +430,11 @@ impl StateCells {
             sample_rate: rate,
             crossfader: f32::from_bits(self.crossfader.load(Ordering::Relaxed)),
             crossfader_curve: curve_at(self.curve.load(Ordering::Relaxed)),
+            master: dj_domain::Levels {
+                peak_left: f32::from_bits(self.master_peak.load(Ordering::Relaxed)),
+                peak_right: f32::from_bits(self.master_peak.load(Ordering::Relaxed)),
+            },
+            master_gain: f32::from_bits(self.master_gain.load(Ordering::Relaxed)),
             decks,
         }
     }

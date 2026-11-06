@@ -174,7 +174,7 @@ impl Engine {
                 self.playing = enabled;
                 Some(Ack::applied(command_id, at_sample))
             }
-            DjCommand::SetCrossfaderCurve { .. } => {
+            DjCommand::SetCrossfaderCurve { .. } | DjCommand::SetMasterGain { .. } => {
                 Some(Ack::rejected(command_id, RejectReason::NotSupported))
             }
             DjCommand::SetChannelGain { linear_gain, .. } => {
@@ -236,8 +236,10 @@ impl Engine {
             audio_clock_samples: self.clock,
             sample_rate: self.sample_rate,
             crossfader: self.crossfader,
-            // The A01 renderer has no mixer: it plays one tone, so there is no law to choose.
+            // The A01 renderer has no mixer: it plays one tone, so there is no law or master gain.
             crossfader_curve: dj_domain::CrossfaderCurve::default(),
+            master: dj_domain::Levels::default(),
+            master_gain: 1.0,
             decks: vec![DeckSnapshot {
                 waveform: None,
                 deck: DeckId::A,

@@ -212,6 +212,11 @@ impl Mixer {
         self.curve = curve;
     }
 
+    /// Master gain in force, linear.
+    pub fn master_gain(&self) -> f32 {
+        self.master_gain
+    }
+
     /// Master gain, linear.
     pub fn set_master_gain(&mut self, gain: f32) {
         if gain.is_finite() {

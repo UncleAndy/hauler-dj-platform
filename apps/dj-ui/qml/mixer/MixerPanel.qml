@@ -14,6 +14,16 @@ Pane {
     readonly property var decks: Bridge.snapshot.decks !== undefined ? Bridge.snapshot.decks : []
     // The order is a setting (LayoutState.channelOrder); C first by default, as the owner asked.
     readonly property var order: LayoutState.channelOrder.split("")
+    // Two halves with the master between them: the master belongs in the middle of the mixer.
+    readonly property int half: Math.floor(order.length / 2)
+    readonly property var leftStrips: order.slice(0, half)
+    readonly property var rightStrips: order.slice(half)
+    // What the engine published for the master bus.
+    readonly property real masterPeak: Bridge.snapshot.master !== undefined
+                                       ? Math.max(Bridge.snapshot.master.peak_left,
+                                                  Bridge.snapshot.master.peak_right) : 0.0
+    readonly property real masterGain: Bridge.snapshot.master_gain !== undefined
+                                       ? Bridge.snapshot.master_gain : 1.0
 
     function deckOf(id) {
         for (let index = 0; index < mixer.decks.length; ++index) {
@@ -44,8 +54,112 @@ Pane {
             spacing: 4
 
             Repeater {
-                model: mixer.order
-                delegate: ColumnLayout {
+                model: mixer.leftStrips
+                delegate: stripComponent
+            }
+
+            // The master column: a round gain knob over a coloured meter, and the meter starts below
+            // the knob — that is the "shorter at the top" the owner asked for, which the layout check
+            // measures against the deck meters.
+            ColumnLayout {
+                objectName: "masterColumn"
+                Layout.preferredWidth: 34
+                Layout.fillHeight: true
+                spacing: 3
+
+                MasterKnob {
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.preferredWidth: 34
+                    Layout.preferredHeight: 34
+                    gain: mixer.masterGain
+                }
+                Label {
+                    text: mixer.masterGain > 0.0
+                          ? (mixer.toDb(mixer.masterGain) >= 0 ? "+" : "")
+                            + mixer.toDb(mixer.masterGain).toFixed(1)
+                          : "-∞"
+                    color: UiSettings.themeTextDim
+                    font.pixelSize: 9
+                    Layout.alignment: Qt.AlignHCenter
+                }
+                MasterMeter {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    peak: mixer.masterPeak
+                }
+            }
+
+            Repeater {
+                model: mixer.rightStrips
+                delegate: stripComponent
+            }
+        }
+
+        // The crossfader sits at the bottom of the column, under the strips, where the hand rests.
+        Crossfader {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 30
+        }
+
+        // The law in force, as four buttons in one row, each showing its own curve. The picture is
+        // the point: the shapes differ at a glance, the names do not. One row, not two: vertical room
+        // belongs to the strips and the crossfader.
+        RowLayout {
+            id: curveRow
+            objectName: "crossfaderCurves"
+            Layout.fillWidth: true
+            Layout.preferredHeight: 32
+            spacing: 4
+
+            readonly property string current: Bridge.snapshot.crossfader_curve !== undefined
+                                                ? Bridge.snapshot.crossfader_curve : "constant_power"
+
+            Repeater {
+                model: [
+                    { law: "constant_power", hint: qsTr("Constant power: the energy sum stays at unity") },
+                    { law: "linear", hint: qsTr("Linear: each side falls by the same step") },
+                    { law: "smooth", hint: qsTr("Smooth: holds its level, then falls through the middle") },
+                    { law: "sharp", hint: qsTr("Sharp: a cut — both sides open across the middle") }
+                ]
+
+                delegate: Rectangle {
+                    required property var modelData
+                    objectName: "curveButton_" + modelData.law
+                    readonly property bool lit: curveRow.current === modelData.law
+                    // The four share the column's width; the height stays the one a hand can hit.
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 32
+                    radius: 2
+                    color: lit ? UiSettings.themePanel : UiSettings.themeSurface
+                    border.width: 1
+                    border.color: lit ? UiSettings.themeAccent : UiSettings.themeBorder
+
+                    CurveGlyph {
+                        anchors.fill: parent
+                        anchors.margins: 3
+                        law: parent.modelData.law
+                        open: parent.lit ? UiSettings.themeAccent : UiSettings.themeText
+                        closed: UiSettings.themeTextDim
+                        guide: UiSettings.themeBorder
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: Bridge.setCrossfaderCurve(parent.modelData.law)
+                        ToolTip.visible: containsMouse
+                        ToolTip.text: parent.modelData.hint
+                    }
+                }
+            }
+        }
+    }
+
+    // One channel strip, drawn twice: the halves only differ in which decks they hold.
+    Component {
+        id: stripComponent
+                ColumnLayout {
                     id: strip
                     required property string modelData
                     objectName: "strip_" + modelData
@@ -135,68 +249,7 @@ Pane {
                         Layout.alignment: Qt.AlignHCenter
                     }
                 }
-            }
-        }
-
-        // The crossfader sits at the bottom of the column, under the strips, where the hand rests.
-        Crossfader {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 30
-        }
-
-        // The law in force, as four buttons in one row, each showing its own curve. The picture is
-        // the point: the shapes differ at a glance, the names do not. One row, not two: vertical room
-        // belongs to the strips and the crossfader.
-        RowLayout {
-            id: curveRow
-            objectName: "crossfaderCurves"
-            Layout.fillWidth: true
-            Layout.preferredHeight: 32
-            spacing: 4
-
-            readonly property string current: Bridge.snapshot.crossfader_curve !== undefined
-                                                ? Bridge.snapshot.crossfader_curve : "constant_power"
-
-            Repeater {
-                model: [
-                    { law: "constant_power", hint: qsTr("Constant power: the energy sum stays at unity") },
-                    { law: "linear", hint: qsTr("Linear: each side falls by the same step") },
-                    { law: "smooth", hint: qsTr("Smooth: holds its level, then falls through the middle") },
-                    { law: "sharp", hint: qsTr("Sharp: a cut — both sides open across the middle") }
-                ]
-
-                delegate: Rectangle {
-                    required property var modelData
-                    objectName: "curveButton_" + modelData.law
-                    readonly property bool lit: curveRow.current === modelData.law
-                    // The four share the column's width; the height stays the one a hand can hit.
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 32
-                    radius: 2
-                    color: lit ? UiSettings.themePanel : UiSettings.themeSurface
-                    border.width: 1
-                    border.color: lit ? UiSettings.themeAccent : UiSettings.themeBorder
-
-                    CurveGlyph {
-                        anchors.fill: parent
-                        anchors.margins: 3
-                        law: parent.modelData.law
-                        open: parent.lit ? UiSettings.themeAccent : UiSettings.themeText
-                        closed: UiSettings.themeTextDim
-                        guide: UiSettings.themeBorder
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: Bridge.setCrossfaderCurve(parent.modelData.law)
-                        ToolTip.visible: containsMouse
-                        ToolTip.text: parent.modelData.hint
-                    }
-                }
-            }
-        }
     }
+
 
 }

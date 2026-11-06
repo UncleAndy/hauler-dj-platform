@@ -97,6 +97,9 @@ public:
     Q_INVOKABLE int setCrossfader(double position);
     Q_INVOKABLE int setChannelGain(const QString &deck, double gain);
 
+    // Master output gain, linear (1.0 = unity).
+    Q_INVOKABLE int setMasterGain(double gain);
+
     // Pick the crossfader law by its wire name: constant_power, linear, smooth, sharp.
     Q_INVOKABLE int setCrossfaderCurve(const QString &curve);
 

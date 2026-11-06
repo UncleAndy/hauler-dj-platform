@@ -871,6 +871,10 @@ int main(int argc, char *argv[])
         QStringLiteral("Close the window after this many milliseconds: the shutdown path, exercised "
                        "instead of described."),
         QStringLiteral("ms"));
+    const QCommandLineOption masterCheckOption(
+        QStringLiteral("master-check"),
+        QStringLiteral("With --connect: the master knob must change the published gain, the master "
+                       "meter must see the signal, and the knob must sit above a shorter meter."));
     const QCommandLineOption curveCheckOption(
         QStringLiteral("curve-check"),
         QStringLiteral("With --connect: send each crossfader law and require the snapshot to report "
@@ -1024,6 +1028,7 @@ int main(int argc, char *argv[])
     parser.addOption(wheelCheckOption);
     parser.addOption(windowCheckOption);
     parser.addOption(curveCheckOption);
+    parser.addOption(masterCheckOption);
     parser.addOption(exitAfterOption);
     parser.addOption(stripCheckOption);
     parser.addOption(loadOption);
@@ -1503,6 +1508,200 @@ int main(int argc, char *argv[])
             }
             *settled = true;
         });
+    }
+
+    if (parser.isSet(masterCheckOption)) {
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        QQuickItem *content = window->contentItem();
+        const auto item = [&](const QString &name) { return findItem(content, name); };
+        auto *knob = item(QStringLiteral("masterKnob"));
+        auto *meter = item(QStringLiteral("masterMeter"));
+        auto *column = item(QStringLiteral("masterColumn"));
+        auto *stripA = item(QStringLiteral("strip_A"));
+        auto *stripB = item(QStringLiteral("strip_B"));
+        auto *meterA = item(QStringLiteral("meter_A"));
+        if (knob == nullptr || meter == nullptr || column == nullptr || stripA == nullptr
+            || stripB == nullptr || meterA == nullptr) {
+            std::fprintf(stderr, "dj-ui: the master column is not in the mixer\n");
+            return 1;
+        }
+        // Between A and B, not at an end.
+        const double columnMid = column->mapToItem(content, QPointF(column->width() / 2.0, 0)).x();
+        const double aMid = stripA->mapToItem(content, QPointF(stripA->width() / 2.0, 0)).x();
+        const double bMid = stripB->mapToItem(content, QPointF(stripB->width() / 2.0, 0)).x();
+        std::fprintf(stdout, "dj-ui: the master column sits at %.0f px, between A at %.0f and B at %.0f\n",
+                     columnMid, aMid, bMid);
+        if (!(aMid < columnMid && columnMid < bMid)) {
+            std::fprintf(stderr, "dj-ui: the master column is not between the A and B strips\n");
+            return 1;
+        }
+        // Round, and above the meter.
+        std::fprintf(stdout, "dj-ui: the master knob is %.0f x %.0f px\n", knob->width(),
+                     knob->height());
+        if (std::abs(knob->width() - knob->height()) > 1.0) {
+            std::fprintf(stderr, "dj-ui: the master knob is not round\n");
+            return 1;
+        }
+        const double knobBottom = knob->mapToItem(content, QPointF(0, knob->height())).y();
+        const double meterTop = meter->mapToItem(content, QPointF(0, 0)).y();
+        const double deckMeterTop = meterA->mapToItem(content, QPointF(0, 0)).y();
+        std::fprintf(stdout, "dj-ui: the master meter starts %.0f px below the knob, %.0f px below "
+                             "the deck meters\n",
+                     meterTop - knobBottom, meterTop - deckMeterTop);
+        if (meterTop < knobBottom) {
+            std::fprintf(stderr, "dj-ui: the master knob overlaps the meter\n");
+            return 1;
+        }
+        if (meterTop <= deckMeterTop) {
+            std::fprintf(stderr, "dj-ui: the master meter is not shorter at the top\n");
+            return 1;
+        }
+        // Three colours, and none of them the accent: the master must be findable by colour alone.
+        const QString green = settings.themeMeterGreen();
+        const QString yellow = settings.themeMeterYellow();
+        const QString red = settings.themeMeterRed();
+        std::fprintf(stdout, "dj-ui: master meter colours %s %s %s\n", qPrintable(green),
+                     qPrintable(yellow), qPrintable(red));
+        if (green == yellow || yellow == red || green == red || green == settings.themeAccent()) {
+            std::fprintf(stderr, "dj-ui: the master meter colours do not separate from each other\n");
+            return 1;
+        }
+
+        bridge->connectToEngine(parser.value(connectOption));
+        QElapsedTimer linking;
+        linking.start();
+        while (!bridge->isConnected() && linking.elapsed() < 3000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QThread::msleep(10);
+        }
+        if (!bridge->isConnected()) {
+            std::fprintf(stderr, "dj-ui: no engine\n");
+            return 1;
+        }
+        // The knob's command must land in the published gain, which is what the label and the pointer
+        // read: a knob that moves a value nobody publishes is a knob that springs back.
+        const auto gainNow = [&]() {
+            return bridge->snapshot().value(QStringLiteral("master_gain")).toDouble();
+        };
+        bridge->setMasterGain(0.5);
+        QElapsedTimer waiting;
+        waiting.start();
+        double seen = gainNow();
+        while (waiting.elapsed() < 3000 && std::abs(seen - 0.5) > 0.01) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            seen = gainNow();
+            QThread::msleep(10);
+        }
+        std::fprintf(stdout, "dj-ui: master gain 0.5 -> snapshot says %.2f\n", seen);
+        if (std::abs(seen - 0.5) > 0.01) {
+            std::fprintf(stderr, "dj-ui: the master gain did not reach the engine\n");
+            return 1;
+        }
+
+        // And the meter must see the signal, not just exist: load a track, play it, watch the peak.
+        const QString fixture = parser.value(loadOption);
+        if (!fixture.isEmpty()) {
+            // Another check may have left deck A playing to its end, where a play command produces
+            // silence. Empty the deck first: this check is about the master meter, not about what ran
+            // before it in the same engine.
+            bridge->play(QStringLiteral("A"), false);
+            bridge->eject(QStringLiteral("A"));
+            QElapsedTimer clearing;
+            clearing.start();
+            // A snapshot still saying Ready describes the track that was there a moment ago: wait for
+            // the deck to report itself empty, or the load below is believed before it happened and a
+            // play command lands on nothing.
+            while (clearing.elapsed() < 2000) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                const QVariantList decksNow =
+                    bridge->snapshot().value(QStringLiteral("decks")).toList();
+                bool ready = false;
+                for (const QVariant &entry : decksNow) {
+                    const QVariantMap deck = entry.toMap();
+                    if (deck.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                        const QVariant load = deck.value(QStringLiteral("load"));
+                        const QString name = load.typeId() == QMetaType::QString
+                            ? load.toString()
+                            : load.toMap().keys().value(0);
+                        ready = name == QLatin1String("Ready");
+                    }
+                }
+                if (!ready) {
+                    break;
+                }
+                QThread::msleep(10);
+            }
+            // A load can be refused for a moment after the eject: try, wait for Ready, try again.
+            const auto loadState = [&]() {
+                const QVariantList decks = bridge->snapshot().value(QStringLiteral("decks")).toList();
+                for (const QVariant &entry : decks) {
+                    const QVariantMap deck = entry.toMap();
+                    if (deck.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                        const QVariant load = deck.value(QStringLiteral("load"));
+                        // serde writes a variant with data as an object with one key, and one without
+                        // as a plain string.
+                        return load.typeId() == QMetaType::QString
+                            ? load.toString()
+                            : load.toMap().keys().value(0);
+                    }
+                }
+                return QString();
+            };
+            QString load;
+            for (int attempt = 0; attempt < 3 && load != QLatin1String("Ready"); ++attempt) {
+                bridge->load(QStringLiteral("A"), fixture);
+                QElapsedTimer settling;
+                settling.start();
+                while (settling.elapsed() < 4000) {
+                    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                    load = loadState();
+                    if (load == QLatin1String("Ready") || load == QLatin1String("Failed")) {
+                        break;
+                    }
+                    QThread::msleep(20);
+                }
+            }
+            if (load != QLatin1String("Ready")) {
+                std::fprintf(stderr, "dj-ui: the master check could not load a track\n");
+                return 1;
+            }
+            bridge->play(QStringLiteral("A"), true);
+            QElapsedTimer playing;
+            playing.start();
+            double peak = 0.0;
+            while (playing.elapsed() < 3000 && peak <= 0.0) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                peak = bridge->snapshot().value(QStringLiteral("master")).toMap()
+                           .value(QStringLiteral("peak_left")).toDouble();
+                QThread::msleep(20);
+            }
+            // Where the signal stops, if it stops: the deck's own meter and the transport state say
+            // whether the master is silent because nothing plays or because nothing is routed.
+            bool playingA = false;
+            double deckPeak = 0.0;
+            const QVariantList decks = bridge->snapshot().value(QStringLiteral("decks")).toList();
+            for (const QVariant &entry : decks) {
+                const QVariantMap deck = entry.toMap();
+                if (deck.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                    playingA = deck.value(QStringLiteral("playing")).toBool();
+                    deckPeak = deck.value(QStringLiteral("levels")).toMap()
+                                   .value(QStringLiteral("peak_left")).toDouble();
+                }
+            }
+            std::fprintf(stdout, "dj-ui: deck A playing %s, its own peak %.3f, master peak %.3f\n",
+                         playingA ? "yes" : "no", deckPeak, peak);
+            if (peak <= 0.0) {
+                std::fprintf(stderr, "dj-ui: the master meter stays at zero with a deck playing\n");
+                return 1;
+            }
+            bridge->play(QStringLiteral("A"), false);
+        }
+        std::fprintf(stdout, "dj-ui: the master knob and meter work\n");
+        return 0;
     }
 
     if (parser.isSet(curveCheckOption)) {
