@@ -67,6 +67,10 @@ private:
     // so scrolling cannot make the strip shimmer.
     std::vector<QColor> columnColours() const;
 
+    // Peak per envelope column, smoothed with a fixed set of radii; one ramp per zoom level.
+    std::vector<std::vector<double>> peakRamps() const;
+    int rampForZoom(double columnsPerBar) const;
+
     QVariantList m_columns;
     int m_framesPerBucket = 0;
     int m_sampleRate = 0;
@@ -80,4 +84,5 @@ private:
     // Median level of each band in this track: what the colour balances against.
     double m_bandTypical[3] = {1.0, 1.0, 1.0};
     std::vector<QColor> m_colours;
+    std::vector<std::vector<double>> m_peakRamps;
 };

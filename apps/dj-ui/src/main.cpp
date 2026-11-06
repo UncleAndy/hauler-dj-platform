@@ -325,6 +325,7 @@ int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socket
                 // right one, and that is the whole point: the same moment must keep its colour.
                 int compared = 0;
                 double worstHue = 0.0;
+                double worstHeight = 0.0;
                 for (int index = 0; index < 320; ++index) {
                     const int leftIndex = 80 + index;
                     const int rightIndex = index;
@@ -343,12 +344,24 @@ int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socket
                     double difference = qAbs(a.hsvHueF() - b.hsvHueF()) * 360.0;
                     difference = qMin(difference, 360.0 - difference);
                     worstHue = qMax(worstHue, difference);
+                    // Height must not depend on the window either: a kernel that resizes with the
+                    // view makes the whole strip pump as it scrolls.
+                    const double heightA = left.at(leftIndex).toMap()
+                                               .value(QStringLiteral("amplitude")).toDouble();
+                    const double heightB = right.at(rightIndex).toMap()
+                                                .value(QStringLiteral("amplitude")).toDouble();
+                    worstHeight = qMax(worstHeight, qAbs(heightA - heightB));
                     ++compared;
                 }
                 if (compared < 20) {
                     std::fprintf(stdout,
                                  "dj-ui: window comparison skipped, only %d comparable bars\n",
                                  compared);
+                } else if (worstHeight > 0.04) {
+                    failure = QStringLiteral("height depends on the window: up to %1 of full scale")
+                                  .arg(worstHeight, 0, 'f', 3);
+                    loop.quit();
+                    return;
                 } else if (worstHue > 25.0) {
                     failure = QStringLiteral("colour depends on the window: hue moves up to %1 "
                                              "degrees")
@@ -357,9 +370,9 @@ int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socket
                     return;
                 } else {
                     std::fprintf(stdout,
-                                 "dj-ui: colour does not depend on the window (max %.1f degrees over "
-                                 "%d bars)\n",
-                                 worstHue, compared);
+                                 "dj-ui: the picture does not depend on the window (max %.1f degrees, "
+                                 "%.3f of height, over %d bars)\n",
+                                 worstHue, worstHeight, compared);
                 }
             }
 

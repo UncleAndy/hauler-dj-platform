@@ -146,6 +146,7 @@ void Waveform::measure()
     }
     m_maxChannel[0] = m_maxChannel[1] = m_maxChannel[2] = 1.0;
     m_colours = columnColours();
+    m_peakRamps = peakRamps();
 }
 
 QVariantList Waveform::profile(int columns, double windowStart, double span) const
@@ -163,6 +164,8 @@ QVariantList Waveform::profile(int columns, double windowStart, double span) con
     const int coveredFrom = qBound(0, int(std::floor(windowStart * total)), total);
     const int coveredTo = qBound(0, int(std::ceil((windowStart + span) * total)), total);
     m_lastCovered = qMax(0, coveredTo - coveredFrom);
+    const double columnsPerBar =
+        columns > 0 ? double(m_lastCovered) / double(columns) : 0.0;
 
     int previous = coveredFrom;
     for (int bar = 0; bar < columns; ++bar) {
@@ -231,60 +234,24 @@ QVariantList Waveform::profile(int columns, double windowStart, double span) con
         const QColor colour = counted > 0
             ? QColor::fromRgbF(red / counted, green / counted, blue / counted)
             : QColor(0, 0, 0);
-        // Height: the peak of the block against the loudest peak in the track.
-        double peak = 0.0;
+        // Height: the average of the pre-smoothed peaks over the columns this bar covers. A raw
+        // peak picks whichever column happened to be loudest, so with several columns per bar the
+        // outline jumps from bar to bar — that is the moiré. The smoothing is prepared once for the
+        // whole track, per zoom level, so it cannot depend on where the window sits.
+        const double *ramp = m_peakRamps.at(rampForZoom(columnsPerBar)).data();
+        double rampSum = 0.0;
+        int rampSeen = 0;
         for (int index = first; index <= last && index < total; ++index) {
-            const QVariantMap column = m_columns.at(index).toMap();
-            peak = qMax(peak, qMax(qAbs(column.value(QStringLiteral("min")).toDouble()),
-                                   qAbs(column.value(QStringLiteral("max")).toDouble())));
+            rampSum += ramp[index];
+            ++rampSeen;
         }
+        const double peak = rampSeen > 0 ? rampSum / rampSeen : 0.0;
         bars.append(QVariantMap{
             {QStringLiteral("amplitude"), qBound(0.0, peak / m_maxAmplitude, 1.0)},
             {QStringLiteral("rgb"), colour.name()},
             {QStringLiteral("outside"), false}});
     }
 
-    // Zoomed out, one bar covers several envelope columns and the peak inside each one jumps about:
-    // neighbouring bars differ by a pixel or two even where the music is steady, and that reads as
-    // a pixel moiré over the whole strip. The cure is the one the eye expects — a slight horizontal
-    // blur, its width tied to how many columns a bar actually spans, so a zoomed-in view keeps its
-    // transients sharp and the overview becomes smooth.
-    const double columnsPerBar = columns > 0 ? double(m_lastCovered) / double(columns) : 0.0;
-    if (columnsPerBar > 1.5 && bars.size() > 2) {
-        const int radius = qBound(1, int(std::ceil(columnsPerBar * 0.5)), 4);
-        const double sigma = qMax(0.8, columnsPerBar * 0.45);
-        std::vector<double> amplitudes;
-        amplitudes.reserve(std::size_t(bars.size()));
-        for (const QVariant &entry : bars) {
-            amplitudes.push_back(entry.toMap().value(QStringLiteral("amplitude")).toDouble());
-        }
-        std::vector<double> smoothed(amplitudes.size(), 0.0);
-        for (int index = 0; index < int(amplitudes.size()); ++index) {
-            double sum = 0.0;
-            double weight = 0.0;
-            for (int step = -radius; step <= radius; ++step) {
-                const int neighbour = index + step;
-                if (neighbour < 0 || neighbour >= int(amplitudes.size())) {
-                    continue;
-                }
-                if (bars.at(neighbour).toMap().value(QStringLiteral("outside")).toBool()) {
-                    continue;
-                }
-                const double kernel = std::exp(-0.5 * (step / sigma) * (step / sigma));
-                sum += amplitudes[std::size_t(neighbour)] * kernel;
-                weight += kernel;
-            }
-            smoothed[std::size_t(index)] = weight > 0.0 ? sum / weight : amplitudes[std::size_t(index)];
-        }
-        for (int index = 0; index < bars.size(); ++index) {
-            if (bars.at(index).toMap().value(QStringLiteral("outside")).toBool()) {
-                continue;
-            }
-            QVariantMap bar = bars.at(index).toMap();
-            bar[QStringLiteral("amplitude")] = smoothed[std::size_t(index)];
-            bars[index] = bar;
-        }
-    }
     return bars;
 }
 
@@ -357,4 +324,65 @@ std::vector<QColor> Waveform::columnColours() const
             : QColor(0, 0, 0);
     }
     return smoothed;
+}
+
+std::vector<std::vector<double>> Waveform::peakRamps() const
+{
+    // Peak per column, then the same ramp smoothed with a few fixed radii. A fixed set means the
+    // chosen radius depends only on the zoom, never on the scroll position: a radius computed from
+    // "how many columns this bar happens to cover" changes as the view moves and makes the whole
+    // strip pump.
+    std::vector<double> raw;
+    raw.reserve(std::size_t(m_columns.size()));
+    for (const QVariant &entry : m_columns) {
+        const QVariantMap column = entry.toMap();
+        raw.push_back(qMax(qAbs(column.value(QStringLiteral("min")).toDouble()),
+                           qAbs(column.value(QStringLiteral("max")).toDouble())));
+    }
+
+    static const int radii[] = {0, 2, 4, 8, 16};
+    std::vector<std::vector<double>> ramps;
+    ramps.reserve(sizeof(radii) / sizeof(radii[0]));
+    for (const int radius : radii) {
+        std::vector<double> ramp(raw.size(), 0.0);
+        for (int index = 0; index < int(raw.size()); ++index) {
+            if (radius == 0) {
+                ramp[std::size_t(index)] = raw[std::size_t(index)];
+                continue;
+            }
+            double sum = 0.0;
+            double weight = 0.0;
+            for (int step = -radius; step <= radius; ++step) {
+                const int neighbour = index + step;
+                if (neighbour < 0 || neighbour >= int(raw.size())) {
+                    continue;
+                }
+                const double kernel = std::exp(-0.5 * (step / (radius * 0.5)) * (step / (radius * 0.5)));
+                sum += raw[std::size_t(neighbour)] * kernel;
+                weight += kernel;
+            }
+            ramp[std::size_t(index)] = weight > 0.0 ? sum / weight : raw[std::size_t(index)];
+        }
+        ramps.push_back(std::move(ramp));
+    }
+    return ramps;
+}
+
+int Waveform::rampForZoom(double columnsPerBar) const
+{
+    // Zoomed in (a bar is one column or less) there is nothing to smooth: transients must stay
+    // needles. Zoomed out, the radius grows with the columns per bar, chosen from the fixed set.
+    static const int radii[] = {0, 2, 4, 8, 16};
+    if (columnsPerBar <= 1.5) {
+        return 0; // one bar is one column or less: nothing to smooth
+    }
+    // Twice the columns per bar: a bar then averages over what is effectively a smooth slope
+    // instead of sampling the jagged edge of the envelope.
+    const double wanted = columnsPerBar * 2.0;
+    for (int index = 1; index < int(sizeof(radii) / sizeof(radii[0])); ++index) {
+        if (radii[index] >= wanted) {
+            return index;
+        }
+    }
+    return int(sizeof(radii) / sizeof(radii[0])) - 1;
 }
