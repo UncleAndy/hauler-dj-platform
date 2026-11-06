@@ -93,7 +93,7 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        color: "#101317"
+        color: UiSettings.waveformStyle === "coloured" ? "#141414" : "#101317"
         radius: 3
 
         Canvas {

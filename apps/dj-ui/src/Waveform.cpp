@@ -114,24 +114,18 @@ bool Waveform::load(const QString &path)
 void Waveform::measure()
 {
     // The reference algorithm normalises against the loudest block of the whole track, per channel.
+    // The height of a bar is the peak of its block, so drum hits become needles instead of humps.
     double loudest = 0.0;
-    double channels[3] = {0.0, 0.0, 0.0};
     for (const QVariant &entry : m_columns) {
         const QVariantMap column = entry.toMap();
-        const double bands[3] = {column.value(QStringLiteral("low")).toDouble(),
-                                 column.value(QStringLiteral("mid")).toDouble(),
-                                 column.value(QStringLiteral("high")).toDouble()};
-        const double amplitude = std::sqrt(bands[0] * bands[0] + bands[1] * bands[1]
-                                           + bands[2] * bands[2]);
-        loudest = qMax(loudest, amplitude);
-        for (int band = 0; band < 3; ++band) {
-            channels[band] = qMax(channels[band], bands[band]);
-        }
+        const double peak = qMax(qAbs(column.value(QStringLiteral("min")).toDouble()),
+                                 qAbs(column.value(QStringLiteral("max")).toDouble()));
+        loudest = qMax(loudest, peak);
     }
     m_maxAmplitude = qMax(loudest, 1e-6);
-    for (int band = 0; band < 3; ++band) {
-        m_maxChannel[band] = qMax(channels[band], 1e-6);
-    }
+    // The colour no longer needs per-channel maxima: every bar is normalised by its own strongest
+    // channel and then forced to full saturation and full brightness.
+    m_maxChannel[0] = m_maxChannel[1] = m_maxChannel[2] = 1.0;
 }
 
 QVariantList Waveform::profile(int columns, double windowStart, double span) const
@@ -184,26 +178,34 @@ QVariantList Waveform::profile(int columns, double windowStart, double span) con
         for (int band = 0; band < 3; ++band) {
             bands[band] = std::sqrt(energy[band] / divisor) * m_bandGain[band];
         }
-        const double amplitude = std::sqrt(bands[0] * bands[0] + bands[1] * bands[1]
-                                           + bands[2] * bands[2]);
-
-        // Height against the loudest block of the track, colour against each channel's own peak.
-        double channels[3] = {0.0, 0.0, 0.0};
+        // Perceptual weighting: treble and mids carry far less energy than bass in any recording,
+        // so they are lifted before anything else happens. Without this the picture is red only.
+        static const double perception[3] = {1.0, 1.5, 2.5};
+        double raw[3] = {0.0, 0.0, 0.0};
         for (int band = 0; band < 3; ++band) {
-            channels[band] = qBound(0.0, bands[band] / m_maxChannel[band], 1.0);
+            raw[band] = std::pow(bands[band] * perception[band], 1.8);
         }
-        double red = 0.0;
-        double green = 0.0;
-        double blue = 0.0;
-        for (int band = 0; band < 3; ++band) {
-            red += m_palette[band].redF() * channels[band];
-            green += m_palette[band].greenF() * channels[band];
-            blue += m_palette[band].blueF() * channels[band];
+        // Normalise by the strongest channel of this very bar, then force saturation and brightness
+        // to full: that is what turns three mixed levels into a clean neon hue instead of grey.
+        const double strongest = qMax(raw[0], qMax(raw[1], raw[2]));
+        QColor colour(0, 0, 0);
+        if (strongest > 1e-12) {
+            const double red = raw[0] / strongest;
+            const double green = raw[1] / strongest;
+            const double blue = raw[2] / strongest;
+            const QColor mixed = QColor::fromRgbF(qBound(0.0, red, 1.0), qBound(0.0, green, 1.0),
+                                                  qBound(0.0, blue, 1.0));
+            colour = QColor::fromHsvF(mixed.hsvHueF(), 1.0, 1.0);
         }
-        const QColor colour = QColor::fromRgbF(qBound(0.0, red, 1.0), qBound(0.0, green, 1.0),
-                                               qBound(0.0, blue, 1.0));
+        // Height: the peak of the block against the loudest peak in the track.
+        double peak = 0.0;
+        for (int index = first; index <= last && index < total; ++index) {
+            const QVariantMap column = m_columns.at(index).toMap();
+            peak = qMax(peak, qMax(qAbs(column.value(QStringLiteral("min")).toDouble()),
+                                   qAbs(column.value(QStringLiteral("max")).toDouble())));
+        }
         bars.append(QVariantMap{
-            {QStringLiteral("amplitude"), qBound(0.0, amplitude / m_maxAmplitude, 1.0)},
+            {QStringLiteral("amplitude"), qBound(0.0, peak / m_maxAmplitude, 1.0)},
             {QStringLiteral("rgb"), colour.name()}});
     }
     return bars;

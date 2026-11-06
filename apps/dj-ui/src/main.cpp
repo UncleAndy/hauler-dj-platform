@@ -640,7 +640,9 @@ int main(int argc, char *argv[])
         const int barCount = qMax(1, width / (barWidth + barGap));
         const QVariantList pixels = envelope.profile(barCount, 0.0, 1.0);
         QImage image(width, height, QImage::Format_RGB32);
-        image.fill(QColor(QStringLiteral("#101317")));
+        image.fill(QColor(settings.waveformStyle() == QStringLiteral("coloured")
+                              ? QStringLiteral("#141414")
+                              : QStringLiteral("#101317")));
         QPainter painter(&image);
         const double middle = height / 2.0;
         int painted = 0;

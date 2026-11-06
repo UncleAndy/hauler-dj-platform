@@ -11,9 +11,9 @@ use dj_codec::{MediaError, StreamDecoder};
 /// One column of the waveform: the extremes of the samples it covers, plus how much of them is
 /// bass and how much is treble.
 ///
-/// The bands are what a coloured waveform draws: bass heavy passages read warm, hats and cymbals
-/// read cold. They are per-bucket RMS of two filtered copies of the mix, not a spectrum — a full
-/// FFT per column would cost more than the picture is worth at this resolution.
+/// The bands are what a coloured waveform draws: bass-heavy passages read warm, hats and cymbals
+/// read cold. They are the RMS of the FFT magnitudes inside each DJ band, computed per column: the
+/// spectrum is what separates a kick from a hi-hat, and filters of any order blur that boundary.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Bucket {
     /// Lowest sample value in the bucket, in [-1, 1].
@@ -28,11 +28,10 @@ pub struct Bucket {
     pub high: f32,
 }
 
-/// Low band edge: everything below this counts as bass.
-pub const LOW_CUTOFF_HZ: f32 = 250.0;
-
-/// High band edge: everything above this counts as treble.
-pub const HIGH_CUTOFF_HZ: f32 = 4_000.0;
+/// Band edges, in Hz: bass / mids / treble as DJ software draws them.
+pub const BASS_RANGE_HZ: (f32, f32) = (20.0, 280.0);
+pub const MIDS_RANGE_HZ: (f32, f32) = (280.0, 3_500.0);
+pub const TREBLE_RANGE_HZ: (f32, f32) = (3_500.0, 20_000.0);
 
 impl Bucket {
     /// Silence.
@@ -50,38 +49,69 @@ impl Bucket {
     }
 }
 
-/// One-pole lowpass, the cheapest way to split a band without an FFT.
-#[derive(Debug, Clone, Copy)]
-/// A second-order lowpass: two cascaded one-pole sections with a shared state.
+/// In-place iterative radix-2 FFT, the textbook Cooley-Tukey.
 ///
-/// The one-pole this replaced leaked badly — at 1 kHz a 250 Hz one-pole filter still passes a third
-/// of the energy, so the "bass" band was loud in every column of every track and no colouring could
-/// separate a kick from a chord. Four poles put the leakage where it belongs: about -24 dB per
-/// octave, which keeps the three bands honest.
-struct Lowpass4 {
-    sections: [f32; 2],
-    alpha: f32,
-}
-
-impl Lowpass4 {
-    fn new(cutoff_hz: f32, sample_rate: u32) -> Self {
-        // Two identical one-pole sections cascade to a -3 dB point at 0.6436 of each section's own
-        // cutoff, so each section is placed at 1.554x the frequency we actually want. Getting this
-        // wrong the other way (too low) makes the pair drop mid content early, and that content
-        // leaks into the treble band as if the material were bright.
-        let ratio = (cutoff_hz * 1.554 / sample_rate as f32).clamp(0.0, 0.49);
-        let alpha = 1.0 - (-std::f32::consts::TAU * ratio).exp();
-        Self {
-            sections: [0.0, 0.0],
-            alpha,
+/// Written out rather than pulled in as a dependency: the project must build offline and stay
+/// licence-clean, and this is the only transform it needs.
+fn fft_in_place(real: &mut [f32], imag: &mut [f32]) {
+    let n = real.len();
+    if n <= 1 {
+        return;
+    }
+    debug_assert!(n.is_power_of_two(), "radix-2 needs a power of two");
+    // Bit-reversal permutation.
+    let mut j = 0usize;
+    for i in 1..n {
+        let mut bit = n >> 1;
+        while j & bit != 0 {
+            j ^= bit;
+            bit >>= 1;
+        }
+        j |= bit;
+        if i < j {
+            real.swap(i, j);
+            imag.swap(i, j);
         }
     }
-
-    fn process(&mut self, input: f32) -> f32 {
-        self.sections[0] += self.alpha * (input - self.sections[0]);
-        self.sections[1] += self.alpha * (self.sections[0] - self.sections[1]);
-        self.sections[1]
+    // Butterflies, doubling the block length each pass.
+    let mut len = 2usize;
+    while len <= n {
+        let angle = -std::f32::consts::TAU / len as f32;
+        let (sin_half, cos_half) = (angle.sin(), angle.cos());
+        let mut start = 0usize;
+        while start < n {
+            let (mut wr, mut wi) = (1.0f32, 0.0f32);
+            for offset in 0..len / 2 {
+                let even = start + offset;
+                let odd = even + len / 2;
+                let tr = real[odd] * wr - imag[odd] * wi;
+                let ti = real[odd] * wi + imag[odd] * wr;
+                real[odd] = real[even] - tr;
+                imag[odd] = imag[even] - ti;
+                real[even] += tr;
+                imag[even] += ti;
+                let next_r = wr * cos_half - wi * sin_half;
+                wi = wr * sin_half + wi * cos_half;
+                wr = next_r;
+            }
+            start += len;
+        }
+        len <<= 1;
     }
+}
+
+/// RMS of the FFT magnitudes whose frequency falls inside `range_hz`.
+fn band_rms(magnitudes: &[f32], bin_hz: f32, range_hz: (f32, f32)) -> f32 {
+    let first = ((range_hz.0 / bin_hz).ceil() as usize).max(1);
+    let last = ((range_hz.1 / bin_hz).floor() as usize).min(magnitudes.len().saturating_sub(1));
+    if last < first {
+        return 0.0;
+    }
+    let energy: f32 = magnitudes[first..=last]
+        .iter()
+        .map(|value| value * value)
+        .sum();
+    (energy / (last - first + 1) as f32).sqrt()
 }
 
 /// A whole track's envelope.
@@ -136,49 +166,62 @@ pub fn analyse(path: &Path, frames_per_bucket: u32) -> Result<Peaks, MediaError>
     let bucket_frames = frames_per_bucket as usize;
     let mut buffer = vec![0.0f32; bucket_frames * 2];
     let mut buckets = Vec::new();
-    // Two filtered copies of the mix, carried across buckets so a bass note that crosses a bucket
-    // boundary is not split into two quiet halves.
-    let mut low_filter = Lowpass4::new(LOW_CUTOFF_HZ, sample_rate);
-    let mut treble_filter = Lowpass4::new(HIGH_CUTOFF_HZ, sample_rate);
+
+    // The transform length is the bucket rounded up to a power of two; a longer bucket is cut, a
+    // shorter one is zero-padded, so every column carries the same spectral resolution.
+    let fft_size = bucket_frames.next_power_of_two().max(64);
+    let bin_hz = sample_rate as f32 / fft_size as f32;
+    // Hann window: without it a tone that does not fit the bucket leaks across the whole spectrum
+    // and every column looks bright.
+    let window: Vec<f32> = (0..fft_size)
+        .map(|index| {
+            let phase = std::f32::consts::TAU * index as f32 / fft_size as f32;
+            0.5 - 0.5 * phase.cos()
+        })
+        .collect();
+    // A Hann window halves the energy; dividing by its mean restores the amplitude the FFT reports.
+    let window_gain: f32 = window.iter().sum::<f32>() / fft_size as f32;
+    let mut real = vec![0.0f32; fft_size];
+    let mut imag = vec![0.0f32; fft_size];
+    let mut magnitudes = vec![0.0f32; fft_size / 2 + 1];
 
     loop {
         let read = decoder.read_frames(&mut buffer)?;
         if read == 0 {
             break;
         }
-        // The decoder fills interleaved stereo; a short final read is a bucket too, otherwise the
-        // timebase would drift by the remainder of every track.
+        // A short final read is still a column, otherwise the timebase would drift by the
+        // remainder of every track.
         let mut min = 0.0f32;
         let mut max = 0.0f32;
-        let mut low_energy = 0.0f32;
-        let mut mid_energy = 0.0f32;
-        let mut high_energy = 0.0f32;
         for frame in 0..read {
             let left = buffer[frame * 2];
             let right = buffer[frame * 2 + 1];
-            let low = left.min(right);
-            let high = left.max(right);
-            min = min.min(low);
-            max = max.max(high);
-
-            let mono = (left + right) * 0.5;
-            // Three bands from two fourth-order lowpasses: what is below the low cutoff, the slice
-            // between the cutoffs, and what is left above the high one.
-            let bass = low_filter.process(mono);
-            let below_high = treble_filter.process(mono);
-            let mids = below_high - bass;
-            let treble = mono - below_high;
-            low_energy += bass * bass;
-            mid_energy += mids * mids;
-            high_energy += treble * treble;
+            min = min.min(left.min(right));
+            max = max.max(left.max(right));
         }
-        let frames = read.max(1) as f32;
+
+        for (index, slot) in real.iter_mut().enumerate() {
+            *slot = if index < read {
+                (buffer[index * 2] + buffer[index * 2 + 1]) * 0.5 * window[index]
+            } else {
+                0.0
+            };
+        }
+        imag.iter_mut().for_each(|slot| *slot = 0.0);
+        fft_in_place(&mut real, &mut imag);
+        for (bin, magnitude) in magnitudes.iter_mut().enumerate() {
+            let power = real[bin] * real[bin] + imag[bin] * imag[bin];
+            // Two-sided spectrum to one-sided amplitude, and back to the signal's own scale.
+            *magnitude = 2.0 * power.sqrt() / (fft_size as f32 * window_gain);
+        }
+
         buckets.push(Bucket {
             min,
             max,
-            low: (low_energy / frames).sqrt(),
-            mid: (mid_energy / frames).sqrt(),
-            high: (high_energy / frames).sqrt(),
+            low: band_rms(&magnitudes, bin_hz, BASS_RANGE_HZ),
+            mid: band_rms(&magnitudes, bin_hz, MIDS_RANGE_HZ),
+            high: band_rms(&magnitudes, bin_hz, TREBLE_RANGE_HZ),
         });
     }
 
