@@ -1517,6 +1517,13 @@ int main(int argc, char *argv[])
             return 1;
         }
         QQuickItem *content = window->contentItem();
+
+        // The window is sized by the session and is not shown in a headless run: give it the real
+        // size, or every measurement below is taken against a 0x0 window and lies small.
+        window->resize(1366, 768);
+        window->show();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+
         const auto item = [&](const QString &name) { return findItem(content, name); };
         auto *knob = item(QStringLiteral("masterKnob"));
         auto *meter = item(QStringLiteral("masterMeter"));
@@ -1557,11 +1564,19 @@ int main(int argc, char *argv[])
                              "from the deck meters; heights %.0f and %.0f px\n",
                      meterTop - knobBottom, meterBottom - deckMeterBottom, meter->height(),
                      meterA->height());
+        auto *row = item(QStringLiteral("stripRow"));
+        const auto place = [&](QQuickItem *what, const char *name) {
+            if (what == nullptr) {
+                std::fprintf(stdout, "dj-ui:   %s missing\n", name);
+                return;
+            }
+            const QPointF at = what->mapToItem(content, QPointF(0, 0));
+            std::fprintf(stdout, "dj-ui:   %s y %.0f h %.0f\n", name, at.y(), what->height());
+        };
         if (meterTop < knobBottom) {
             std::fprintf(stderr, "dj-ui: the master knob overlaps the meter\n");
             return 1;
         }
-        auto *row = item(QStringLiteral("stripRow"));
         std::fprintf(stdout, "dj-ui: the meter band is %.0f px inside a %.0f px strip row\n",
                      meter->height(), row != nullptr ? row->height() : -1.0);
         if (std::abs(meter->height() - meterA->height()) > 1.0) {

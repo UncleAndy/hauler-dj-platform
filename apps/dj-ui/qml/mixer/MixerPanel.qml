@@ -28,8 +28,12 @@ Pane {
     // One meter band for the whole mixer. The master's knob stands above its meter, so that column
     // decides how much room a meter gets; the deck meters take the same height instead of running
     // taller, and everything lines up at the bottom.
-    readonly property real masterKnobSide: Math.max(14, Math.min(30, stripRow.height * 0.32))
-    readonly property real meterHeight: Math.max(14, stripRow.height - masterKnobSide - 17)
+    // The strip band: panel height minus margins, the crossfader and the law buttons. Taken from the
+    // panel on purpose — the row's own height depends on what the meters ask for, and reading it back
+    // is a loop that settles stale.
+    readonly property real bandHeight: Math.max(56, mixer.height - 86)
+    readonly property real masterKnobSide: Math.max(14, Math.min(30, bandHeight * 0.32))
+    readonly property real meterHeight: Math.max(18, bandHeight - masterKnobSide - 17)
 
     function deckOf(id) {
         for (let index = 0; index < mixer.decks.length; ++index) {
@@ -60,7 +64,7 @@ Pane {
             Layout.fillWidth: true
             Layout.fillHeight: true
             // A meter band has to survive a short window: knob, label and at least 14 px of meter.
-            Layout.minimumHeight: 52
+            Layout.minimumHeight: 56
             spacing: 4
 
             Repeater {
@@ -68,42 +72,43 @@ Pane {
                 delegate: stripComponent
             }
 
-            // The master column: a round gain knob over a coloured meter, and the meter starts below
-            // the knob — that is the "shorter at the top" the owner asked for, which the layout check
-            // measures against the deck meters.
-            ColumnLayout {
+            // The master column: a round gain knob over a coloured meter. Everything is anchored to
+            // the bottom edge, so the meter ends on the same line as the deck meters.
+            Item {
                 id: masterColumn
                 objectName: "masterColumn"
                 Layout.preferredWidth: 34
                 Layout.fillHeight: true
-                spacing: 2
-                // The knob has to leave the meter room to exist: the mixer is the shortest band of
-                // the shell, and a fixed 34 px knob with a label under it left the meter at nothing.
 
                 MasterKnob {
-                    Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: mixer.masterKnobSide
-                    Layout.preferredHeight: mixer.masterKnobSide
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.bottom: masterMeterItem.top
+                    anchors.bottomMargin: 2
+                    width: mixer.masterKnobSide
+                    height: mixer.masterKnobSide
                     gain: mixer.masterGain
                 }
                 MasterMeter {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: mixer.meterHeight
-                    Layout.minimumHeight: 10
+                    id: masterMeterItem
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.bottom: masterLabel.top
+                    anchors.bottomMargin: 2
+                    width: 28
+                    height: mixer.meterHeight
                     peak: mixer.masterPeak
                 }
                 Label {
+                    id: masterLabel
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.bottom: parent.bottom
                     text: mixer.masterGain > 0.0
                           ? (mixer.toDb(mixer.masterGain) >= 0 ? "+" : "")
                             + mixer.toDb(mixer.masterGain).toFixed(1)
                           : "-∞"
                     color: UiSettings.themeTextDim
                     font.pixelSize: 9
-                    Layout.alignment: Qt.AlignHCenter
                 }
-
             }
-
             Repeater {
                 model: mixer.rightStrips
                 delegate: stripComponent
@@ -174,100 +179,102 @@ Pane {
     // One channel strip, drawn twice: the halves only differ in which decks they hold.
     Component {
         id: stripComponent
-                ColumnLayout {
-                    id: strip
-                    required property string modelData
-                    objectName: "strip_" + modelData
-                    readonly property var deck: mixer.deckOf(strip.modelData)
-                    readonly property real peak: strip.deck !== null && strip.deck.levels !== undefined
-                                                 ? Math.max(strip.deck.levels.peak_left,
-                                                            strip.deck.levels.peak_right) : 0.0
-                    readonly property real gain: strip.deck !== null
-                                                 && strip.deck.linear_gain !== undefined
-                                                 ? strip.deck.linear_gain : 1.0
-                    // What the last wheel step sent, so a check can see the wheel working.
-                    property real lastWheelGain: -1
-                    // One notch is one decibel: fine enough to trim by ear, coarse enough to move.
-                    readonly property real wheelStepDb: 1.0
+        Item {
+            id: strip
+            required property string modelData
+            objectName: "strip_" + modelData
+            readonly property var deck: mixer.deckOf(strip.modelData)
+            readonly property real peak: strip.deck !== null && strip.deck.levels !== undefined
+                                         ? Math.max(strip.deck.levels.peak_left,
+                                                    strip.deck.levels.peak_right) : 0.0
+            readonly property real gain: strip.deck !== null
+                                         && strip.deck.linear_gain !== undefined
+                                         ? strip.deck.linear_gain : 1.0
+            // What the last wheel step sent, so a check can see the wheel working.
+            property real lastWheelGain: -1
+            // One notch is one decibel: fine enough to trim by ear, coarse enough to move.
+            readonly property real wheelStepDb: 1.0
 
-                    // The value the wheel has already asked for. A fast spin sends several events
-                    // before the engine answers; without this, each one would start from the same
-                    // number and the gain would not move.
-                    property real pendingGain: -1
+            // The value the wheel has already asked for. A fast spin sends several events before the
+            // engine answers; without this, each one would start from the same number and the gain
+            // would not move.
+            property real pendingGain: -1
 
-                    function stepGain(notches) {
-                        const from = strip.pendingGain > 0.0
-                                     ? strip.pendingGain
-                                     : (strip.deck !== null && strip.deck.linear_gain !== undefined
-                                        ? strip.deck.linear_gain : 1.0);
-                        const decibels = from > 0.0 ? 20.0 * Math.log(from) / Math.LN10 : -40.0;
-                        const wanted = Math.max(-40.0, Math.min(6.0, decibels + notches * strip.wheelStepDb));
-                        const gain = Math.pow(10.0, wanted / 20.0);
-                        strip.lastWheelGain = gain;
-                        strip.pendingGain = gain;
-                        Bridge.setChannelGain(strip.modelData, gain);
-                        return gain;
-                    }
+            function stepGain(notches) {
+                const from = strip.pendingGain > 0.0
+                             ? strip.pendingGain
+                             : (strip.deck !== null && strip.deck.linear_gain !== undefined
+                                ? strip.deck.linear_gain : 1.0);
+                const decibels = from > 0.0 ? 20.0 * Math.log(from) / Math.LN10 : -40.0;
+                const wanted = Math.max(-40.0, Math.min(6.0, decibels + notches * strip.wheelStepDb));
+                const gain = Math.pow(10.0, wanted / 20.0);
+                strip.lastWheelGain = gain;
+                strip.pendingGain = gain;
+                Bridge.setChannelGain(strip.modelData, gain);
+                return gain;
+            }
 
-                    // The decks that live to the left of the mixer keep their knob on the left.
-                    readonly property bool knobLeft: strip.modelData === "A"
-                                                     || strip.modelData === "C"
+            // The decks that live to the left of the mixer keep their knob on the left.
+            readonly property bool knobLeft: strip.modelData === "A" || strip.modelData === "C"
 
-                    Layout.fillWidth: true
-                    Layout.fillHeight: false
-                    // Bottom-anchored: the meters of every strip end on the same line as the master's.
-                    Layout.alignment: Qt.AlignBottom
-                    spacing: 2
+            Layout.fillWidth: true
+            Layout.fillHeight: true
 
-                    Label {
-                        text: strip.modelData
-                        color: UiSettings.themeTextDim
-                        font.pixelSize: 10
-                        Layout.alignment: Qt.AlignHCenter
-                    }
+            // Anchored to the edges: the meter band sits on the bottom line, level with the master's,
+            // and the deck's letter keeps the top. No positioner, so nothing to settle stale.
+            Label {
+                id: deckLabel
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.top: parent.top
+                text: strip.modelData
+                color: UiSettings.themeTextDim
+                font.pixelSize: 10
+            }
 
-                    // Knob and meter, mirrored: the row runs left to right for the left-hand decks
-                    // and right to left for the right-hand ones, so nothing but the direction differs.
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Layout.fillHeight: false
-                        Layout.preferredHeight: mixer.meterHeight
-                        spacing: 4
-                        layoutDirection: strip.knobLeft ? Qt.LeftToRight : Qt.RightToLeft
+            // Knob and meter, mirrored: the row runs left to right for the left-hand decks and right
+            // to left for the right-hand ones, so nothing but the direction differs.
+            Row {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: gainLabel.top
+                anchors.bottomMargin: 2
+                height: mixer.meterHeight
+                spacing: 4
+                layoutDirection: strip.knobLeft ? Qt.LeftToRight : Qt.RightToLeft
 
-                        GainKnob {
-                            Layout.preferredWidth: 22
-                            Layout.fillHeight: true
-                            deckId: strip.modelData
-                            gain: strip.gain
-                            onScrolled: function (notches) { strip.stepGain(notches) }
-                        }
-                        LevelMeter {
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            deckId: strip.modelData
-                            peak: strip.peak
-                            onScrolled: function (notches) { strip.stepGain(notches) }
-                        }
-                    }
-
-                    // The engine has answered: from here the snapshot is the truth again.
-                    Connections {
-                        target: Bridge
-                        function onSnapshotChanged() { strip.pendingGain = -1 }
-                    }
-
-                    Label {
-                        text: strip.gain > 0.0
-                              ? (mixer.toDb(strip.gain) >= 0 ? "+" : "")
-                                + mixer.toDb(strip.gain).toFixed(1)
-                              : "-∞"
-                        color: UiSettings.themeTextDim
-                        font.pixelSize: 9
-                        Layout.alignment: Qt.AlignHCenter
-                    }
+                GainKnob {
+                    width: 22
+                    height: parent.height
+                    deckId: strip.modelData
+                    gain: strip.gain
+                    onScrolled: function (notches) { strip.stepGain(notches) }
                 }
+                LevelMeter {
+                    width: parent.width - 22 - parent.spacing
+                    height: parent.height
+                    deckId: strip.modelData
+                    peak: strip.peak
+                    onScrolled: function (notches) { strip.stepGain(notches) }
+                }
+            }
+
+            Label {
+                id: gainLabel
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                text: strip.gain > 0.0
+                      ? (mixer.toDb(strip.gain) >= 0 ? "+" : "")
+                        + mixer.toDb(strip.gain).toFixed(1)
+                      : "-∞"
+                color: UiSettings.themeTextDim
+                font.pixelSize: 9
+            }
+
+            // The engine has answered: from here the snapshot is the truth again.
+            Connections {
+                target: Bridge
+                function onSnapshotChanged() { strip.pendingGain = -1 }
+            }
+        }
     }
-
-
 }
