@@ -38,7 +38,7 @@ impl Fingerprint {
     }
 }
 
-const MAGIC: &[u8; 8] = b"DJWAVE09";
+const MAGIC: &[u8; 8] = b"DJWAVE10";
 
 /// Bytes per column on disk: two extremes as i16 and three band levels as u8.
 const BUCKET_BYTES: usize = 7;

@@ -61,7 +61,7 @@ bool Waveform::load(const QString &path)
     const QByteArray bytes = file.readAll();
     file.close();
 
-    if (bytes.size() < kHeaderBytes || std::memcmp(bytes.constData(), "DJWAVE09", 8) != 0) {
+    if (bytes.size() < kHeaderBytes || std::memcmp(bytes.constData(), "DJWAVE10", 8) != 0) {
         m_error = QStringLiteral("%1 is not a waveform file").arg(QFileInfo(path).fileName());
         emit changed();
         return false;
@@ -267,9 +267,10 @@ QColor Waveform::pixelColor(double loud, double mid, double high) const
     }
     const double share[3] = {shaped[0] / shapedTotal, shaped[1] / shapedTotal,
                              shaped[2] / shapedTotal};
-    // Where this column sits on a log-frequency axis, using the centre of each band: bass around
-    // 70 Hz, mids around 1 kHz, treble around 9 kHz, on the 20 Hz - 20 kHz span.
-    static const double centre[3] = {0.140, 0.520, 0.900};
+    // Where this column sits on a log-frequency axis, using the centre of each band on the
+    // 20 Hz - 20 kHz span: bass 20-200 Hz sits near 0.10, mids 200-2500 Hz near 0.48, treble
+    // 2500-20000 Hz near 0.92.
+    static const double centre[3] = {0.100, 0.480, 0.920};
     const double position =
         qBound(0.0, share[0] * centre[0] + share[1] * centre[1] + share[2] * centre[2], 1.0);
 

@@ -150,18 +150,24 @@ fn the_colour_follows_the_balance_not_the_raw_energy() {
         "the first half is mid-heavy even before normalising: {early:?}"
     );
 
-    // Relative to the track, the halves are different, and that is what the colour reads.
+    // Relative to each band's own reference, the halves read differently — and that difference is
+    // what the colour follows. The margins are on the raw levels, because the reference is a median
+    // over the whole file and therefore already sits between the two halves.
     let weight = |bucket: &dj_analysis::Bucket, band: usize| {
         bucket_band(bucket, band) / peaks.band_reference[band].max(f32::EPSILON)
     };
     assert!(
-        weight(&early, 1) > weight(&early, 2) * 2.0,
-        "the first half must read as mids: {early:?} against {:?}",
-        peaks.band_reference
+        early.mid > early.high * 2.0,
+        "the first half is mid-heavy: {early:?}"
     );
     assert!(
-        weight(&late, 2) > weight(&late, 1),
-        "the second half must read as treble relative to the track: {late:?} against {:?}",
+        late.high > late.mid * 2.0,
+        "the second half is treble-heavy: {late:?}"
+    );
+    assert!(
+        weight(&early, 1) > weight(&late, 1) && weight(&late, 2) > weight(&early, 2),
+        "reading against the track must separate the halves: early {early:?} late {late:?} \
+         reference {:?}",
         peaks.band_reference
     );
 }
