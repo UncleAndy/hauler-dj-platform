@@ -30,7 +30,7 @@ dj-engine — the audio engine process
 
 Usage:
   dj-engine [--socket PATH] [--null-sink] [--device SUBSTR] [--block N] [--rate HZ]
-            [--seconds S] [--autoplay]
+            [--seconds S] [--autoplay] [--state-hz N]
   dj-engine [--socket PATH] --stop      ask a running engine to shut down
 
 Defaults: socket $XDG_RUNTIME_DIR/hauler-dj-engine.sock, null sink, 48 kHz, block 256.
@@ -43,6 +43,7 @@ On a device with four or more outputs master goes to the first pair and cue to t
 counters the probe reports, for the evidence directory.
 --autoplay starts every deck playing, so a bounded run actually carries signal. Without it the
 decks stay paused and every level reads zero, which says nothing about the output path.
+--state-hz N publishes state N times a second (default 20, from display.state_hz in the settings).
 --stop asks the running engine to shut down over its socket. Ctrl-C works too, but a signal can be
 blocked by the audio backend, so a stop must also be possible without one.
 
@@ -127,6 +128,9 @@ fn run(argv: &[String]) -> Result<(), String> {
     let mut seconds: Option<f64> = None;
     let mut autoplay = false;
     let mut request_stop = false;
+    // Settings first, so the flags default to them rather than to numbers scattered in the code.
+    let defaults = dj_config::Config::default();
+    let mut state_hz = defaults.display.state_hz;
 
     let mut index = 0;
     while index < argv.len() {
@@ -155,6 +159,16 @@ fn run(argv: &[String]) -> Result<(), String> {
             }
             "--rate" => {
                 rate = value(1)?.parse().map_err(|_| "--rate expects a number")?;
+                index += 2;
+            }
+            "--state-hz" => {
+                let parsed: u32 = value(1)?
+                    .parse()
+                    .map_err(|_| "--state-hz expects a number")?;
+                if !(1..=120).contains(&parsed) {
+                    return Err("--state-hz must be 1..=120 snapshots a second".to_string());
+                }
+                state_hz = parsed;
                 index += 2;
             }
             "--stop" => {
@@ -260,10 +274,16 @@ fn run(argv: &[String]) -> Result<(), String> {
     keep_a_signal_receiving_thread(&stop);
 
     // The publisher owns snapshot assembly: one allocation, at display rate, off the audio path.
+    // The count is kept so a bounded run can report the rate it actually achieved: the setting is
+    // only worth having if the wire carries what it promises.
+    let published = Arc::new(std::sync::atomic::AtomicU64::new(0));
     {
         let cells = Arc::clone(&cells);
+        let published = Arc::clone(&published);
         let subscribers = Arc::clone(&subscribers);
-        let publish_every = Duration::from_millis(50);
+        // The state rate is a parameter (display.state_hz): twenty snapshots a second is the
+        // default, and raising it trades IPC for less projection between snapshots.
+        let publish_every = Duration::from_micros(1_000_000 / u64::from(state_hz));
         std::thread::spawn(move || {
             let mut revision: u64 = 0;
             let mut statics = statics;
@@ -277,6 +297,7 @@ fn run(argv: &[String]) -> Result<(), String> {
                     }
                 }
                 revision += 1;
+                published.fetch_add(1, Ordering::Relaxed);
                 let snapshot = cells.read(&statics, rate, epoch, revision);
                 let message = ServerMessage::Snapshot(Box::new(snapshot));
 
@@ -389,15 +410,24 @@ fn run(argv: &[String]) -> Result<(), String> {
         graph_loads_rx,
     );
 
+    // One bag of run parameters for both paths.
+    let options = RunOptions {
+        block,
+        rate,
+        seconds,
+        state_hz,
+        published: Arc::clone(&published),
+    };
+
     match (device, device_channels) {
         (Some(requested), Some(channels)) => {
-            let outcome = run_device(graph, &requested, channels, block, rate, seconds, &stop);
+            let outcome = run_device(graph, &requested, channels, &options, &stop);
             remove_socket(&socket);
             outcome
         }
         _ => {
             let _ = null_sink;
-            run_null(graph, block, rate, seconds, &stop);
+            run_null(graph, &options, &stop);
             // The listener lives in the accept thread, which is parked in accept() and therefore
             // never runs its own destructor; the socket has to be removed here or the next engine
             // sees a live path with nobody behind it.
@@ -437,16 +467,34 @@ fn register_signals(stop: &Arc<AtomicBool>) -> Result<(), String> {
     Ok(())
 }
 
+/// What a run needs beyond its graph: the block, the rate, how long to run, and how often to publish.
+///
+/// One struct rather than nine arguments: the two paths (device and null sink) share them, and the
+/// list had already grown past what a call site can read.
+struct RunOptions {
+    block: usize,
+    rate: u32,
+    seconds: Option<f64>,
+    state_hz: u32,
+    published: Arc<std::sync::atomic::AtomicU64>,
+}
+
 /// The device path: the graph lives inside the callback, which is the only place it may run.
 fn run_device(
     graph: EngineGraph,
     requested: &str,
     channels: usize,
-    block: usize,
-    rate: u32,
-    seconds: Option<f64>,
+    options: &RunOptions,
     stop: &Arc<AtomicBool>,
 ) -> Result<(), String> {
+    let RunOptions {
+        block,
+        rate,
+        seconds,
+        state_hz,
+        published,
+    } = options;
+    let (block, rate, seconds, state_hz) = (*block, *rate, *seconds, *state_hz);
     let plan = dj_audio_io::RoutePlan::for_channels(channels);
     let config = dj_audio_io::LiveConfig {
         device: Some(requested.to_string()),
@@ -494,6 +542,8 @@ fn run_device(
             "render_p99_us": report.render_p99_us,
             "render_max_us": report.render_max_us,
             "render_budget": report.render_budget,
+            "state_hz_requested": state_hz,
+            "snapshots_published": published.load(Ordering::Relaxed),
             "stalled_blocks": report.stalled_blocks,
             "off_cpu_max_us": report.off_cpu_max_us,
             "peaks": report.peaks,
@@ -526,13 +576,15 @@ fn run_device(
 }
 
 /// The null path: same graph, same rules, paced by a clock instead of a sound card.
-fn run_null(
-    mut graph: EngineGraph,
-    block: usize,
-    rate: u32,
-    seconds: Option<f64>,
-    stop: &Arc<AtomicBool>,
-) {
+fn run_null(mut graph: EngineGraph, options: &RunOptions, stop: &Arc<AtomicBool>) {
+    let RunOptions {
+        block,
+        rate,
+        seconds,
+        state_hz,
+        published,
+    } = options;
+    let (block, rate, seconds, state_hz) = (*block, *rate, *seconds, *state_hz);
     let period = Duration::from_secs_f64(f64::from(block as u32) / f64::from(rate));
     let mut master = vec![0.0f32; block * 2];
     let mut cue = vec![0.0f32; block * 2];
@@ -560,6 +612,10 @@ fn run_null(
                 "audio_seconds": graph.clock() as f64 / f64::from(rate),
                 "sample_rate": rate,
                 "block_frames": block,
+                // The rate the wire actually carried, next to the one that was asked for: the
+                // figure is what the UI can project between, not what the flag promised.
+                "state_hz_requested": state_hz,
+                "snapshots_published": published.load(Ordering::Relaxed),
             });
             println!(
                 "{}",

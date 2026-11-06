@@ -59,6 +59,19 @@ bool UiSettings::setWaveformBandColor(const QString &band, const QString &color)
     return true;
 }
 
+bool UiSettings::setFrameHz(int hz)
+{
+    if (hz < 5 || hz > 240) {
+        return false;
+    }
+    if (m_frameHz == hz) {
+        return true;
+    }
+    m_frameHz = hz;
+    emit changed();
+    return true;
+}
+
 bool UiSettings::setWaveformBarWidth(int width)
 {
     if (width <= 0 || width > 32) {

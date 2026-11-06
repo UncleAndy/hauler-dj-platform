@@ -78,7 +78,9 @@ Item {
     }
 
     Timer {
-        interval: 16
+        // The frame rate is a setting (display.frame_hz, default 20): twenty is smooth enough with
+        // the projection, and a booth laptop does not have to draw at the display rate.
+        interval: UiSettings.frameInterval
         repeat: true
         running: view.playing
         onTriggered: view.advance()

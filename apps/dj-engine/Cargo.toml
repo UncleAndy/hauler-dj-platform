@@ -13,6 +13,7 @@ dj-audio-core = { path = "../../crates/dj-audio-core" }
 dj-audio-io = { path = "../../crates/dj-audio-io" }
 dj-bridge = { path = "../../crates/dj-bridge" }
 dj-codec = { path = "../../crates/dj-codec" }
+dj-config = { path = "../../crates/dj-config" }
 dj-deck = { path = "../../crates/dj-deck" }
 dj-domain = { path = "../../crates/dj-domain" }
 dj-mixer = { path = "../../crates/dj-mixer" }

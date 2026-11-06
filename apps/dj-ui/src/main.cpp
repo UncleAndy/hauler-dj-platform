@@ -645,6 +645,12 @@ int main(int argc, char *argv[])
         QStringLiteral("Trim the three bands before colouring, comma separated "
                        "(default 1,1,1). Raise the low gain to see more bass colour."),
         QStringLiteral("low,mid,high"));
+    const QCommandLineOption frameRateOption(
+        QStringLiteral("fps"),
+        QStringLiteral("Frames drawn per second (default 20, from display.frame_hz in the settings; "
+                       "5..240). The strip is projected between engine snapshots, so a higher rate "
+                       "smooths a fast scroll without asking the engine for more state."),
+        QStringLiteral("hz"));
     const QCommandLineOption benchOption(
         QStringLiteral("waveform-bench"),
         QStringLiteral("Redraw the strip N times and report the cost of a frame, in milliseconds."),
@@ -697,6 +703,7 @@ int main(int argc, char *argv[])
     parser.addOption(screenshotOption);
     parser.addOption(themeCheckOption);
     parser.addOption(benchOption);
+    parser.addOption(frameRateOption);
     parser.addOption(bandGainOption);
     parser.addOption(barWidthOption);
     parser.addOption(barGapOption);
@@ -752,6 +759,14 @@ int main(int argc, char *argv[])
         const int gap = parser.value(barGapOption).toInt(&ok);
         if (!ok || !settings.setWaveformBarGap(gap)) {
             std::fprintf(stderr, "dj-ui: --waveform-bar-gap needs 0..32\n");
+            return 2;
+        }
+    }
+    if (parser.isSet(frameRateOption)) {
+        bool ok = false;
+        const int hz = parser.value(frameRateOption).toInt(&ok);
+        if (!ok || !settings.setFrameHz(hz)) {
+            std::fprintf(stderr, "dj-ui: --fps needs 5..240\n");
             return 2;
         }
     }
@@ -999,8 +1014,10 @@ int main(int argc, char *argv[])
             return costs[index];
         };
         std::fprintf(stdout,
-                     "dj-ui: frame cost p50 %.2f ms, p99 %.2f ms, max %.2f ms over %d frames\n",
-                     at(0.50), at(0.99), costs.back(), count);
+                     "dj-ui: frame cost p50 %.2f ms, p99 %.2f ms, max %.2f ms over %d frames "
+                     "at %d Hz (%d ms apart)\n",
+                     at(0.50), at(0.99), costs.back(), count, settings.frameHz(),
+                     settings.frameInterval());
         // A frame has a 16.7 ms budget at 60 Hz; taking more than half of it to paint the strip
         // means the strip, not the display, sets the frame rate.
         if (at(0.99) > 8.0) {

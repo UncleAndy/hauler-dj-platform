@@ -33,6 +33,8 @@ pub struct Config {
     pub diagnostics: DiagnosticsSettings,
     /// Real-time scheduling expectation (ADR-0010).
     pub realtime: RealtimeSettings,
+    /// How often the picture is refreshed.
+    pub display: DisplaySettings,
 }
 
 impl Default for Config {
@@ -44,6 +46,7 @@ impl Default for Config {
             pcm_cache: CacheSettings::default(),
             diagnostics: DiagnosticsSettings::default(),
             realtime: RealtimeSettings::default(),
+            display: DisplaySettings::default(),
         }
     }
 }
@@ -189,6 +192,33 @@ impl Default for RealtimeSettings {
     }
 }
 
+/// How often state leaves the engine and how often the screen is redrawn.
+///
+/// Two numbers, not one, because they answer different questions. The engine publishes whole
+/// snapshots — every deck, every counter — and twenty a second is enough for the numbers. The strip
+/// under the playhead moves between those snapshots: the UI projects the position from the track's
+/// own sample rate and the current tempo, so a frame rate above the state rate still buys smooth
+/// motion. Twenty frames a second is the default: it is cheaper on a booth laptop and the projection
+/// keeps the movement continuous. Raising `frame_hz` towards the display rate makes a fast scroll at
+/// deep zoom smoother; raising `state_hz` does it by sending more truth instead of projecting it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DisplaySettings {
+    /// Snapshots published per second.
+    pub state_hz: u32,
+    /// Frames drawn per second.
+    pub frame_hz: u32,
+}
+
+impl Default for DisplaySettings {
+    fn default() -> Self {
+        Self {
+            state_hz: 20,
+            frame_hz: 20,
+        }
+    }
+}
+
 /// Why a settings file was rejected.
 #[derive(Debug)]
 pub enum ConfigError {
@@ -280,6 +310,18 @@ impl Config {
                 self.pcm_cache.max_size_gb
             )));
         }
+        if !(1..=120).contains(&self.display.state_hz) {
+            return Err(ConfigError::Invalid(format!(
+                "display.state_hz {} is outside 1..=120",
+                self.display.state_hz
+            )));
+        }
+        if !(5..=240).contains(&self.display.frame_hz) {
+            return Err(ConfigError::Invalid(format!(
+                "display.frame_hz {} is outside 5..=240",
+                self.display.frame_hz
+            )));
+        }
         let diagnostics = &self.diagnostics;
         if diagnostics.late_threshold_periods <= diagnostics.early_threshold_periods {
             return Err(ConfigError::Invalid(
@@ -343,6 +385,10 @@ mod tests {
         assert_eq!(config.diagnostics.early_threshold_periods, 0.5);
         assert_eq!(config.diagnostics.stall_threshold_us, 500);
         assert_eq!(config.diagnostics.expensive_threshold_percent, 1.0);
+        // The owner asked for twenty frames a second as the default, and for both rates to be
+        // parameters rather than constants.
+        assert_eq!(config.display.state_hz, 20);
+        assert_eq!(config.display.frame_hz, 20);
         config.validate().unwrap_or_else(|err| panic!("{err}"));
     }
 
@@ -381,6 +427,15 @@ mod tests {
 
         let rate = Config::from_toml("[audio]\nsample_rate = 1\n");
         assert!(matches!(rate, Err(ConfigError::Invalid(_))));
+
+        let frames = Config::from_toml("[display]\nframe_hz = 0\n");
+        assert!(
+            matches!(frames, Err(ConfigError::Invalid(text)) if text.contains("frame_hz")),
+            "a zero frame rate must name the field"
+        );
+
+        let states = Config::from_toml("[display]\nstate_hz = 500\n");
+        assert!(matches!(states, Err(ConfigError::Invalid(_))));
     }
 
     #[test]
@@ -390,6 +445,8 @@ mod tests {
         config.audio.device = Some("s4".to_string());
         config.loop_playback.buffer_max_seconds = 4.0;
         config.diagnostics.late_threshold_periods = 1.25;
+        config.display.state_hz = 40;
+        config.display.frame_hz = 60;
 
         let text = config.to_toml().unwrap_or_else(|err| panic!("{err}"));
         let back = Config::from_toml(&text).unwrap_or_else(|err| panic!("{err}"));

@@ -30,6 +30,10 @@ class UiSettings : public QObject
     Q_PROPERTY(QString themeWaveBackground READ themeWaveBackground CONSTANT)
     Q_PROPERTY(QString themeWaveOutline READ themeWaveOutline CONSTANT)
     Q_PROPERTY(QString waveformStyle READ waveformStyle NOTIFY changed)
+    // Frames drawn per second; the strip and the playhead projection run at this rate.
+    Q_PROPERTY(int frameHz READ frameHz NOTIFY changed)
+    // Milliseconds between frames, ready for a Timer interval: QML should not divide on its own.
+    Q_PROPERTY(int frameInterval READ frameInterval NOTIFY changed)
     // Bar geometry of the spectral waveform. A gap makes the picture read as a bar chart; the
     // waveform in a deck is continuous, so the default gap is zero.
     Q_PROPERTY(int waveformBarWidth READ waveformBarWidth NOTIFY changed)
@@ -65,6 +69,8 @@ public:
     QString themeWaveOutline() const { return QStringLiteral("#5b636d"); }
 
     QString waveformStyle() const { return m_waveformStyle; }
+    int frameHz() const { return m_frameHz; }
+    int frameInterval() const { return qMax(1, 1000 / qMax(1, m_frameHz)); }
     int waveformBarWidth() const { return m_waveformBarWidth; }
     int waveformBarGap() const { return m_waveformBarGap; }
 
@@ -78,6 +84,9 @@ public:
     // Sets one of "low", "mid", "high"; false when the band name or the colour is wrong.
     bool setWaveformBandColor(const QString &band, const QString &color);
 
+    // Frames per second, 5..240; false when the number is outside what a display can use.
+    bool setFrameHz(int hz);
+
     // "coloured" or "plain"; anything else is refused.
     bool setWaveformStyle(const QString &style);
 
@@ -90,6 +99,8 @@ signals:
 private:
     QString m_waveformOutsideColor = QStringLiteral("#101010");
     QString m_waveformStyle = QStringLiteral("coloured");
+    // Twenty frames a second: the owner's default, and enough with the projection between snapshots.
+    int m_frameHz = 20;
     // One bar per pixel: the waveform is a continuous curve, and two-pixel bars halve the
     // horizontal detail for nothing.
     int m_waveformBarWidth = 1;
