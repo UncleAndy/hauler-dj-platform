@@ -243,6 +243,48 @@ QVariantList Waveform::profile(int columns, double windowStart, double span) con
             {QStringLiteral("rgb"), colour.name()},
             {QStringLiteral("outside"), false}});
     }
+
+    // Zoomed out, one bar covers several envelope columns and the peak inside each one jumps about:
+    // neighbouring bars differ by a pixel or two even where the music is steady, and that reads as
+    // a pixel moiré over the whole strip. The cure is the one the eye expects — a slight horizontal
+    // blur, its width tied to how many columns a bar actually spans, so a zoomed-in view keeps its
+    // transients sharp and the overview becomes smooth.
+    const double columnsPerBar = columns > 0 ? double(m_lastCovered) / double(columns) : 0.0;
+    if (columnsPerBar > 1.5 && bars.size() > 2) {
+        const int radius = qBound(1, int(std::ceil(columnsPerBar * 0.5)), 4);
+        const double sigma = qMax(0.8, columnsPerBar * 0.45);
+        std::vector<double> amplitudes;
+        amplitudes.reserve(std::size_t(bars.size()));
+        for (const QVariant &entry : bars) {
+            amplitudes.push_back(entry.toMap().value(QStringLiteral("amplitude")).toDouble());
+        }
+        std::vector<double> smoothed(amplitudes.size(), 0.0);
+        for (int index = 0; index < int(amplitudes.size()); ++index) {
+            double sum = 0.0;
+            double weight = 0.0;
+            for (int step = -radius; step <= radius; ++step) {
+                const int neighbour = index + step;
+                if (neighbour < 0 || neighbour >= int(amplitudes.size())) {
+                    continue;
+                }
+                if (bars.at(neighbour).toMap().value(QStringLiteral("outside")).toBool()) {
+                    continue;
+                }
+                const double kernel = std::exp(-0.5 * (step / sigma) * (step / sigma));
+                sum += amplitudes[std::size_t(neighbour)] * kernel;
+                weight += kernel;
+            }
+            smoothed[std::size_t(index)] = weight > 0.0 ? sum / weight : amplitudes[std::size_t(index)];
+        }
+        for (int index = 0; index < bars.size(); ++index) {
+            if (bars.at(index).toMap().value(QStringLiteral("outside")).toBool()) {
+                continue;
+            }
+            QVariantMap bar = bars.at(index).toMap();
+            bar[QStringLiteral("amplitude")] = smoothed[std::size_t(index)];
+            bars[index] = bar;
+        }
+    }
     return bars;
 }
 

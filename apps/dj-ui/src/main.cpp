@@ -283,6 +283,36 @@ int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socket
                 }
             }
             std::fprintf(stdout, "dj-ui: profile tiles the track at 640, 901 and 1280 px\n");
+            // The overview must be smooth. Without the horizontal blur the bars beat against the
+            // envelope grid and the strip reads as a pixel moiré; the mean distance of a bar from
+            // its neighbours is the number that catches it.
+            {
+                const QVariantList overview = waveform.profile(1200, 0.0, 1.0);
+                double total = 0.0;
+                int compared = 0;
+                for (int index = 1; index + 1 < overview.size(); ++index) {
+                    if (overview.at(index).toMap().value(QStringLiteral("outside")).toBool()) {
+                        continue;
+                    }
+                    const double left = overview.at(index - 1).toMap()
+                                            .value(QStringLiteral("amplitude")).toDouble();
+                    const double right = overview.at(index + 1).toMap()
+                                             .value(QStringLiteral("amplitude")).toDouble();
+                    const double here = overview.at(index).toMap()
+                                            .value(QStringLiteral("amplitude")).toDouble();
+                    total += qAbs(here - 0.5 * (left + right)) * 80.0;
+                    ++compared;
+                }
+                const double roughness = compared > 0 ? total / compared : 0.0;
+                std::fprintf(stdout, "dj-ui: overview roughness %.2f px\n", roughness);
+                if (expectSpread && roughness > 1.0) {
+                    failure = QStringLiteral("the overview is jagged: %.2f px between neighbours")
+                                  .arg(roughness);
+                    loop.quit();
+                    return;
+                }
+            }
+
 
             // The colours must not depend on where the window happens to sit. They did while the
             // smoothing was recomputed per paint: as the waveform scrolled, every frame re-smoothed
@@ -834,6 +864,31 @@ int main(int argc, char *argv[])
         }
         std::fprintf(stdout, "dj-ui: wrote %s, %d of %d columns painted\n",
                      qPrintable(parts.at(1)), painted, width);
+        // How jagged the outline is: the mean distance of a bar from the average of its neighbours,
+        // in pixels. A pixel moiré shows up here as a number around two; a smooth outline is under
+        // one. Printed and asserted, because "looks grainy" is not something a gate can read.
+        double roughness = 0.0;
+        int compared = 0;
+        for (int index = 1; index + 1 < pixels.size(); ++index) {
+            const QVariantMap bar = pixels.at(index).toMap();
+            if (bar.value(QStringLiteral("outside")).toBool()) {
+                continue;
+            }
+            const double left = pixels.at(index - 1)
+                                    .toMap()
+                                    .value(QStringLiteral("amplitude"))
+                                    .toDouble();
+            const double right = pixels.at(index + 1)
+                                     .toMap()
+                                     .value(QStringLiteral("amplitude"))
+                                     .toDouble();
+            const double here = bar.value(QStringLiteral("amplitude")).toDouble();
+            roughness += qAbs(here - 0.5 * (left + right)) * middle;
+            ++compared;
+        }
+        if (compared > 0) {
+            std::fprintf(stdout, "dj-ui: roughness %.2f px\n", roughness / compared);
+        }
         std::fprintf(stdout, "dj-ui: hues");
         for (int index = 0; index < 8; ++index) {
             if (hues[index] > 0) {
