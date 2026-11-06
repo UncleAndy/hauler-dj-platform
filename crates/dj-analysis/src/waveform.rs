@@ -187,27 +187,46 @@ pub fn analyse(path: &Path, frames_per_bucket: u32) -> Result<Peaks, MediaError>
     })
 }
 
-/// Typical level of each band: the median of the columns that carry anything.
+/// Typical level of each band: the median over the columns where the track is actually playing.
 ///
-/// Median rather than mean, because one loud drop should not move the reference for the whole
-/// track and repaint everything around it.
+/// Two mistakes live here. The median over all columns is dragged down by the silence between hits,
+/// and then a band that is quiet most of the time — the bass, on a sparse track — looks enormous the
+/// moment it plays, which paints the whole waveform red. So the reference is taken from columns at
+/// or above a quarter of the track's loudest column: what the track sounds like when it sounds.
 fn reference_levels(buckets: &[Bucket]) -> [f32; 3] {
+    let loudest = buckets
+        .iter()
+        .map(|bucket| bucket.max.abs().max(bucket.min.abs()))
+        .fold(0.0f32, f32::max);
+    let floor = loudest * 0.25;
     let mut per_band: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    let mut all_columns: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
     for bucket in buckets {
         if bucket.bands_are_missing() {
             continue;
         }
-        per_band[0].push(bucket.low);
-        per_band[1].push(bucket.mid);
-        per_band[2].push(bucket.high);
+        for (index, level) in [bucket.low, bucket.mid, bucket.high]
+            .into_iter()
+            .enumerate()
+        {
+            all_columns[index].push(level);
+            if bucket.max.abs().max(bucket.min.abs()) >= floor {
+                per_band[index].push(level);
+            }
+        }
     }
     let mut reference = [0.0f32; 3];
-    for (index, values) in per_band.iter_mut().enumerate() {
+    for index in 0..3 {
+        let values = if per_band[index].len() >= 8 {
+            &mut per_band[index]
+        } else {
+            &mut all_columns[index]
+        };
         if values.is_empty() {
             continue;
         }
         values.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
-        reference[index] = values[values.len() / 2];
+        reference[index] = values[values.len() / 2].max(1e-6);
     }
     reference
 }

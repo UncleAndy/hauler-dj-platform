@@ -59,6 +59,9 @@ public:
     // brightness, the other two tint it in proportion to how loud they are against that leader.
     QColor pixelColor(double loud, double mid, double high) const;
 
+    // Trims for the three bands when the measured balance does not suit the material.
+    void setBandGain(double low, double mid, double high);
+
 signals:
     void changed();
 
@@ -72,4 +75,5 @@ private:
     // Typical level of low, mid and high across the loaded track, from the envelope header.
     double m_bandReference[3] = {0.0, 0.0, 0.0};
     QColor m_palette[3];
+    double m_bandGain[3] = {1.0, 1.0, 1.0};
 };

@@ -233,17 +233,39 @@ void Waveform::setPalette(const QColor &low, const QColor &mid, const QColor &hi
 QColor Waveform::pixelColor(double loud, double mid, double high) const
 {
     const double levels[3] = {qMax(0.0, loud), qMax(0.0, mid), qMax(0.0, high)};
-    const double leader = qMax(levels[0], qMax(levels[1], levels[2]));
-    if (leader <= 1e-6) {
+    // Compare each band with its own usual level for this track, not with zero. A band that simply
+    // spans more octaves is loud everywhere, so measuring against zero makes whichever band is
+    // widest win the whole track: first the mids, then the bass, both times one flat colour.
+    // What makes a kick red is that the bass is louder THAN ITSELF usually is.
+    double deviations[3] = {0.0, 0.0, 0.0};
+    double rawTotal = 0.0;
+    for (int band = 0; band < 3; ++band) {
+        rawTotal += levels[band];
+    }
+    if (rawTotal <= 1e-6) {
         return m_palette[1];
     }
-    // The loudest band contributes with weight 1 — full brightness of its colour — and the others
-    // in proportion to their loudness against it. A weighted average, not a sum: the result stays
-    // as bright as the leader and no band can wash the picture out.
+    for (int band = 0; band < 3; ++band) {
+        const double usual = qMax(m_bandReference[band], 1e-6);
+        // Gain 1.0 keeps the measurement honest; the ceiling stops one huge hit from pinning a band.
+        const double relative = levels[band] * m_bandGain[band] / usual;
+        deviations[band] = qMax(0.0, qMin(8.0, relative - 1.0));
+    }
+    double leader = qMax(deviations[0], qMax(deviations[1], deviations[2]));
+    if (leader <= 1e-6) {
+        // Nothing stands out from the track's own average: fall back to the plain loudness mix so
+        // the column still carries information instead of turning grey.
+        for (int band = 0; band < 3; ++band) {
+            deviations[band] = levels[band];
+        }
+        leader = qMax(deviations[0], qMax(deviations[1], deviations[2]));
+    }
     double weights[3] = {0.0, 0.0, 0.0};
     double total = 0.0;
     for (int band = 0; band < 3; ++band) {
-        weights[band] = levels[band] / leader;
+        // The leader contributes 1 — full brightness of its colour — the others in proportion to
+        // how much they rise above their own usual level against the leader, as the owner asked.
+        weights[band] = deviations[band] / leader;
         total += weights[band];
     }
     double red = 0.0;
@@ -257,4 +279,11 @@ QColor Waveform::pixelColor(double loud, double mid, double high) const
         blue += colour.blueF() * share;
     }
     return QColor::fromRgbF(qBound(0.0, red, 1.0), qBound(0.0, green, 1.0), qBound(0.0, blue, 1.0));
+}
+
+void Waveform::setBandGain(double low, double mid, double high)
+{
+    m_bandGain[0] = low;
+    m_bandGain[1] = mid;
+    m_bandGain[2] = high;
 }

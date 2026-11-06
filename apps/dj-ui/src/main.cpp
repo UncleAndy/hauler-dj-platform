@@ -497,6 +497,11 @@ int main(int argc, char *argv[])
         QStringLiteral("waveform-style"),
         QStringLiteral("coloured (default: bass warm, treble cold) or plain."),
         QStringLiteral("style"));
+    const QCommandLineOption bandGainOption(
+        QStringLiteral("waveform-band-gain"),
+        QStringLiteral("Trim the three bands before colouring, comma separated "
+                       "(default 1,1,1). Raise the low gain to see more bass colour."),
+        QStringLiteral("low,mid,high"));
     const QCommandLineOption waveformPngOption(
         QStringLiteral("waveform-png"),
         QStringLiteral("Render a waveform envelope to an image and exit: PATH OUT.png"),
@@ -527,6 +532,7 @@ int main(int argc, char *argv[])
     parser.addOption(bandColorOption);
     parser.addOption(expectSpreadOption);
     parser.addOption(waveformPngOption);
+    parser.addOption(bandGainOption);
     parser.addOption(dialogCheckOption);
     parser.process(app);
 
@@ -565,6 +571,24 @@ int main(int argc, char *argv[])
             }
         }
     }
+    double bandGain[3] = {1.0, 1.0, 1.0};
+    if (parser.isSet(bandGainOption)) {
+        const QStringList parts = parser.value(bandGainOption).split(',');
+        bool ok = parts.size() == 3;
+        double gains[3] = {1.0, 1.0, 1.0};
+        for (int index = 0; ok && index < 3; ++index) {
+            gains[index] = parts.at(index).trimmed().toDouble(&ok);
+            ok = ok && gains[index] > 0.0;
+        }
+        if (!ok) {
+            std::fprintf(stderr, "dj-ui: --waveform-band-gain needs three positive numbers\n");
+            return 2;
+        }
+        bandGain[0] = gains[0];
+        bandGain[1] = gains[1];
+        bandGain[2] = gains[2];
+        waveform.setBandGain(bandGain[0], bandGain[1], bandGain[2]);
+    }
     waveform.setPalette(QColor(settings.waveformLowColor()), QColor(settings.waveformMidColor()),
                         QColor(settings.waveformHighColor()));
     qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "UiSettings", &settings);
@@ -581,6 +605,7 @@ int main(int argc, char *argv[])
         envelope.setPalette(QColor(settings.waveformLowColor()),
                             QColor(settings.waveformMidColor()),
                             QColor(settings.waveformHighColor()));
+        envelope.setBandGain(bandGain[0], bandGain[1], bandGain[2]);
         if (!envelope.load(parts.at(0))) {
             std::fprintf(stderr, "dj-ui: %s\n", qPrintable(envelope.error()));
             return 1;
@@ -608,8 +633,44 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: cannot write %s\n", qPrintable(parts.at(1)));
             return 1;
         }
+        // The numbers behind the picture: what a colour does globally is not visible by eye when
+        // one band leads everywhere, and that is exactly the complaint to check for.
+        int hues[6] = {0, 0, 0, 0, 0, 0};
+        const char *names[6] = {"red", "orange", "yellow", "green", "blue", "violet"};
+        for (int x = 0; x < pixels.size() && x < width; ++x) {
+            const QVariantMap pixel = pixels.at(x).toMap();
+            if (qAbs(pixel.value(QStringLiteral("max")).toDouble()) * middle < 0.5) {
+                continue;
+            }
+            const QColor colour(pixel.value(QStringLiteral("rgb")).toString());
+            const int hue = int(colour.hsvHueF() * 360.0);
+            if (hue < 20 || hue >= 340) {
+                ++hues[0];
+            } else if (hue < 45) {
+                ++hues[1];
+            } else if (hue < 70) {
+                ++hues[2];
+            } else if (hue < 160) {
+                ++hues[3];
+            } else if (hue < 250) {
+                ++hues[4];
+            } else {
+                ++hues[5];
+            }
+        }
         std::fprintf(stdout, "dj-ui: wrote %s, %d of %d columns painted\n",
                      qPrintable(parts.at(1)), painted, width);
+        const QVariantList references = envelope.reference();
+        std::fprintf(stdout, "dj-ui: usual levels low %.4f mid %.4f high %.4f\n",
+                     references.at(0).toDouble(), references.at(1).toDouble(),
+                     references.at(2).toDouble());
+        std::fprintf(stdout, "dj-ui: hues");
+        for (int index = 0; index < 6; ++index) {
+            if (hues[index] > 0) {
+                std::fprintf(stdout, " %s %d", names[index], hues[index]);
+            }
+        }
+        std::fprintf(stdout, "\n");
         return 0;
     }
 
