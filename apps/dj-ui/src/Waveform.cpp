@@ -239,39 +239,47 @@ void Waveform::setPalette(const QColor &low, const QColor &mid, const QColor &hi
 
 QColor Waveform::pixelColor(double loud, double mid, double high) const
 {
-    // The three bands drive the red, green and blue channels directly, each scaled by its own
-    // loudest block in this track. That is the scheme the reference describes, and it is the only
-    // one of the five I tried that cannot collapse: no band is chosen as "the" colour, so no band
-    // can own the picture, and mixtures come out where music has them — bass plus mids is orange,
-    // mids plus treble is cyan, everything at once is white.
     const double levels[3] = {qMax(0.0, loud) * m_bandGain[0], qMax(0.0, mid) * m_bandGain[1],
                               qMax(0.0, high) * m_bandGain[2]};
-    // Against each band's own usual level in this track, so a band that spans more octaves cannot
-    // own a channel by being loud everywhere.
-    double relative[3] = {0.0, 0.0, 0.0};
-    for (int band = 0; band < 3; ++band) {
-        relative[band] = levels[band] / qMax(m_bandReference[band], 1e-6);
-    }
-    // The strongest band fills its channel completely and the others follow in proportion, so a
-    // kick is red with an orange edge, a hi-hat is blue, and dense material — where all three rise
-    // together — comes out pale, as the reference says it should.
-    const double strongest = qMax(relative[0], qMax(relative[1], relative[2]));
-    if (strongest <= 1e-6) {
+    // Absolute loudness, not "against the usual": a steady bass line is loud at every moment, and
+    // measuring it against its own average made it look ordinary exactly where it should be red.
+    double total = levels[0] + levels[1] + levels[2];
+    if (total <= 1e-6) {
         return QColor(0, 0, 0);
     }
-    // Each band adds its own colour in proportion to its share, so bass plus mids mixes into
-    // orange, mids plus highs into cyan, and a passage where all three are up turns pale — the
-    // additive channels of the reference, with the three colours still configurable.
-    double red = 0.0;
-    double green = 0.0;
-    double blue = 0.0;
-    for (int band = 0; band < 3; ++band) {
-        const double share = qBound(0.0, relative[band] / strongest, 1.0);
-        red += m_palette[band].redF() * share;
-        green += m_palette[band].greenF() * share;
-        blue += m_palette[band].blueF() * share;
+    const double share[3] = {levels[0] / total, levels[1] / total, levels[2] / total};
+    // Where this column sits on a log-frequency axis, using the centre of each band: bass around
+    // 70 Hz, mids around 1 kHz, treble around 9 kHz, on the 20 Hz - 20 kHz span.
+    static const double centre[3] = {0.181, 0.566, 0.884};
+    const double position =
+        qBound(0.0, share[0] * centre[0] + share[1] * centre[1] + share[2] * centre[2], 1.0);
+
+    // One hue per column, running round the colour circle from red through yellow and green to blue
+    // and violet — the way the reference waveform does it. Measured from the owner's screenshots:
+    // a column there is a single colour from top to bottom, and neighbouring columns differ.
+    struct Stop {
+        double at;
+        double hue;
+    };
+    // Calibrated against the reference screenshot, where bass is red and orange rather than yellow:
+    // a kick lands near 0.27 of the axis, and that has to come out red-orange, not yellow.
+    static const Stop stops[] = {{0.00, 3.0},   {0.30, 14.0}, {0.45, 50.0}, {0.60, 120.0},
+                                 {0.75, 178.0}, {0.88, 232.0}, {1.00, 275.0}};
+    double hue = stops[0].hue;
+    for (std::size_t index = 1; index < sizeof(stops) / sizeof(stops[0]); ++index) {
+        if (position <= stops[index].at) {
+            const double span = stops[index].at - stops[index - 1].at;
+            const double part = span > 0.0 ? (position - stops[index - 1].at) / span : 0.0;
+            hue = stops[index - 1].hue + (stops[index].hue - stops[index - 1].hue) * part;
+            break;
+        }
+        hue = stops[index].hue;
     }
-    return QColor::fromRgbF(qBound(0.0, red, 1.0), qBound(0.0, green, 1.0), qBound(0.0, blue, 1.0));
+    // Mixed spectrum with no clear winner washes out, as the reference describes; a column where one
+    // band dominates stays saturated.
+    const double strongest = qMax(share[0], qMax(share[1], share[2]));
+    const double saturation = qBound(0.25, 0.35 + (strongest - 1.0 / 3.0) * 1.65, 1.0);
+    return QColor::fromHsvF(hue / 360.0, saturation, 1.0);
 }
 
 void Waveform::setBandGain(double low, double mid, double high)
