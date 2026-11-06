@@ -113,8 +113,9 @@ fn changing_balance_file(dir: &Path) -> PathBuf {
     for frame in 0..frames {
         let time = frame as f32 / rate as f32;
         let second_half = frame >= rate as usize;
-        let mid = if second_half { 0.2f32 } else { 0.8 };
-        let high = if second_half { 0.5f32 } else { 0.05 };
+        // A clear change of balance, so the crossover's own transition band cannot blur the test.
+        let mid = if second_half { 0.1f32 } else { 0.9 };
+        let high = if second_half { 0.9f32 } else { 0.02 };
         let value = (time * 1_000.0 * std::f32::consts::TAU).sin() * mid
             + (time * 9_000.0 * std::f32::consts::TAU).sin() * high;
         samples.push(value * 0.5);
@@ -129,33 +130,17 @@ fn changing_balance_file(dir: &Path) -> PathBuf {
 }
 
 #[test]
-fn the_colour_follows_the_balance_not_the_raw_energy() {
+fn a_track_that_changes_balance_shows_it_in_the_bands() {
     let dir = temp_cache("balance");
     std::fs::create_dir_all(&dir).unwrap_or_else(|err| panic!("{err}"));
     let peaks = analyse(&changing_balance_file(&dir), 512).unwrap_or_else(|err| panic!("{err}"));
-
-    assert!(
-        peaks.band_reference.iter().all(|level| *level > 0.0),
-        "every band needs a reference: {:?}",
-        peaks.band_reference
-    );
 
     let quarter = peaks.buckets.len() / 4;
     let early = peaks.buckets[quarter];
     let late = peaks.buckets[peaks.buckets.len() - quarter];
 
-    // Raw energies: mid wins in both halves — that is exactly why the raw mix was always green.
-    assert!(
-        early.mid > early.low && early.mid > early.high,
-        "the first half is mid-heavy even before normalising: {early:?}"
-    );
-
-    // Relative to each band's own reference, the halves read differently — and that difference is
-    // what the colour follows. The margins are on the raw levels, because the reference is a median
-    // over the whole file and therefore already sits between the two halves.
-    let weight = |bucket: &dj_analysis::Bucket, band: usize| {
-        bucket_band(bucket, band) / peaks.band_reference[band].max(f32::EPSILON)
-    };
+    // The renderer turns these numbers into R, G and B, so the bands themselves have to separate
+    // the two halves: a mid-heavy passage must read green and a treble-heavy one blue.
     assert!(
         early.mid > early.high * 2.0,
         "the first half is mid-heavy: {early:?}"
@@ -165,19 +150,9 @@ fn the_colour_follows_the_balance_not_the_raw_energy() {
         "the second half is treble-heavy: {late:?}"
     );
     assert!(
-        weight(&early, 1) > weight(&late, 1) && weight(&late, 2) > weight(&early, 2),
-        "reading against the track must separate the halves: early {early:?} late {late:?} \
-         reference {:?}",
-        peaks.band_reference
+        early.low < early.mid,
+        "neither half of this file is bass-heavy: {early:?}"
     );
-}
-
-fn bucket_band(bucket: &dj_analysis::Bucket, band: usize) -> f32 {
-    match band {
-        0 => bucket.low,
-        1 => bucket.mid,
-        _ => bucket.high,
-    }
 }
 
 #[test]
@@ -296,8 +271,6 @@ fn an_empty_envelope_is_harmless() {
         frames_per_bucket: 512,
         sample_rate: 48_000,
         buckets: Vec::new(),
-        band_reference: [0.0; 3],
-        band_level: [0.0; 3],
     };
     assert_eq!(empty.frames(), 0);
     assert_eq!(empty.peak(), 0.0);

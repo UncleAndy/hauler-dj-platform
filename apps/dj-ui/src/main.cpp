@@ -271,13 +271,13 @@ int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socket
             // real track has its own balance; but if one band takes everything on music too, the
             // colouring is broken and this line says so before anyone looks at the screen.
             {
-                const QVariantList whole = waveform.profile(900, 0.0, 1.0);
+                const QVariantList whole = waveform.columns();
                 int counts[3] = {0, 0, 0};
                 for (const QVariant &entry : whole) {
                     const QVariantMap pixel = entry.toMap();
-                    const double weights[3] = {pixel.value(QStringLiteral("h0")).toDouble(),
-                                               pixel.value(QStringLiteral("h1")).toDouble(),
-                                               pixel.value(QStringLiteral("h2")).toDouble()};
+                    const double weights[3] = {pixel.value(QStringLiteral("low")).toDouble(),
+                                               pixel.value(QStringLiteral("mid")).toDouble(),
+                                               pixel.value(QStringLiteral("high")).toDouble()};
                     int best = 0;
                     for (int band = 1; band < 3; ++band) {
                         if (weights[band] > weights[best]) {
@@ -288,12 +288,9 @@ int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socket
                 }
                 const double shown = whole.isEmpty() ? 1.0 : double(whole.size());
                 std::fprintf(stdout,
-                             "dj-ui: colour spread over the track: low %.0f%% mid %.0f%% high %.0f%%"
-                             " (references %.3f %.3f %.3f)\n",
+                             "dj-ui: colour spread over the track: bass %.0f%% mid %.0f%% high %.0f%%\n",
                              100.0 * counts[0] / shown, 100.0 * counts[1] / shown,
-                             100.0 * counts[2] / shown, waveform.reference().at(0).toDouble(),
-                             waveform.reference().at(1).toDouble(),
-                             waveform.reference().at(2).toDouble());
+                             100.0 * counts[2] / shown);
                 // A single tone legitimately has one band everywhere, so this is only a defect
                 // when the material has balance to show — which is what --waveform-expect-spread
                 // declares. The shares are printed either way.
@@ -612,20 +609,23 @@ int main(int argc, char *argv[])
         }
         const int width = 1200;
         const int height = 160;
-        const QVariantList pixels = envelope.profile(width, 0.0, 1.0);
+        const int barWidth = 2;
+        const int barGap = 1;
+        const int barCount = qMax(1, width / (barWidth + barGap));
+        const QVariantList pixels = envelope.profile(barCount, 0.0, 1.0);
         QImage image(width, height, QImage::Format_RGB32);
         image.fill(QColor(QStringLiteral("#101317")));
         QPainter painter(&image);
         const double middle = height / 2.0;
         int painted = 0;
-        for (int x = 0; x < pixels.size() && x < width; ++x) {
-            const QVariantMap pixel = pixels.at(x).toMap();
-            const double half = qAbs(pixel.value(QStringLiteral("max")).toDouble())
-                / qMax(envelope.loudest(), 1e-6) * middle;
+        for (int index = 0; index < pixels.size(); ++index) {
+            const QVariantMap pixel = pixels.at(index).toMap();
+            const double half = pixel.value(QStringLiteral("amplitude")).toDouble() * middle;
             if (half < 0.5) {
                 continue;
             }
-            painter.fillRect(QRectF(x, middle - half, 1.0, qMax(1.0, half * 2)),
+            painter.fillRect(QRectF(index * (barWidth + barGap), middle - half, barWidth,
+                                    qMax(1.0, half * 2)),
                              QColor(pixel.value(QStringLiteral("rgb")).toString()));
             ++painted;
         }
@@ -642,10 +642,9 @@ int main(int argc, char *argv[])
         int hues[8] = {0, 0, 0, 0, 0, 0, 0, 0};
         const char *names[8] = {"white", "red", "orange", "yellow",
                                 "green", "cyan", "blue", "violet"};
-        for (int x = 0; x < pixels.size() && x < width; ++x) {
-            const QVariantMap pixel = pixels.at(x).toMap();
-            if (qAbs(pixel.value(QStringLiteral("max")).toDouble()) / qMax(envelope.loudest(), 1e-6)
-                    * middle < 0.5) {
+        for (int index = 0; index < pixels.size(); ++index) {
+            const QVariantMap pixel = pixels.at(index).toMap();
+            if (pixel.value(QStringLiteral("amplitude")).toDouble() * middle < 0.5) {
                 continue;
             }
             const QColor colour(pixel.value(QStringLiteral("rgb")).toString());
@@ -672,10 +671,6 @@ int main(int argc, char *argv[])
         }
         std::fprintf(stdout, "dj-ui: wrote %s, %d of %d columns painted\n",
                      qPrintable(parts.at(1)), painted, width);
-        const QVariantList references = envelope.reference();
-        std::fprintf(stdout, "dj-ui: usual levels low %.4f mid %.4f high %.4f\n",
-                     references.at(0).toDouble(), references.at(1).toDouble(),
-                     references.at(2).toDouble());
         std::fprintf(stdout, "dj-ui: hues");
         for (int index = 0; index < 8; ++index) {
             if (hues[index] > 0) {

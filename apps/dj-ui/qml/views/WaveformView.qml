@@ -134,45 +134,28 @@ Item {
                     return;
                 }
 
-                // Only the columns inside the window are drawn; out of view they cost nothing.
-                const firstColumn = Math.max(0, Math.floor(total * view.windowStart));
-                const lastColumn = Math.min(total, Math.ceil(total * view.windowEnd));
-                const visible = Math.max(1, lastColumn - firstColumn);
-                const group = Math.max(1, Math.ceil(visible / width));
-
-                // The envelope is aggregated into exactly one entry per screen pixel, by the
-                // reader in C++, with contiguous bucket ranges. Drawing per bucket with fractional
-                // positions is what produced moiré: neighbouring strands landed on the same pixel
-                // or skipped one, and at some zoom levels that pattern was regular enough to look
-                // like texture on the waveform.
-                const pixels = envelope.profile(Math.round(width), view.windowStart, view.zoomSpan);
+                // The window is split into bars of a fixed width, which is the segmentation step of
+                // the reference algorithm: block i covers an equal slice of time and gets one RMS
+                // per band, one amplitude and one colour. Integer positions mean no two bars can
+                // land on the same pixel, which is what used to produce moiré.
+                const barWidth = 2;
+                const barGap = 1;
+                const step = barWidth + barGap;
+                const barCount = Math.max(1, Math.floor(width / step));
+                const bars = envelope.profile(barCount, view.windowStart, view.zoomSpan);
                 const coloured = UiSettings.waveformStyle === "coloured";
-                if (coloured) {
-                    // The colour arrives per column, already decided by the reader: the loudest
-                    // band at full brightness tinted by the others. Nothing is mixed here, so what
-                    // the screen shows is exactly what --waveform-png writes, and both can be
-                    // measured instead of argued about.
-                    for (let x = 0; x < pixels.length; ++x) {
-                        const pixel = pixels[x];
-                        // The loudest column fills the strip; the rest scale against it, so a
-                        // quiet track still reads as a waveform instead of a thin line.
-                        const scale = envelope.loudest > 0.0 ? 1.0 / envelope.loudest : 1.0;
-                        const half = Math.abs(pixel.max) * scale * middle;
-                        if (half < 0.5) {
-                            continue;
-                        }
-                        context.fillStyle = pixel.rgb;
-                        context.fillRect(x, middle - half, 1, Math.max(1, half * 2));
+                const flatColour = UiSettings.waveformMidColor;
+                for (let index = 0; index < bars.length; ++index) {
+                    const bar = bars[index];
+                    // Amplitude is already normalised against the loudest block of the track, so a
+                    // quiet track still fills the strip instead of drawing a thin line.
+                    const half = bar.amplitude * middle;
+                    if (half < 0.5) {
+                        continue;
                     }
-                } else {
-                    context.strokeStyle = "#5fa8d3";
-                    context.beginPath();
-                    for (let x = 0; x < pixels.length; ++x) {
-                        const pixel = pixels[x];
-                        context.moveTo(x + 0.5, middle - pixel.max * middle);
-                        context.lineTo(x + 0.5, middle - pixel.min * middle);
-                    }
-                    context.stroke();
+                    const x = index * step;
+                    context.fillStyle = coloured ? bar.rgb : flatColour;
+                    context.fillRect(x, middle - half, barWidth, Math.max(1, half * 2));
                 }
 
                 // The loop, if one is set: a tinted band across the whole height.

@@ -29,10 +29,10 @@ pub struct Bucket {
 }
 
 /// Low band edge: everything below this counts as bass.
-pub const LOW_CUTOFF_HZ: f32 = 200.0;
+pub const LOW_CUTOFF_HZ: f32 = 250.0;
 
 /// High band edge: everything above this counts as treble.
-pub const HIGH_CUTOFF_HZ: f32 = 2_500.0;
+pub const HIGH_CUTOFF_HZ: f32 = 4_000.0;
 
 impl Bucket {
     /// Silence.
@@ -93,19 +93,6 @@ pub struct Peaks {
     pub sample_rate: u32,
     /// One entry per bucket, in source-frame order.
     pub buckets: Vec<Bucket>,
-    /// Typical level of each band across the whole track: [low, mid, high].
-    ///
-    /// Without this the picture is one colour: the mid band spans four octaves and therefore holds
-    /// more energy than bass or treble in almost any music, so raw energies always weight it up.
-    /// Colouring by `band / reference` shows what makes a column different from the track itself —
-    /// which is why a kick reads red and a hi-hat reads cold.
-    pub band_reference: [f32; 3],
-    /// Loud level of each band across the track: [low, mid, high], the 95th percentile.
-    ///
-    /// Treble carries far less energy than bass in any music, so an absolute comparison never
-    /// reaches the cool end of the hue scale. Each band is measured against this instead, which is
-    /// what lets a hi-hat read blue next to a kick reading red.
-    pub band_level: [f32; 3],
 }
 
 impl Peaks {
@@ -195,86 +182,9 @@ pub fn analyse(path: &Path, frames_per_bucket: u32) -> Result<Peaks, MediaError>
         });
     }
 
-    let band_reference = reference_levels(&buckets);
-    let band_level = loud_levels(&buckets);
     Ok(Peaks {
         frames_per_bucket,
         sample_rate,
         buckets,
-        band_reference,
-        band_level,
     })
-}
-
-/// Typical level of each band: the median over the columns where the track is actually playing.
-///
-/// Two mistakes live here. The median over all columns is dragged down by the silence between hits,
-/// and then a band that is quiet most of the time — the bass, on a sparse track — looks enormous the
-/// moment it plays, which paints the whole waveform red. So the reference is taken from columns at
-/// or above a quarter of the track's loudest column: what the track sounds like when it sounds.
-fn reference_levels(buckets: &[Bucket]) -> [f32; 3] {
-    let loudest = buckets
-        .iter()
-        .map(|bucket| bucket.max.abs().max(bucket.min.abs()))
-        .fold(0.0f32, f32::max);
-    let floor = loudest * 0.25;
-    let mut per_band: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
-    let mut all_columns: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
-    for bucket in buckets {
-        if bucket.bands_are_missing() {
-            continue;
-        }
-        for (index, level) in [bucket.low, bucket.mid, bucket.high]
-            .into_iter()
-            .enumerate()
-        {
-            all_columns[index].push(level);
-            if bucket.max.abs().max(bucket.min.abs()) >= floor {
-                per_band[index].push(level);
-            }
-        }
-    }
-    let mut reference = [0.0f32; 3];
-    for index in 0..3 {
-        let values = if per_band[index].len() >= 8 {
-            &mut per_band[index]
-        } else {
-            &mut all_columns[index]
-        };
-        if values.is_empty() {
-            continue;
-        }
-        values.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
-        reference[index] = values[values.len() / 2].max(1e-6);
-    }
-    reference
-}
-
-/// Loud level of each band: the 95th percentile of the columns where the track plays.
-///
-/// Not the maximum, because one clipped hit would make every other column of that band look quiet
-/// for the whole track.
-fn loud_levels(buckets: &[Bucket]) -> [f32; 3] {
-    let mut per_band: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
-    for bucket in buckets {
-        if bucket.bands_are_missing() {
-            continue;
-        }
-        for (index, level) in [bucket.low, bucket.mid, bucket.high]
-            .into_iter()
-            .enumerate()
-        {
-            per_band[index].push(level);
-        }
-    }
-    let mut loud = [1e-6f32; 3];
-    for (index, values) in per_band.iter_mut().enumerate() {
-        if values.is_empty() {
-            continue;
-        }
-        values.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
-        let at = (values.len() * 95) / 100;
-        loud[index] = values[at.min(values.len() - 1)].max(1e-6);
-    }
-    loud
 }

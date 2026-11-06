@@ -1,20 +1,21 @@
-// Reads the cached waveform envelope so QML can draw it (A07, DJP-MEDIA-003).
+// Reads the cached waveform envelope and turns it into the bars the deck draws (A07, DJP-MEDIA-003).
 //
-// The file is written by the engine (`DJWAVE01`): a fingerprint, the timebase in source frames and
-// one min/max pair per column. Reading it here, rather than shipping columns in the snapshot, keeps
-// twenty snapshots a second small and gives the UI a picture it can hold on to.
+// The envelope is written by the engine (`DJWAVE11`): a fingerprint, the timebase in source frames,
+// and per column the min/max of the mix plus the RMS of three frequency bands. Everything about
+// colour and height is decided here, from the whole track, exactly as the reference algorithm
+// describes: three bands drive R, G and B, and each channel is normalised by its own maximum.
 
 #pragma once
 
 #include <QColor>
 #include <QObject>
-#include <QVariantList>
 #include <QString>
+#include <QVariantList>
 
 class Waveform : public QObject
 {
     Q_OBJECT
-    // Columns of the envelope, oldest first; each is {min, max} in [-1, 1].
+    // Columns of the envelope, oldest first; each is {min, max, low, mid, high}.
     Q_PROPERTY(QVariantList columns READ columns NOTIFY changed)
     // Frames each column covers: the timebase the playhead is placed with.
     Q_PROPERTY(int framesPerBucket READ framesPerBucket NOTIFY changed)
@@ -38,48 +39,37 @@ public:
     Q_INVOKABLE bool load(const QString &path);
     Q_INVOKABLE void clear();
 
-    // Aggregate the envelope into exactly `width` screen columns for the visible window.
+    // One entry per bar for the visible window: {amplitude, rgb}.
     //
-    // Every pixel gets one contiguous range of buckets and the ranges tile the window without gaps
-    // or overlaps. That is what removes the moiré: drawing per bucket with fractional x positions
-    // made neighbouring strands land on the same pixel or skip one, and at some zoom levels the
-    // pattern was regular enough to read as texture.
-    Q_INVOKABLE QVariantList profile(int width, double windowStart, double span) const;
+    // `columns` is the number of bars the caller can fit. The window is split into that many equal
+    // time blocks, which is the segmentation step of the reference algorithm; every block gets the
+    // RMS of each band, its amplitude, and the colour those three numbers produce.
+    Q_INVOKABLE QVariantList profile(int columns, double windowStart, double span) const;
 
-    // Buckets the last `profile` call consumed; equals `buckets` when the window covers the track.
+    // Envelope columns the last `profile` call consumed; equals `buckets` for the whole track.
     Q_INVOKABLE int lastCoveredBuckets() const { return m_lastCovered; }
 
-    // Shares of the column that the three bands claim, in [0, 1]; what the renderer mixes with.
-    Q_INVOKABLE QVariantList reference() const;
-
-    // Loudest column of the track: it fills the strip, everything else scales against it.
-    Q_INVOKABLE double loudest() const { return m_loudest; }
-
-    // Colors of the three bands, brightest red for bass, yellow for mids, bright blue for highs.
+    // Colors of the three channels: bass, mids, treble.
     void setPalette(const QColor &low, const QColor &mid, const QColor &high);
 
-    // The color of one column at its loudness share: the loudest band sets the hue at full
-    // brightness, the other two tint it in proportion to how loud they are against that leader.
-    QColor pixelColor(double loud, double mid, double high) const;
-
-    // Trims for the three bands when the measured balance does not suit the material.
+    // Trims for the three channels before normalisation, all 1.0 by default.
     void setBandGain(double low, double mid, double high);
 
 signals:
     void changed();
 
 private:
+    // Recompute the whole-track maxima the normalisation needs: amplitude and each colour channel.
+    void measure();
+
     QVariantList m_columns;
     int m_framesPerBucket = 0;
     int m_sampleRate = 0;
     QString m_source;
     QString m_error;
     mutable int m_lastCovered = 0;
-    // Typical level of low, mid and high across the loaded track, from the envelope header.
-    double m_bandReference[3] = {0.0, 0.0, 0.0};
     QColor m_palette[3];
     double m_bandGain[3] = {1.0, 1.0, 1.0};
-    // Loud level of each band across the track: what fills its part of the hue axis.
-    double m_bandLevel[3] = {1.0, 1.0, 1.0};
-    double m_loudest = 1.0;
+    double m_maxAmplitude = 1.0;
+    double m_maxChannel[3] = {1.0, 1.0, 1.0};
 };
