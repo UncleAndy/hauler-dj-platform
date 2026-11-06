@@ -4,7 +4,10 @@
 #include <QFileInfo>
 #include <QVariantMap>
 
+#include <algorithm>
+#include <array>
 #include <cmath>
+#include <vector>
 #include <cstring>
 
 namespace {
@@ -123,8 +126,23 @@ void Waveform::measure()
         loudest = qMax(loudest, peak);
     }
     m_maxAmplitude = qMax(loudest, 1e-6);
-    // The colour no longer needs per-channel maxima: every bar is normalised by its own strongest
-    // channel and then forced to full saturation and full brightness.
+    // Typical level of each band across the track. Bass carries an order of magnitude more energy
+    // than treble in any recording, and without this every bar lands on the red end of the scale no
+    // matter what the music does. The perceptual weights of the specification then apply on top.
+    std::array<std::vector<double>, 3> samples;
+    for (const QVariant &entry : m_columns) {
+        const QVariantMap column = entry.toMap();
+        samples[0].push_back(column.value(QStringLiteral("low")).toDouble());
+        samples[1].push_back(column.value(QStringLiteral("mid")).toDouble());
+        samples[2].push_back(column.value(QStringLiteral("high")).toDouble());
+    }
+    for (int band = 0; band < 3; ++band) {
+        std::sort(samples[band].begin(), samples[band].end());
+        const double typical = samples[band].empty()
+            ? 1e-6
+            : samples[band][samples[band].size() / 2];
+        m_bandTypical[band] = qMax(typical, 1e-6);
+    }
     m_maxChannel[0] = m_maxChannel[1] = m_maxChannel[2] = 1.0;
 }
 
@@ -183,7 +201,11 @@ QVariantList Waveform::profile(int columns, double windowStart, double span) con
         static const double perception[3] = {1.0, 1.5, 2.5};
         double raw[3] = {0.0, 0.0, 0.0};
         for (int band = 0; band < 3; ++band) {
-            raw[band] = std::pow(bands[band] * perception[band], 1.8);
+            // Against the band's own typical level, then the perceptual weight, then the contrast
+            // exponent: the first step removes the energy imbalance between bands, the second
+            // compensates how the ear hears them, the third sharpens the winner.
+            const double balanced = bands[band] / m_bandTypical[band];
+            raw[band] = std::pow(balanced * perception[band], 1.8);
         }
         // Normalise by the strongest channel of this very bar, then force saturation and brightness
         // to full: that is what turns three mixed levels into a clean neon hue instead of grey.

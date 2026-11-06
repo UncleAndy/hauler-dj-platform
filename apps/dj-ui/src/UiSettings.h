@@ -54,7 +54,9 @@ signals:
 private:
     QString m_waveformOutsideColor = QStringLiteral("#101317");
     QString m_waveformStyle = QStringLiteral("coloured");
-    int m_waveformBarWidth = 2;
+    // One bar per pixel: the waveform is a continuous curve, and two-pixel bars halve the
+    // horizontal detail for nothing.
+    int m_waveformBarWidth = 1;
     int m_waveformBarGap = 0;
     // Red, green and blue channels: bass drives red, mids green, highs blue. Mixed additively, so
     // bass with mids reads orange and all three at once read pale.

@@ -72,4 +72,6 @@ private:
     double m_bandGain[3] = {1.0, 1.0, 1.0};
     double m_maxAmplitude = 1.0;
     double m_maxChannel[3] = {1.0, 1.0, 1.0};
+    // Median level of each band in this track: what the colour balances against.
+    double m_bandTypical[3] = {1.0, 1.0, 1.0};
 };

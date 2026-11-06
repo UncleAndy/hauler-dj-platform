@@ -496,7 +496,7 @@ int main(int argc, char *argv[])
         QStringLiteral("style"));
     const QCommandLineOption barWidthOption(
         QStringLiteral("waveform-bar-width"),
-        QStringLiteral("Width of one waveform bar in pixels (default 2)."),
+        QStringLiteral("Width of one waveform bar in pixels (default 1: one bar per pixel)."),
         QStringLiteral("px"));
     const QCommandLineOption barGapOption(
         QStringLiteral("waveform-bar-gap"),
