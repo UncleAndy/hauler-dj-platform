@@ -38,7 +38,7 @@ impl Fingerprint {
     }
 }
 
-const MAGIC: &[u8; 8] = b"DJWAVE08";
+const MAGIC: &[u8; 8] = b"DJWAVE09";
 
 /// Bytes per column on disk: two extremes as i16 and three band levels as u8.
 const BUCKET_BYTES: usize = 7;
@@ -92,6 +92,8 @@ impl WaveformCache {
         let bucket_count = usize::try_from(u64::from_le_bytes(number)).ok()?;
         let mut reference_bytes = [0u8; 3];
         reader.read_exact(&mut reference_bytes).ok()?;
+        let mut loud_bytes = [0u8; 3];
+        reader.read_exact(&mut loud_bytes).ok()?;
 
         let current = Fingerprint::of(path).ok()?;
         if current.size != stored_size || current.modified_ns != stored_modified {
@@ -124,6 +126,11 @@ impl WaveformCache {
                 dequantise_band(reference_bytes[0]),
                 dequantise_band(reference_bytes[1]),
                 dequantise_band(reference_bytes[2]),
+            ],
+            band_level: [
+                dequantise_band(loud_bytes[0]),
+                dequantise_band(loud_bytes[1]),
+                dequantise_band(loud_bytes[2]),
             ],
         })
     }
@@ -198,6 +205,11 @@ pub fn write_envelope(source: &Path, peaks: &Peaks, entry: &Path) -> std::io::Re
         quantise_band(peaks.band_reference[0]),
         quantise_band(peaks.band_reference[1]),
         quantise_band(peaks.band_reference[2]),
+    ])?;
+    writer.write_all(&[
+        quantise_band(peaks.band_level[0]),
+        quantise_band(peaks.band_level[1]),
+        quantise_band(peaks.band_level[2]),
     ])?;
     for bucket in &peaks.buckets {
         let min = quantise(bucket.min);

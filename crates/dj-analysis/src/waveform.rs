@@ -52,22 +52,35 @@ impl Bucket {
 
 /// One-pole lowpass, the cheapest way to split a band without an FFT.
 #[derive(Debug, Clone, Copy)]
-struct OnePole {
-    state: f32,
+/// A second-order lowpass: two cascaded one-pole sections with a shared state.
+///
+/// The one-pole this replaced leaked badly — at 1 kHz a 250 Hz one-pole filter still passes a third
+/// of the energy, so the "bass" band was loud in every column of every track and no colouring could
+/// separate a kick from a chord. Four poles put the leakage where it belongs: about -24 dB per
+/// octave, which keeps the three bands honest.
+struct Lowpass4 {
+    sections: [f32; 2],
     alpha: f32,
 }
 
-impl OnePole {
+impl Lowpass4 {
     fn new(cutoff_hz: f32, sample_rate: u32) -> Self {
-        let ratio = (cutoff_hz / sample_rate as f32).clamp(0.0, 0.5);
-        // -3 dB point at `cutoff_hz`, the usual one-pole approximation.
+        // Two identical one-pole sections cascade to a -3 dB point at 0.6436 of each section's own
+        // cutoff, so each section is placed at 1.554x the frequency we actually want. Getting this
+        // wrong the other way (too low) makes the pair drop mid content early, and that content
+        // leaks into the treble band as if the material were bright.
+        let ratio = (cutoff_hz * 1.554 / sample_rate as f32).clamp(0.0, 0.49);
         let alpha = 1.0 - (-std::f32::consts::TAU * ratio).exp();
-        Self { state: 0.0, alpha }
+        Self {
+            sections: [0.0, 0.0],
+            alpha,
+        }
     }
 
     fn process(&mut self, input: f32) -> f32 {
-        self.state += self.alpha * (input - self.state);
-        self.state
+        self.sections[0] += self.alpha * (input - self.sections[0]);
+        self.sections[1] += self.alpha * (self.sections[0] - self.sections[1]);
+        self.sections[1]
     }
 }
 
@@ -87,6 +100,12 @@ pub struct Peaks {
     /// Colouring by `band / reference` shows what makes a column different from the track itself —
     /// which is why a kick reads red and a hi-hat reads cold.
     pub band_reference: [f32; 3],
+    /// Loud level of each band across the track: [low, mid, high], the 95th percentile.
+    ///
+    /// Treble carries far less energy than bass in any music, so an absolute comparison never
+    /// reaches the cool end of the hue scale. Each band is measured against this instead, which is
+    /// what lets a hi-hat read blue next to a kick reading red.
+    pub band_level: [f32; 3],
 }
 
 impl Peaks {
@@ -132,9 +151,8 @@ pub fn analyse(path: &Path, frames_per_bucket: u32) -> Result<Peaks, MediaError>
     let mut buckets = Vec::new();
     // Two filtered copies of the mix, carried across buckets so a bass note that crosses a bucket
     // boundary is not split into two quiet halves.
-    let mut low_filter = OnePole::new(LOW_CUTOFF_HZ, sample_rate);
-    let mut treble_filter = OnePole::new(HIGH_CUTOFF_HZ, sample_rate);
-    let mut low_hp = OnePole::new(LOW_CUTOFF_HZ, sample_rate);
+    let mut low_filter = Lowpass4::new(LOW_CUTOFF_HZ, sample_rate);
+    let mut treble_filter = Lowpass4::new(HIGH_CUTOFF_HZ, sample_rate);
 
     loop {
         let read = decoder.read_frames(&mut buffer)?;
@@ -157,7 +175,7 @@ pub fn analyse(path: &Path, frames_per_bucket: u32) -> Result<Peaks, MediaError>
             max = max.max(high);
 
             let mono = (left + right) * 0.5;
-            // Three bands from two one-pole lowpasses: what is below the low cutoff, the slice
+            // Three bands from two fourth-order lowpasses: what is below the low cutoff, the slice
             // between the cutoffs, and what is left above the high one.
             let bass = low_filter.process(mono);
             let below_high = treble_filter.process(mono);
@@ -166,7 +184,6 @@ pub fn analyse(path: &Path, frames_per_bucket: u32) -> Result<Peaks, MediaError>
             low_energy += bass * bass;
             mid_energy += mids * mids;
             high_energy += treble * treble;
-            let _ = low_hp.process(mono);
         }
         let frames = read.max(1) as f32;
         buckets.push(Bucket {
@@ -179,11 +196,13 @@ pub fn analyse(path: &Path, frames_per_bucket: u32) -> Result<Peaks, MediaError>
     }
 
     let band_reference = reference_levels(&buckets);
+    let band_level = loud_levels(&buckets);
     Ok(Peaks {
         frames_per_bucket,
         sample_rate,
         buckets,
         band_reference,
+        band_level,
     })
 }
 
@@ -229,4 +248,33 @@ fn reference_levels(buckets: &[Bucket]) -> [f32; 3] {
         reference[index] = values[values.len() / 2].max(1e-6);
     }
     reference
+}
+
+/// Loud level of each band: the 95th percentile of the columns where the track plays.
+///
+/// Not the maximum, because one clipped hit would make every other column of that band look quiet
+/// for the whole track.
+fn loud_levels(buckets: &[Bucket]) -> [f32; 3] {
+    let mut per_band: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    for bucket in buckets {
+        if bucket.bands_are_missing() {
+            continue;
+        }
+        for (index, level) in [bucket.low, bucket.mid, bucket.high]
+            .into_iter()
+            .enumerate()
+        {
+            per_band[index].push(level);
+        }
+    }
+    let mut loud = [1e-6f32; 3];
+    for (index, values) in per_band.iter_mut().enumerate() {
+        if values.is_empty() {
+            continue;
+        }
+        values.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+        let at = (values.len() * 95) / 100;
+        loud[index] = values[at.min(values.len() - 1)].max(1e-6);
+    }
+    loud
 }

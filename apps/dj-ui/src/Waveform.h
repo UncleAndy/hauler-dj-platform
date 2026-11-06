@@ -79,5 +79,7 @@ private:
     double m_bandReference[3] = {0.0, 0.0, 0.0};
     QColor m_palette[3];
     double m_bandGain[3] = {1.0, 1.0, 1.0};
+    // Loud level of each band across the track: what fills its part of the hue axis.
+    double m_bandLevel[3] = {1.0, 1.0, 1.0};
     double m_loudest = 1.0;
 };

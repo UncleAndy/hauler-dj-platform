@@ -291,6 +291,7 @@ fn an_empty_envelope_is_harmless() {
         sample_rate: 48_000,
         buckets: Vec::new(),
         band_reference: [0.0; 3],
+        band_level: [0.0; 3],
     };
     assert_eq!(empty.frames(), 0);
     assert_eq!(empty.peak(), 0.0);

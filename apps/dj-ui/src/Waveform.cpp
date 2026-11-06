@@ -10,8 +10,9 @@
 namespace {
 
 // Mirrors the header written by crates/dj-analysis: magic (8), size (8), modified (16, u128),
-// sample rate (8), frames per bucket (8), column count (8), and three band references (3).
-constexpr int kHeaderBytes = 56 + 3;
+// sample rate (8), frames per bucket (8), column count (8), three band references (3), and three
+// band levels (3).
+constexpr int kHeaderBytes = 56 + 3 + 3;
 // Two extremes as i16 and three band levels as u8, per column.
 constexpr int kColumnBytes = 7;
 
@@ -60,7 +61,7 @@ bool Waveform::load(const QString &path)
     const QByteArray bytes = file.readAll();
     file.close();
 
-    if (bytes.size() < kHeaderBytes || std::memcmp(bytes.constData(), "DJWAVE08", 8) != 0) {
+    if (bytes.size() < kHeaderBytes || std::memcmp(bytes.constData(), "DJWAVE09", 8) != 0) {
         m_error = QStringLiteral("%1 is not a waveform file").arg(QFileInfo(path).fileName());
         emit changed();
         return false;
@@ -76,6 +77,8 @@ bool Waveform::load(const QString &path)
     for (int index = 0; index < 3; ++index) {
         const double stored = static_cast<uchar>(bytes.at(56 + index)) / 255.0;
         m_bandReference[index] = stored * stored;
+        const double loud = static_cast<uchar>(bytes.at(59 + index)) / 255.0;
+        m_bandLevel[index] = qMax(1e-6, loud * loud);
     }
     if (m_bandReference[0] <= 0.0 && m_bandReference[1] <= 0.0 && m_bandReference[2] <= 0.0) {
         m_error = QStringLiteral("%1 has no band references").arg(QFileInfo(path).fileName());
@@ -241,13 +244,19 @@ QColor Waveform::pixelColor(double loud, double mid, double high) const
 {
     const double levels[3] = {qMax(0.0, loud) * m_bandGain[0], qMax(0.0, mid) * m_bandGain[1],
                               qMax(0.0, high) * m_bandGain[2]};
-    // Absolute loudness, not "against the usual": a steady bass line is loud at every moment, and
-    // measuring it against its own average made it look ordinary exactly where it should be red.
-    double total = levels[0] + levels[1] + levels[2];
+    // Each band against its own loud level in this track. Absolute loudness is not enough: treble
+    // always carries a fraction of the bass energy, so the scale never reached the cool end and a
+    // hi-hat could not look blue. Against its own peak, every band can fill its part of the axis.
+    double relative[3] = {0.0, 0.0, 0.0};
+    double total = 0.0;
+    for (int band = 0; band < 3; ++band) {
+        relative[band] = levels[band] / qMax(m_bandLevel[band], 1e-6);
+        total += relative[band];
+    }
     if (total <= 1e-6) {
         return QColor(0, 0, 0);
     }
-    const double share[3] = {levels[0] / total, levels[1] / total, levels[2] / total};
+    const double share[3] = {relative[0] / total, relative[1] / total, relative[2] / total};
     // Where this column sits on a log-frequency axis, using the centre of each band: bass around
     // 70 Hz, mids around 1 kHz, treble around 9 kHz, on the 20 Hz - 20 kHz span.
     static const double centre[3] = {0.181, 0.566, 0.884};
