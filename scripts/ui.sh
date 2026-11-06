@@ -101,6 +101,13 @@ case "${1:-}" in
     else
       QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --self-check
     fi
+    # Drum-like material must not paint one colour: a tone has no balance to show, a kick and a hat
+    # do. The engine reuses its cache, so this is a second UI pass over the same runtime.
+    drums="crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav"
+    if [ -f "$drums" ]; then
+      QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --self-check \
+        --load "$PWD/$drums" --waveform-expect-spread
+    fi
     ;;
   *)
     exec "$build_dir/apps/dj-ui/dj-ui" "$@"

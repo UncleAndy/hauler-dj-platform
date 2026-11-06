@@ -48,17 +48,13 @@ Item {
     readonly property real windowStart: playheadRatio - zoomSpan / 2
     readonly property real windowEnd: playheadRatio + zoomSpan / 2
 
-    // Three bands, three colours, mixed by their own weights: what the analysis measured decides
-    // the hue of the column, so a kick and a hi-hat look different without anyone choosing per frame.
-    function bandColor(bass, mids, treble) {
-        const total = bass + mids + treble;
-        if (total <= 0.0001) {
-            return Qt.color(UiSettings.waveformMidColor);
-        }
+    // The weights arrive already computed: each band against the track's own level for that band.
+    // Nothing about frequencies is decided here, so the picture cannot drift from the analysis.
+    function bandColor(pixel) {
         const low = Qt.color(UiSettings.waveformLowColor);
         const mid = Qt.color(UiSettings.waveformMidColor);
         const high = Qt.color(UiSettings.waveformHighColor);
-        const weights = [bass / total, mids / total, treble / total];
+        const weights = [pixel.w0, pixel.w1, pixel.w2];
         const colors = [low, mid, high];
         let r = 0.0;
         let g = 0.0;
@@ -175,7 +171,7 @@ Item {
                         const pixel = pixels[x];
                         const top = middle - pixel.max * middle;
                         const bottom = middle - pixel.min * middle;
-                        context.fillStyle = view.bandColor(pixel.low, pixel.mid, pixel.high);
+                        context.fillStyle = view.bandColor(pixel);
                         context.fillRect(x, top, 1, Math.max(1, bottom - top));
                     }
                 } else {

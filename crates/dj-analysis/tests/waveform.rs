@@ -101,6 +101,79 @@ fn silence_is_flat_and_a_tone_is_not() {
     assert!(loud > 0.3, "the tail is a tone, got {loud}");
 }
 
+/// A file whose balance changes: the first second is mostly mid, the second is mostly treble.
+///
+/// This is the case that made the whole waveform one colour. In absolute terms the mid band is the
+/// loudest in both halves, because a 1 kHz tone at any level beats a 9 kHz tone at any level as far
+/// as band energy goes; the difference between the halves is only in their ratio.
+fn changing_balance_file(dir: &Path) -> PathBuf {
+    let rate = 48_000u32;
+    let frames = rate as usize * 2;
+    let mut samples = Vec::with_capacity(frames * 2);
+    for frame in 0..frames {
+        let time = frame as f32 / rate as f32;
+        let second_half = frame >= rate as usize;
+        let mid = if second_half { 0.2f32 } else { 0.8 };
+        let high = if second_half { 0.5f32 } else { 0.05 };
+        let value = (time * 1_000.0 * std::f32::consts::TAU).sin() * mid
+            + (time * 9_000.0 * std::f32::consts::TAU).sin() * high;
+        samples.push(value * 0.5);
+        samples.push(value * 0.5);
+    }
+    let path = dir.join("changing-balance.wav");
+    let file = std::fs::File::create(&path).unwrap_or_else(|err| panic!("{err}"));
+    let mut writer = std::io::BufWriter::new(file);
+    dj_audio_core::wav::write_pcm16_interleaved(&mut writer, rate, 2, &samples)
+        .unwrap_or_else(|err| panic!("{err}"));
+    path
+}
+
+#[test]
+fn the_colour_follows_the_balance_not_the_raw_energy() {
+    let dir = temp_cache("balance");
+    std::fs::create_dir_all(&dir).unwrap_or_else(|err| panic!("{err}"));
+    let peaks = analyse(&changing_balance_file(&dir), 512).unwrap_or_else(|err| panic!("{err}"));
+
+    assert!(
+        peaks.band_reference.iter().all(|level| *level > 0.0),
+        "every band needs a reference: {:?}",
+        peaks.band_reference
+    );
+
+    let quarter = peaks.buckets.len() / 4;
+    let early = peaks.buckets[quarter];
+    let late = peaks.buckets[peaks.buckets.len() - quarter];
+
+    // Raw energies: mid wins in both halves — that is exactly why the raw mix was always green.
+    assert!(
+        early.mid > early.low && early.mid > early.high,
+        "the first half is mid-heavy even before normalising: {early:?}"
+    );
+
+    // Relative to the track, the halves are different, and that is what the colour reads.
+    let weight = |bucket: &dj_analysis::Bucket, band: usize| {
+        bucket_band(bucket, band) / peaks.band_reference[band].max(f32::EPSILON)
+    };
+    assert!(
+        weight(&early, 1) > weight(&early, 2) * 2.0,
+        "the first half must read as mids: {early:?} against {:?}",
+        peaks.band_reference
+    );
+    assert!(
+        weight(&late, 2) > weight(&late, 1),
+        "the second half must read as treble relative to the track: {late:?} against {:?}",
+        peaks.band_reference
+    );
+}
+
+fn bucket_band(bucket: &dj_analysis::Bucket, band: usize) -> f32 {
+    match band {
+        0 => bucket.low,
+        1 => bucket.mid,
+        _ => bucket.high,
+    }
+}
+
 #[test]
 fn the_cache_returns_what_it_stored() {
     let path = fixture("tone-1s-44100.flac");
@@ -217,6 +290,7 @@ fn an_empty_envelope_is_harmless() {
         frames_per_bucket: 512,
         sample_rate: 48_000,
         buckets: Vec::new(),
+        band_reference: [0.0; 3],
     };
     assert_eq!(empty.frames(), 0);
     assert_eq!(empty.peak(), 0.0);

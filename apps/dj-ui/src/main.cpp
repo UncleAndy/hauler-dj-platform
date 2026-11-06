@@ -101,7 +101,8 @@ bool deckIsPlaying(const QVariantMap &snapshot, const QString &deck)
 // "applied at sample N", and a snapshot that then reports the deck as playing. The UI must never
 // assume either.
 int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socketPath,
-                 int timeoutMs, const QString &loadPath, const QString &loadSecondPath)
+                 int timeoutMs, const QString &loadPath, const QString &loadSecondPath,
+                 bool expectSpread)
 {
     QElapsedTimer elapsed;
     elapsed.start();
@@ -229,9 +230,10 @@ int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socket
                 loop.quit();
                 return;
             }
-            // The fixture is a 440 Hz tone, which lives in the mid band: if the three bands were
-            // really one number copied three times, this would not hold.
-            if (loudestMids <= loudestBass || loudestMids <= loudestTreble) {
+            // The default fixture is a 440 Hz tone, which lives in the mid band: if the three bands
+            // were really one number copied three times, this would not hold. Material whose bands
+            // genuinely differ (drums) is checked by the spread instead, below.
+            if (!expectSpread && (loudestMids <= loudestBass || loudestMids <= loudestTreble)) {
                 failure = QStringLiteral("the mid band is not dominant for a 440 Hz tone: "
                                          "low %1 mid %2 high %3")
                               .arg(loudestBass)
@@ -262,6 +264,59 @@ int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socket
                 }
             }
             std::fprintf(stdout, "dj-ui: profile tiles the track at 640, 901 and 1280 px\n");
+
+            // Which band wins each column of the whole track. Printed, not asserted, because a
+            // real track has its own balance; but if one band takes everything on music too, the
+            // colouring is broken and this line says so before anyone looks at the screen.
+            {
+                const QVariantList whole = waveform.profile(900, 0.0, 1.0);
+                int counts[3] = {0, 0, 0};
+                for (const QVariant &entry : whole) {
+                    const QVariantMap pixel = entry.toMap();
+                    const double weights[3] = {pixel.value(QStringLiteral("w0")).toDouble(),
+                                               pixel.value(QStringLiteral("w1")).toDouble(),
+                                               pixel.value(QStringLiteral("w2")).toDouble()};
+                    int best = 0;
+                    for (int band = 1; band < 3; ++band) {
+                        if (weights[band] > weights[best]) {
+                            best = band;
+                        }
+                    }
+                    ++counts[best];
+                }
+                const double shown = whole.isEmpty() ? 1.0 : double(whole.size());
+                std::fprintf(stdout,
+                             "dj-ui: colour spread over the track: low %.0f%% mid %.0f%% high %.0f%%"
+                             " (references %.3f %.3f %.3f)\n",
+                             100.0 * counts[0] / shown, 100.0 * counts[1] / shown,
+                             100.0 * counts[2] / shown, waveform.reference().at(0).toDouble(),
+                             waveform.reference().at(1).toDouble(),
+                             waveform.reference().at(2).toDouble());
+                if (counts[1] == whole.size() && whole.size() > 3) {
+                    failure = QStringLiteral("every column is mid-dominant; the colouring is flat");
+                    loop.quit();
+                    return;
+                }
+                if (expectSpread) {
+                    // Drum-like material must not paint one colour: at least two bands have to own
+                    // a tenth of the columns each. Two rather than three, because a kick-and-hat
+                    // loop legitimately has almost no mid content, and demanding it would be a
+                    // threshold chosen to fit the fixture instead of the requirement.
+                    int covered = 0;
+                    for (int band = 0; band < 3; ++band) {
+                        if (double(counts[band]) / shown >= 0.10) {
+                            ++covered;
+                        }
+                    }
+                    if (covered < 2) {
+                        failure = QStringLiteral("only %1 band(s) claim a tenth of the columns")
+                                      .arg(covered);
+                        loop.quit();
+                        return;
+                    }
+                    std::fprintf(stdout, "dj-ui: %d bands claim a tenth of the columns\n", covered);
+                }
+            }
             std::fprintf(stdout,
                          "dj-ui: waveform loaded: %d columns of %d frames at %d Hz, covering %.0f "
                          "of %.0f frames; bands low %.3f mid %.3f high %.3f\n",
@@ -434,6 +489,9 @@ int main(int argc, char *argv[])
         QStringLiteral("waveform-style"),
         QStringLiteral("coloured (default: bass warm, treble cold) or plain."),
         QStringLiteral("style"));
+    const QCommandLineOption expectSpreadOption(
+        QStringLiteral("waveform-expect-spread"),
+        QStringLiteral("Fail unless every band claims at least 10% of the loaded track's columns."));
     const QCommandLineOption bandColorOption(
         QStringLiteral("waveform-band-colors"),
         QStringLiteral("Three colours for bass, mids and treble, comma separated "
@@ -455,6 +513,7 @@ int main(int argc, char *argv[])
     parser.addOption(outsideColorOption);
     parser.addOption(styleOption);
     parser.addOption(bandColorOption);
+    parser.addOption(expectSpreadOption);
     parser.addOption(dialogCheckOption);
     parser.process(app);
 
@@ -501,7 +560,8 @@ int main(int argc, char *argv[])
         return runSelfCheck(
             *bridge, waveform, path, 20000,
             parser.isSet(loadOption) ? parser.value(loadOption) : QString(),
-            parser.isSet(loadSecondOption) ? parser.value(loadSecondOption) : QString());
+            parser.isSet(loadSecondOption) ? parser.value(loadSecondOption) : QString(),
+            parser.isSet(expectSpreadOption));
     }
 
     if (parser.isSet(dialogCheckOption)) {

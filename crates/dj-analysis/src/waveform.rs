@@ -80,6 +80,13 @@ pub struct Peaks {
     pub sample_rate: u32,
     /// One entry per bucket, in source-frame order.
     pub buckets: Vec<Bucket>,
+    /// Typical level of each band across the whole track: [low, mid, high].
+    ///
+    /// Without this the picture is one colour: the mid band spans four octaves and therefore holds
+    /// more energy than bass or treble in almost any music, so raw energies always weight it up.
+    /// Colouring by `band / reference` shows what makes a column different from the track itself —
+    /// which is why a kick reads red and a hi-hat reads cold.
+    pub band_reference: [f32; 3],
 }
 
 impl Peaks {
@@ -171,9 +178,36 @@ pub fn analyse(path: &Path, frames_per_bucket: u32) -> Result<Peaks, MediaError>
         });
     }
 
+    let band_reference = reference_levels(&buckets);
     Ok(Peaks {
         frames_per_bucket,
         sample_rate,
         buckets,
+        band_reference,
     })
+}
+
+/// Typical level of each band: the median of the columns that carry anything.
+///
+/// Median rather than mean, because one loud drop should not move the reference for the whole
+/// track and repaint everything around it.
+fn reference_levels(buckets: &[Bucket]) -> [f32; 3] {
+    let mut per_band: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    for bucket in buckets {
+        if bucket.bands_are_missing() {
+            continue;
+        }
+        per_band[0].push(bucket.low);
+        per_band[1].push(bucket.mid);
+        per_band[2].push(bucket.high);
+    }
+    let mut reference = [0.0f32; 3];
+    for (index, values) in per_band.iter_mut().enumerate() {
+        if values.is_empty() {
+            continue;
+        }
+        values.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+        reference[index] = values[values.len() / 2];
+    }
+    reference
 }

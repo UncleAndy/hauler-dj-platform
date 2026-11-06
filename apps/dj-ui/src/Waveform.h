@@ -48,6 +48,9 @@ public:
     // Buckets the last `profile` call consumed; equals `buckets` when the window covers the track.
     Q_INVOKABLE int lastCoveredBuckets() const { return m_lastCovered; }
 
+    // Shares of the column that the three bands claim, in [0, 1]; what the renderer mixes with.
+    Q_INVOKABLE QVariantList reference() const;
+
 signals:
     void changed();
 
@@ -58,4 +61,6 @@ private:
     QString m_source;
     QString m_error;
     mutable int m_lastCovered = 0;
+    // Typical level of low, mid and high across the loaded track, from the envelope header.
+    double m_bandReference[3] = {0.0, 0.0, 0.0};
 };

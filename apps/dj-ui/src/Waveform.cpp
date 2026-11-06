@@ -9,8 +9,9 @@
 
 namespace {
 
-// Mirrors the header written by crates/dj-analysis: magic, fingerprint, timebase, columns.
-constexpr int kHeaderBytes = 56;
+// Mirrors the header written by crates/dj-analysis: magic (8), size (8), modified (16, u128),
+// sample rate (8), frames per bucket (8), column count (8), and three band references (3).
+constexpr int kHeaderBytes = 56 + 3;
 // Two extremes as i16 and three band levels as u8, per column.
 constexpr int kColumnBytes = 7;
 
@@ -59,7 +60,7 @@ bool Waveform::load(const QString &path)
     const QByteArray bytes = file.readAll();
     file.close();
 
-    if (bytes.size() < kHeaderBytes || std::memcmp(bytes.constData(), "DJWAVE03", 8) != 0) {
+    if (bytes.size() < kHeaderBytes || std::memcmp(bytes.constData(), "DJWAVE04", 8) != 0) {
         m_error = QStringLiteral("%1 is not a waveform file").arg(QFileInfo(path).fileName());
         emit changed();
         return false;
@@ -68,6 +69,19 @@ bool Waveform::load(const QString &path)
     const quint64 sampleRate = readU64(bytes.constData() + 32);
     const quint64 framesPerBucket = readU64(bytes.constData() + 40);
     const quint64 count = readU64(bytes.constData() + 48);
+    // Typical level of each band across the track, stored right after the count. The colour is
+    // decided by how a column compares with these, not by raw energy: the mid band spans four
+    // octaves and therefore holds the most energy in almost any music, which is why colouring by
+    // raw levels painted the whole waveform the mid colour.
+    for (int index = 0; index < 3; ++index) {
+        const double stored = static_cast<uchar>(bytes.at(56 + index)) / 255.0;
+        m_bandReference[index] = stored * stored;
+    }
+    if (m_bandReference[0] <= 0.0 && m_bandReference[1] <= 0.0 && m_bandReference[2] <= 0.0) {
+        m_error = QStringLiteral("%1 has no band references").arg(QFileInfo(path).fileName());
+        emit changed();
+        return false;
+    }
     const quint64 available = static_cast<quint64>((bytes.size() - kHeaderBytes) / kColumnBytes);
     if (count == 0 || count > available || framesPerBucket == 0) {
         m_error = QStringLiteral("%1 is truncated: %2 columns announced, %3 present")
@@ -155,11 +169,69 @@ QVariantList Waveform::profile(int width, double windowStart, double span) const
             ++seen;
         }
         const double divisor = seen > 0 ? seen : 1;
+        // Each band against the track's own level for that band, squared so the winner shows and
+        // normalised so the three weights read as shares of the column.
+        const double relative[3] = {
+            (bass / divisor) / qMax(m_bandReference[0], 1e-6),
+            (mids / divisor) / qMax(m_bandReference[1], 1e-6),
+            (treble / divisor) / qMax(m_bandReference[2], 1e-6),
+        };
+        // Cubed, so a band that leads by a third takes most of the column instead of a third of it.
+        double shares[3] = {relative[0] * relative[0] * relative[0],
+                            relative[1] * relative[1] * relative[1],
+                            relative[2] * relative[2] * relative[2]};
+        const double shareTotal = shares[0] + shares[1] + shares[2];
+        if (shareTotal <= 1e-12) {
+            shares[0] = shares[1] = shares[2] = 1.0 / 3.0;
+        } else {
+            for (double &share : shares) {
+                share /= shareTotal;
+            }
+        }
         pixels.append(QVariantMap{{QStringLiteral("min"), low},
                                   {QStringLiteral("max"), high},
                                   {QStringLiteral("low"), bass / divisor},
                                   {QStringLiteral("mid"), mids / divisor},
-                                  {QStringLiteral("high"), treble / divisor}});
+                                  {QStringLiteral("high"), treble / divisor},
+                                  {QStringLiteral("w0"), shares[0]},
+                                  {QStringLiteral("w1"), shares[1]},
+                                  {QStringLiteral("w2"), shares[2]}});
+    }
+    // A column whose bands are nearly equal has no dominant colour, and tiny measurement noise
+    // would then flip it between red, green and violet from one pixel to the next. Averaging the
+    // shares with the neighbours settles those columns and leaves real changes sharp.
+    if (pixels.size() > 5) {
+        QVariantList smoothed;
+        smoothed.reserve(pixels.size());
+        for (int x = 0; x < pixels.size(); ++x) {
+            QVariantMap pixel = pixels.at(x).toMap();
+            double shares[3] = {0.0, 0.0, 0.0};
+            int weight = 0;
+            for (int offset = -2; offset <= 2; ++offset) {
+                const int neighbour = x + offset;
+                if (neighbour < 0 || neighbour >= pixels.size()) {
+                    continue;
+                }
+                const QVariantMap around = pixels.at(neighbour).toMap();
+                const double kernel = 3 - std::abs(offset);
+                shares[0] += around.value(QStringLiteral("w0")).toDouble() * kernel;
+                shares[1] += around.value(QStringLiteral("w1")).toDouble() * kernel;
+                shares[2] += around.value(QStringLiteral("w2")).toDouble() * kernel;
+                weight += kernel;
+            }
+            if (weight > 0) {
+                for (int band = 0; band < 3; ++band) {
+                    pixel[QStringLiteral("w%1").arg(band)] = shares[band] / weight;
+                }
+            }
+            smoothed.append(pixel);
+        }
+        return smoothed;
     }
     return pixels;
+}
+
+QVariantList Waveform::reference() const
+{
+    return {m_bandReference[0], m_bandReference[1], m_bandReference[2]};
 }
