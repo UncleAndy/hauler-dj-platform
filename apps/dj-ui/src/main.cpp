@@ -21,7 +21,11 @@
 #include <QJsonDocument>
 #include <QEventLoop>
 #include <QGuiApplication>
+#include <QPalette>
+#include <QMap>
 #include <QImage>
+#include <algorithm>
+#include <QQuickWindow>
 #include <QLinearGradient>
 #include <QPainter>
 #include <QQmlApplicationEngine>
@@ -525,6 +529,32 @@ int main(int argc, char *argv[])
     qInstallMessageHandler(collectMessages);
 
     QGuiApplication app(argc, argv);
+
+    // Controls follow the application palette, and the palette is the measured Traktor scheme:
+    // neutral dark greys with one blue accent. Without this the shell's own background is dark
+    // while every control stays light, which is exactly wrong for a booth.
+    // The Controls style reads the palette; Fusion is the one that honours it on every platform.
+    qputenv("QT_QUICK_CONTROLS_STYLE", "Fusion");
+    QPalette palette;
+    palette.setColor(QPalette::Window, QColor(QStringLiteral("#181818")));
+    palette.setColor(QPalette::WindowText, QColor(QStringLiteral("#c8c8c8")));
+    palette.setColor(QPalette::Base, QColor(QStringLiteral("#101010")));
+    palette.setColor(QPalette::AlternateBase, QColor(QStringLiteral("#202020")));
+    palette.setColor(QPalette::Text, QColor(QStringLiteral("#c8c8c8")));
+    palette.setColor(QPalette::Button, QColor(QStringLiteral("#282828")));
+    palette.setColor(QPalette::ButtonText, QColor(QStringLiteral("#c8c8c8")));
+    palette.setColor(QPalette::BrightText, QColor(QStringLiteral("#f0f3f6")));
+    palette.setColor(QPalette::Highlight, QColor(QStringLiteral("#5090f0")));
+    palette.setColor(QPalette::HighlightedText, QColor(QStringLiteral("#0b0b0b")));
+    palette.setColor(QPalette::ToolTipBase, QColor(QStringLiteral("#202020")));
+    palette.setColor(QPalette::ToolTipText, QColor(QStringLiteral("#c8c8c8")));
+    palette.setColor(QPalette::PlaceholderText, QColor(QStringLiteral("#8a8a8a")));
+    palette.setColor(QPalette::Disabled, QPalette::Text, QColor(QStringLiteral("#6a6a6a")));
+    palette.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(QStringLiteral("#6a6a6a")));
+    QGuiApplication::setPalette(palette);
+
+    QGuiApplication::setPalette(palette);
+
     QCoreApplication::setApplicationName(QStringLiteral("dj-platform"));
     QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0"));
     QCoreApplication::setOrganizationName(QStringLiteral("DJ Platform"));
@@ -551,7 +581,7 @@ int main(int argc, char *argv[])
     const QCommandLineOption outsideColorOption(
         QStringLiteral("waveform-outside-color"),
         QStringLiteral("Colour of the regions before the start and after the end of a track "
-                       "(default: the strip background, #101317)."),
+                       "(default: #101010, the window background)."),
         QStringLiteral("colour"));
     const QCommandLineOption styleOption(
         QStringLiteral("waveform-style"),
@@ -570,6 +600,15 @@ int main(int argc, char *argv[])
         QStringLiteral("Trim the three bands before colouring, comma separated "
                        "(default 1,1,1). Raise the low gain to see more bass colour."),
         QStringLiteral("low,mid,high"));
+    const QCommandLineOption themeCheckOption(
+        QStringLiteral("ui-theme-check"),
+        QStringLiteral("Grab the shell and fail unless it is dark: a light panel means the palette "
+                       "was lost."));
+    const QCommandLineOption screenshotOption(
+        QStringLiteral("ui-screenshot"),
+        QStringLiteral("Load the shell, wait, grab it into OUT.png and exit. Verifies the theme "
+                       "without a display."),
+        QStringLiteral("OUT.png"));
     const QCommandLineOption spanOption(
         QStringLiteral("waveform-span"),
         QStringLiteral("Window to render for --waveform-png: START,SPAN as fractions of the track "
@@ -606,6 +645,8 @@ int main(int argc, char *argv[])
     parser.addOption(expectSpreadOption);
     parser.addOption(waveformPngOption);
     parser.addOption(spanOption);
+    parser.addOption(screenshotOption);
+    parser.addOption(themeCheckOption);
     parser.addOption(bandGainOption);
     parser.addOption(barWidthOption);
     parser.addOption(barGapOption);
@@ -725,7 +766,7 @@ int main(int argc, char *argv[])
         QImage image(width, height, QImage::Format_RGB32);
         image.fill(QColor(settings.waveformStyle() == QStringLiteral("coloured")
                               ? QStringLiteral("#141414")
-                              : QStringLiteral("#101317")));
+                              : QStringLiteral("#101010")));
         QPainter painter(&image);
         const double middle = height / 2.0;
         int painted = 0;
@@ -833,6 +874,68 @@ int main(int argc, char *argv[])
     if (engine.rootObjects().isEmpty()) {
         std::fprintf(stderr, "dj-ui: the QML scene did not load\n");
         return 1;
+    }
+
+    if (parser.isSet(themeCheckOption) || parser.isSet(screenshotOption)) {
+        // A window that never reaches a screen still has to look right: grabbing it here, from the
+        // engine the shell actually uses, is how the theme gets measured instead of described.
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        QEventLoop settle;
+        QTimer::singleShot(600, &settle, &QEventLoop::quit);
+        settle.exec();
+        const QImage image = window->grabWindow();
+        if (parser.isSet(screenshotOption)) {
+            const QString target = parser.value(screenshotOption);
+            if (!image.save(target)) {
+                std::fprintf(stderr, "dj-ui: cannot write %s\n", qPrintable(target));
+                return 1;
+            }
+        }
+        // The theme, measured: the reference interface is dark greys with one blue accent, and a
+        // regression to the light default shows up as a majority of bright pixels, not as a missing
+        // property.
+        QMap<QString, int> counts;
+        int bright = 0;
+        int total = 0;
+        for (int y = 0; y < image.height(); y += 4) {
+            for (int x = 0; x < image.width(); x += 4) {
+                const QColor pixel = image.pixelColor(x, y);
+                const int luma = (pixel.red() * 299 + pixel.green() * 587 + pixel.blue() * 114) / 1000;
+                if (luma > 128) {
+                    ++bright;
+                }
+                ++total;
+                counts[pixel.name()] += 1;
+            }
+        }
+        if (parser.isSet(screenshotOption)) {
+            std::fprintf(stdout, "dj-ui: wrote %s (%dx%d)\n",
+                         qPrintable(parser.value(screenshotOption)), image.width(), image.height());
+        }
+        std::fprintf(stdout, "dj-ui: theme: %.1f%% bright pixels, dominant colours:",
+                     100.0 * bright / qMax(1, total));
+        QList<QPair<int, QString>> ranked;
+        for (auto it = counts.cbegin(); it != counts.cend(); ++it) {
+            ranked.append({it.value(), it.key()});
+        }
+        std::sort(ranked.begin(), ranked.end(), [](const auto &left, const auto &right) {
+            return left.first > right.first;
+        });
+        for (int index = 0; index < ranked.size() && index < 4; ++index) {
+            std::fprintf(stdout, " %s %.0f%%", qPrintable(ranked.at(index).second),
+                         100.0 * ranked.at(index).first / qMax(1, total));
+        }
+        std::fprintf(stdout, "\n");
+        if (bright * 4 > total) {
+            std::fprintf(stderr, "dj-ui: the shell is light: %.0f%% of its pixels are bright\n",
+                         100.0 * bright / qMax(1, total));
+            return 1;
+        }
+        return 0;
     }
 
     if (parser.isSet(smokeOption)) {

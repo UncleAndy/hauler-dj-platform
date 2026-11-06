@@ -14,6 +14,15 @@ Pane {
     required property string deckId
     required property string deckLabel
 
+    // Panels sit one step above the window surface and are outlined a step brighter, the way the
+    // reference separates the deck areas from the background.
+    background: Rectangle {
+        color: UiSettings.themePanel
+        border.color: UiSettings.themeBorder
+        border.width: 1
+        radius: 2
+    }
+
     readonly property bool live: Bridge.connected
     readonly property var state: {
         const decks = Bridge.snapshot.decks;
@@ -116,11 +125,11 @@ Pane {
                     Layout.fillWidth: true
                     height: 6
                     radius: 2
-                    color: "#232830"
+                    color: UiSettings.themeRaised
                     Rectangle {
                         height: parent.height
                         radius: 2
-                        color: panel.playing ? "#7fd67f" : "#4a5a4a"
+                        color: panel.playing ? UiSettings.themeAccent : UiSettings.themePanel
                         width: parent.width * Math.min(1.0, panel.state.levels !== undefined
                                                         ? panel.state.levels.peak_left : 0.0)
                     }
@@ -134,11 +143,11 @@ Pane {
                     Layout.fillWidth: true
                     height: 6
                     radius: 2
-                    color: "#232830"
+                    color: UiSettings.themeRaised
                     Rectangle {
                         height: parent.height
                         radius: 2
-                        color: panel.playing ? "#7fd67f" : "#4a5a4a"
+                        color: panel.playing ? UiSettings.themeAccent : UiSettings.themePanel
                         width: parent.width * Math.min(1.0, panel.state.levels !== undefined
                                                         ? panel.state.levels.peak_right : 0.0)
                     }
@@ -153,19 +162,19 @@ Pane {
             Label {
                 text: qsTr("play")
                 font.pixelSize: 10
-                color: panel.playing ? "#7fd67f" : "#3a4048"
+                color: panel.playing ? UiSettings.themeAccent : UiSettings.themeRaised
             }
             Label {
                 text: qsTr("cue")
                 font.pixelSize: 10
                 color: panel.state.hotcues !== undefined
                        && panel.state.hotcues[0] !== null
-                       && panel.state.hotcues[0] !== undefined ? "#e2c07f" : "#3a4048"
+                       && panel.state.hotcues[0] !== undefined ? UiSettings.themeMarker : UiSettings.themeRaised
             }
             Label {
                 text: qsTr("loop")
                 font.pixelSize: 10
-                color: panel.loop !== null && panel.loop !== undefined ? "#7fb0e2" : "#3a4048"
+                color: panel.loop !== null && panel.loop !== undefined ? UiSettings.themeAccent : UiSettings.themeRaised
             }
         }
 
@@ -185,7 +194,7 @@ Pane {
                 return qsTr("ready");
             }
             color: panel.state.load !== undefined && panel.state.load.Failed !== undefined
-                   ? "#e2a09b" : "#8a929c"
+                   ? UiSettings.themeDanger : UiSettings.themeTextDim
             font.pixelSize: 11
             elide: Text.ElideRight
             Layout.fillWidth: true

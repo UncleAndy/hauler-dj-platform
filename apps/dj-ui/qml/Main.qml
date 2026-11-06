@@ -5,6 +5,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 
 import "decks"
+import "." as Shell
 import "mixer"
 
 ApplicationWindow {
@@ -16,9 +17,29 @@ ApplicationWindow {
     visible: true
     title: qsTr("DJ Platform — %1").arg(Bridge.connected ? qsTr("engine connected")
                                                         : qsTr("engine offline"))
-    color: "#14161a"
+    color: UiSettings.themeBackground
+
+    // Controls take their colours from the window palette; setting it here propagates to every
+    // Pane, Button and Label in the shell. The values are the measured Traktor scheme: neutral dark
+    // greys and one blue accent, so nothing glares in a dark booth.
+    palette.window: UiSettings.themeSurface
+    palette.windowText: UiSettings.themeText
+    palette.base: UiSettings.themeBackground
+    palette.alternateBase: UiSettings.themePanel
+    palette.text: UiSettings.themeText
+    palette.button: UiSettings.themeRaised
+    palette.buttonText: UiSettings.themeText
+    palette.brightText: UiSettings.themePlayhead
+    palette.highlight: UiSettings.themeAccent
+    palette.highlightedText: UiSettings.themeAccentDim
+    palette.toolTipBase: UiSettings.themePanel
+    palette.toolTipText: UiSettings.themeText
+    palette.placeholderText: UiSettings.themeTextDim
 
     header: ToolBar {
+        // The title bar sits a step darker than the surfaces below it, as in the reference: the
+        // frame recedes and the working area comes forward.
+        background: Rectangle { color: UiSettings.themeBackground }
         RowLayout {
             anchors.fill: parent
             Label {
@@ -29,7 +50,7 @@ ApplicationWindow {
             Label {
                 // The link state and the engine's own words, not a guess.
                 text: Bridge.status
-                color: Bridge.connected ? "#9be29b" : "#e2a09b"
+                color: Bridge.connected ? UiSettings.themeText : UiSettings.themeDanger
             }
             Label {
                 text: Bridge.connected

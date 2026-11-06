@@ -14,6 +14,21 @@ class UiSettings : public QObject
     // Defaults to the strip's own background, so the edges look like empty space, not a warning.
     Q_PROPERTY(QString waveformOutsideColor READ waveformOutsideColor NOTIFY changed)
     // How the strip is drawn: "coloured" paints bass warm and treble cold, "plain" uses one colour.
+    Q_PROPERTY(QString themeBackground READ themeBackground CONSTANT)
+    Q_PROPERTY(QString themeSurface READ themeSurface CONSTANT)
+    Q_PROPERTY(QString themePanel READ themePanel CONSTANT)
+    Q_PROPERTY(QString themeRaised READ themeRaised CONSTANT)
+    Q_PROPERTY(QString themeBorder READ themeBorder CONSTANT)
+    Q_PROPERTY(QString themeText READ themeText CONSTANT)
+    Q_PROPERTY(QString themeTextDim READ themeTextDim CONSTANT)
+    Q_PROPERTY(QString themeAccent READ themeAccent CONSTANT)
+    Q_PROPERTY(QString themeAccentDim READ themeAccentDim CONSTANT)
+    Q_PROPERTY(QString themeWarning READ themeWarning CONSTANT)
+    Q_PROPERTY(QString themeDanger READ themeDanger CONSTANT)
+    Q_PROPERTY(QString themeMarker READ themeMarker CONSTANT)
+    Q_PROPERTY(QString themePlayhead READ themePlayhead CONSTANT)
+    Q_PROPERTY(QString themeWaveBackground READ themeWaveBackground CONSTANT)
+    Q_PROPERTY(QString themeWaveOutline READ themeWaveOutline CONSTANT)
     Q_PROPERTY(QString waveformStyle READ waveformStyle NOTIFY changed)
     // Bar geometry of the spectral waveform. A gap makes the picture read as a bar chart; the
     // waveform in a deck is continuous, so the default gap is zero.
@@ -28,6 +43,27 @@ public:
     explicit UiSettings(QObject *parent = nullptr);
 
     QString waveformOutsideColor() const { return m_waveformOutsideColor; }
+
+    // The interface palette, measured from the owner's TRAKTOR PRO 4 screenshots: almost entirely
+    // neutral dark greys, soft grey text instead of white, one blue accent. That is what working in
+    // the dark needs — no glare, nothing saturated competing with the waveforms. Numbers, not
+    // assets: ADR-001 forbids their graphics, and a measured colour is not a graphic.
+    QString themeBackground() const { return QStringLiteral("#101010"); }
+    QString themeSurface() const { return QStringLiteral("#101010"); }
+    QString themePanel() const { return QStringLiteral("#181818"); }
+    QString themeRaised() const { return QStringLiteral("#282828"); }
+    QString themeBorder() const { return QStringLiteral("#383838"); }
+    QString themeText() const { return QStringLiteral("#c8c8c8"); }
+    QString themeTextDim() const { return QStringLiteral("#8a8a8a"); }
+    QString themeAccent() const { return QStringLiteral("#5090f0"); }
+    QString themeAccentDim() const { return QStringLiteral("#204070"); }
+    QString themeWarning() const { return QStringLiteral("#e0a06a"); }
+    QString themeDanger() const { return QStringLiteral("#e06a5a"); }
+    QString themeMarker() const { return QStringLiteral("#e2c07f"); }
+    QString themePlayhead() const { return QStringLiteral("#f0f3f6"); }
+    QString themeWaveBackground() const { return QStringLiteral("#141414"); }
+    QString themeWaveOutline() const { return QStringLiteral("#5b636d"); }
+
     QString waveformStyle() const { return m_waveformStyle; }
     int waveformBarWidth() const { return m_waveformBarWidth; }
     int waveformBarGap() const { return m_waveformBarGap; }
@@ -52,7 +88,7 @@ signals:
     void changed();
 
 private:
-    QString m_waveformOutsideColor = QStringLiteral("#101317");
+    QString m_waveformOutsideColor = QStringLiteral("#101010");
     QString m_waveformStyle = QStringLiteral("coloured");
     // One bar per pixel: the waveform is a continuous curve, and two-pixel bars halve the
     // horizontal detail for nothing.

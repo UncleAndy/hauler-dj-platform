@@ -93,7 +93,7 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        color: UiSettings.waveformStyle === "coloured" ? "#141414" : "#101317"
+        color: UiSettings.waveformStyle === "coloured" ? UiSettings.themeWaveBackground : UiSettings.themeSurface
         radius: 3
 
         Canvas {
@@ -104,7 +104,7 @@ Item {
             onPaint: {
                 const context = getContext("2d");
                 context.reset();
-                context.fillStyle = "#101317";
+                context.fillStyle = UiSettings.themeSurface.toString();
                 context.fillRect(0, 0, width, height);
 
                 const middle = height / 2;
@@ -124,7 +124,7 @@ Item {
                     context.fillRect(Math.max(0, endX), 0, width - Math.max(0, endX), height);
                 }
 
-                context.strokeStyle = "#242a33";
+                context.strokeStyle = UiSettings.themeBorder.toString();
                 context.beginPath();
                 context.moveTo(0, middle);
                 context.lineTo(width, middle);
@@ -188,7 +188,7 @@ Item {
                             context.fillStyle = "rgba(127, 176, 226, 0.14)";
                             context.fillRect(left, 0, right - left, height);
                         }
-                        context.strokeStyle = "#7fb0e2";
+                        context.strokeStyle = UiSettings.themeAccent.toString();
                         context.beginPath();
                         context.moveTo(from, 0);
                         context.lineTo(from, height);
@@ -205,7 +205,7 @@ Item {
                     if (x < 0 || x > width) {
                         continue;
                     }
-                    context.fillStyle = "#e2c07f";
+                    context.fillStyle = UiSettings.themeMarker.toString();
                     context.fillRect(x - 1, 0, 2, 6);
                     context.fillText(String(slot + 1), x + 3, 9);
                 }
@@ -213,7 +213,7 @@ Item {
                 // The playhead is the centre of the strip by construction; drawn from the engine's
                 // own frame count, never from a local timer.
                 const playhead = ((view.playheadRatio - view.windowStart) / view.zoomSpan) * width;
-                context.strokeStyle = "#f0f3f6";
+                context.strokeStyle = UiSettings.themePlayhead.toString();
                 context.beginPath();
                 context.moveTo(playhead, 0);
                 context.lineTo(playhead, height);
@@ -251,7 +251,7 @@ Item {
             anchors.centerIn: parent
             visible: envelope.buckets === 0
             text: envelope.error.length > 0 ? envelope.error : qsTr("no waveform")
-            color: "#5b636d"
+            color: UiSettings.themeWaveOutline
             font.pixelSize: 11
         }
 
@@ -263,7 +263,7 @@ Item {
             text: view.atEnvelopeLimit
                   ? qsTr("zoom %1× · envelope limit").arg((1 / view.zoomSpan).toFixed(1))
                   : qsTr("zoom %1×").arg((1 / view.zoomSpan).toFixed(1))
-            color: view.atEnvelopeLimit ? "#e2a09b" : "#5b636d"
+            color: view.atEnvelopeLimit ? UiSettings.themeDanger : UiSettings.themeWaveOutline
             font.pixelSize: 10
         }
     }

@@ -70,7 +70,7 @@ Dialog {
             text: Browser.error.length > 0
                   ? Browser.error
                   : qsTr("%1 entries · audio files only").arg(Browser.entries.length)
-            color: Browser.error.length > 0 ? "#e2a09b" : "#8a929c"
+            color: Browser.error.length > 0 ? UiSettings.themeDanger : UiSettings.themeTextDim
             opacity: 0.6
             font.pixelSize: 11
         }

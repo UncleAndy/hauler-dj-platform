@@ -32,6 +32,8 @@ case "${1:-}" in
   --build-only) exit 0 ;;
   --smoke)
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --smoke
+    # A light panel means the palette was lost; the shell has to stay dark for a booth.
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --ui-theme-check
     # A non-default colour exercises the binding from the command line through QML: a misspelled
     # property would warn here instead of silently keeping the default.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --smoke \
