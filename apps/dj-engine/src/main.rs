@@ -282,9 +282,14 @@ fn run(argv: &[String]) -> Result<(), String> {
     // The count is kept so a bounded run can report the rate it actually achieved: the setting is
     // only worth having if the wire carries what it promises.
     let published = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    // Per-deck "is playing", refreshed by the publisher. A load has to be refused for a deck that is
+    // playing, and the thread that answers the client never sees the graph.
+    let playing: Arc<Vec<AtomicBool>> =
+        Arc::new((0..DeckId::COUNT).map(|_| AtomicBool::new(false)).collect());
     {
         let cells = Arc::clone(&cells);
         let published = Arc::clone(&published);
+        let playing = Arc::clone(&playing);
         let subscribers = Arc::clone(&subscribers);
         // The state rate is a parameter (display.state_hz): twenty snapshots a second is the
         // default, and raising it trades IPC for less projection between snapshots.
@@ -304,6 +309,11 @@ fn run(argv: &[String]) -> Result<(), String> {
                 revision += 1;
                 published.fetch_add(1, Ordering::Relaxed);
                 let snapshot = cells.read(&statics, rate, epoch, revision);
+                for deck in &snapshot.decks {
+                    if let Some(flag) = playing.get(deck.deck.index()) {
+                        flag.store(deck.playing, Ordering::Relaxed);
+                    }
+                }
                 let message = ServerMessage::Snapshot(Box::new(snapshot));
 
                 if let Ok(mut list) = subscribers.lock() {
@@ -345,8 +355,17 @@ fn run(argv: &[String]) -> Result<(), String> {
                 let alerts = outgoing_clone;
                 let loads = loads.clone();
                 let stop = Arc::clone(&stop_handle);
+                let playing = Arc::clone(&playing);
                 std::thread::spawn(move || {
-                    serve_client(connection, receiver, alerts, submissions, loads, stop)
+                    serve_client(
+                        connection,
+                        receiver,
+                        alerts,
+                        submissions,
+                        loads,
+                        stop,
+                        playing,
+                    )
                 });
             }
         });
@@ -666,6 +685,7 @@ fn serve_client(
     submissions: Sender<Submission>,
     loads: Sender<LoadRequest>,
     stop: Arc<AtomicBool>,
+    playing: Arc<Vec<AtomicBool>>,
 ) {
     let (mut reader, mut writer) = connection.split();
 
@@ -687,6 +707,23 @@ fn serve_client(
                 // deck becomes playable only when the state says `Ready`.
                 match dj_engine::route(&command) {
                     dj_engine::Routed::Load(request) => {
+                        // A deck that is playing refuses a load: cutting the track the room is
+                        // dancing to is the one mistake a DJ never forgives. The playing flag comes
+                        // from the published state, which is at most one publish interval old.
+                        // A deck that is playing refuses a load: cutting the track the room is
+                        // dancing to is the one mistake a DJ never forgives. The flag comes from the
+                        // publisher, so it is at most one publish interval old.
+                        let busy = playing
+                            .get(request.deck.index())
+                            .is_some_and(|flag| flag.load(Ordering::Relaxed));
+                        if busy {
+                            let ack =
+                                dj_domain::Ack::rejected(command.id, dj_domain::RejectReason::Busy);
+                            if alerts.send(ServerMessage::Ack(ack)).is_err() {
+                                return;
+                            }
+                            continue;
+                        }
                         let ack = match loads.send(request) {
                             Ok(()) => dj_domain::Ack::accepted(command.id),
                             Err(_) => dj_domain::Ack::rejected(

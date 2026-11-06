@@ -25,8 +25,58 @@ Pane {
     readonly property var selected: list.currentIndex >= 0 && list.currentIndex < Browser.entries.length
                                     ? Browser.entries[list.currentIndex] : null
 
-    // The one place a row acts: the mouse and the Load button both come through here, so a check can
-    // call it and exercise the same path the user does.
+    // Loading is deliberate: a deck button, or the number key of that deck. A double click only
+    // opens a folder — it never puts a track into a deck, because a stray double click during a set
+    // is a ruined transition.
+    readonly property var deckIds: ["A", "B", "C", "D"]
+
+    function deckIsPlaying(id) {
+        const decks = Bridge.snapshot.decks;
+        if (decks === undefined || decks === null) {
+            return false;
+        }
+        for (let index = 0; index < decks.length; ++index) {
+            if (decks[index].deck === id) {
+                return decks[index].playing === true;
+            }
+        }
+        return false;
+    }
+
+    // Double click and Enter on a folder: open it. Nothing else acts on a double click.
+    function openFolder(index) {
+        if (index < 0 || index >= Browser.entries.length) {
+            return false;
+        }
+        const entry = Browser.entries[index];
+        if (entry.dir !== true) {
+            browser.lastAction = "not a folder";
+            return false;
+        }
+        Browser.open(entry.path);
+        browser.lastAction = "opened " + entry.path;
+        return true;
+    }
+
+    // Load the selected track into `deck`; refuses a deck that is playing rather than cutting the
+    // track the room is dancing to.
+    function loadInto(deck) {
+        if (browser.selected === null || browser.selected.dir === true) {
+            browser.lastAction = "nothing to load";
+            return false;
+        }
+        if (browser.deckIsPlaying(deck)) {
+            browser.lastAction = "deck " + deck + " is playing";
+            return false;
+        }
+        browser.target = deck;
+        Bridge.load(deck, browser.selected.path);
+        browser.lastAction = "loaded " + browser.selected.path + " into " + deck;
+        return true;
+    }
+
+    // The one place a row acts: the mouse and the button both come through here, so a check can call
+    // it and exercise the same path the user does.
     function activate(index) {
         if (index < 0 || index >= Browser.entries.length) {
             browser.lastAction = "nothing at " + index;
@@ -86,14 +136,12 @@ Pane {
                     implicitHeight: 18
                     checkable: true
                     checked: browser.target === modelData
-                    onClicked: {
-                        browser.target = modelData;
-                        // A deck button is a load button when something is chosen: pick the deck and
-                        // the track together instead of asking for a second click.
-                        if (browser.selected !== null && browser.selected.dir !== true) {
-                            browser.activate(list.currentIndex);
-                        }
-                    }
+                    // A playing deck is not a destination: the button says so instead of taking the
+                    // click and cutting the track.
+                    enabled: !browser.deckIsPlaying(modelData)
+                    ToolTip.visible: hovered && !enabled
+                    ToolTip.text: qsTr("deck %1 is playing").arg(modelData)
+                    onClicked: browser.loadInto(modelData)
                 }
             }
         }
@@ -110,8 +158,16 @@ Pane {
             focus: true
             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
             // A click selects; Enter or a double click acts, as in any file list.
-            Keys.onReturnPressed: browser.activate(list.currentIndex)
-            Keys.onEnterPressed: browser.activate(list.currentIndex)
+            // A folder opens with Enter; a track does not, because Enter is not a load key here.
+            Keys.onReturnPressed: browser.openFolder(list.currentIndex)
+            Keys.onEnterPressed: browser.openFolder(list.currentIndex)
+            Keys.onPressed: function (event) {
+                const deck = ["1", "2", "3", "4"].indexOf(event.text);
+                if (deck >= 0) {
+                    browser.loadInto(browser.deckIds[deck]);
+                    event.accepted = true;
+                }
+            }
 
             delegate: Rectangle {
                 id: row
@@ -145,7 +201,13 @@ Pane {
                         list.currentIndex = row.index;
                         list.forceActiveFocus();
                     }
-                    onDoubleClicked: browser.activate(row.index)
+                    onDoubleClicked: {
+                        // Folders only: opening one is navigation. A track needs a deck button or a
+                        // number key, so a double click cannot cut what is playing.
+                        if (row.isFolder) {
+                            browser.openFolder(row.index);
+                        }
+                    }
                 }
             }
         }
@@ -166,7 +228,7 @@ Pane {
                 text: qsTr("Load")
                 font.pixelSize: 10
                 enabled: browser.selected !== null && browser.selected.dir !== true
-                onClicked: browser.activate(list.currentIndex)
+                onClicked: browser.loadInto(browser.target)
             }
         }
 

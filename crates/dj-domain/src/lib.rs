@@ -298,6 +298,8 @@ pub enum RejectReason {
     NotSupported,
     /// A parameter was outside its accepted range.
     InvalidValue,
+    /// The deck is playing: loading would cut the track the room is dancing to.
+    Busy,
     /// The command was addressed to an older engine epoch.
     StaleEpoch,
 }

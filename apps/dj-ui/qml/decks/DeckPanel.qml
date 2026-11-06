@@ -170,7 +170,11 @@ Pane {
             Button {
                 text: qsTr("Load")
                 font.pixelSize: 11
-                enabled: panel.live
+                // A deck that is playing is not a destination: stop it first. The engine refuses
+                // such a load as well, so this is the visible half of the same rule.
+                enabled: panel.live && !panel.playing
+                ToolTip.visible: hovered && !enabled && panel.playing
+                ToolTip.text: qsTr("stop the deck to load another track")
                 onClicked: loadDialog.open()
             }
             Button {

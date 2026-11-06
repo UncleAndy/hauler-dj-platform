@@ -138,6 +138,118 @@ QQuickItem *findItem(QQuickItem *root, const QString &name)
 
 } // namespace
 
+// A playing deck must refuse a load, and the refusal has to reach the client as such: the UI's own
+// guard is a courtesy, the engine's rule is the one that protects the sound.
+static int runBusyCheck(BridgeClient &bridge, const QString &socketPath, const QString &track,
+                        const QString &other, int timeoutMs)
+{
+    QEventLoop loop;
+    QTimer watchdog;
+    watchdog.setSingleShot(true);
+    QObject::connect(&watchdog, &QTimer::timeout, &loop, &QEventLoop::quit);
+    watchdog.start(timeoutMs);
+
+    enum Stage { Stopping, Loading, Playing, AskingBusy, AskingAgain, Done };
+    // Any deck left playing by an earlier run would make the first load look refused; the check
+    // starts from a known state instead of assuming one.
+    Stage stage = Stopping;
+    bool stopAsked = false;
+    int pending = 0;
+    bool refusedBusy = false;
+    bool secondAccepted = false;
+
+    QObject::connect(&bridge, &BridgeClient::acked, &loop,
+                     [&](int id, bool applied, bool rejected, const QString &reason) {
+                         if (id != pending) {
+                             return;
+                         }
+                         std::fprintf(stdout, "dj-ui: ack %d applied=%d rejected=%d %s\n", id,
+                                      applied ? 1 : 0, rejected ? 1 : 0, qPrintable(reason));
+                         if (stage == AskingBusy) {
+                             refusedBusy = rejected && reason.contains(QStringLiteral("Busy"));
+                             // The deck has to take the track once it is stopped.
+                             bridge.play(QStringLiteral("A"), false);
+                         } else if (stage == AskingAgain) {
+                             secondAccepted = !rejected;
+                             stage = Done;
+                             loop.quit();
+                         }
+                     });
+
+    QObject::connect(&bridge, &BridgeClient::snapshotChanged, &loop, [&]() {
+        const QVariantList decks = bridge.snapshot().value(QStringLiteral("decks")).toList();
+        bool deckAPlaying = false;
+        QString loadState;
+        for (const QVariant &entry : decks) {
+            const QVariantMap deck = entry.toMap();
+            if (deck.value(QStringLiteral("deck")).toString() != QStringLiteral("A")) {
+                continue;
+            }
+            deckAPlaying = deck.value(QStringLiteral("playing")).toBool();
+            loadState = deck.value(QStringLiteral("load")).toString();
+            if (loadState.isEmpty()) {
+                loadState = deck.value(QStringLiteral("load")).toMap().firstKey();
+            }
+        }
+        if (stage == Stopping) {
+            if (deckAPlaying && !stopAsked) {
+                stopAsked = true;
+                bridge.play(QStringLiteral("A"), false);
+                return;
+            }
+            if (!deckAPlaying) {
+                stage = Loading;
+            }
+            return;
+        }
+        if (stage == Loading) {
+            const QString reference = track;
+            if (!reference.isEmpty()) {
+                pending = bridge.load(QStringLiteral("A"), reference);
+                stage = Playing;
+                std::fprintf(stdout, "dj-ui: loading A, then playing it\n");
+            }
+            return;
+        }
+        if (stage == Playing && !deckAPlaying) {
+            pending = bridge.play(QStringLiteral("A"), true);
+            return;
+        }
+        if (stage == Playing && deckAPlaying) {
+            stage = AskingBusy;
+            pending = bridge.load(QStringLiteral("A"), other.isEmpty() ? track : other);
+            std::fprintf(stdout, "dj-ui: deck A is playing, asking it to take another track\n");
+            return;
+        }
+        if (stage == AskingBusy && !deckAPlaying) {
+            stage = AskingAgain;
+            pending = bridge.load(QStringLiteral("A"), other.isEmpty() ? track : other);
+            std::fprintf(stdout, "dj-ui: deck A is stopped, asking again\n");
+        }
+    });
+
+    QObject::connect(&bridge, &BridgeClient::connectedChanged, &loop, [&]() {
+        if (!bridge.isConnected()) {
+            return;
+        }
+        std::fprintf(stdout, "dj-ui: connected to %s for the busy check\n", qPrintable(socketPath));
+    });
+
+    bridge.connectToEngine(socketPath);
+    loop.exec();
+
+    if (!refusedBusy) {
+        std::fprintf(stderr, "dj-ui: a load into a playing deck was not refused as Busy\n");
+        return 1;
+    }
+    if (!secondAccepted) {
+        std::fprintf(stderr, "dj-ui: the stopped deck did not accept the load\n");
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: a playing deck refuses a load, a stopped one takes it\n");
+    return 0;
+}
+
 // End to end: the UI's gain command, the engine applying it, and the number coming back in the
 // snapshot. The unit test proves the routing; this proves the wire.
 static int runGainCheck(BridgeClient &bridge, const QString &socketPath, int timeoutMs)
@@ -721,6 +833,10 @@ int main(int argc, char *argv[])
         QStringLiteral("strip-check"),
         QStringLiteral("With --connect and --load: load the track into deck A and require the deck's "
                        "strip to receive the envelope the engine published."));
+    const QCommandLineOption busyCheckOption(
+        QStringLiteral("load-busy-check"),
+        QStringLiteral("With --connect and --load: prove a playing deck refuses a load (Busy) and "
+                       "accepts it once stopped."));
     const QCommandLineOption gainCheckOption(
         QStringLiteral("gain-check"),
         QStringLiteral("With --connect: send a channel gain and require the snapshot to carry it "
@@ -839,6 +955,7 @@ int main(int argc, char *argv[])
     parser.addOption(connectOption);
     parser.addOption(selfCheckOption);
     parser.addOption(gainCheckOption);
+    parser.addOption(busyCheckOption);
     parser.addOption(stripCheckOption);
     parser.addOption(loadOption);
     parser.addOption(loadSecondOption);
@@ -1131,6 +1248,12 @@ int main(int argc, char *argv[])
         }
         std::fprintf(stdout, "\n");
         return 0;
+    }
+
+    if (parser.isSet(busyCheckOption)) {
+        BridgeClient busyBridge;
+        return runBusyCheck(busyBridge, parser.value(connectOption), parser.value(loadOption),
+                            parser.value(loadSecondOption), 15000);
     }
 
     if (parser.isSet(gainCheckOption)) {
@@ -1611,20 +1734,27 @@ int main(int argc, char *argv[])
             return 1;
         }
 
-        const auto activate = [&](int index) {
+        const auto invoke = [&](const char *method, int index) {
             list->setProperty("currentIndex", index);
             QVariant returned;
-            QMetaObject::invokeMethod(panel, "activate", Q_RETURN_ARG(QVariant, returned),
+            QMetaObject::invokeMethod(panel, method, Q_RETURN_ARG(QVariant, returned),
                                       Q_ARG(QVariant, index));
             return panel->property("lastAction").toString();
         };
+        const auto loadInto = [&](const QString &deck) {
+            list->setProperty("currentIndex", fileIndex);
+            QVariant returned;
+            QMetaObject::invokeMethod(panel, "loadInto", Q_RETURN_ARG(QVariant, returned),
+                                      Q_ARG(QVariant, deck));
+            return panel->property("lastAction").toString();
+        };
 
-        const QString onTrack = activate(fileIndex);
+        const QString onTrack = loadInto(QStringLiteral("A"));
         // The selection has to hold too: a highlight that never lights is the same bug as a click
         // that never lands. Checked before the folder, because opening a folder reloads the model
         // and a fresh list correctly starts with nothing selected.
         const int selected = list->property("currentIndex").toInt();
-        const QString onFolder = activate(folderIndex);
+        const QString onFolder = invoke("openFolder", folderIndex);
         std::fprintf(stdout, "dj-ui: browser track  -> %s\n", qPrintable(onTrack));
         std::fprintf(stdout, "dj-ui: browser folder -> %s\n", qPrintable(onFolder));
         if (!onTrack.startsWith(QStringLiteral("loaded ")) || !onTrack.endsWith(QStringLiteral("into A"))) {
@@ -1658,6 +1788,28 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: a click on the browser row did not select it\n");
             return 1;
         }
+        // A double click must not load: it is the gesture that ruins a transition when the hand
+        // slips. Verified with real events at the row, not by reading the QML.
+        browser.open(folder.path());
+        QCoreApplication::processEvents();
+        panel->setProperty("lastAction", QString());
+        const QPointF rowCentre = list->mapToScene(QPointF(20.0, fileIndex * 18.0 + 9.0));
+        for (int repeat = 0; repeat < 2; ++repeat) {
+            for (const QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+                QMouseEvent event(type, rowCentre, window->mapToGlobal(rowCentre.toPoint()),
+                                  Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+                QCoreApplication::sendEvent(window, &event);
+            }
+        }
+        QCoreApplication::processEvents();
+        const QString afterDoubleClick = panel->property("lastAction").toString();
+        std::fprintf(stdout, "dj-ui: browser double click -> %s\n",
+                     afterDoubleClick.isEmpty() ? "nothing" : qPrintable(afterDoubleClick));
+        if (afterDoubleClick.startsWith(QStringLiteral("loaded "))) {
+            std::fprintf(stderr, "dj-ui: a double click loaded a track\n");
+            return 1;
+        }
+
         // A deck button is also a load button when something is chosen.
         list->setProperty("currentIndex", fileIndex);
         auto *buttonB = findItem(window->contentItem(), QStringLiteral("deckButton_B"));
