@@ -227,6 +227,28 @@ int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socket
                 loop.quit();
                 return;
             }
+            // The anti-moiré rule, checked as a property rather than by eye: for any screen width
+            // the profile has exactly one entry per pixel and the pixel ranges tile the window, so
+            // no bucket is drawn twice and none is skipped.
+            for (const int probeWidth : {640, 901, 1280}) {
+                const QVariantList profile = waveform.profile(probeWidth, 0.0, 1.0);
+                if (profile.size() != probeWidth) {
+                    failure = QStringLiteral("profile at %1 px has %2 entries")
+                                  .arg(probeWidth)
+                                  .arg(profile.size());
+                    loop.quit();
+                    return;
+                }
+                if (waveform.lastCoveredBuckets() != waveform.buckets()) {
+                    failure = QStringLiteral("profile at %1 px covers %2 of %3 buckets")
+                                  .arg(probeWidth)
+                                  .arg(waveform.lastCoveredBuckets())
+                                  .arg(waveform.buckets());
+                    loop.quit();
+                    return;
+                }
+            }
+            std::fprintf(stdout, "dj-ui: profile tiles the track at 640, 901 and 1280 px\n");
             std::fprintf(stdout,
                          "dj-ui: waveform loaded: %d columns of %d frames at %d Hz, covering %.0f "
                          "of %.0f frames; bands low %.3f high %.3f\n",
@@ -399,6 +421,11 @@ int main(int argc, char *argv[])
         QStringLiteral("waveform-style"),
         QStringLiteral("coloured (default: bass warm, treble cold) or plain."),
         QStringLiteral("style"));
+    const QCommandLineOption bandColorOption(
+        QStringLiteral("waveform-band-colors"),
+        QStringLiteral("Three colours for bass, mids and treble, comma separated "
+                       "(default #e0512f,#e8b53a,#dfeaf7)."),
+        QStringLiteral("low,mid,high"));
     const QCommandLineOption loadSecondOption(
         QStringLiteral("load-b"),
         QStringLiteral("With --self-check: load this file into deck B as well."),
@@ -414,6 +441,7 @@ int main(int argc, char *argv[])
     parser.addOption(loadSecondOption);
     parser.addOption(outsideColorOption);
     parser.addOption(styleOption);
+    parser.addOption(bandColorOption);
     parser.addOption(dialogCheckOption);
     parser.process(app);
 
@@ -436,6 +464,21 @@ int main(int argc, char *argv[])
         std::fprintf(stderr, "dj-ui: %s is not a waveform style (coloured or plain)\n",
                      qPrintable(parser.value(styleOption)));
         return 2;
+    }
+    if (parser.isSet(bandColorOption)) {
+        const QStringList parts = parser.value(bandColorOption).split(',');
+        const QStringList bands = {QStringLiteral("low"), QStringLiteral("mid"), QStringLiteral("high")};
+        if (parts.size() != 3) {
+            std::fprintf(stderr, "dj-ui: --waveform-band-colors needs three colours\n");
+            return 2;
+        }
+        for (int index = 0; index < 3; ++index) {
+            if (!settings.setWaveformBandColor(bands.at(index), parts.at(index).trimmed())) {
+                std::fprintf(stderr, "dj-ui: %s is not a colour for band %s\n",
+                             qPrintable(parts.at(index)), qPrintable(bands.at(index)));
+                return 2;
+            }
+        }
     }
     qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "UiSettings", &settings);
 

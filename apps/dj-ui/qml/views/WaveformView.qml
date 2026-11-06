@@ -48,26 +48,21 @@ Item {
     readonly property real windowStart: playheadRatio - zoomSpan / 2
     readonly property real windowEnd: playheadRatio + zoomSpan / 2
 
-    // Bass warm, mids neutral, treble cold. The mix is the ratio between the two bands in this
-    // column, so a track with a heavy low end reads differently from one full of hats.
+    // Bass warm, mids amber, treble cold — three colours from the settings, interpolated by the
+    // ratio between the two bands in this column. A track with a heavy low end reads differently
+    // from one full of hats, and the palette is the user's to change.
     function bandColor(bass, treble) {
         const total = bass + treble;
         const mix = total > 0.0001 ? treble / total : 0.5;
-        const warm = [224, 122, 60];
-        const neutral = [107, 168, 216];
-        const cold = [226, 240, 255];
-        let from = warm;
-        let to = neutral;
-        let t = mix * 2;
-        if (mix > 0.5) {
-            from = neutral;
-            to = cold;
-            t = (mix - 0.5) * 2;
-        }
-        const channel = function (index) {
-            return Math.round(from[index] + (to[index] - from[index]) * t);
-        };
-        return "rgb(" + channel(0) + "," + channel(1) + "," + channel(2) + ")";
+        const low = Qt.color(UiSettings.waveformLowColor);
+        const mid = Qt.color(UiSettings.waveformMidColor);
+        const high = Qt.color(UiSettings.waveformHighColor);
+        const from = mix < 0.5 ? low : mid;
+        const to = mix < 0.5 ? mid : high;
+        const t = mix < 0.5 ? mix * 2 : (mix - 0.5) * 2;
+        return Qt.rgba(from.r + (to.r - from.r) * t,
+                       from.g + (to.g - from.g) * t,
+                       from.b + (to.b - from.b) * t, 1.0);
     }
 
     // Where a source frame lands on screen, in pixels; negative ratio means "not a frame".
@@ -162,59 +157,28 @@ Item {
                 const visible = Math.max(1, lastColumn - firstColumn);
                 const group = Math.max(1, Math.ceil(visible / width));
 
-                // Two ways to draw the same envelope. `coloured` paints each column by its own band
-                // content — bass warm, treble cold — so a listener can see where the low end is;
-                // `plain` keeps one colour and lets the shape speak.
+                // The envelope is aggregated into exactly one entry per screen pixel, by the
+                // reader in C++, with contiguous bucket ranges. Drawing per bucket with fractional
+                // positions is what produced moiré: neighbouring strands landed on the same pixel
+                // or skipped one, and at some zoom levels that pattern was regular enough to look
+                // like texture on the waveform.
+                const pixels = envelope.profile(Math.round(width), view.windowStart, view.zoomSpan);
                 const coloured = UiSettings.waveformStyle === "coloured";
                 if (coloured) {
-                    for (let start = firstColumn; start < lastColumn; start += group) {
-                        let low = 0.0;
-                        let high = 0.0;
-                        let bass = 0.0;
-                        let treble = 0.0;
-                        let seen = 0;
-                        for (let index = start; index < Math.min(start + group, lastColumn); ++index) {
-                            const column = envelope.columns[index];
-                            if (column === undefined) {
-                                continue;
-                            }
-                            low = Math.min(low, column.min);
-                            high = Math.max(high, column.max);
-                            bass += column.low !== undefined ? column.low : 0.0;
-                            treble += column.high !== undefined ? column.high : 0.0;
-                            seen += 1;
-                        }
-                        const x = ((start / total) - view.windowStart) / view.zoomSpan * width;
-                        const span = Math.max(1.0, width / Math.max(1, visible / group));
-                        if (x < -span || x > width) {
-                            continue;
-                        }
-                        context.fillStyle = view.bandColor(seen > 0 ? bass / seen : 0.0,
-                                                          seen > 0 ? treble / seen : 0.0);
-                        const top = middle - high * middle;
-                        const bottom = middle - low * middle;
-                        context.fillRect(x, top, span, Math.max(1.0, bottom - top));
+                    for (let x = 0; x < pixels.length; ++x) {
+                        const pixel = pixels[x];
+                        const top = middle - pixel.max * middle;
+                        const bottom = middle - pixel.min * middle;
+                        context.fillStyle = view.bandColor(pixel.low, pixel.high);
+                        context.fillRect(x, top, 1, Math.max(1, bottom - top));
                     }
                 } else {
                     context.strokeStyle = "#5fa8d3";
                     context.beginPath();
-                    for (let start = firstColumn; start < lastColumn; start += group) {
-                        let low = 0.0;
-                        let high = 0.0;
-                        for (let index = start; index < Math.min(start + group, lastColumn); ++index) {
-                            const column = envelope.columns[index];
-                            if (column === undefined) {
-                                continue;
-                            }
-                            low = Math.min(low, column.min);
-                            high = Math.max(high, column.max);
-                        }
-                        const x = ((start / total) - view.windowStart) / view.zoomSpan * width + 0.5;
-                        if (x < -1 || x > width + 1) {
-                            continue;
-                        }
-                        context.moveTo(x, middle - high * middle);
-                        context.lineTo(x, middle - low * middle);
+                    for (let x = 0; x < pixels.length; ++x) {
+                        const pixel = pixels[x];
+                        context.moveTo(x + 0.5, middle - pixel.max * middle);
+                        context.lineTo(x + 0.5, middle - pixel.min * middle);
                     }
                     context.stroke();
                 }

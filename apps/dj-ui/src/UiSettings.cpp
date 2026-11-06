@@ -34,3 +34,27 @@ bool UiSettings::setWaveformStyle(const QString &style)
     emit changed();
     return true;
 }
+
+bool UiSettings::setWaveformBandColor(const QString &band, const QString &color)
+{
+    if (!QColor(color).isValid()) {
+        return false;
+    }
+    const QString name = band.trimmed().toLower();
+    QString *target = nullptr;
+    if (name == QStringLiteral("low")) {
+        target = &m_waveformLowColor;
+    } else if (name == QStringLiteral("mid")) {
+        target = &m_waveformMidColor;
+    } else if (name == QStringLiteral("high")) {
+        target = &m_waveformHighColor;
+    }
+    if (target == nullptr) {
+        return false;
+    }
+    if (*target != color) {
+        *target = color;
+        emit changed();
+    }
+    return true;
+}

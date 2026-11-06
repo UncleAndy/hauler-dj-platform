@@ -4,6 +4,7 @@
 #include <QFileInfo>
 #include <QMap>
 
+#include <cmath>
 #include <cstring>
 
 namespace {
@@ -101,4 +102,59 @@ bool Waveform::load(const QString &path)
     m_error.clear();
     emit changed();
     return true;
+}
+
+QVariantList Waveform::profile(int width, double windowStart, double span) const
+{
+    QVariantList pixels;
+    m_lastCovered = 0;
+    if (width <= 0 || m_columns.isEmpty() || span <= 0.0) {
+        return pixels;
+    }
+    const int total = m_columns.size();
+    pixels.reserve(width);
+    // Distinct buckets the window covers. Pixels can repeat a bucket when there are fewer buckets
+    // than pixels, so counting per pixel would report the width instead of the envelope.
+    const int coveredFrom = qBound(0, int(std::floor(windowStart * total)), total);
+    const int coveredTo = qBound(0, int(std::ceil((windowStart + span) * total)), total);
+    m_lastCovered = qMax(0, coveredTo - coveredFrom);
+
+    // Integer bucket boundaries per pixel: pixel p owns [first, next), and next is the first of
+    // pixel p+1, so the ranges tile by construction rather than by luck.
+    int previous = qBound(0, int(std::floor(windowStart * total)), total);
+    for (int x = 0; x < width; ++x) {
+        const double edge = windowStart + span * double(x + 1) / double(width);
+        int next = qBound(0, int(std::floor(edge * total)), total);
+        if (next < previous) {
+            next = previous;
+        }
+        int first = previous;
+        int last = next - 1;
+        if (last < first) {
+            // Fewer buckets than pixels: repeat the nearest one instead of leaving a hole.
+            first = qBound(0, previous, total - 1);
+            last = first;
+        }
+        previous = next;
+
+        double low = 0.0;
+        double high = 0.0;
+        double bass = 0.0;
+        double treble = 0.0;
+        int seen = 0;
+        for (int index = first; index <= last && index < total; ++index) {
+            const QVariantMap column = m_columns.at(index).toMap();
+            low = qMin(low, column.value(QStringLiteral("min")).toDouble());
+            high = qMax(high, column.value(QStringLiteral("max")).toDouble());
+            bass += column.value(QStringLiteral("low")).toDouble();
+            treble += column.value(QStringLiteral("high")).toDouble();
+            ++seen;
+        }
+        const double divisor = seen > 0 ? seen : 1;
+        pixels.append(QVariantMap{{QStringLiteral("min"), low},
+                                  {QStringLiteral("max"), high},
+                                  {QStringLiteral("low"), bass / divisor},
+                                  {QStringLiteral("high"), treble / divisor}});
+    }
+    return pixels;
 }

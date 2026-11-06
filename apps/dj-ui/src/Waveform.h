@@ -37,6 +37,17 @@ public:
     Q_INVOKABLE bool load(const QString &path);
     Q_INVOKABLE void clear();
 
+    // Aggregate the envelope into exactly `width` screen columns for the visible window.
+    //
+    // Every pixel gets one contiguous range of buckets and the ranges tile the window without gaps
+    // or overlaps. That is what removes the moiré: drawing per bucket with fractional x positions
+    // made neighbouring strands land on the same pixel or skip one, and at some zoom levels the
+    // pattern was regular enough to read as texture.
+    Q_INVOKABLE QVariantList profile(int width, double windowStart, double span) const;
+
+    // Buckets the last `profile` call consumed; equals `buckets` when the window covers the track.
+    Q_INVOKABLE int lastCoveredBuckets() const { return m_lastCovered; }
+
 signals:
     void changed();
 
@@ -46,4 +57,5 @@ private:
     int m_sampleRate = 0;
     QString m_source;
     QString m_error;
+    mutable int m_lastCovered = 0;
 };
