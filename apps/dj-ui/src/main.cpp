@@ -25,7 +25,9 @@
 #include <QEventLoop>
 #include <QGuiApplication>
 #include <QPalette>
+#include <QDir>
 #include <QMap>
+#include <QTemporaryDir>
 #include <QImage>
 #include <algorithm>
 #include <QQuickWindow>
@@ -111,6 +113,29 @@ bool deckIsPlaying(const QVariantMap &snapshot, const QString &deck)
 // Connect, ask deck A to play, and require exactly what the contract promises: an ack that says
 // "applied at sample N", and a snapshot that then reports the deck as playing. The UI must never
 // assume either.
+namespace {
+
+// QML items created by a Repeater are not always in the window's QObject tree, so a search by name
+// has to walk the visual tree — the one the user actually sees.
+QQuickItem *findItem(QQuickItem *root, const QString &name)
+{
+    if (root == nullptr) {
+        return nullptr;
+    }
+    if (root->objectName() == name) {
+        return root;
+    }
+    const QList<QQuickItem *> children = root->childItems();
+    for (QQuickItem *child : children) {
+        if (QQuickItem *found = findItem(child, name)) {
+            return found;
+        }
+    }
+    return nullptr;
+}
+
+} // namespace
+
 int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socketPath,
                  int timeoutMs, const QString &loadPath, const QString &loadSecondPath,
                  bool expectSpread)
@@ -674,6 +699,10 @@ int main(int argc, char *argv[])
         QStringLiteral("ui-theme-check"),
         QStringLiteral("Grab the shell and fail unless it is dark: a light panel means the palette "
                        "was lost."));
+    const QCommandLineOption browserCheckOption(
+        QStringLiteral("browser-check"),
+        QStringLiteral("Load the shell, pick a track in the browser and act on it, the way a click "
+                       "does, then print what happened."));
     const QCommandLineOption screenshotOption(
         QStringLiteral("ui-screenshot"),
         QStringLiteral("Load the shell, wait, grab it into OUT.png and exit. Verifies the theme "
@@ -716,6 +745,7 @@ int main(int argc, char *argv[])
     parser.addOption(waveformPngOption);
     parser.addOption(spanOption);
     parser.addOption(screenshotOption);
+    parser.addOption(browserCheckOption);
     parser.addOption(themeCheckOption);
     parser.addOption(benchOption);
     parser.addOption(frameRateOption);
@@ -1071,10 +1101,11 @@ int main(int argc, char *argv[])
         QEventLoop settle;
         QTimer::singleShot(600, &settle, &QEventLoop::quit);
         settle.exec();
-        auto *globalBar = window->findChild<QQuickItem *>(QStringLiteral("globalBar"));
-        auto *deckArea = window->findChild<QQuickItem *>(QStringLiteral("deckArea"));
-        auto *browser = window->findChild<QQuickItem *>(QStringLiteral("browser"));
-        auto *mixer = window->findChild<QQuickItem *>(QStringLiteral("mixer"));
+        auto *content = window->contentItem();
+        auto *globalBar = findItem(content, QStringLiteral("globalBar"));
+        auto *deckArea = findItem(content, QStringLiteral("deckArea"));
+        auto *browser = findItem(content, QStringLiteral("browserPanel"));
+        auto *mixer = findItem(content, QStringLiteral("mixer"));
         if (globalBar == nullptr || deckArea == nullptr || browser == nullptr || mixer == nullptr) {
             std::fprintf(stderr, "dj-ui: the shell has no regions by name\n");
             return 1;
@@ -1111,7 +1142,125 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: the layout does not match its settings\n");
             return 1;
         }
+        // Each deck, measured: a deck that grows tall enough to swallow the window is what "too
+        // puffy" means, so the numbers are printed next to the layout's.
+        for (const char *id : {"A", "B", "C", "D"}) {
+            auto *deck = findItem(content, QStringLiteral("deckPanel_%1").arg(QString::fromLatin1(id)));
+            auto *detail = findItem(content, QStringLiteral("deckDetail_%1").arg(QString::fromLatin1(id)));
+            auto *overview = findItem(content, QStringLiteral("deckOverview_%1").arg(QString::fromLatin1(id)));
+            if (deck == nullptr || detail == nullptr || overview == nullptr) {
+                std::fprintf(stderr,
+                             "dj-ui: deck %s has no strips (panel %s, strip %s, overview %s)\n", id,
+                             deck != nullptr ? "found" : "missing",
+                             detail != nullptr ? "found" : "missing",
+                             overview != nullptr ? "found" : "missing");
+                return 1;
+            }
+            std::fprintf(stdout, "dj-ui: deck %s %.0f px tall, strip %.0f px, overview %.0f px\n", id,
+                         deck->height(), detail->height(), overview->height());
+        }
         std::fprintf(stdout, "dj-ui: layout %s applied as set\n", qPrintable(layout.preset()));
+        return 0;
+    }
+
+    if (parser.isSet(browserCheckOption)) {
+        // A list you cannot pick from is a picture of a list, so the check goes through the same
+        // function the mouse does: select a track, activate it, read what the panel says happened.
+        QTemporaryDir folder;
+        if (!folder.isValid()) {
+            std::fprintf(stderr, "dj-ui: cannot make a temporary folder\n");
+            return 1;
+        }
+        QDir(folder.path()).mkpath(QStringLiteral("subfolder"));
+        const QString track = folder.path() + QStringLiteral("/track.wav");
+        QFile file(track);
+        if (!file.open(QIODevice::WriteOnly)) {
+            std::fprintf(stderr, "dj-ui: cannot write %s\n", qPrintable(track));
+            return 1;
+        }
+        file.write("RIFF", 4);
+        file.close();
+        browser.open(folder.path());
+
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        QEventLoop settle;
+        QTimer::singleShot(600, &settle, &QEventLoop::quit);
+        settle.exec();
+
+        QQuickItem *panel = findItem(window->contentItem(), QStringLiteral("browserPanel"));
+        QQuickItem *list = findItem(window->contentItem(), QStringLiteral("browserList"));
+        if (panel == nullptr || list == nullptr) {
+            std::fprintf(stderr, "dj-ui: the shell has no browser\n");
+            return 1;
+        }
+        const QVariantList entries = browser.entries();
+        int fileIndex = -1;
+        int folderIndex = -1;
+        for (int index = 0; index < entries.size(); ++index) {
+            const QVariantMap entry = entries.at(index).toMap();
+            if (entry.value(QStringLiteral("dir")).toBool()) {
+                folderIndex = index;
+            } else if (fileIndex < 0) {
+                fileIndex = index;
+            }
+        }
+        if (fileIndex < 0 || folderIndex < 0) {
+            std::fprintf(stderr, "dj-ui: the browser did not list the track and the folder\n");
+            return 1;
+        }
+
+        const auto activate = [&](int index) {
+            list->setProperty("currentIndex", index);
+            QVariant returned;
+            QMetaObject::invokeMethod(panel, "activate", Q_RETURN_ARG(QVariant, returned),
+                                      Q_ARG(QVariant, index));
+            return panel->property("lastAction").toString();
+        };
+
+        const QString onTrack = activate(fileIndex);
+        // The selection has to hold too: a highlight that never lights is the same bug as a click
+        // that never lands. Checked before the folder, because opening a folder reloads the model
+        // and a fresh list correctly starts with nothing selected.
+        const int selected = list->property("currentIndex").toInt();
+        const QString onFolder = activate(folderIndex);
+        std::fprintf(stdout, "dj-ui: browser track  -> %s\n", qPrintable(onTrack));
+        std::fprintf(stdout, "dj-ui: browser folder -> %s\n", qPrintable(onFolder));
+        if (!onTrack.startsWith(QStringLiteral("loaded ")) || !onTrack.endsWith(QStringLiteral("into A"))) {
+            std::fprintf(stderr, "dj-ui: a track click did not load into the chosen deck\n");
+            return 1;
+        }
+        if (!onFolder.startsWith(QStringLiteral("opened "))) {
+            std::fprintf(stderr, "dj-ui: a folder click did not open the folder\n");
+            return 1;
+        }
+        if (selected != fileIndex) {
+            std::fprintf(stderr, "dj-ui: the selection did not follow the click (%d, wanted %d)\n",
+                         selected, fileIndex);
+            return 1;
+        }
+        // The click itself, delivered to the window the way a mouse delivers it: calling the action
+        // proves the panel works, sending the event proves the row is reachable.
+        browser.open(folder.path());
+        QCoreApplication::processEvents();
+        const QPointF rowPoint =
+            list->mapToScene(QPointF(20.0, fileIndex * 18.0 + 9.0));
+        for (const QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+            QMouseEvent event(type, rowPoint, window->mapToGlobal(rowPoint.toPoint()),
+                              Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(window, &event);
+        }
+        QCoreApplication::processEvents();
+        const int clicked = list->property("currentIndex").toInt();
+        std::fprintf(stdout, "dj-ui: browser click at row %d selected %d\n", fileIndex, clicked);
+        if (clicked != fileIndex) {
+            std::fprintf(stderr, "dj-ui: a click on the browser row did not select it\n");
+            return 1;
+        }
+        std::fprintf(stdout, "dj-ui: browser selects and acts, selection follows the click\n");
         return 0;
     }
 

@@ -21,9 +21,9 @@ Item {
     readonly property real columnsPerPixel: (envelope.buckets * zoomSpan) / Math.max(1, width)
     readonly property bool atEnvelopeLimit: columnsPerPixel < 1.0 && envelope.buckets > 0
 
-    // This deck's envelope, and only this deck's: each view owns one, so loading into A cannot
-    // repaint B.
-    WaveformEnvelope { id: envelope }
+    // The deck's envelope, owned by the panel: the zoomed strip and the whole-track overview draw
+    // the same columns, instead of parsing the file twice and disagreeing after a reload.
+    property WaveformEnvelope envelope
 
     readonly property var waveform: deckState !== undefined && deckState.waveform !== undefined
                                     ? deckState.waveform : null
@@ -125,30 +125,7 @@ Item {
         view.zoomSpan = Math.min(1.0, Math.max(0.02, view.zoomSpan / factor));
     }
 
-    // Load once per reference: the snapshot repeats the same path twenty times a second.
-    Connections {
-        target: Bridge
-        function onSnapshotChanged() { view.reload() }
-    }
 
-    function reload() {
-        const reference = view.waveform !== null && view.waveform.path !== undefined
-                          ? String(view.waveform.path) : "";
-        if (reference.length === 0) {
-            if (envelope.buckets > 0) {
-                envelope.clear();
-            }
-            return;
-        }
-        if (envelope.source === reference) {
-            return;
-        }
-        if (!envelope.load(reference)) {
-            console.warn("waveform:", envelope.error);
-        }
-    }
-
-    Component.onCompleted: reload()
 
     Rectangle {
         anchors.fill: parent

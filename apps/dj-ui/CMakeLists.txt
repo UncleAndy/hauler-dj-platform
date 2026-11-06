@@ -31,6 +31,7 @@ qt_add_qml_module(dj-ui
         qml/decks/DeckPanel.qml
         qml/decks/LoadDialog.qml
         qml/views/WaveformView.qml
+        qml/views/TrackOverview.qml
         qml/mixer/Crossfader.qml
         qml/mixer/MixerPanel.qml
 )

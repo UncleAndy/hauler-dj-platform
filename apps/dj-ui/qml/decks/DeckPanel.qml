@@ -1,8 +1,9 @@
 // A deck panel driven entirely by the engine snapshot (DJP-ARCH-004).
 //
-// The transport controls are never optimistic: pressing Play sends a command and waits. The button
-// only appears pressed once a snapshot says the deck is playing, and it is disabled while the engine
-// is unreachable, so a dead engine can never look like a working one.
+// The arrangement follows the reference: the deck's letter and the track's title share one line, the
+// zoomed strip takes the room, the whole track sits under it as a thin overview, and the transport
+// controls are a row at the bottom. Nothing is optimistic: pressing Play sends a command and waits,
+// and the button only reads "playing" once a snapshot says so.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -17,8 +18,6 @@ Pane {
     property bool targeted: false
     signal chosen()
 
-    // Panels sit one step above the window surface and are outlined a step brighter, the way the
-    // reference separates the deck areas from the background.
     background: Rectangle {
         color: UiSettings.themePanel
         border.color: panel.targeted ? UiSettings.themeAccent : UiSettings.themeBorder
@@ -51,174 +50,176 @@ Pane {
     readonly property var track: panel.state.track !== undefined ? panel.state.track : null
     readonly property var loop: panel.state.loop_region !== undefined ? panel.state.loop_region : null
 
-    function positionLabel() {
-        const frames = panel.state.source_frame;
-        if (frames === undefined || frames === null) {
-            return qsTr("—");
+    // One envelope per deck, shared by the zoomed strip and the overview: loading into A can never
+    // repaint B, and the two strips cannot disagree about how long the track is.
+    WaveformEnvelope { id: envelope }
+
+    function timeLabel(frames) {
+        const rate = envelope.sampleRate > 0 ? envelope.sampleRate : 48000;
+        if (frames === undefined || frames === null || frames < 0) {
+            return "—";
         }
-        const seconds = Math.floor(frames / (Bridge.snapshot.sample_rate || 48000));
+        const seconds = Math.floor(frames / rate);
         const minutes = Math.floor(seconds / 60);
         return minutes + ":" + ("0" + (seconds % 60)).slice(-2);
     }
 
+    function positionLabel() {
+        return panel.timeLabel(panel.state.source_frame);
+    }
+
+    function lengthLabel() {
+        if (panel.columns <= 0 || panel.framesPerBucket <= 0) {
+            return "—";
+        }
+        return panel.timeLabel(panel.columns * panel.framesPerBucket);
+    }
+
+    readonly property int columns: panel.state.waveform !== undefined
+                                   && panel.state.waveform.buckets !== undefined
+                                   ? panel.state.waveform.buckets : 0
+    readonly property real framesPerBucket: panel.state.waveform !== undefined
+                                            && panel.state.waveform.frames_per_bucket !== undefined
+                                            ? panel.state.waveform.frames_per_bucket : 0
+
+    // Load once per reference: the snapshot repeats the same path twenty times a second.
+    function reload() {
+        const reference = panel.state.waveform !== undefined && panel.state.waveform.path !== undefined
+                          ? String(panel.state.waveform.path) : "";
+        if (reference.length === 0) {
+            if (envelope.buckets > 0) {
+                envelope.clear();
+            }
+            return;
+        }
+        if (envelope.source === reference) {
+            return;
+        }
+        if (!envelope.load(reference)) {
+            console.warn("waveform:", envelope.error);
+        }
+    }
+
+    onStateChanged: reload()
+    Component.onCompleted: reload()
+
     ColumnLayout {
         anchors.fill: parent
-        spacing: 8
+        anchors.margins: 4
+        spacing: 4
 
-        Label {
-            text: panel.deckLabel
-            font.pixelSize: 22
-            font.bold: true
-        }
-
-        Label {
-            text: panel.track !== null && panel.track.title !== undefined
-                  ? panel.track.title : qsTr("no track loaded")
-            opacity: panel.track !== null ? 0.9 : 0.45
-            elide: Text.ElideRight
-            Layout.fillWidth: true
-        }
-
+        // One line: which deck it is, what is loaded, where the playhead is in the track.
         RowLayout {
-            Layout.alignment: Qt.AlignHCenter
-            spacing: 8
+            Layout.fillWidth: true
+            spacing: 6
+
+            Label {
+                text: panel.deckId
+                font.pixelSize: 15
+                font.bold: true
+                color: panel.targeted ? UiSettings.themeAccent : UiSettings.themeText
+            }
+            Label {
+                Layout.fillWidth: true
+                text: panel.track !== null && panel.track.title !== undefined
+                      ? panel.track.title : qsTr("no track loaded")
+                color: panel.track !== null ? UiSettings.themeText : UiSettings.themeTextDim
+                font.pixelSize: 12
+                elide: Text.ElideRight
+            }
+            Label {
+                text: panel.positionLabel() + " / " + panel.lengthLabel()
+                color: UiSettings.themeTextDim
+                font.pixelSize: 11
+            }
+        }
+
+        // The zoomed strip: what is around the playhead right now.
+        WaveformView {
+            id: detail
+            objectName: "deckDetail_" + panel.deckId
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.minimumHeight: 48
+            deckState: panel.state
+            envelope: envelope
+        }
+
+        // The whole track, with a marker that slides along it; a click here seeks.
+        TrackOverview {
+            objectName: "deckOverview_" + panel.deckId
+            Layout.fillWidth: true
+            Layout.preferredHeight: 22
+            Layout.minimumHeight: 14
+            deckState: panel.state
+            envelope: envelope
+        }
+
+        // Transport, at the bottom where the hand already is.
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 4
 
             Button {
-                text: qsTr("Load…")
+                text: qsTr("Load")
+                font.pixelSize: 11
                 enabled: panel.live
                 onClicked: loadDialog.open()
             }
             Button {
                 text: panel.playing ? qsTr("Pause") : qsTr("Play")
+                font.pixelSize: 11
                 enabled: panel.live
-                checkable: false
                 highlighted: panel.playing
                 onClicked: Bridge.play(panel.deckId, !panel.playing)
             }
             Button {
                 text: qsTr("Cue")
+                font.pixelSize: 11
                 enabled: panel.live
                 onClicked: Bridge.cue(panel.deckId, "Jump", 0)
             }
             Button {
-                text: qsTr("Set cue")
+                text: qsTr("Set")
+                font.pixelSize: 11
                 enabled: panel.live
                 onClicked: Bridge.cue(panel.deckId, "Set", 0)
             }
             Button {
-                text: panel.loop !== null ? qsTr("Loop on") : qsTr("Loop off")
+                text: qsTr("Loop")
+                font.pixelSize: 11
                 enabled: panel.live
                 checkable: false
+                highlighted: panel.loop !== null && panel.loop !== undefined
                 onClicked: {
                     const from = panel.state.source_frame !== undefined ? panel.state.source_frame : 0;
                     Bridge.setLoop(panel.deckId, panel.loop === null, from, from + 48000);
                 }
             }
-        }
-
-        WaveformView {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 96
-            deckState: panel.state
-        }
-
-        // Level and cue indicators (DJP-UI-002): driven by the snapshot, never by the click.
-        ColumnLayout {
-            Layout.fillWidth: true
-            spacing: 2
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 6
-                Label { text: qsTr("L"); opacity: 0.5; font.pixelSize: 10 }
-                Rectangle {
-                    Layout.fillWidth: true
-                    height: 6
-                    radius: 2
-                    color: UiSettings.themeRaised
-                    Rectangle {
-                        height: parent.height
-                        radius: 2
-                        color: panel.playing ? UiSettings.themeAccent : UiSettings.themePanel
-                        width: parent.width * Math.min(1.0, panel.state.levels !== undefined
-                                                        ? panel.state.levels.peak_left : 0.0)
-                    }
-                }
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 6
-                Label { text: qsTr("R"); opacity: 0.5; font.pixelSize: 10 }
-                Rectangle {
-                    Layout.fillWidth: true
-                    height: 6
-                    radius: 2
-                    color: UiSettings.themeRaised
-                    Rectangle {
-                        height: parent.height
-                        radius: 2
-                        color: panel.playing ? UiSettings.themeAccent : UiSettings.themePanel
-                        width: parent.width * Math.min(1.0, panel.state.levels !== undefined
-                                                        ? panel.state.levels.peak_right : 0.0)
-                    }
-                }
-            }
-        }
-
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 8
-
+            Item { Layout.fillWidth: true }
             Label {
-                text: qsTr("play")
+                text: panel.statusText()
+                color: panel.state.load !== undefined && panel.state.load.Failed !== undefined
+                       ? UiSettings.themeDanger : UiSettings.themeTextDim
                 font.pixelSize: 10
-                color: panel.playing ? UiSettings.themeAccent : UiSettings.themeRaised
-            }
-            Label {
-                text: qsTr("cue")
-                font.pixelSize: 10
-                color: panel.state.hotcues !== undefined
-                       && panel.state.hotcues[0] !== null
-                       && panel.state.hotcues[0] !== undefined ? UiSettings.themeMarker : UiSettings.themeRaised
-            }
-            Label {
-                text: qsTr("loop")
-                font.pixelSize: 10
-                color: panel.loop !== null && panel.loop !== undefined ? UiSettings.themeAccent : UiSettings.themeRaised
+                elide: Text.ElideRight
+                Layout.maximumWidth: 140
             }
         }
+    }
 
-        Label {
-            Layout.alignment: Qt.AlignHCenter
-            text: {
-                const load = panel.state.load;
-                if (load === undefined) {
-                    return qsTr("empty");
-                }
-                if (load.Loading !== undefined) {
-                    return qsTr("preparing… %1%").arg(Math.round((load.Loading.progress || 0) * 100));
-                }
-                if (load.Failed !== undefined) {
-                    return qsTr("cannot play: %1").arg(load.Failed.message);
-                }
-                return qsTr("ready");
-            }
-            color: panel.state.load !== undefined && panel.state.load.Failed !== undefined
-                   ? UiSettings.themeDanger : UiSettings.themeTextDim
-            font.pixelSize: 11
-            elide: Text.ElideRight
-            Layout.fillWidth: true
-            horizontalAlignment: Text.AlignHCenter
+    function statusText() {
+        const load = panel.state.load;
+        if (load === undefined) {
+            return qsTr("empty");
         }
-
-        Label {
-            Layout.alignment: Qt.AlignHCenter
-            text: qsTr("at %1 · gain %2")
-                      .arg(panel.positionLabel())
-                      .arg(panel.state.linear_gain !== undefined
-                           ? panel.state.linear_gain.toFixed(2) : "—")
-            opacity: 0.6
+        if (load.Loading !== undefined) {
+            return qsTr("preparing… %1%").arg(Math.round((load.Loading.progress || 0) * 100));
         }
+        if (load.Failed !== undefined) {
+            return qsTr("cannot play: %1").arg(load.Failed.message);
+        }
+        return qsTr("ready");
     }
 
     LoadDialog {

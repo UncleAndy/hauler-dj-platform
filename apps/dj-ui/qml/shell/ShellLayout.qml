@@ -76,6 +76,7 @@ Item {
                     model: LayoutState.deckRows === 2 ? ["A", "C"] : ["A"]
                     delegate: DeckPanel {
                         required property string modelData
+                        objectName: "deckPanel_" + modelData
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         deckId: modelData
@@ -103,6 +104,7 @@ Item {
                     model: LayoutState.deckRows === 2 ? ["B", "D"] : ["B"]
                     delegate: DeckPanel {
                         required property string modelData
+                        objectName: "deckPanel_" + modelData
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         deckId: modelData
@@ -118,7 +120,7 @@ Item {
 
         BrowserPanel {
             id: browserPanel
-            objectName: "browser"
+            objectName: "browserPanel"
             target: shell.targetDeck
             SplitView.preferredHeight: shell.height * LayoutState.browserPercent / 100.0
             SplitView.minimumHeight: 90
