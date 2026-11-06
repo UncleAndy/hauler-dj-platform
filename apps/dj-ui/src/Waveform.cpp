@@ -256,10 +256,20 @@ QColor Waveform::pixelColor(double loud, double mid, double high) const
     if (total <= 1e-6) {
         return QColor(0, 0, 0);
     }
-    const double share[3] = {relative[0] / total, relative[1] / total, relative[2] / total};
+    // Raised to 1.5 before normalising: without it the three shares stay close, every column lands
+    // in the middle of the colour scale, and the track reads as one long orange-yellow-green smear.
+    // With it the leading band pulls the hue to its own part of the circle without hiding the others.
+    double shaped[3] = {0.0, 0.0, 0.0};
+    double shapedTotal = 0.0;
+    for (int band = 0; band < 3; ++band) {
+        shaped[band] = std::pow(relative[band] / total, 1.5);
+        shapedTotal += shaped[band];
+    }
+    const double share[3] = {shaped[0] / shapedTotal, shaped[1] / shapedTotal,
+                             shaped[2] / shapedTotal};
     // Where this column sits on a log-frequency axis, using the centre of each band: bass around
     // 70 Hz, mids around 1 kHz, treble around 9 kHz, on the 20 Hz - 20 kHz span.
-    static const double centre[3] = {0.181, 0.566, 0.884};
+    static const double centre[3] = {0.140, 0.520, 0.900};
     const double position =
         qBound(0.0, share[0] * centre[0] + share[1] * centre[1] + share[2] * centre[2], 1.0);
 
