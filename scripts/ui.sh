@@ -39,7 +39,14 @@ case "${1:-}" in
         --session-file "${TMPDIR:-/tmp}/dj-session-check.json" --browser-start-check
     # F11 fills the screen, and the shape survives a restart: a window that forgets it is a window
     # that starts in the wrong place every time.
-    printf '{"folder":"","window":"maximized"}' > "${TMPDIR:-/tmp}/dj-window-check.json"
+    for shape in window maximized; do
+        printf '{"folder":"","window":"%s"}' "$shape" > "${TMPDIR:-/tmp}/dj-window-check.json"
+        QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" \
+            --session-file "${TMPDIR:-/tmp}/dj-window-check.json" --window-check
+    done
+    # A restart that lands in full screen must still know it came from a maximized window.
+    printf '{"folder":"","window":"fullscreen","restore_to":"maximized"}' \
+        > "${TMPDIR:-/tmp}/dj-window-check.json"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" \
         --session-file "${TMPDIR:-/tmp}/dj-window-check.json" --window-check
     # The browser must select a row with a click and act on it: a list you cannot pick from is a

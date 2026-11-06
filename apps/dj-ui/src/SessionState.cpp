@@ -58,6 +58,19 @@ bool SessionState::rememberWindow(const QString &state)
     return true;
 }
 
+bool SessionState::rememberRestoreTo(const QString &state)
+{
+    if (state != QLatin1String("window") && state != QLatin1String("maximized")) {
+        return false;
+    }
+    if (state == m_restoreTo) {
+        return true;
+    }
+    m_restoreTo = state;
+    emit changed();
+    return true;
+}
+
 bool SessionState::load()
 {
     QFile file(m_file);
@@ -80,6 +93,10 @@ bool SessionState::load()
     if (!window.isEmpty()) {
         any = rememberWindow(window) || any;
     }
+    const QString restoreTo = root.value(QStringLiteral("restore_to")).toString();
+    if (!restoreTo.isEmpty()) {
+        any = rememberRestoreTo(restoreTo) || any;
+    }
     return any;
 }
 
@@ -92,6 +109,7 @@ bool SessionState::save() const
     QJsonObject root;
     root.insert(QStringLiteral("folder"), m_folder);
     root.insert(QStringLiteral("window"), m_window);
+    root.insert(QStringLiteral("restore_to"), m_restoreTo);
     QFile file(m_file);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         return false;
