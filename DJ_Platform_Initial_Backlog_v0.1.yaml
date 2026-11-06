@@ -200,3 +200,16 @@ tasks:
       - 'Two independently controllable decks and crossfader work in Linux GUI'
       - 'Cue and loop operations persist across reload'
       - 'Headless reproducibility and RT benchmark evidence attached'
+  - id: A14
+    title: 'Channel three-band EQ: low, mid and high on every channel'
+    role: dsp-audio
+    priority: P1
+    release: R0.5
+    depends_on: [A04, A05, A08, A13]
+    requirements: [DJP-MIX-002]
+    deliverables: [crates/dj-dsp, apps/dj-engine, apps/dj-ui]
+    acceptance:
+      - 'Measured magnitude response: low shelf, mid peak, high shelf, each within its stated band'
+      - 'Flat at 0 dB within 0.1 dB, and no change to a channel whose EQ is untouched'
+      - 'Coefficients recomputed off the audio callback; a block renders without allocation'
+      - 'Three knobs per channel show the engine state, not a local model'

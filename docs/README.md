@@ -9,7 +9,7 @@
 |---|---|---|
 | `../DJ_Platform_TZ_v0.1_RU.md` | Источник требований `DJP-*` | утверждён владельцем (v0.1) |
 | `../DJ_Platform_Implementation_Plan_v0.1_RU.md` | Порядок разработки, gate и роли | утверждён владельцем (v0.1) |
-| `../DJ_Platform_Initial_Backlog_v0.1.yaml` | Задачи A00–A13 | принят |
+| `../DJ_Platform_Initial_Backlog_v0.1.yaml` | Задачи A00–A14 | принят |
 | `requirements/traceability.csv` | Требование → реализация → тест → свидетельство | 136 требований; 5 `passing` (A01), 7 `review` (A00/A12), остальные `unverified` |
 | `adr/*.md` | Решения: лицензия, аудиобэкенд, UI-мост, аудиоустройства, контроллеры | 0001/0002/0003/0005/0006 accepted |
 | `architecture/*.md` | Карта крейтов, RT-контракт, обзор | RT-контракт закрыт тестами A01 |
