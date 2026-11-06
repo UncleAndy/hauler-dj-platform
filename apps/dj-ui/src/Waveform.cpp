@@ -214,7 +214,9 @@ std::vector<Waveform::Bar> Waveform::bars(int columns, double windowStart, doubl
     // comb of repeated envelope columns; at the whole track it is full.
     const double zoom = span > 0.0 ? 1.0 / span : 1.0;
     const double mediumWeight = qBound(0.5, 0.5 + 0.5 * (span - 0.05) / 0.85, 1.0);
-    const double smoothWeight = qMin(1.0, mediumWeight + 0.25 * (smoothingHeat(zoom) - 1.0));
+    // Never all the way: at full weight the outline is the smoothed ramp only, and the strip loses
+    // the last of its own shape.
+    const double smoothWeight = qMin(0.9, mediumWeight + 0.25 * (smoothingHeat(zoom) - 1.0));
     const int level = rampForZoom(columnsPerBar, zoom);
     const double *ramp = (!m_peakRamps.empty() && smoothWeight > 0.0)
         ? m_peakRamps.at(std::size_t(level)).data()
@@ -450,7 +452,14 @@ int Waveform::rampForZoom(double columnsPerBar, double zoom) const
     // repeats across several bars and reads as a comb — so the smoothing grows with the zoom instead
     // of shrinking with the bar.
     static const int radii[] = {1, 4, 8, 16, 32, 64};
-    const double wanted = qMax(1.0, columnsPerBar * 8.0 * smoothingHeat(zoom));
+    // Eight bars of neighbourhood is the medium setting. Past two hundred times the window holds only a
+    // handful of envelope columns, so eight bars of them is most of the picture: the neighbourhood
+    // narrows towards four bars at 400x, smoothly, or the picture would change character at one step.
+    const double beyond = zoom > 200.0
+        ? qBound(0.0, std::log(zoom / 200.0) / std::log(2.0), 1.0)
+        : 0.0;
+    const double neighbourhood = 8.0 - 4.0 * beyond;
+    const double wanted = qMax(1.0, columnsPerBar * neighbourhood * smoothingHeat(zoom));
     for (int index = 0; index < int(sizeof(radii) / sizeof(radii[0])); ++index) {
         if (radii[index] >= wanted) {
             return index;
@@ -461,14 +470,20 @@ int Waveform::rampForZoom(double columnsPerBar, double zoom) const
 
 double Waveform::smoothingHeat(double zoom)
 {
-    // How much stronger than the medium setting the smoothing is: one up to 15x, then rising with the
-    // zoom towards a ceiling of 2.5. The rise saturates on purpose — past about forty times the strip
-    // shows so little of the track that more ironing only makes the beat look soft. Measured against
-    // the zoom, the curve gives 1.2 at 20x, 1.7 at 40x, 2.1 at 100x and 2.4 at 400x: the last decade
-    // of zoom adds a tenth of what the first one did.
+    // How much stronger than the medium setting the smoothing is. It climbs to about forty times and
+    // then flattens, because past that the strip shows so little of the track that more ironing only
+    // makes the beat look soft. Beyond two hundred times it eases off again: at that zoom a bar is a
+    // fraction of an envelope column, the picture is built of a handful of columns, and blurring them
+    // together hides the only detail there is left.
     if (!(zoom > 15.0)) {
         return 1.0;
     }
-    const double past = zoom / 15.0 - 1.0;
-    return 1.0 + 1.5 * past / (past + 2.0);
+    const double peak = 200.0;
+    const double reached = qMin(zoom, peak) / 15.0 - 1.0;
+    const double rise = 1.0 + 1.5 * reached / (reached + 2.0);
+    if (zoom <= peak) {
+        return rise;
+    }
+    const double past = qBound(0.0, std::log(zoom / peak) / std::log(400.0 / peak), 1.0);
+    return rise - 1.2 * past;
 }
