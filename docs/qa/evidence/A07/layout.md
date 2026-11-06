@@ -437,3 +437,22 @@ dj-ui: wheel over knob 1,122, over meter 1,259      — обе зоны, --layou
 dj-ui: wheel over knob A: gain 1,000 -> 1,259       — до движка, --wheel-check
 dj-ui: the wheel trims a channel through the engine
 ```
+
+## Полный экран и запоминание формы окна
+
+`F11` переключает полноэкранный режим; выход возвращает ту форму, из которой вышли (развёрнутое окно —
+снова развёрнутым). Клавиша обрабатывается фильтром событий на самом окне, а не `Shortcut` в QML: ярлык
+срабатывает только когда фокус у оболочки, а F11 должен работать всегда — и его же можно нажать из
+проверки.
+
+Форма окна пишется в `session.json` рядом с папкой браузера и восстанавливается до того, как запустится
+любая проверка:
+
+```
+dj-ui: the window opened maximized (remembered maximized)
+dj-ui: F11 -> fullscreen, remembered fullscreen
+dj-ui: F11 again -> maximized, remembered maximized
+dj-ui: the window keeps its shape across F11 and a restart
+```
+
+Проверка прогоняется в гейте для трёх исходных форм: `window`, `maximized`, `fullscreen`.

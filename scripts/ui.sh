@@ -37,6 +37,11 @@ case "${1:-}" in
     # The browser must open where the last track came from, and follow a new load.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" \
         --session-file "${TMPDIR:-/tmp}/dj-session-check.json" --browser-start-check
+    # F11 fills the screen, and the shape survives a restart: a window that forgets it is a window
+    # that starts in the wrong place every time.
+    printf '{"folder":"","window":"maximized"}' > "${TMPDIR:-/tmp}/dj-window-check.json"
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" \
+        --session-file "${TMPDIR:-/tmp}/dj-window-check.json" --window-check
     # The browser must select a row with a click and act on it: a list you cannot pick from is a
     # picture of a list.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --browser-check

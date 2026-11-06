@@ -44,6 +44,20 @@ bool SessionState::rememberFolder(const QString &path)
     return true;
 }
 
+bool SessionState::rememberWindow(const QString &state)
+{
+    if (state != QLatin1String("window") && state != QLatin1String("maximized")
+        && state != QLatin1String("fullscreen")) {
+        return false;
+    }
+    if (state == m_window) {
+        return true;
+    }
+    m_window = state;
+    emit changed();
+    return true;
+}
+
 bool SessionState::load()
 {
     QFile file(m_file);
@@ -54,11 +68,19 @@ bool SessionState::load()
     if (!document.isObject()) {
         return false;
     }
-    const QString folder = document.object().value(QStringLiteral("folder")).toString();
-    if (folder.isEmpty()) {
-        return false;
+    // The two facts are independent: a remembered window shape is still worth having when the folder
+    // has been deleted, and the other way round.
+    bool any = false;
+    const QJsonObject root = document.object();
+    const QString folder = root.value(QStringLiteral("folder")).toString();
+    if (!folder.isEmpty()) {
+        any = rememberFolder(folder) || any;
     }
-    return rememberFolder(folder);
+    const QString window = root.value(QStringLiteral("window")).toString();
+    if (!window.isEmpty()) {
+        any = rememberWindow(window) || any;
+    }
+    return any;
 }
 
 bool SessionState::save() const
@@ -69,6 +91,7 @@ bool SessionState::save() const
     }
     QJsonObject root;
     root.insert(QStringLiteral("folder"), m_folder);
+    root.insert(QStringLiteral("window"), m_window);
     QFile file(m_file);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         return false;

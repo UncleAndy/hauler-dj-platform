@@ -13,16 +13,22 @@ class SessionState : public QObject
     Q_OBJECT
     Q_PROPERTY(QString folder READ folder NOTIFY changed)
     Q_PROPERTY(QString file READ file NOTIFY changed)
+    // "window", "maximized" or "fullscreen": the shape the window was left in.
+    Q_PROPERTY(QString window READ window NOTIFY changed)
 
 public:
     explicit SessionState(QObject *parent = nullptr);
 
     QString folder() const { return m_folder; }
     QString file() const { return m_file; }
+    QString window() const { return m_window; }
     void setFile(const QString &path);
 
     // Remember a folder; empty paths and folders that no longer exist are ignored.
     bool rememberFolder(const QString &path);
+
+    // Remember the window shape; anything but the three known names is refused.
+    bool rememberWindow(const QString &state);
 
     // Read the file; a missing or broken one simply leaves the state empty.
     bool load();
@@ -36,4 +42,5 @@ signals:
 private:
     QString m_folder;
     QString m_file;
+    QString m_window = QStringLiteral("window");
 };

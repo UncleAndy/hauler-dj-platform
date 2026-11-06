@@ -23,6 +23,7 @@
 #include <QCommandLineParser>
 #include <QElapsedTimer>
 #include <QJsonDocument>
+#include <QKeyEvent>
 #include <QEventLoop>
 #include <QGuiApplication>
 #include <QPalette>
@@ -862,6 +863,10 @@ int main(int argc, char *argv[])
         QStringLiteral("strip-check"),
         QStringLiteral("With --connect and --load: load the track into deck A and require the deck's "
                        "strip to receive the envelope the engine published."));
+    const QCommandLineOption windowCheckOption(
+        QStringLiteral("window-check"),
+        QStringLiteral("With --session-file: restore the remembered window shape, toggle it with F11 "
+                       "and require the file to follow."));
     const QCommandLineOption wheelCheckOption(
         QStringLiteral("wheel-check"),
         QStringLiteral("With --connect: scroll over a channel knob and require the deck's gain to "
@@ -1005,6 +1010,7 @@ int main(int argc, char *argv[])
     parser.addOption(refusalCheckOption);
     parser.addOption(spaceCheckOption);
     parser.addOption(wheelCheckOption);
+    parser.addOption(windowCheckOption);
     parser.addOption(stripCheckOption);
     parser.addOption(loadOption);
     parser.addOption(loadSecondOption);
@@ -1350,6 +1356,141 @@ int main(int argc, char *argv[])
     if (engine.rootObjects().isEmpty()) {
         std::fprintf(stderr, "dj-ui: the QML scene did not load\n");
         return 1;
+    }
+
+    // The shape the window was left in: window, maximized or full screen. Restored before any check
+    // runs, so a check sees the same window a person would.
+    auto *mainWindow = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    if (mainWindow != nullptr) {
+        // F11 belongs to the window, not to whichever control happens to hold the focus: a filter sees
+        // the key whatever the focus is, and a shortcut on the QML item would only fire when the shell
+        // itself had it.
+        class FullScreenKey : public QObject
+        {
+        public:
+            explicit FullScreenKey(QQuickWindow *window)
+                : QObject(window)
+                , m_window(window)
+            {
+            }
+
+        protected:
+            bool eventFilter(QObject *watched, QEvent *event) override
+            {
+                if (event->type() != QEvent::KeyPress) {
+                    return QObject::eventFilter(watched, event);
+                }
+                auto *key = static_cast<QKeyEvent *>(event);
+                if (key->key() != Qt::Key_F11 || key->isAutoRepeat()) {
+                    return QObject::eventFilter(watched, event);
+                }
+                if (m_window->visibility() == QQuickWindow::FullScreen) {
+                    // Back to the shape it came from, not to a default size.
+                    if (m_wasMaximized) {
+                        m_window->showMaximized();
+                    } else {
+                        m_window->showNormal();
+                    }
+                } else {
+                    m_wasMaximized = m_window->visibility() == QQuickWindow::Maximized;
+                    m_window->showFullScreen();
+                }
+                return true;
+            }
+
+        private:
+            QQuickWindow *m_window = nullptr;
+            bool m_wasMaximized = false;
+        };
+        mainWindow->installEventFilter(new FullScreenKey(mainWindow));
+        const QString wanted = session.window();
+        if (wanted == QLatin1String("fullscreen")) {
+            mainWindow->showFullScreen();
+        } else if (wanted == QLatin1String("maximized")) {
+            mainWindow->showMaximized();
+        }
+        QObject::connect(mainWindow, &QQuickWindow::visibilityChanged, mainWindow,
+                         [&session, mainWindow]() {
+                             QString state = QStringLiteral("window");
+                             if (mainWindow->visibility() == QQuickWindow::FullScreen) {
+                                 state = QStringLiteral("fullscreen");
+                             } else if (mainWindow->visibility() == QQuickWindow::Maximized) {
+                                 state = QStringLiteral("maximized");
+                             }
+                             if (session.rememberWindow(state)) {
+                                 session.save();
+                             }
+                         });
+    }
+
+    if (parser.isSet(windowCheckOption)) {
+        if (session.file().isEmpty() || !parser.isSet(sessionFileOption)) {
+            std::fprintf(stderr, "dj-ui: --window-check needs --session-file\n");
+            return 1;
+        }
+        if (mainWindow == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        const auto stateOf = [&]() {
+            switch (mainWindow->visibility()) {
+            case QQuickWindow::FullScreen:
+                return QStringLiteral("fullscreen");
+            case QQuickWindow::Maximized:
+                return QStringLiteral("maximized");
+            default:
+                return QStringLiteral("window");
+            }
+        };
+        const auto remembers = [&]() {
+            QFile file(session.file());
+            if (!file.open(QIODevice::ReadOnly)) {
+                return QString();
+            }
+            return QJsonDocument::fromJson(file.readAll())
+                .object().value(QStringLiteral("window")).toString();
+        };
+        const auto pressF11 = [&]() {
+            QKeyEvent press(QEvent::KeyPress, Qt::Key_F11, Qt::NoModifier);
+            QCoreApplication::sendEvent(mainWindow, &press);
+            QKeyEvent release(QEvent::KeyRelease, Qt::Key_F11, Qt::NoModifier);
+            QCoreApplication::sendEvent(mainWindow, &release);
+            QCoreApplication::processEvents();
+        };
+
+        const QString opened = stateOf();
+        std::fprintf(stdout, "dj-ui: the window opened %s (remembered %s)\n",
+                     qPrintable(opened), qPrintable(session.window()));
+        if (opened != session.window()) {
+            std::fprintf(stderr, "dj-ui: the window shape was not restored\n");
+            return 1;
+        }
+        // F11 toggles: from full screen it leaves, from anything else it fills.
+        const QString expected = opened == QLatin1String("fullscreen")
+            ? QStringLiteral("window")
+            : QStringLiteral("fullscreen");
+        pressF11();
+        const QString full = stateOf();
+        const QString afterFull = remembers();
+        std::fprintf(stdout, "dj-ui: F11 -> %s, remembered %s\n", qPrintable(full),
+                     qPrintable(afterFull));
+        if (full != expected || afterFull != expected) {
+            std::fprintf(stderr, "dj-ui: F11 gave %s, wanted %s, and was remembered as %s\n",
+                         qPrintable(full), qPrintable(expected), qPrintable(afterFull));
+            return 1;
+        }
+        pressF11();
+        const QString back = stateOf();
+        const QString afterBack = remembers();
+        std::fprintf(stdout, "dj-ui: F11 again -> %s, remembered %s\n", qPrintable(back),
+                     qPrintable(afterBack));
+        if (back != opened || afterBack != opened) {
+            std::fprintf(stderr, "dj-ui: leaving full screen did not return to %s\n",
+                         qPrintable(opened));
+            return 1;
+        }
+        std::fprintf(stdout, "dj-ui: the window keeps its shape across F11 and a restart\n");
+        return 0;
     }
 
     // A frame of the strip, timed: the same code the deck runs, painted into an image instead of a
