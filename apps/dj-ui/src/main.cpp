@@ -935,6 +935,11 @@ int main(int argc, char *argv[])
         QStringLiteral("layout-check"),
         QStringLiteral("Load the shell, print each region's share of the window and fail when it "
                        "differs from the layout by more than two points."));
+    const QCommandLineOption contrastOption(
+        QStringLiteral("waveform-contrast"),
+        QStringLiteral("How much the strip separates loud from quiet: the height is raised to this "
+                       "power (default 1.25; 0.5..3). 1.0 draws the amplitudes as they are."),
+        QStringLiteral("power"));
     const QCommandLineOption zoomOption(
         QStringLiteral("waveform-zoom"),
         QStringLiteral("Zoom the strip starts at, as a factor (default 10; 1..100). A double click "
@@ -1016,6 +1021,7 @@ int main(int argc, char *argv[])
     parser.addOption(benchOption);
     parser.addOption(frameRateOption);
     parser.addOption(zoomOption);
+    parser.addOption(contrastOption);
     parser.addOption(layoutOption);
     parser.addOption(layoutFileOption);
     parser.addOption(layoutCheckOption);
@@ -1094,6 +1100,15 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: --waveform-bar-gap needs 0..32\n");
             return 2;
         }
+    }
+    if (parser.isSet(contrastOption)) {
+        bool ok = false;
+        const double power = parser.value(contrastOption).toDouble(&ok);
+        if (!ok || power < 0.5 || power > 3.0) {
+            std::fprintf(stderr, "dj-ui: --waveform-contrast needs 0.5..3\n");
+            return 2;
+        }
+        Waveform::setDefaultContrast(power);
     }
     if (parser.isSet(zoomOption)) {
         bool ok = false;

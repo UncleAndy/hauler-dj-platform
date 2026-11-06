@@ -35,6 +35,7 @@ Waveform::Waveform(QObject *parent)
     m_palette[0] = QColor(QStringLiteral("#ff2f1f"));
     m_palette[1] = QColor(QStringLiteral("#35d13a"));
     m_palette[2] = QColor(QStringLiteral("#2f6bff"));
+    m_contrast = s_defaultContrast;
 }
 
 void Waveform::clear()
@@ -310,6 +311,10 @@ std::vector<Waveform::Bar> Waveform::bars(int columns, double windowStart, doubl
             }
         }
 
+        // Contrast: loud stays loud, quiet sinks. A power above one spreads the picture without
+        // touching the peaks the normalisation set.
+        height = std::pow(qBound(0.0, height, 1.0), m_contrast);
+
         Bar entry;
         entry.amplitude = float(qBound(0.0, height, 1.0));
         entry.colour = colour.rgb();
@@ -497,4 +502,20 @@ double Waveform::smoothingHeat(double zoom)
         }
     }
     return anchors[last].heat;
+}
+
+double Waveform::s_defaultContrast = 1.25;
+
+void Waveform::setDefaultContrast(double power)
+{
+    s_defaultContrast = qBound(0.5, power, 3.0);
+}
+
+void Waveform::setContrast(double power)
+{
+    const double bounded = qBound(0.5, power, 3.0);
+    if (!qFuzzyCompare(m_contrast, bounded)) {
+        m_contrast = bounded;
+        emit changed();
+    }
 }

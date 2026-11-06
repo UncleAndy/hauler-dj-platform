@@ -84,6 +84,13 @@ public:
     // Trims for the three channels before normalisation, all 1.0 by default.
     void setBandGain(double low, double mid, double high);
 
+    // How much the picture separates loud from quiet: the height is raised to this power, so above
+    // one a quiet passage sinks and a loud one keeps its full height. One draws the amplitudes as
+    // they are. Applies to every instance, including the ones QML creates.
+    static void setDefaultContrast(double power);
+    void setContrast(double power);
+    double contrast() const { return m_contrast; }
+
 signals:
     void changed();
 
@@ -121,4 +128,6 @@ private:
     // *visible window* would make every bar's height depend on where the window sits — the strip
     // would pump as it scrolled, which the self-check refuses.
     std::vector<double> m_rampLoudest;
+    double m_contrast = 1.25;
+    static double s_defaultContrast;
 };
