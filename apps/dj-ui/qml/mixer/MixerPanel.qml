@@ -56,13 +56,13 @@ Pane {
                     id: strip
                     required property string modelData
                     objectName: "strip_" + modelData
-                    readonly property var state: mixer.deckOf(strip.modelData)
-                    readonly property real peak: strip.state !== null && strip.state.levels !== undefined
-                                                 ? Math.max(strip.state.levels.peak_left,
-                                                            strip.state.levels.peak_right) : 0.0
-                    readonly property real gain: strip.state !== null
-                                                 && strip.state.linear_gain !== undefined
-                                                 ? strip.state.linear_gain : 1.0
+                    readonly property var deck: mixer.deckOf(strip.modelData)
+                    readonly property real peak: strip.deck !== null && strip.deck.levels !== undefined
+                                                 ? Math.max(strip.deck.levels.peak_left,
+                                                            strip.deck.levels.peak_right) : 0.0
+                    readonly property real gain: strip.deck !== null
+                                                 && strip.deck.linear_gain !== undefined
+                                                 ? strip.deck.linear_gain : 1.0
 
                     Layout.fillWidth: true
                     Layout.fillHeight: true
@@ -85,6 +85,14 @@ Pane {
                         Item {
                             id: knob
                             objectName: "knob_" + strip.modelData
+                            // What the last gesture asked for, so a check can tell a knob that is
+                            // dead from a knob whose command the engine refused.
+                            property real lastY: -1
+                            property real lastGain: -1
+                            // While the mouse is down the handle follows the hand, not the round trip
+                            // through the engine: a control that lags by a snapshot feels dead.
+                            property bool dragging: false
+                            property real dragged: 0.0
                             Layout.preferredWidth: 22
                             Layout.fillHeight: true
 
@@ -99,7 +107,8 @@ Pane {
                                 anchors.left: parent.left
                                 anchors.right: parent.right
                                 anchors.bottom: parent.bottom
-                                height: parent.height * strip.fraction
+                                height: parent.height * (knob.dragging ? knob.dragged
+                                                                       : strip.fraction)
                                 color: UiSettings.themeAccentDim
                             }
                             // Unity: where the knob lives when nothing has been touched.
@@ -114,23 +123,41 @@ Pane {
                                 width: parent.width
                                 height: 8
                                 radius: 1
-                                y: parent.height * (1.0 - strip.fraction) - height / 2
-                                color: strip.state !== null ? UiSettings.themeRaised
-                                                            : UiSettings.themePanel
+                                y: parent.height * (1.0 - (knob.dragging ? knob.dragged
+                                                                         : strip.fraction)) - height / 2
+                                color: strip.deck !== null ? UiSettings.themeRaised
+                                                           : UiSettings.themePanel
                                 border.color: UiSettings.themeTextDim
                                 border.width: 1
                             }
                             MouseArea {
                                 anchors.fill: parent
-                                enabled: strip.state !== null && Bridge.connected
-                                onPositionChanged: function (mouse) { knob.set(mouse.y) }
-                                onPressed: function (mouse) { knob.set(mouse.y) }
+                                // The knob always takes the hand: it shows the drag at once, and the
+                                // command is sent when there is a deck to send it for. Disabling it
+                                // when the link was down made a live control look broken.
+                                enabled: true
+                                onPressed: function (mouse) {
+                                    knob.dragging = true;
+                                    knob.set(mouse.y);
+                                }
+                                onPositionChanged: function (mouse) {
+                                    if (knob.dragging) {
+                                        knob.set(mouse.y);
+                                    }
+                                }
+                                onReleased: knob.dragging = false
+                                onCanceled: knob.dragging = false
                             }
 
                             function set(y) {
                                 const share = 1.0 - Math.max(0.0, Math.min(1.0, y / height));
                                 const db = mixer.minimumDb + share * (mixer.maximumDb - mixer.minimumDb);
-                                Bridge.setChannelGain(strip.modelData, mixer.toGain(db));
+                                knob.lastY = y;
+                                knob.lastGain = mixer.toGain(db);
+                                knob.dragged = share;
+                                if (strip.deck !== null) {
+                                    Bridge.setChannelGain(strip.modelData, knob.lastGain);
+                                }
                             }
                         }
 

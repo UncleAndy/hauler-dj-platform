@@ -36,7 +36,7 @@ Pane {
     }
 
     readonly property bool live: Bridge.connected
-    readonly property var state: {
+    readonly property var deck: {
         const decks = Bridge.snapshot.decks;
         if (decks === undefined || decks === null || decks.length === undefined) {
             return ({});
@@ -49,9 +49,9 @@ Pane {
         return ({});
     }
 
-    readonly property bool playing: panel.state.playing === true
-    readonly property var track: panel.state.track !== undefined ? panel.state.track : null
-    readonly property var loop: panel.state.loop_region !== undefined ? panel.state.loop_region : null
+    readonly property bool playing: panel.deck.playing === true
+    readonly property var track: panel.deck.track !== undefined ? panel.deck.track : null
+    readonly property var loop: panel.deck.loop_region !== undefined ? panel.deck.loop_region : null
 
     // One envelope per deck, shared by the zoomed strip and the overview: loading into A can never
     // repaint B, and the two strips cannot disagree about how long the track is.
@@ -68,7 +68,7 @@ Pane {
     }
 
     function positionLabel() {
-        return panel.timeLabel(panel.state.source_frame);
+        return panel.timeLabel(panel.deck.source_frame);
     }
 
     function lengthLabel() {
@@ -78,17 +78,17 @@ Pane {
         return panel.timeLabel(panel.columns * panel.framesPerBucket);
     }
 
-    readonly property int columns: panel.state.waveform !== undefined
-                                   && panel.state.waveform.buckets !== undefined
-                                   ? panel.state.waveform.buckets : 0
-    readonly property real framesPerBucket: panel.state.waveform !== undefined
-                                            && panel.state.waveform.frames_per_bucket !== undefined
-                                            ? panel.state.waveform.frames_per_bucket : 0
+    readonly property int columns: panel.deck.waveform !== undefined
+                                   && panel.deck.waveform.buckets !== undefined
+                                   ? panel.deck.waveform.buckets : 0
+    readonly property real framesPerBucket: panel.deck.waveform !== undefined
+                                            && panel.deck.waveform.frames_per_bucket !== undefined
+                                            ? panel.deck.waveform.frames_per_bucket : 0
 
     // Load once per reference: the snapshot repeats the same path twenty times a second.
     function reload() {
-        const reference = panel.state.waveform !== undefined && panel.state.waveform.path !== undefined
-                          ? String(panel.state.waveform.path) : "";
+        const reference = panel.deck.waveform !== undefined && panel.deck.waveform.path !== undefined
+                          ? String(panel.deck.waveform.path) : "";
         if (reference.length === 0) {
             if (envelope.buckets > 0) {
                 envelope.clear();
@@ -144,7 +144,7 @@ Pane {
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.minimumHeight: 40
-            deckState: panel.state
+            deckState: panel.deck
             envelope: envelope
         }
 
@@ -156,7 +156,7 @@ Pane {
             // seek than a hairline, and the zoomed strip still keeps the most room.
             Layout.preferredHeight: 44
             Layout.minimumHeight: 28
-            deckState: panel.state
+            deckState: panel.deck
             envelope: envelope
         }
 
@@ -197,14 +197,14 @@ Pane {
                 checkable: false
                 highlighted: panel.loop !== null && panel.loop !== undefined
                 onClicked: {
-                    const from = panel.state.source_frame !== undefined ? panel.state.source_frame : 0;
+                    const from = panel.deck.source_frame !== undefined ? panel.deck.source_frame : 0;
                     Bridge.setLoop(panel.deckId, panel.loop === null, from, from + 48000);
                 }
             }
             Item { Layout.fillWidth: true }
             Label {
                 text: panel.statusText()
-                color: panel.state.load !== undefined && panel.state.load.Failed !== undefined
+                color: panel.deck.load !== undefined && panel.deck.load.Failed !== undefined
                        ? UiSettings.themeDanger : UiSettings.themeTextDim
                 font.pixelSize: 10
                 elide: Text.ElideRight
@@ -214,7 +214,7 @@ Pane {
     }
 
     function statusText() {
-        const load = panel.state.load;
+        const load = panel.deck.load;
         if (load === undefined) {
             return qsTr("empty");
         }

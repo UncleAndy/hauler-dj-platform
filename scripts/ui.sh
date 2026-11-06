@@ -112,6 +112,9 @@ case "${1:-}" in
     else
       QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --self-check
     fi
+    # The channel gain, end to end: the UI's command must reach the deck it names and come back
+    # in the snapshot. A knob that turns but changes nothing is the failure this catches.
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --gain-check
     # Drum-like material must not paint one colour: a tone has no balance to show, a kick and a hat
     # do. The engine reuses its cache, so this is a second UI pass over the same runtime.
     drums="crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav"

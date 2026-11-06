@@ -226,7 +226,9 @@ fn run(argv: &[String]) -> Result<(), String> {
 
     // Decks and mixer live on the render loop; clients only ever send commands to it.
     let mut decks: Vec<Deck> = Vec::new();
-    for id in [DeckId::A, DeckId::B] {
+    // Four decks, because the shell draws four and the mixer has a strip for each: a deck the engine
+    // does not create is a panel whose controls can never do anything.
+    for id in [DeckId::A, DeckId::B, DeckId::C, DeckId::D] {
         let mut deck = Deck::new(id);
         deck.attach(Box::new(ToneSource::new(rate, 440.0, 600.0)), None);
         deck.set_blocking(false);

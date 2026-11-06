@@ -136,6 +136,79 @@ QQuickItem *findItem(QQuickItem *root, const QString &name)
 
 } // namespace
 
+// End to end: the UI's gain command, the engine applying it, and the number coming back in the
+// snapshot. The unit test proves the routing; this proves the wire.
+static int runGainCheck(BridgeClient &bridge, const QString &socketPath, int timeoutMs)
+{
+    QEventLoop loop;
+    QTimer watchdog;
+    watchdog.setSingleShot(true);
+    QObject::connect(&watchdog, &QTimer::timeout, &loop, &QEventLoop::quit);
+    watchdog.start(timeoutMs);
+
+    bool sent = false;
+    bool done = false;
+    bool seen = false;
+    double gainC = 0.0;
+    double gainB = 0.0;
+
+    QObject::connect(&bridge, &BridgeClient::snapshotChanged, &loop, [&]() {
+        if (!sent) {
+            sent = true;
+            bridge.setChannelGain(QStringLiteral("C"), 0.25);
+            std::fprintf(stdout, "dj-ui: sent gain 0.25 to deck C\n");
+            return;
+        }
+        const QVariantList decks =
+            bridge.snapshot().value(QStringLiteral("decks")).toList();
+        if (!seen) {
+            seen = true;
+            QStringList names;
+            for (const QVariant &entry : decks) {
+                names.append(entry.toMap().value(QStringLiteral("deck")).toString());
+            }
+            std::fprintf(stdout, "dj-ui: snapshot with %d decks: %s\n", int(decks.size()),
+                         qPrintable(names.join(QStringLiteral(", "))));
+        }
+        for (const QVariant &entry : decks) {
+            const QVariantMap deck = entry.toMap();
+            if (deck.value(QStringLiteral("deck")).toString() == QStringLiteral("C")) {
+                gainC = deck.value(QStringLiteral("linear_gain")).toDouble();
+            } else if (deck.value(QStringLiteral("deck")).toString() == QStringLiteral("B")) {
+                gainB = deck.value(QStringLiteral("linear_gain")).toDouble();
+            }
+        }
+        if (std::abs(gainC - 0.25) < 0.01) {
+            done = true;
+            loop.quit();
+        }
+    });
+
+    QObject::connect(&bridge, &BridgeClient::connectedChanged, &loop, [&]() {
+        if (!bridge.isConnected()) {
+            return;
+        }
+        std::fprintf(stdout, "dj-ui: connected to %s for the gain check\n", qPrintable(socketPath));
+        bridge.setChannelGain(QStringLiteral("C"), 0.25);
+        sent = true;
+    });
+
+    bridge.connectToEngine(socketPath);
+    loop.exec();
+
+    if (!done) {
+        std::fprintf(stderr, "dj-ui: deck C did not reach gain 0.25 (it is %.3f)\n", gainC);
+        return 1;
+    }
+    if (std::abs(gainB - 1.0) > 0.01) {
+        std::fprintf(stderr, "dj-ui: deck B moved too (%.3f); the command must touch only C\n", gainB);
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: gain 0.25 landed on deck C, deck B still at %.2f\n", gainB);
+    bridge.setChannelGain(QStringLiteral("C"), 1.0);
+    return 0;
+}
+
 int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socketPath,
                  int timeoutMs, const QString &loadPath, const QString &loadSecondPath,
                  bool expectSpread)
@@ -642,6 +715,10 @@ int main(int argc, char *argv[])
         QStringLiteral("connect"),
         QStringLiteral("Engine socket to connect to (default: %1).").arg(defaultSocketPath()),
         QStringLiteral("path"));
+    const QCommandLineOption gainCheckOption(
+        QStringLiteral("gain-check"),
+        QStringLiteral("With --connect: send a channel gain and require the snapshot to carry it "
+                       "for that deck and no other."));
     const QCommandLineOption selfCheckOption(
         QStringLiteral("self-check"),
         QStringLiteral("Connect, press Play, require the ack and the snapshot, then exit."));
@@ -741,6 +818,7 @@ int main(int argc, char *argv[])
     parser.addOption(smokeOption);
     parser.addOption(connectOption);
     parser.addOption(selfCheckOption);
+    parser.addOption(gainCheckOption);
     parser.addOption(loadOption);
     parser.addOption(loadSecondOption);
     parser.addOption(outsideColorOption);
@@ -1008,6 +1086,11 @@ int main(int argc, char *argv[])
         return 0;
     }
 
+    if (parser.isSet(gainCheckOption)) {
+        BridgeClient gainBridge;
+        return runGainCheck(gainBridge, parser.value(connectOption), 5000);
+    }
+
     if (parser.isSet(selfCheckOption)) {
         const QString path = parser.isSet(connectOption) ? parser.value(connectOption)
                                                          : defaultSocketPath();
@@ -1242,6 +1325,25 @@ int main(int argc, char *argv[])
         }
         std::fprintf(stdout, "dj-ui: deck frames at rest: %s\n",
                      qPrintable(framed.join(QStringLiteral(", "))));
+        // A knob the mouse cannot reach is not a knob. Send a real press at three quarters of its
+        // height and read back what it decided to send.
+        if (knob != nullptr) {
+            const QPointF point = knob->mapToScene(QPointF(knob->width() / 2.0, knob->height() * 0.25));
+            for (const QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+                QMouseEvent event(type, point, window->mapToGlobal(point.toPoint()), Qt::LeftButton,
+                                  Qt::LeftButton, Qt::NoModifier);
+                QCoreApplication::sendEvent(window, &event);
+            }
+            QCoreApplication::processEvents();
+            const double lastY = knob->property("lastY").toDouble();
+            const double lastGain = knob->property("lastGain").toDouble();
+            std::fprintf(stdout, "dj-ui: knob A press at %.0f px -> y %.1f, gain %.3f\n",
+                         point.y(), lastY, lastGain);
+            if (lastY < 0.0) {
+                std::fprintf(stderr, "dj-ui: the knob did not receive the mouse\n");
+                return 1;
+            }
+        }
         std::fprintf(stdout, "dj-ui: layout %s applied as set\n", qPrintable(layout.preset()));
         return 0;
     }
