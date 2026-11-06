@@ -128,15 +128,19 @@ tasks:
       - 'Waveform timebase matches exact source frame positions'
       - 'Changing file fingerprint invalidates cache'
   - id: A08
-    title: 'SQLite collection and first persistence migration'
+    title: 'Portable per-track metadata (.djmeta) and the SQLite index over it'
     role: storage
     priority: P0
     release: R0
-    depends_on: [A00]
-    requirements: [DJP-DATA-001, DJP-DATA-003, DJP-DATA-005]
-    deliverables: [crates/dj-library, crates/dj-session]
+    depends_on: [A00, A02]
+    requirements: [DJP-DATA-001, DJP-DATA-002, DJP-DATA-003, DJP-DATA-004, DJP-DATA-005, DJP-DATA-006]
+    deliverables: [crates/dj-library, crates/dj-session, schemas/djmeta-v1.json]
     acceptance:
-      - 'Track and cue data survive save, restart and versioned migration'
+      - 'Cue, grid and loop travel with the music: a copied folder opens with them on another machine'
+      - 'Deleting the database and rescanning restores everything from .djmeta'
+      - 'A read-only volume keeps working through the mirror, and conflicts surface as a list'
+      - 'A renamed file keeps its metadata through the fingerprint, without a duplicate row'
+      - 'Corrupt metadata leaves the track playable and the original file untouched'
       - 'No DB operations on RT thread'
   - id: A09
     title: 'S4 MK3 read-only HID driver skeleton and control map probe'

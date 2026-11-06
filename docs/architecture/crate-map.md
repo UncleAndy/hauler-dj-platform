@@ -17,7 +17,7 @@
 | `dj-dsp` | dsp | A04 | R0 | DJP-ARCH-006, -009; DJP-NFR-008 |
 | `dj-mixer` | dsp | A04 | R0 | DJP-MIX-001; DJP-ARCH-006, -007 — **реализовано в A04**: канальные стрипы, кроссфейдер, лимитер, метры, шина cue |
 | `dj-analysis` | media | A07 | R0 | DJP-MEDIA-003 |
-| `dj-library` | media | A08 | R0 | DJP-DATA-001, -003, -004, -005 |
+| `dj-library` | media | A08 | R0 | DJP-DATA-001…006 — переносимые метаданные трека (`.djmeta`), индекс SQLite только для поиска и сортировки |
 | `dj-session` | media | A08 | R0 | DJP-ENV-006; DJP-SET-002, -003 |
 | `dj-bridge` | ui | A06 | R0 | DJP-ARCH-004; DJP-UI-001, -002 | — **реализовано в A06 (часть 1)**: кадры с длиной, рукопожатие `command-v1`, снапшоты, отказ чужому протоколу, замена протухшего сокета
 | `dj-controller-core` | hardware | A09 | R0 | DJP-CTRL-001, -002, -004 |
