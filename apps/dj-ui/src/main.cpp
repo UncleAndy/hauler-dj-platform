@@ -2174,7 +2174,7 @@ int main(int argc, char *argv[])
             }
         }
 
-        // A knob must be as tall as the meter beside it, or "full height" is only a phrase.
+        // The pointer and the meter are one rectangle, so they must agree on their size.
         auto *knob = findItem(content, QStringLiteral("knob_A"));
         auto *meter = findItem(content, QStringLiteral("meter_A"));
         if (knob != nullptr && meter != nullptr) {
@@ -2205,8 +2205,8 @@ int main(int argc, char *argv[])
         }
         std::fprintf(stdout, "dj-ui: deck frames at rest: %s\n",
                      qPrintable(framed.join(QStringLiteral(", "))));
-        // Knobs mirror: the left-hand decks keep theirs on the left of the meter, the right-hand ones
-        // on the right.
+        // The gain pointer rides on the meter: same rectangle, so the strip gives none of its width
+        // away to a separate column.
         for (const char *id : {"A", "B", "C", "D"}) {
             auto *stripKnob = findItem(content, QStringLiteral("knob_%1").arg(QString::fromLatin1(id)));
             auto *stripMeter = findItem(content, QStringLiteral("meter_%1").arg(QString::fromLatin1(id)));
@@ -2214,15 +2214,42 @@ int main(int argc, char *argv[])
                 std::fprintf(stderr, "dj-ui: deck %s has no knob or meter\n", id);
                 return 1;
             }
-            const double knobX = stripKnob->mapToScene(QPointF(0, 0)).x();
-            const double meterX = stripMeter->mapToScene(QPointF(0, 0)).x();
-            const bool left = QString::fromLatin1(id) == QStringLiteral("A")
-                || QString::fromLatin1(id) == QStringLiteral("C");
-            std::fprintf(stdout, "dj-ui: deck %s knob at %.0f, meter at %.0f, %s\n", id, knobX, meterX,
-                         (knobX < meterX) == left ? "as placed" : "WRONG SIDE");
-            if ((knobX < meterX) != left) {
-                std::fprintf(stderr, "dj-ui: deck %s has its knob on the wrong side\n", id);
+            const QPointF knobAt = stripKnob->mapToScene(QPointF(0, 0));
+            const QPointF meterAt = stripMeter->mapToScene(QPointF(0, 0));
+            const double shift = std::abs(knobAt.x() - meterAt.x())
+                + std::abs(knobAt.y() - meterAt.y())
+                + std::abs(stripKnob->width() - stripMeter->width())
+                + std::abs(stripKnob->height() - stripMeter->height());
+            std::fprintf(stdout, "dj-ui: deck %s pointer on the meter, %.0f px apart\n", id, shift);
+            if (shift > 2.0) {
+                std::fprintf(stderr, "dj-ui: deck %s has its pointer beside the meter, not on it\n", id);
                 return 1;
+            }
+        }
+
+        // And the pointer has to be painted, not merely placed: at rest the gain is unity, so a bright
+        // line must cross the meter at the unity mark over a dark scale.
+        if (auto *pointer = findItem(content, QStringLiteral("knob_A"));
+            pointer != nullptr) {
+            const QImage frame = window->grabWindow();
+            if (!frame.isNull()) {
+                const QPointF origin = pointer->mapToScene(QPointF(0, 0));
+                const double ratio = content->width() > 0
+                    ? static_cast<double>(frame.width()) / content->width() : 1.0;
+                const double unityY = origin.y() + pointer->height() * (1.0 - 40.0 / 46.0);
+                // Away from the middle: the grip sits there, and this is a check about the line.
+                const double sampleX = origin.x() + 4.0;
+                const QColor onLine = frame.pixelColor(static_cast<int>(sampleX * ratio),
+                                                       static_cast<int>(unityY * ratio));
+                const QColor below = frame.pixelColor(
+                    static_cast<int>(sampleX * ratio),
+                    static_cast<int>((unityY + pointer->height() * 0.08) * ratio));
+                std::fprintf(stdout, "dj-ui: the gain pointer draws %s at unity over %s\n",
+                             qPrintable(onLine.name()), qPrintable(below.name()));
+                if (!(onLine.lightness() > below.lightness() + 60)) {
+                    std::fprintf(stderr, "dj-ui: the gain pointer is not drawn on the meter\n");
+                    return 1;
+                }
             }
         }
 
@@ -2344,11 +2371,11 @@ int main(int argc, char *argv[])
         // The wheel trims a channel — over the knob and over the meter, because that is where the
         // pointer actually is when a person scrolls. A handler on the strip missed both.
         if (auto *stripA = findItem(content, QStringLiteral("strip_A")); stripA != nullptr) {
-            const auto wheelAt = [&](QQuickItem *target) {
+            const auto wheelAt = [&](QQuickItem *target, int notches) {
                 const QPointF centre =
                     target->mapToScene(QPointF(target->width() / 2.0, target->height() / 2.0));
                 QWheelEvent event(centre, window->mapToGlobal(centre.toPoint()), QPoint(),
-                                  QPoint(0, 120), Qt::NoButton, Qt::NoModifier,
+                                  QPoint(0, 120 * notches), Qt::NoButton, Qt::NoModifier,
                                   Qt::NoScrollPhase, false);
                 QCoreApplication::sendEvent(window, &event);
                 QCoreApplication::processEvents();
@@ -2360,18 +2387,21 @@ int main(int argc, char *argv[])
                 std::fprintf(stderr, "dj-ui: strip A has no knob or meter\n");
                 return 1;
             }
-            const double overKnob = wheelAt(knobA);
-            const double overMeter = wheelAt(meterA);
-            std::fprintf(stdout, "dj-ui: wheel over knob %.3f, over meter %.3f\n", overKnob,
-                         overMeter);
-            if (!(overKnob > 1.0)) {
-                std::fprintf(stderr, "dj-ui: the wheel does nothing over the knob\n");
-                return 1;
-            }
-            if (!(overMeter > 1.0) || overMeter == overKnob) {
+            // The pointer rides on the meter, so the wheel has one surface: up must add a decibel and
+            // down must take one away, wherever on the band the pointer happens to be.
+            const double overMeter = wheelAt(meterA, 1);
+            const double downAgain = wheelAt(meterA, -1);
+            std::fprintf(stdout, "dj-ui: wheel over the meter %.3f up, %.3f down\n", overMeter,
+                         downAgain);
+            if (!(overMeter > 1.0)) {
                 std::fprintf(stderr, "dj-ui: the wheel does nothing over the meter\n");
                 return 1;
             }
+            if (!(downAgain < overMeter)) {
+                std::fprintf(stderr, "dj-ui: the wheel down does not take the gain back\n");
+                return 1;
+            }
+            Q_UNUSED(knobA);
         }
 
         // A knob the mouse cannot reach is not a knob. Send a real press at three quarters of its

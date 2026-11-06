@@ -1,8 +1,9 @@
 // Mixer: one strip per deck and the crossfader below them (DJP-MIX-001).
 //
-// A strip is a gain knob beside a level meter, both as tall as the column. The knob sits on the inner
-// side: the left-hand decks (A and C) keep theirs on the left, the right-hand ones (B and D) on the
-// right, so the two halves of the mixer mirror each other instead of every knob crowding the middle.
+// A strip is a level meter with the gain pointer drawn on it, as tall as the column. There is no
+// separate fader column: a strip is narrow, and a column for the fader took a quarter of the meter's
+// width. The pointer is a bright line across the meter at the gain's height, with a grip in the
+// middle, and the wheel or a drag on the meter trims the channel.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -214,9 +215,6 @@ Pane {
                 return gain;
             }
 
-            // The decks that live to the left of the mixer keep their knob on the left.
-            readonly property bool knobLeft: strip.modelData === "A" || strip.modelData === "C"
-
             Layout.fillWidth: true
             Layout.fillHeight: true
 
@@ -231,29 +229,26 @@ Pane {
                 font.pixelSize: 10
             }
 
-            // Knob and meter, mirrored: the row runs left to right for the left-hand decks and right
-            // to left for the right-hand ones, so nothing but the direction differs.
-            Row {
+            // The meter carries the gain pointer: one column does both jobs, and the strip keeps its
+            // width for the meter itself. The pointer is a line across the meter at the gain's height.
+            Item {
+                id: meterBand
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.bottom: gainLabel.top
                 anchors.bottomMargin: 2
                 height: mixer.meterHeight
-                spacing: 4
-                layoutDirection: strip.knobLeft ? Qt.LeftToRight : Qt.RightToLeft
 
-                GainKnob {
-                    width: 22
-                    height: parent.height
-                    deckId: strip.modelData
-                    gain: strip.gain
-                    onScrolled: function (notches) { strip.stepGain(notches) }
-                }
                 LevelMeter {
-                    width: parent.width - 22 - parent.spacing
-                    height: parent.height
+                    anchors.fill: parent
                     deckId: strip.modelData
                     peak: strip.peak
+                    onScrolled: function (notches) { strip.stepGain(notches) }
+                }
+                GainKnob {
+                    anchors.fill: parent
+                    deckId: strip.modelData
+                    gain: strip.gain
                     onScrolled: function (notches) { strip.stepGain(notches) }
                 }
             }
