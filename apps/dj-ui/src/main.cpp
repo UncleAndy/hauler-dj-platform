@@ -1582,6 +1582,8 @@ int main(int argc, char *argv[])
             return 1;
         }
 
+
+
         bridge->connectToEngine(parser.value(connectOption));
         QElapsedTimer linking;
         linking.start();
@@ -1705,12 +1707,46 @@ int main(int argc, char *argv[])
             }
             std::fprintf(stdout, "dj-ui: deck A playing %s, its own peak %.3f, master peak %.3f\n",
                          playingA ? "yes" : "no", deckPeak, peak);
+            // The live meter, still bound to the snapshot: -9 dB is well inside the green.
+            std::fprintf(stdout, "dj-ui: the master meter reads %s at %.3f\n",
+                         qPrintable(meter->property("zone").toString()), peak);
+            if (meter->property("zone").toString() != QLatin1String("green")) {
+                std::fprintf(stderr, "dj-ui: the master meter colours the live level wrongly\n");
+                return 1;
+            }
+
             if (peak <= 0.0) {
                 std::fprintf(stderr, "dj-ui: the master meter stays at zero with a deck playing\n");
                 return 1;
             }
             bridge->play(QStringLiteral("A"), false);
         }
+        // The colour rules, asked of the meter itself: green means room, yellow means close to
+        // 0 dB, red means at or past it. A meter whose colours were squeezed into its own bar showed
+        // red at the top of every level.
+        const auto zoneAt = [&](double linear) {
+            // The zone is a property of the meter, so ask it: feeding it a level and reading the
+            // answer tests the rule, not a copy of it.
+            meter->setProperty("peak", QVariant(linear));
+            return meter->property("zone").toString();
+        };
+        const QString zoneLow = zoneAt(0.1);    // -20 dB
+        const QString zoneAt6 = zoneAt(0.49);   // -6.2 dB
+        const QString zoneNear = zoneAt(0.6);   // -4.4 dB
+        const QString zoneFull = zoneAt(1.0);   // 0 dB
+        std::fprintf(stdout, "dj-ui: master meter zones: -20 dB %s, -6.2 dB %s, -4.4 dB %s, 0 dB %s\n",
+                     qPrintable(zoneLow), qPrintable(zoneAt6), qPrintable(zoneNear),
+                     qPrintable(zoneFull));
+        if (zoneLow != QLatin1String("green") || zoneAt6 != QLatin1String("green")
+            || zoneNear != QLatin1String("yellow") || zoneFull != QLatin1String("red")) {
+            std::fprintf(stderr, "dj-ui: the master meter colours do not follow the level\n");
+            return 1;
+        }
+        std::fprintf(stdout, "dj-ui: master meter yellow from %.0f dB, red from %.0f dB, top %.0f dB\n",
+                     meter->property("yellowFromDb").toDouble(),
+                     meter->property("redFromDb").toDouble(),
+                     meter->property("ceilingDb").toDouble());
+
         std::fprintf(stdout, "dj-ui: the master knob and meter work\n");
         return 0;
     }
