@@ -13,14 +13,24 @@ Pane {
 
     required property string deckId
     required property string deckLabel
+    // The deck the browser will load into; the panel shows it instead of leaving the user to guess.
+    property bool targeted: false
+    signal chosen()
 
     // Panels sit one step above the window surface and are outlined a step brighter, the way the
     // reference separates the deck areas from the background.
     background: Rectangle {
         color: UiSettings.themePanel
-        border.color: UiSettings.themeBorder
+        border.color: panel.targeted ? UiSettings.themeAccent : UiSettings.themeBorder
         border.width: 1
         radius: 2
+
+        MouseArea {
+            anchors.fill: parent
+            // Behind the controls: a click on empty panel space chooses this deck as the browser's
+            // target, a click on a control does what the control says.
+            onClicked: panel.chosen()
+        }
     }
 
     readonly property bool live: Bridge.connected

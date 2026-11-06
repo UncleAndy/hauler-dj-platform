@@ -16,6 +16,8 @@ qt_add_executable(dj-ui
     src/WaveformPainter.h
     src/UiSettings.cpp
     src/UiSettings.h
+    src/LayoutSettings.cpp
+    src/LayoutSettings.h
 )
 
 qt_add_qml_module(dj-ui
@@ -23,10 +25,14 @@ qt_add_qml_module(dj-ui
     VERSION 0.1
     QML_FILES
         qml/Main.qml
+        qml/shell/ShellLayout.qml
+        qml/shell/GlobalBar.qml
+        qml/browser/BrowserPanel.qml
         qml/decks/DeckPanel.qml
         qml/decks/LoadDialog.qml
         qml/views/WaveformView.qml
         qml/mixer/Crossfader.qml
+        qml/mixer/MixerPanel.qml
 )
 
 target_link_libraries(dj-ui PRIVATE Qt6::Quick Qt6::Network)

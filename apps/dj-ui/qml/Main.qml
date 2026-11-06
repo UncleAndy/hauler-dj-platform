@@ -4,9 +4,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-import "decks"
-import "." as Shell
-import "mixer"
+import "shell"
 
 ApplicationWindow {
     id: root
@@ -36,58 +34,10 @@ ApplicationWindow {
     palette.toolTipText: UiSettings.themeText
     palette.placeholderText: UiSettings.themeTextDim
 
-    header: ToolBar {
-        // The title bar sits a step darker than the surfaces below it, as in the reference: the
-        // frame recedes and the working area comes forward.
-        background: Rectangle { color: UiSettings.themeBackground }
-        RowLayout {
-            anchors.fill: parent
-            Label {
-                text: qsTr("DJ Platform")
-                font.bold: true
-            }
-            Item { Layout.fillWidth: true }
-            Label {
-                // The link state and the engine's own words, not a guess.
-                text: Bridge.status
-                color: Bridge.connected ? UiSettings.themeText : UiSettings.themeDanger
-            }
-            Label {
-                text: Bridge.connected
-                      ? qsTr("rev %1").arg(Bridge.snapshot.revision !== undefined
-                                           ? Bridge.snapshot.revision : 0)
-                      : qsTr("no engine")
-                opacity: 0.6
-            }
-        }
-    }
-
-    ColumnLayout {
+    // The arrangement lives in ShellLayout: the proportions are settings, the splitters write them
+    // back, and this window only owns the palette and the size.
+    ShellLayout {
         anchors.fill: parent
-        anchors.margins: 8
-        spacing: 8
-
-        RowLayout {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            spacing: 8
-
-            DeckPanel {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                deckId: "A"
-                deckLabel: qsTr("Deck A")
-            }
-            DeckPanel {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                deckId: "B"
-                deckLabel: qsTr("Deck B")
-            }
-        }
-
-        Crossfader {
-            Layout.fillWidth: true
-        }
+        anchors.margins: 6
     }
 }

@@ -13,6 +13,7 @@
 
 #include "BridgeClient.h"
 #include "UiSettings.h"
+#include "LayoutSettings.h"
 #include "Waveform.h"
 #include "WaveformItem.h"
 #include "WaveformPainter.h"
@@ -645,6 +646,20 @@ int main(int argc, char *argv[])
         QStringLiteral("Trim the three bands before colouring, comma separated "
                        "(default 1,1,1). Raise the low gain to see more bass colour."),
         QStringLiteral("low,mid,high"));
+    const QCommandLineOption layoutOption(
+        QStringLiteral("layout"),
+        QStringLiteral("Arrange the shell like a preset: traktor (default, measured from the "
+                       "reference) or two-deck."),
+        QStringLiteral("preset"));
+    const QCommandLineOption layoutFileOption(
+        QStringLiteral("layout-file"),
+        QStringLiteral("Where the layout is remembered (default $XDG_CONFIG_HOME/hauler-dj/"
+                       "layout.json). A preset on the command line overrides the file."),
+        QStringLiteral("path"));
+    const QCommandLineOption layoutCheckOption(
+        QStringLiteral("layout-check"),
+        QStringLiteral("Load the shell, print each region's share of the window and fail when it "
+                       "differs from the layout by more than two points."));
     const QCommandLineOption frameRateOption(
         QStringLiteral("fps"),
         QStringLiteral("Frames drawn per second (default 20, from display.frame_hz in the settings; "
@@ -704,6 +719,9 @@ int main(int argc, char *argv[])
     parser.addOption(themeCheckOption);
     parser.addOption(benchOption);
     parser.addOption(frameRateOption);
+    parser.addOption(layoutOption);
+    parser.addOption(layoutFileOption);
+    parser.addOption(layoutCheckOption);
     parser.addOption(bandGainOption);
     parser.addOption(barWidthOption);
     parser.addOption(barGapOption);
@@ -720,6 +738,7 @@ int main(int argc, char *argv[])
     qmlRegisterType<WaveformItem>("DjPlatform.Ui", 1, 0, "WaveformStrip");
     Waveform waveform; // used by the headless self-check
     UiSettings settings;
+    LayoutSettings layout;
     if (parser.isSet(outsideColorOption)
         && !settings.setWaveformOutsideColor(parser.value(outsideColorOption))) {
         std::fprintf(stderr, "dj-ui: %s is not a colour\n",
@@ -790,7 +809,20 @@ int main(int argc, char *argv[])
     }
     waveform.setPalette(QColor(settings.waveformLowColor()), QColor(settings.waveformMidColor()),
                         QColor(settings.waveformHighColor()));
+    if (parser.isSet(layoutFileOption)) {
+        layout.setFile(parser.value(layoutFileOption));
+    }
+    // The file is the user's last arrangement; a preset named on the command line wins over it, so a
+    // single run can be compared against the measured default without editing anything.
+    layout.load();
+    if (parser.isSet(layoutOption) && !layout.applyPreset(parser.value(layoutOption))) {
+        std::fprintf(stderr, "dj-ui: --layout expects traktor or two-deck\n");
+        return 2;
+    }
+
     qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "UiSettings", &settings);
+    // Not "Layout": that name belongs to QtQuick.Layouts' attached property.
+    qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "LayoutState", &layout);
 
     if (parser.isSet(waveformPngOption)) {
         // The envelope drawn exactly as the deck draws it, but into a file: no display, no engine,
@@ -1025,6 +1057,61 @@ int main(int argc, char *argv[])
                          at(0.99));
             return 1;
         }
+        return 0;
+    }
+
+    // The arrangement, measured from the objects that were actually built: a layout setting that the
+    // shell quietly ignores is worse than no setting at all.
+    if (parser.isSet(layoutCheckOption)) {
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        QEventLoop settle;
+        QTimer::singleShot(600, &settle, &QEventLoop::quit);
+        settle.exec();
+        auto *globalBar = window->findChild<QQuickItem *>(QStringLiteral("globalBar"));
+        auto *deckArea = window->findChild<QQuickItem *>(QStringLiteral("deckArea"));
+        auto *browser = window->findChild<QQuickItem *>(QStringLiteral("browser"));
+        auto *mixer = window->findChild<QQuickItem *>(QStringLiteral("mixer"));
+        if (globalBar == nullptr || deckArea == nullptr || browser == nullptr || mixer == nullptr) {
+            std::fprintf(stderr, "dj-ui: the shell has no regions by name\n");
+            return 1;
+        }
+        auto *shell = globalBar->parentItem();
+        if (shell == nullptr || shell->height() <= 0.0 || deckArea->width() <= 0.0) {
+            std::fprintf(stderr, "dj-ui: the shell has no size yet\n");
+            return 1;
+        }
+        const double height = shell->height();
+        const double width = deckArea->width();
+        const double globalShare = globalBar->height() / height * 100.0;
+        const double deckShare = deckArea->height() / height * 100.0;
+        const double browserShare = browser->height() / height * 100.0;
+        const double mixerShare = mixer->width() / width * 100.0;
+
+        const auto report = [&](const char *name, double actual, double wanted) {
+            std::fprintf(stdout, "dj-ui: layout %-8s %5.1f%% (wanted %4.1f%%)\n", name, actual,
+                         wanted);
+        };
+        report("global", globalShare, layout.globalPercent());
+        report("decks", deckShare, layout.deckRowsPercent());
+        report("browser", browserShare, layout.browserPercent());
+        report("mixer", mixerShare, layout.mixerPercent());
+
+        const auto off = [](double actual, double wanted) {
+            return std::abs(actual - wanted) > 2.0;
+        };
+        if (off(globalShare, layout.globalPercent()) || off(mixerShare, layout.mixerPercent())) {
+            std::fprintf(stderr, "dj-ui: the layout does not match its settings\n");
+            return 1;
+        }
+        if (off(deckShare, layout.deckRowsPercent()) || off(browserShare, layout.browserPercent())) {
+            std::fprintf(stderr, "dj-ui: the layout does not match its settings\n");
+            return 1;
+        }
+        std::fprintf(stdout, "dj-ui: layout %s applied as set\n", qPrintable(layout.preset()));
         return 0;
     }
 
