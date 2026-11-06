@@ -13,7 +13,7 @@ use dj_engine::{
     DeckStatic, EngineGraph, GraphLoad, StateCells, Submission, apply, assign_crossfader_sides,
     prepare_track, route, snapshot,
 };
-use dj_mixer::{ChannelSettings, CrossAssign, Mixer};
+use dj_mixer::{ChannelSettings, CrossAssign, CrossfaderCurve, Mixer};
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
 
@@ -669,6 +669,42 @@ fn an_eject_clears_the_deck_inside_the_block() {
         .unwrap_or_else(|| panic!("deck A"));
     assert_eq!(deck_a.snapshot().load, dj_domain::DeckLoad::Empty);
     assert!(deck_a.snapshot().track.is_none());
+}
+
+#[test]
+fn a_curve_command_changes_the_law_and_the_snapshot_says_which() {
+    // The law is a choice a person makes, so it has to travel: the engine applies it and the snapshot
+    // reports it back. Without the second half the selector in the shell could only guess.
+    let mut decks = vec![deck_with_tone(DeckId::A, 48_000)];
+    let mut mixer = mixer_for(48_000);
+
+    for law in CrossfaderCurve::ALL {
+        let ack = apply(
+            &mut decks,
+            &mut mixer,
+            &command(9, DjCommand::SetCrossfaderCurve { curve: law }),
+            0,
+        );
+        assert!(matches!(ack.status, AckStatus::Applied { .. }), "{law:?}");
+        assert_eq!(mixer.curve(), law);
+        let published = snapshot(&decks, &mixer, 1, 0, 48_000, 1);
+        assert_eq!(published.crossfader_curve, law);
+    }
+}
+
+#[test]
+fn the_published_state_carries_the_law_without_allocating() {
+    let decks = vec![deck_with_tone(DeckId::A, 48_000)];
+    let mut mixer = mixer_for(48_000);
+    mixer.set_curve(CrossfaderCurve::Sharp);
+    let cells = StateCells::new();
+    cells.publish(&decks, &mixer, 0);
+    let statics: Vec<DeckStatic> = decks
+        .iter()
+        .map(|deck| DeckStatic::from_snapshot(&deck.snapshot()))
+        .collect();
+    let published = cells.read(&statics, 48_000, 1, 1);
+    assert_eq!(published.crossfader_curve, CrossfaderCurve::Sharp);
 }
 
 #[test]

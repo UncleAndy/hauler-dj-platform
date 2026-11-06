@@ -30,7 +30,7 @@ dj-engine — the audio engine process
 
 Usage:
   dj-engine [--socket PATH] [--null-sink] [--device SUBSTR] [--block N] [--rate HZ]
-            [--seconds S] [--autoplay] [--state-hz N]
+            [--seconds S] [--autoplay] [--state-hz N] [--crossfader-curve LAW]
   dj-engine [--socket PATH] --stop      ask a running engine to shut down
 
 Defaults: socket $XDG_RUNTIME_DIR/hauler-dj-engine.sock, null sink, 48 kHz, block 256.
@@ -44,6 +44,7 @@ counters the probe reports, for the evidence directory.
 --autoplay starts every deck playing, so a bounded run actually carries signal. Without it the
 decks stay paused and every level reads zero, which says nothing about the output path.
 --state-hz N publishes state N times a second (default 20, from display.state_hz in the settings).
+--crossfader-curve LAW picks the crossfader law: constant_power (default), linear, smooth, sharp.
 --stop asks the running engine to shut down over its socket. Ctrl-C works too, but a signal can be
 blocked by the audio backend, so a stop must also be possible without one.
 
@@ -131,6 +132,8 @@ fn run(argv: &[String]) -> Result<(), String> {
     // Settings first, so the flags default to them rather than to numbers scattered in the code.
     let defaults = dj_config::Config::default();
     let mut state_hz = defaults.display.state_hz;
+    // Every law is a choice, not a constant: the default is the DJ one, and a person can ask for any.
+    let mut crossfader_curve = dj_mixer::CrossfaderCurve::default();
 
     let mut index = 0;
     while index < argv.len() {
@@ -169,6 +172,17 @@ fn run(argv: &[String]) -> Result<(), String> {
                     return Err("--state-hz must be 1..=120 snapshots a second".to_string());
                 }
                 state_hz = parsed;
+                index += 2;
+            }
+            "--crossfader-curve" => {
+                let name = value(1)?;
+                crossfader_curve = dj_mixer::CrossfaderCurve::parse(&name).ok_or_else(|| {
+                    let known: Vec<&str> = dj_mixer::CrossfaderCurve::ALL
+                        .iter()
+                        .map(|law| law.as_str())
+                        .collect();
+                    format!("--crossfader-curve expects one of: {}", known.join(", "))
+                })?;
                 index += 2;
             }
             "--stop" => {
@@ -236,6 +250,7 @@ fn run(argv: &[String]) -> Result<(), String> {
     }
     let mut mixer = Mixer::new(decks.len());
     mixer.prepare(rate, block);
+    mixer.set_curve(crossfader_curve);
     for index in 0..decks.len() {
         mixer.set_channel(
             index,

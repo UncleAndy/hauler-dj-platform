@@ -481,3 +481,34 @@ F11 again -> maximized, file says maximized
 the window opened fullscreen (wanted fullscreen, file says fullscreen)
 F11 -> maximized, file says maximized        — вернулись в развёрнутое, а не в обычное
 ```
+
+## Кривые кроссфейдера
+
+Закон кроссфейдера — не константа, а выбор, и он ходит по протоколу (`dj-domain::CrossfaderCurve`),
+потому что оболочка должна показать, какой включён.
+
+| Закон | Формула стороны при позиции `p` | В центре |
+|---|---|---|
+| `constant_power` (умолчание) | `sin(p·π/2)` | 0,707 — энергия в сумме единица |
+| `linear` | `p` | 0,5 |
+| `smooth` | `p²(3−2p)` | 0,5 — держит уровень у своего края, падает в середине |
+| `sharp` (cut) | `clamp(p/0,25)` | 1,0 — оба канала открыты, для скретча |
+
+Выбор — четыре кнопки под кроссфейдером (`curveButton_<закон>`); подсвечивается та, что пришла в
+снапшоте, а не та, по которой щёлкнули. Движок принимает выбор командой `SetCrossfaderCurve`, начальный
+закон задаётся флагом `--crossfader-curve`.
+
+Проверка в гейте:
+
+```
+dj-ui: curve constant_power -> snapshot says constant_power
+dj-ui:   highlighted constant_power, plain linear,smooth,sharp
+dj-ui: curve linear -> snapshot says linear
+dj-ui:   highlighted linear, plain constant_power,smooth,sharp
+dj-ui: curve smooth -> snapshot says smooth
+dj-ui: curve sharp -> snapshot says sharp
+dj-ui: every crossfader law travels to the engine and back
+```
+
+Числа законов держат тесты `every_crossfader_law_has_the_shape_it_promises` (края, центр, форма S и
+срез) и `the_law_names_round_trip`.

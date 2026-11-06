@@ -6,7 +6,7 @@
 //! fragile way to check a rule.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 
 use dj_audio_io::Renderer;
@@ -17,7 +17,7 @@ use dj_domain::{
     Ack, AckStatus, CueAction, DeckId, DeckLoad, DeckSnapshot, DjCommand, FrameRange, Levels,
     RejectReason, ScheduledCommand, Snapshot, SourceFrame, TrackMeta,
 };
-use dj_mixer::{ChannelSettings, CrossAssign, Mixer};
+use dj_mixer::{ChannelSettings, CrossAssign, CrossfaderCurve, Mixer};
 
 pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, clock: u64) -> Ack {
     let id = command.id;
@@ -103,6 +103,10 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
     }
 
     match &command.command {
+        DjCommand::SetCrossfaderCurve { curve } => {
+            mixer.set_curve(*curve);
+            Ack::applied(id, at)
+        }
         DjCommand::SetCrossfader { position } => {
             mixer.set_crossfader(*position);
             Ack::applied(id, at)
@@ -145,6 +149,7 @@ pub fn snapshot(
         audio_clock_samples: clock,
         sample_rate: rate,
         crossfader: mixer.crossfader(),
+        crossfader_curve: mixer.curve(),
         decks: decks.iter().map(|deck| deck.snapshot()).collect(),
     }
 }
@@ -245,6 +250,26 @@ impl DeckCells {
     }
 }
 
+/// The law as one byte, so the render thread can publish it without allocating.
+fn curve_index(curve: CrossfaderCurve) -> u8 {
+    match curve {
+        CrossfaderCurve::Linear => 0,
+        CrossfaderCurve::ConstantPower => 1,
+        CrossfaderCurve::Smooth => 2,
+        CrossfaderCurve::Sharp => 3,
+    }
+}
+
+/// The inverse; an unknown byte reads as the default law rather than as nothing.
+fn curve_at(index: u8) -> CrossfaderCurve {
+    match index {
+        0 => CrossfaderCurve::Linear,
+        2 => CrossfaderCurve::Smooth,
+        3 => CrossfaderCurve::Sharp,
+        _ => CrossfaderCurve::ConstantPower,
+    }
+}
+
 /// The render thread's only way out: plain atomic stores.
 ///
 /// A snapshot allocates (it carries track metadata and a hotcue vector), so building one in the
@@ -254,6 +279,7 @@ impl DeckCells {
 pub struct StateCells {
     clock: AtomicU64,
     crossfader: AtomicU32,
+    curve: AtomicU8,
     count: AtomicUsize,
     decks: [DeckCells; MAX_DECKS],
 }
@@ -270,6 +296,7 @@ impl StateCells {
         Self {
             clock: AtomicU64::new(0),
             crossfader: AtomicU32::new(0.5f32.to_bits()),
+            curve: AtomicU8::new(curve_index(CrossfaderCurve::default())),
             count: AtomicUsize::new(0),
             decks: std::array::from_fn(|_| DeckCells::new()),
         }
@@ -280,6 +307,8 @@ impl StateCells {
         self.clock.store(clock, Ordering::Relaxed);
         self.crossfader
             .store(mixer.crossfader().to_bits(), Ordering::Relaxed);
+        self.curve
+            .store(curve_index(mixer.curve()), Ordering::Relaxed);
         let count = decks.len().min(MAX_DECKS);
         self.count.store(count, Ordering::Release);
         for (index, deck) in decks.iter().take(MAX_DECKS).enumerate() {
@@ -365,6 +394,7 @@ impl StateCells {
             audio_clock_samples: self.clock.load(Ordering::Acquire),
             sample_rate: rate,
             crossfader: f32::from_bits(self.crossfader.load(Ordering::Relaxed)),
+            crossfader_curve: curve_at(self.curve.load(Ordering::Relaxed)),
             decks,
         }
     }

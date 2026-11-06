@@ -110,6 +110,50 @@ pub enum CueAction {
     Jump(u8),
 }
 
+/// Crossfader law: how the two sides trade level as the handle moves.
+///
+/// The law travels in the protocol rather than living in the engine, because a client has to show
+/// which one is in force and a person will notice the difference between them (DJP-MIX-004).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CrossfaderCurve {
+    /// Each side falls linearly; both sit at half at the centre.
+    Linear,
+    /// Quarter sine: each side sits at −3 dB at the centre and the energy sum stays at unity.
+    /// The DJ default.
+    #[default]
+    ConstantPower,
+    /// S-curve: flat at both extremes, steepest in the middle.
+    Smooth,
+    /// Cut: full until a quarter from the edge, then a hard cut, so both channels stay open across
+    /// the middle. The scratch setting.
+    Sharp,
+}
+
+impl CrossfaderCurve {
+    /// Every law, in the order a selector shows them.
+    pub const ALL: [Self; 4] = [Self::ConstantPower, Self::Linear, Self::Smooth, Self::Sharp];
+
+    /// Name used on the wire and on the command line.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Linear => "linear",
+            Self::ConstantPower => "constant_power",
+            Self::Smooth => "smooth",
+            Self::Sharp => "sharp",
+        }
+    }
+
+    /// Parse a name; `None` for anything unknown, so a typo cannot silently mean the default.
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|law| law.as_str() == name.trim().to_ascii_lowercase())
+    }
+}
+
+/// One command from a client to the engine.
+///
 /// Every state change of the live engine goes through one of these (DJP-ARCH-001).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum DjCommand {
@@ -168,6 +212,11 @@ pub enum DjCommand {
         /// Linear position.
         position: f32,
     },
+    /// Choose the crossfader law.
+    SetCrossfaderCurve {
+        /// The law to use from the next block on.
+        curve: CrossfaderCurve,
+    },
     /// Activate, move or clear a loop.
     SetLoop {
         /// Target deck.
@@ -192,7 +241,8 @@ impl DjCommand {
             | DjCommand::Eject { .. } => true,
             DjCommand::SetTempoRatio { .. }
             | DjCommand::SetChannelGain { .. }
-            | DjCommand::SetCrossfader { .. } => false,
+            | DjCommand::SetCrossfader { .. }
+            | DjCommand::SetCrossfaderCurve { .. } => false,
         }
     }
 
@@ -220,6 +270,7 @@ impl DjCommand {
             DjCommand::SetTempoRatio { .. } => Some(CoalesceKey::Tempo),
             DjCommand::SetChannelGain { .. } => Some(CoalesceKey::ChannelGain),
             DjCommand::SetCrossfader { .. } => Some(CoalesceKey::Crossfader),
+            DjCommand::SetCrossfaderCurve { .. } => Some(CoalesceKey::CrossfaderCurve),
             _ => None,
         }
     }
@@ -234,6 +285,8 @@ pub enum CoalesceKey {
     ChannelGain,
     /// Crossfader position.
     Crossfader,
+    /// Crossfader law: only the last choice matters.
+    CrossfaderCurve,
 }
 
 impl CoalesceKey {
@@ -246,6 +299,7 @@ impl CoalesceKey {
             CoalesceKey::Tempo => 0,
             CoalesceKey::ChannelGain => 1,
             CoalesceKey::Crossfader => 2,
+            CoalesceKey::CrossfaderCurve => 3,
         }
     }
 }
@@ -466,6 +520,9 @@ pub struct Snapshot {
     pub sample_rate: u32,
     /// Crossfader position at the moment of publication.
     pub crossfader: f32,
+    /// Crossfader law in force at the moment of publication.
+    #[serde(default)]
+    pub crossfader_curve: CrossfaderCurve,
     /// One entry per deck.
     pub decks: Vec<DeckSnapshot>,
 }

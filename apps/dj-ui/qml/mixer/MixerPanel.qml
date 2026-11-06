@@ -142,6 +142,54 @@ Pane {
             Layout.fillWidth: true
             Layout.preferredHeight: 30
         }
+
+        // The law in force, as four small buttons. They show what the engine published — a selector
+        // that lights up on the click rather than on the ack would lie the moment a command is
+        // refused (DJP-ARCH-004).
+        RowLayout {
+            objectName: "crossfaderCurves"
+            Layout.fillWidth: true
+            Layout.preferredHeight: 18
+            spacing: 3
+
+            readonly property string current: Bridge.snapshot.crossfader_curve !== undefined
+                                                ? Bridge.snapshot.crossfader_curve : "constant_power"
+
+            Repeater {
+                model: [
+                    { law: "constant_power", label: qsTr("Const") },
+                    { law: "linear", label: qsTr("Linear") },
+                    { law: "smooth", label: qsTr("Smooth") },
+                    { law: "sharp", label: qsTr("Sharp") }
+                ]
+
+                delegate: Rectangle {
+                    required property var modelData
+                    objectName: "curveButton_" + modelData.law
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    radius: 2
+                    color: parent.current === modelData.law ? UiSettings.themePanel : UiSettings.themeSurface
+                    border.width: 1
+                    border.color: parent.current === modelData.law ? UiSettings.themeAccent
+                                                                   : UiSettings.themeBorder
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: parent.modelData.label
+                        font.pixelSize: 9
+                        color: parent.parent.current === parent.modelData.law
+                               ? UiSettings.themeText : UiSettings.themeTextDim
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: Bridge.setCrossfaderCurve(parent.modelData.law)
+                    }
+                }
+            }
+        }
     }
 
 }

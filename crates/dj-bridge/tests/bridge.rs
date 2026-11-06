@@ -37,6 +37,7 @@ fn empty_snapshot(revision: u64) -> Snapshot {
         audio_clock_samples: revision * 256,
         sample_rate: 48_000,
         crossfader: 0.5,
+        crossfader_curve: dj_domain::CrossfaderCurve::default(),
         decks: Vec::new(),
     }
 }
@@ -258,6 +259,7 @@ fn a_split_connection_writes_while_its_reader_is_blocked() {
         audio_clock_samples: 512,
         sample_rate: 48_000,
         crossfader: 0.5,
+        crossfader_curve: dj_domain::CrossfaderCurve::default(),
         decks: Vec::new(),
     }));
     writer

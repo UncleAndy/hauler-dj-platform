@@ -375,6 +375,7 @@ dependencies = [
 name = "dj-mixer"
 version = "0.1.0"
 dependencies = [
+ "dj-domain",
  "dj-testkit",
 ]
 

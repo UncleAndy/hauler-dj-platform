@@ -22,14 +22,8 @@ pub enum CrossAssign {
     Thru,
 }
 
-/// Crossfader law.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CrossfaderCurve {
-    /// Linear: each side falls linearly.
-    Linear,
-    /// Constant power: the sum stays at unity in energy, the DJ default.
-    ConstantPower,
-}
+/// Crossfader law, defined by the protocol so a client can name the one in force.
+pub use dj_domain::CrossfaderCurve;
 
 /// One channel strip's settings.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -349,13 +343,25 @@ impl Mixer {
     }
 
     fn side_gain(&self, position: f32) -> f32 {
+        let p = position.clamp(0.0, 1.0);
         match self.curve {
-            CrossfaderCurve::Linear => position,
+            CrossfaderCurve::Linear => p,
             CrossfaderCurve::ConstantPower => {
                 // Quarter sine: at 0.5 each side sits at -3 dB, so the sum stays at unity.
-                (position * std::f32::consts::FRAC_PI_2).sin()
+                (p * std::f32::consts::FRAC_PI_2).sin()
             }
+            // Smoothstep: flat at both ends, steepest in the middle. The handle does most of its
+            // work over the central half of the travel.
+            CrossfaderCurve::Smooth => p * p * (3.0 - 2.0 * p),
+            // Cut: full until a quarter from the edge, then a hard cut. Both channels stay open
+            // across the middle, which is what scratching wants.
+            CrossfaderCurve::Sharp => (p / 0.25).clamp(0.0, 1.0),
         }
+    }
+
+    /// The law currently in force.
+    pub fn curve(&self) -> CrossfaderCurve {
+        self.curve
     }
 }
 

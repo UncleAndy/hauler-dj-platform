@@ -65,6 +65,96 @@ fn the_linear_curve_is_linear() {
 }
 
 #[test]
+fn every_crossfader_law_has_the_shape_it_promises() {
+    let mut mixer = Mixer::new(2);
+    mixer.prepare(48_000, 64);
+
+    // The extremes are the same for every law: one side open, the other shut. A law that leaks at
+    // the ends is a law that makes silence impossible.
+    for law in CrossfaderCurve::ALL {
+        mixer.set_curve(law);
+        mixer.set_crossfader(0.0);
+        assert!(
+            (mixer.crossfader_gain(CrossAssign::A) - 1.0).abs() < 1e-6,
+            "{law:?}"
+        );
+        assert!(
+            mixer.crossfader_gain(CrossAssign::B).abs() < 1e-6,
+            "{law:?}"
+        );
+        mixer.set_crossfader(1.0);
+        assert!(
+            mixer.crossfader_gain(CrossAssign::A).abs() < 1e-6,
+            "{law:?}"
+        );
+        assert!(
+            (mixer.crossfader_gain(CrossAssign::B) - 1.0).abs() < 1e-6,
+            "{law:?}"
+        );
+    }
+
+    // In the middle: linear and smooth sit at half each (amplitude), constant power at −3 dB, and
+    // the cut law keeps both channels wide open — that is what makes a scratch audible.
+    let mut centre = |law| {
+        mixer.set_curve(law);
+        mixer.set_crossfader(0.5);
+        mixer.crossfader_gain(CrossAssign::A)
+    };
+    assert!((centre(CrossfaderCurve::Linear) - 0.5).abs() < 1e-6);
+    assert!((centre(CrossfaderCurve::Smooth) - 0.5).abs() < 1e-6);
+    assert!(
+        (centre(CrossfaderCurve::ConstantPower) - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-4
+    );
+    assert!((centre(CrossfaderCurve::Sharp) - 1.0).abs() < 1e-6);
+
+    // Smooth is an S: it holds level near its own end and falls away quickly past the middle, so the
+    // audible move happens over the central half of the travel.
+    mixer.set_curve(CrossfaderCurve::Smooth);
+    mixer.set_crossfader(0.1);
+    let near_its_end = mixer.crossfader_gain(CrossAssign::A);
+    assert!(
+        near_its_end > 0.95,
+        "smooth stays high near its own end: {near_its_end}"
+    );
+    mixer.set_crossfader(0.8);
+    let past_the_middle = mixer.crossfader_gain(CrossAssign::A);
+    assert!(
+        past_the_middle < 0.2,
+        "and is nearly gone past it: {past_the_middle}"
+    );
+    // Both sides quieter than a linear law on their way out — the dip the S-shape is for.
+    mixer.set_crossfader(0.7);
+    let linear_side = 0.3f32;
+    assert!(mixer.crossfader_gain(CrossAssign::A) < linear_side);
+
+    // The cut law is flat for the first three quarters of its own travel and then falls away: A at
+    // 0.85 of the crossfader still holds 0.6 of its level, at 0.7 it is untouched.
+    mixer.set_curve(CrossfaderCurve::Sharp);
+    mixer.set_crossfader(0.85);
+    assert!((mixer.crossfader_gain(CrossAssign::A) - 0.6).abs() < 1e-6);
+    mixer.set_crossfader(0.7);
+    assert!((mixer.crossfader_gain(CrossAssign::A) - 1.0).abs() < 1e-6);
+    assert!((mixer.crossfader_gain(CrossAssign::B) - 1.0).abs() < 1e-6);
+}
+
+#[test]
+fn the_law_names_round_trip() {
+    for law in CrossfaderCurve::ALL {
+        assert_eq!(CrossfaderCurve::parse(law.as_str()), Some(law));
+    }
+    assert_eq!(
+        CrossfaderCurve::parse("Sharp"),
+        Some(CrossfaderCurve::Sharp)
+    );
+    assert_eq!(
+        CrossfaderCurve::parse("  smooth "),
+        Some(CrossfaderCurve::Smooth)
+    );
+    assert_eq!(CrossfaderCurve::parse("cubic"), None);
+    assert_eq!(CrossfaderCurve::default(), CrossfaderCurve::ConstantPower);
+}
+
+#[test]
 fn routing_puts_each_channel_only_where_it_belongs() {
     // Crossfader fully to B: channel A must not reach the master, but its cue stays audible.
     let mut mixer = Mixer::new(2);

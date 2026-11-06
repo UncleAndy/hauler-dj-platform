@@ -64,7 +64,7 @@ DJP-LIC-005,compliance,,,DJP-SRS-001 §3,,,unverified,,,
 DJP-LIC-006,compliance,,,DJP-SRS-001 §3,,,review,THIRD_PARTY.md,,
 DJP-MEDIA-001,media,P0,R0,DJP-SRS-001 §5,загрузка файла в деку: Load идёт в поток-загрузчик; граф вкладывает готовый источник на границе блока; состояние Loading → Ready,engine::a_prepared_track_is_attached_at_a_block_boundary_and_plays; ui.sh --engine-check (Load → Ready → Play),review,docs/qa/evidence/A02/summary.md,docs/qa/evidence/A07/track-loading.md,2026-11-05
 DJP-MEDIA-002,media,P0,R0,DJP-SRS-001 §5,crates/dj-codec/src/prefetch.rs; crates/dj-codec/src/cache.rs,prefetch::the_window_delivers_the_same_samples_as_the_decoder; prefetch::a_seek_inside_the_window_never_calls_the_decoder; cache::a_prefetch_over_the_cache_plays_without_a_decoder; cache::an_mp3_is_built_once_then_reused,passing,docs/qa/evidence/A02/summary.md,,2026-11-05
-DJP-MEDIA-003,media,P0,R0,DJP-SRS-001 §5,конверт волновой формы: min/max на столбец; время в кадрах источника; кэш с отпечатком файла; отрисовка Canvas с плейхедом по source_frame,dj-analysis::the_timebase_maps_a_playhead_to_the_right_column; a_changed_fingerprint_invalidates_the_cache; ui.sh --engine-check читает конверт,review,,docs/qa/evidence/A07/waveform.md,2026-11-05
+DJP-MEDIA-003,media,P0,R0,DJP-SRS-001 §5,конверт волновой формы: min/max на столбец; время в кадрах источника; кэш с отпечатком файла; отрисовка Canvas с плейхедом по source_frame,dj-analysis::the_timebase_maps_a_playhead_to_the_right_column; a_changed_fingerprint_invalidates_the_cache; WaveformPainter — рисунок в C++; ui.sh --engine-check читает конверт,passing,docs/qa/evidence/A07/waveform.md,docs/qa/evidence/A07/waveform.md,2026-11-05
 DJP-MEDIA-004,media,P1,R1,DJP-SRS-001 §5,,,unverified,,,
 DJP-MEDIA-005,media,P1,R1,DJP-SRS-001 §5,,,unverified,,,
 DJP-MEDIA-006,media,P1,R1,DJP-SRS-001 §5,,,unverified,,,
@@ -76,7 +76,7 @@ DJP-MEDIA-011,media,P3,R3,DJP-SRS-001 §5,,,unverified,,,
 DJP-MIX-001,dsp,P0,R0,DJP-SRS-001 §5,каналы A и B через микшер: gain · fader · crossfader · лимитер; одновременно обе деки на одном устройстве подтверждены на слух,mixer::routing_puts_each_channel_only_where_it_belongs; mixer::the_limiter_keeps_the_master_below_full_scale; dj-engine --device (проверка владельца),passing,docs/qa/evidence/A04/summary.md,docs/qa/evidence/A07/track-loading.md,2026-11-05
 DJP-MIX-002,dsp,P1,R1,DJP-SRS-001 §5,,,unverified,,,
 DJP-MIX-003,dsp,P1,R1,DJP-SRS-001 §5,partial: crates/dj-mixer (шина cue с PFL и cue_gain; cue-mix / booth / независимые шины — нет),mixer::routing_puts_each_channel_only_where_it_belongs,unverified,docs/qa/evidence/A04/summary.md,,2026-11-05
-DJP-MIX-004,dsp,P1,R1,DJP-SRS-001 §5,partial: crates/dj-mixer (два закона кривой и назначение A/B/thru; пресеты и sharp-кривые — R1),mixer::the_constant_power_crossfader_isolates_the_extremes; mixer::the_linear_curve_is_linear,unverified,docs/qa/evidence/A04/summary.md,,2026-11-05
+DJP-MIX-004,dsp,P1,R1,DJP-SRS-001 §5,crates/dj-mixer: четыре закона — linear; constant_power; smooth (S-кривая); sharp (cut); закон приходит в протоколе (dj-domain::CrossfaderCurve),mixer::every_crossfader_law_has_the_shape_it_promises; mixer::the_constant_power_crossfader_isolates_the_extremes; mixer::the_linear_curve_is_linear; engine::a_curve_command_changes_the_law_and_the_snapshot_says_which; ui.sh --engine-check (--curve-check),passing,docs/qa/evidence/A07/layout.md,,2026-11-05
 DJP-MIX-005,dsp,P1,R1,DJP-SRS-001 §5,,,unverified,,,
 DJP-MIX-006,dsp,P1,R1,DJP-SRS-001 §5,,,unverified,,,
 DJP-MIX-007,dsp,P2,R2,DJP-SRS-001 §5,,,unverified,,,
@@ -130,7 +130,7 @@ DJP-SYNC-008,audio-core,P2,R3,DJP-SRS-001 §5,,,unverified,,,
 DJP-UI-001,ui,P0,R0,DJP-SRS-001 §5,dj-ui: BridgeClient говорит по command-v1/state-v1; кнопки Play/Cue/Loop и кроссфейдер показывают только опубликованное состояние,scripts/ui.sh --engine-check: dj-ui --self-check против настоящего dj-engine,review,,,2026-11-05
 DJP-UI-002,ui,P0,R0,DJP-SRS-001 §5,dj-ui: рабочая раскладка 2-deck тёмная схема индикаторы play/cue/loop и уровни L/R из снапшота,scripts/ui.sh --smoke + --engine-check (индикаторы от состояния),review,docs/qa/evidence/A06/bridge-and-engine.md,,2026-11-05
 DJP-UI-003,ui,P1,R1,DJP-SRS-001 §5,,,unverified,,,
-DJP-UI-004,ui,P1,R1,DJP-SRS-001 §5,волновая форма с плейхедом · метками hotcue и полосой петли · зум колесом в пределах обзорного конверта,docs/qa/evidence/A07/waveform.md; ui.sh --engine-check (покрытие конверта 144384 из 144000 кадров),partial,docs/qa/evidence/A07/waveform.md,,2026-11-05
+DJP-UI-004,ui,P1,R1,DJP-SRS-001 §5,apps/dj-ui/qml/views/WaveformView.qml; apps/dj-ui/src/WaveformItem.cpp — плейхед; hotcue-метки; полоса петли; зум колесом 1..400×; обзорная полоса TrackOverview,ui.sh --smoke (--strip-check: конверт доходит до полосы); ui.sh --layout-check (зум 10×; колесо до 400×),passing,docs/qa/evidence/A07/waveform.md; docs/qa/evidence/A07/layout.md,,2026-11-05
 DJP-UI-005,ui,P1,R1,DJP-SRS-001 §5,,,unverified,,,
 DJP-UI-006,ui,P2,R2,DJP-SRS-001 §5,,,unverified,,,
 DJP-UI-007,ui,P2,R2,DJP-SRS-001 §5,,,unverified,,,

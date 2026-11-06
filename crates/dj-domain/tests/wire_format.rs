@@ -6,8 +6,8 @@
 //! bumping the protocol version, which is exactly the conversation we want to force.
 
 use dj_domain::{
-    Ack, CommandId, DeckId, DeckLoad, DeckSnapshot, DjCommand, FrameRange, Levels, RejectReason,
-    STATE_PROTOCOL, ScheduledCommand, Snapshot, SourceFrame, TrackMeta,
+    Ack, CommandId, CrossfaderCurve, DeckId, DeckLoad, DeckSnapshot, DjCommand, FrameRange, Levels,
+    RejectReason, STATE_PROTOCOL, ScheduledCommand, Snapshot, SourceFrame, TrackMeta,
 };
 
 fn play() -> DjCommand {
@@ -83,6 +83,7 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
         audio_clock_samples: 4_800,
         sample_rate: 48_000,
         crossfader: 0.25,
+        crossfader_curve: CrossfaderCurve::Smooth,
         decks: vec![DeckSnapshot {
             waveform: None,
             deck: DeckId::A,
@@ -121,7 +122,7 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
         serde_json::to_string(&snapshot).unwrap_or_default(),
         concat!(
             r#"{"protocol":"state-v1","revision":3,"epoch":1,"audio_clock_samples":4800,"#,
-            r#""sample_rate":48000,"crossfader":0.25,"decks":[{"deck":"A","#,
+            r#""sample_rate":48000,"crossfader":0.25,"crossfader_curve":"smooth","decks":[{"deck":"A","#,
             r#""load":"Ready","playing":true,"source_frame":4800,"remaining_frames":120000,"#,
             r#""position_ratio":0.0384,"track":{"title":"Track","artist":"Artist","#,
             r#""duration_frames":124800,"bpm":128.0,"key":"8A"},"loop_region":null,"#,

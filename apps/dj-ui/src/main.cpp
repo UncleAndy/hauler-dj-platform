@@ -869,6 +869,10 @@ int main(int argc, char *argv[])
         QStringLiteral("Close the window after this many milliseconds: the shutdown path, exercised "
                        "instead of described."),
         QStringLiteral("ms"));
+    const QCommandLineOption curveCheckOption(
+        QStringLiteral("curve-check"),
+        QStringLiteral("With --connect: send each crossfader law and require the snapshot to report "
+                       "it back."));
     const QCommandLineOption windowCheckOption(
         QStringLiteral("window-check"),
         QStringLiteral("With --session-file: restore the remembered window shape, toggle it with F11 "
@@ -1017,6 +1021,7 @@ int main(int argc, char *argv[])
     parser.addOption(spaceCheckOption);
     parser.addOption(wheelCheckOption);
     parser.addOption(windowCheckOption);
+    parser.addOption(curveCheckOption);
     parser.addOption(exitAfterOption);
     parser.addOption(stripCheckOption);
     parser.addOption(loadOption);
@@ -1496,6 +1501,74 @@ int main(int argc, char *argv[])
             }
             *settled = true;
         });
+    }
+
+    if (parser.isSet(curveCheckOption)) {
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        bridge->connectToEngine(parser.value(connectOption));
+        QElapsedTimer linking;
+        linking.start();
+        while (!bridge->isConnected() && linking.elapsed() < 3000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QThread::msleep(10);
+        }
+        if (!bridge->isConnected()) {
+            std::fprintf(stderr, "dj-ui: no engine\n");
+            return 1;
+        }
+        const QStringList laws = {QStringLiteral("constant_power"), QStringLiteral("linear"),
+                                  QStringLiteral("smooth"), QStringLiteral("sharp")};
+        const auto published = [&]() {
+            return bridge->snapshot().value(QStringLiteral("crossfader_curve")).toString();
+        };
+        for (const QString &law : laws) {
+            bridge->setCrossfaderCurve(law);
+            QElapsedTimer waiting;
+            waiting.start();
+            QString seen = published();
+            while (waiting.elapsed() < 3000 && seen != law) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                seen = published();
+                QThread::msleep(10);
+            }
+            std::fprintf(stdout, "dj-ui: curve %s -> snapshot says %s\n", qPrintable(law),
+                         qPrintable(seen.isEmpty() ? QStringLiteral("nothing") : seen));
+            // The buttons must show the same law the engine published: exactly one highlighted.
+            QCoreApplication::processEvents();
+            QStringList lit;
+            QStringList dark;
+            for (const QString &candidate : laws) {
+                auto *button = findItem(window->contentItem(),
+                                        QStringLiteral("curveButton_") + candidate);
+                if (button == nullptr) {
+                    std::fprintf(stderr, "dj-ui: no button for %s\n", qPrintable(candidate));
+                    return 1;
+                }
+                const QColor fill = button->property("color").value<QColor>();
+                if (fill == QColor(QStringLiteral("#181818"))) {
+                    lit.append(candidate);
+                } else {
+                    dark.append(candidate);
+                }
+            }
+            std::fprintf(stdout, "dj-ui:   highlighted %s, plain %s\n",
+                         qPrintable(lit.join(QStringLiteral(","))),
+                         qPrintable(dark.join(QStringLiteral(","))));
+            if (lit.size() != 1 || lit.first() != law) {
+                std::fprintf(stderr, "dj-ui: the selector does not show the law in force\n");
+                return 1;
+            }
+            if (seen != law) {
+                std::fprintf(stderr, "dj-ui: the engine did not take the %s law\n", qPrintable(law));
+                return 1;
+            }
+        }
+        std::fprintf(stdout, "dj-ui: every crossfader law travels to the engine and back\n");
+        return 0;
     }
 
     if (parser.isSet(windowCheckOption)) {
