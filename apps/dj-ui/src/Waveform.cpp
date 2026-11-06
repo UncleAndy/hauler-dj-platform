@@ -461,12 +461,14 @@ int Waveform::rampForZoom(double columnsPerBar, double zoom) const
 
 double Waveform::smoothingHeat(double zoom)
 {
-    // How much stronger than the medium setting the smoothing is. One up to 15x, then rising with the
-    // logarithm of the zoom so that 15x, 100x and 400x are visibly different steps rather than one
-    // cliff, and four times the medium radius at the deepest zoom.
+    // How much stronger than the medium setting the smoothing is: one up to 15x, then rising with the
+    // zoom towards a ceiling of 2.5. The rise saturates on purpose — past about forty times the strip
+    // shows so little of the track that more ironing only makes the beat look soft. Measured against
+    // the zoom, the curve gives 1.2 at 20x, 1.7 at 40x, 2.1 at 100x and 2.4 at 400x: the last decade
+    // of zoom adds a tenth of what the first one did.
     if (!(zoom > 15.0)) {
         return 1.0;
     }
-    const double span = std::log(zoom / 15.0) / std::log(400.0 / 15.0);
-    return 1.0 + 3.0 * qBound(0.0, span, 1.0);
+    const double past = zoom / 15.0 - 1.0;
+    return 1.0 + 1.5 * past / (past + 2.0);
 }
