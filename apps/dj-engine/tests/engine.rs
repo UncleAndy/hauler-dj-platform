@@ -10,8 +10,8 @@ use dj_domain::{
 };
 use dj_engine::Routed;
 use dj_engine::{
-    DeckStatic, EngineGraph, GraphLoad, StateCells, Submission, apply, prepare_track, route,
-    snapshot,
+    DeckStatic, EngineGraph, GraphLoad, StateCells, Submission, apply, assign_crossfader_sides,
+    prepare_track, route, snapshot,
 };
 use dj_mixer::{ChannelSettings, CrossAssign, Mixer};
 use std::sync::Arc;
@@ -713,4 +713,78 @@ fn a_gain_command_moves_the_deck_it_names_and_no_other() {
             deck.linear_gain
         );
     }
+}
+
+#[test]
+fn the_crossfader_moves_the_sides_it_is_meant_to_move() {
+    // The handle moved and nothing happened, because every channel was `Thru` — off the crossfader by
+    // design. This walks the mixer the way the engine sets it up: A and C left, B and D right.
+    let mut mixer = Mixer::new(4);
+    mixer.prepare(48_000, 4);
+    for index in 0..4 {
+        mixer.set_channel(
+            index,
+            ChannelSettings {
+                trim_db: 0.0,
+                fader: 1.0,
+                assign: CrossAssign::Thru,
+                cue: false,
+            },
+        );
+    }
+    assign_crossfader_sides(&mut mixer, &[DeckId::A, DeckId::B, DeckId::C, DeckId::D]);
+
+    let block = [0.25_f32; 8];
+
+    let mut level = |position: f32, index: usize| {
+        mixer.set_crossfader(position);
+        mixer.begin_block(4);
+        mixer.mix_channel(index, &block);
+        mixer.finish_block();
+        mixer
+            .master()
+            .iter()
+            .map(|sample| sample.abs())
+            .sum::<f32>()
+    };
+
+    // 0.0 is the left stop: A and C are open, B and D are shut.
+    assert!(
+        level(0.0, 0) > 0.5,
+        "deck A must be audible at the left stop"
+    );
+    assert_eq!(level(0.0, 1), 0.0, "deck B must be silent at the left stop");
+    assert!(
+        level(0.0, 2) > 0.5,
+        "deck C must be audible at the left stop"
+    );
+    assert_eq!(level(0.0, 3), 0.0, "deck D must be silent at the left stop");
+
+    // 1.0 is the right stop: the other way round.
+    assert_eq!(
+        level(1.0, 0),
+        0.0,
+        "deck A must be silent at the right stop"
+    );
+    assert!(
+        level(1.0, 1) > 0.5,
+        "deck B must be audible at the right stop"
+    );
+    assert_eq!(
+        level(1.0, 2),
+        0.0,
+        "deck C must be silent at the right stop"
+    );
+    assert!(
+        level(1.0, 3) > 0.5,
+        "deck D must be audible at the right stop"
+    );
+
+    // And the middle is not a hole: both sides stay open, a little quieter.
+    let left = level(0.5, 0);
+    let right = level(0.5, 1);
+    assert!(
+        left > 0.2 && right > 0.2,
+        "the middle must not mute both sides"
+    );
 }

@@ -242,11 +242,14 @@ fn run(argv: &[String]) -> Result<(), String> {
             ChannelSettings {
                 trim_db: 0.0,
                 fader: 1.0,
+                // Replaced below by the deck's side of the crossfader.
                 assign: CrossAssign::Thru,
                 cue: false,
             },
         );
     }
+    let ids: Vec<DeckId> = decks.iter().map(dj_deck::Deck::id).collect();
+    dj_engine::assign_crossfader_sides(&mut mixer, &ids);
 
     // A measurement of silence proves nothing about the signal path, and decks start paused.
     if autoplay {

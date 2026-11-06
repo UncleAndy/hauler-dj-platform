@@ -17,7 +17,7 @@ use dj_domain::{
     Ack, AckStatus, CueAction, DeckId, DeckLoad, DeckSnapshot, DjCommand, FrameRange, Levels,
     RejectReason, ScheduledCommand, Snapshot, SourceFrame, TrackMeta,
 };
-use dj_mixer::Mixer;
+use dj_mixer::{ChannelSettings, CrossAssign, Mixer};
 
 pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, clock: u64) -> Ack {
     let id = command.id;
@@ -151,6 +151,24 @@ pub fn snapshot(
 
 /// How many decks the published state has room for.
 pub const MAX_DECKS: usize = 4;
+
+/// Which side of the crossfader each deck follows.
+///
+/// Every channel used to be `Thru`, which bypasses the crossfader by design: the handle moved and the
+/// sound never changed, because nothing was listening to it. A and C are the left side, B and D the
+/// right, matching where the decks sit in the shell.
+pub fn assign_crossfader_sides(mixer: &mut Mixer, decks: &[DeckId]) {
+    for (index, id) in decks.iter().enumerate() {
+        let Some(existing) = mixer.channel(index).copied() else {
+            continue;
+        };
+        let assign = match id {
+            DeckId::A | DeckId::C => CrossAssign::A,
+            DeckId::B | DeckId::D => CrossAssign::B,
+        };
+        mixer.set_channel(index, ChannelSettings { assign, ..existing });
+    }
+}
 
 /// Hotcue slots per deck, matching the contract.
 pub const HOTCUE_SLOTS: usize = 8;
