@@ -1565,6 +1565,27 @@ int main(int argc, char *argv[])
             }
         }
 
+        // The wheel trims a channel: one notch, one decibel, without a drag.
+        if (auto *stripA = findItem(content, QStringLiteral("strip_A")); stripA != nullptr) {
+            const QPointF centre =
+                stripA->mapToScene(QPointF(stripA->width() / 2.0, stripA->height() / 2.0));
+            const auto wheel = [&](int notches) {
+                QWheelEvent event(centre, window->mapToGlobal(centre.toPoint()), QPoint(),
+                                  QPoint(0, 120 * notches), Qt::NoButton, Qt::NoModifier,
+                                  Qt::NoScrollPhase, false);
+                QCoreApplication::sendEvent(window, &event);
+                QCoreApplication::processEvents();
+                return stripA->property("lastWheelGain").toDouble();
+            };
+            const double up = wheel(1);
+            const double down = wheel(-3);
+            std::fprintf(stdout, "dj-ui: wheel on strip A: up %.3f, then down %.3f\n", up, down);
+            if (!(up > 1.0) || !(down < up)) {
+                std::fprintf(stderr, "dj-ui: the wheel does not trim the channel\n");
+                return 1;
+            }
+        }
+
         // A knob the mouse cannot reach is not a knob. Send a real press at three quarters of its
         // height and read back what it decided to send.
         if (knob != nullptr) {

@@ -55,6 +55,22 @@ Pane {
                     readonly property real gain: strip.deck !== null
                                                  && strip.deck.linear_gain !== undefined
                                                  ? strip.deck.linear_gain : 1.0
+                    // What the last wheel step sent, so a check can see the wheel working.
+                    property real lastWheelGain: -1
+                    // One notch is one decibel: fine enough to trim by ear, coarse enough to move.
+                    readonly property real wheelStepDb: 1.0
+
+                    function stepGain(notches) {
+                        const from = strip.deck !== null && strip.deck.linear_gain !== undefined
+                                     ? strip.deck.linear_gain : 1.0;
+                        const decibels = from > 0.0 ? 20.0 * Math.log(from) / Math.LN10 : -40.0;
+                        const wanted = Math.max(-40.0, Math.min(6.0, decibels + notches * strip.wheelStepDb));
+                        const gain = Math.pow(10.0, wanted / 20.0);
+                        strip.lastWheelGain = gain;
+                        Bridge.setChannelGain(strip.modelData, gain);
+                        return gain;
+                    }
+
                     // The decks that live to the left of the mixer keep their knob on the left.
                     readonly property bool knobLeft: strip.modelData === "A"
                                                      || strip.modelData === "C"
@@ -68,6 +84,20 @@ Pane {
                         color: UiSettings.themeTextDim
                         font.pixelSize: 10
                         Layout.alignment: Qt.AlignHCenter
+                    }
+
+                    // The wheel trims the channel without a drag: a handler, not a MouseArea, so it
+                    // does not take the press the knob needs.
+                    WheelHandler {
+                        acceptedDevices: PointerDevice.Mouse
+                        onWheel: function (event) {
+                            // A wheel sends 120 units per notch; a fast spin can send more at once.
+                            const notches = Math.max(-3, Math.min(3,
+                                Math.round(event.angleDelta.y / 120)));
+                            if (notches !== 0) {
+                                strip.stepGain(notches);
+                            }
+                        }
                     }
 
                     // Knob and meter, mirrored: the row runs left to right for the left-hand decks
