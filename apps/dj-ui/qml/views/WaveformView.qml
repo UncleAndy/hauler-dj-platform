@@ -147,6 +147,10 @@ Item {
                 const flatColour = UiSettings.waveformMidColor;
                 for (let index = 0; index < bars.length; ++index) {
                     const bar = bars[index];
+                    if (bar.outside) {
+                        // The area beyond the track keeps the strip colour, not a bar.
+                        continue;
+                    }
                     // Amplitude is already normalised against the loudest block of the track, so a
                     // quiet track still fills the strip instead of drawing a thin line.
                     // Never skip a bar: silence still draws the centre line, so the waveform stays

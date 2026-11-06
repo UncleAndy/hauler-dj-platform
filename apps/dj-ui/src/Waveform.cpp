@@ -40,6 +40,7 @@ Waveform::Waveform(QObject *parent)
 void Waveform::clear()
 {
     m_columns.clear();
+    m_colours.clear();
     m_framesPerBucket = 0;
     m_sampleRate = 0;
     m_source.clear();
@@ -165,6 +166,17 @@ QVariantList Waveform::profile(int columns, double windowStart, double span) con
 
     int previous = coveredFrom;
     for (int bar = 0; bar < columns; ++bar) {
+        // A bar that lies wholly before the start or after the end of the track is not silence in
+        // the track, it is outside it. It used to be clamped to the nearest column, so the empty
+        // margins carried the edge column's colour and looked like a piece of another waveform.
+        const double barStart = windowStart + span * double(bar) / double(columns);
+        const double barEnd = windowStart + span * double(bar + 1) / double(columns);
+        if (barEnd <= 0.0 || barStart >= 1.0) {
+            bars.append(QVariantMap{{QStringLiteral("amplitude"), 0.0},
+                                    {QStringLiteral("rgb"), QString()},
+                                    {QStringLiteral("outside"), true}});
+            continue;
+        }
         const double edge = windowStart + span * double(bar + 1) / double(columns);
         int next = qBound(0, int(std::floor(edge * double(total))), total);
         if (next < previous) {
@@ -228,7 +240,8 @@ QVariantList Waveform::profile(int columns, double windowStart, double span) con
         }
         bars.append(QVariantMap{
             {QStringLiteral("amplitude"), qBound(0.0, peak / m_maxAmplitude, 1.0)},
-            {QStringLiteral("rgb"), colour.name()}});
+            {QStringLiteral("rgb"), colour.name()},
+            {QStringLiteral("outside"), false}});
     }
     return bars;
 }

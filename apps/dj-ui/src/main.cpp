@@ -716,7 +716,7 @@ int main(int argc, char *argv[])
                 windowStart = span.at(0).toDouble(&ok);
                 windowSpan = span.at(1).toDouble(&ok);
             }
-            if (!ok || windowStart < 0.0 || windowSpan <= 0.0 || windowStart + windowSpan > 1.0001) {
+            if (!ok || windowSpan <= 0.0) {
                 std::fprintf(stderr, "dj-ui: --waveform-span needs START,SPAN within 0..1\n");
                 return 2;
             }
@@ -731,6 +731,9 @@ int main(int argc, char *argv[])
         int painted = 0;
         for (int index = 0; index < pixels.size(); ++index) {
             const QVariantMap pixel = pixels.at(index).toMap();
+            if (pixel.value(QStringLiteral("outside")).toBool()) {
+                continue;
+            }
             const double half = qMax(0.5, pixel.value(QStringLiteral("amplitude")).toDouble() * middle);
             // Full brightness at the centre axis, about half at the tips — the glow the deck draws.
             const QColor colour(pixel.value(QStringLiteral("rgb")).toString());
@@ -762,7 +765,8 @@ int main(int argc, char *argv[])
                                 "green", "cyan", "blue", "violet"};
         for (int index = 0; index < pixels.size(); ++index) {
             const QVariantMap pixel = pixels.at(index).toMap();
-            if (pixel.value(QStringLiteral("amplitude")).toDouble() * middle < 0.5) {
+            if (pixel.value(QStringLiteral("outside")).toBool()
+                || pixel.value(QStringLiteral("amplitude")).toDouble() * middle < 0.5) {
                 continue;
             }
             const QColor colour(pixel.value(QStringLiteral("rgb")).toString());
