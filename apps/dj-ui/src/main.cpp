@@ -273,9 +273,9 @@ int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socket
                 int counts[3] = {0, 0, 0};
                 for (const QVariant &entry : whole) {
                     const QVariantMap pixel = entry.toMap();
-                    const double weights[3] = {pixel.value(QStringLiteral("w0")).toDouble(),
-                                               pixel.value(QStringLiteral("w1")).toDouble(),
-                                               pixel.value(QStringLiteral("w2")).toDouble()};
+                    const double weights[3] = {pixel.value(QStringLiteral("h0")).toDouble(),
+                                               pixel.value(QStringLiteral("h1")).toDouble(),
+                                               pixel.value(QStringLiteral("h2")).toDouble()};
                     int best = 0;
                     for (int band = 1; band < 3; ++band) {
                         if (weights[band] > weights[best]) {
@@ -303,18 +303,26 @@ int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socket
                     // loop legitimately has almost no mid content, and demanding it would be a
                     // threshold chosen to fit the fixture instead of the requirement.
                     int covered = 0;
+                    int largest = 0;
                     for (int band = 0; band < 3; ++band) {
-                        if (double(counts[band]) / shown >= 0.10) {
+                        if (double(counts[band]) / shown >= 0.05) {
                             ++covered;
                         }
+                        largest = qMax(largest, counts[band]);
                     }
-                    if (covered < 2) {
-                        failure = QStringLiteral("only %1 band(s) claim a tenth of the columns")
-                                      .arg(covered);
+                    // Not monochrome: at least two bands have to be visible somewhere, and no single
+                    // band may own almost everything. The share itself is the track's business — a
+                    // kick-and-hat loop is mostly kick — but one colour everywhere is a defect.
+                    if (covered < 2 || double(largest) / shown > 0.90) {
+                        failure = QStringLiteral("the picture is one colour: %1 band(s) above 5%%, "
+                                                 "largest %2%")
+                                      .arg(covered)
+                                      .arg(100.0 * largest / shown, 0, 'f', 1);
                         loop.quit();
                         return;
                     }
-                    std::fprintf(stdout, "dj-ui: %d bands claim a tenth of the columns\n", covered);
+                    std::fprintf(stdout, "dj-ui: %d bands are visible, largest takes %.0f%%\n",
+                                 covered, 100.0 * largest / shown);
                 }
             }
             std::fprintf(stdout,

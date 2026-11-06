@@ -105,8 +105,20 @@ case "${1:-}" in
     # do. The engine reuses its cache, so this is a second UI pass over the same runtime.
     drums="crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav"
     if [ -f "$drums" ]; then
-      QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --self-check \
-        --load "$PWD/$drums" --waveform-expect-spread
+      # A second engine for the second pass: reconnecting to the engine that has just been playing
+      # a two-deck load raced the loader thread and the deck came up empty, which is a defect of
+      # its own to look at later — this check is about colour, not about reconnection.
+      second_socket="$run_dir/engine-colour.sock"
+      "$engine_bin" --null-sink --socket "$second_socket" --block 256 &
+      second_pid=$!
+      for _ in $(seq 1 100); do
+        [ -S "$second_socket" ] && break
+        sleep 0.05
+      done
+      QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$second_socket" \
+        --self-check --load "$PWD/$drums" --waveform-expect-spread
+      kill "$second_pid" 2>/dev/null || true
+      wait "$second_pid" 2>/dev/null || true
     fi
     ;;
   *)

@@ -60,7 +60,7 @@ bool Waveform::load(const QString &path)
     const QByteArray bytes = file.readAll();
     file.close();
 
-    if (bytes.size() < kHeaderBytes || std::memcmp(bytes.constData(), "DJWAVE04", 8) != 0) {
+    if (bytes.size() < kHeaderBytes || std::memcmp(bytes.constData(), "DJWAVE06", 8) != 0) {
         m_error = QStringLiteral("%1 is not a waveform file").arg(QFileInfo(path).fileName());
         emit changed();
         return false;
@@ -169,43 +169,33 @@ QVariantList Waveform::profile(int width, double windowStart, double span) const
             ++seen;
         }
         const double divisor = seen > 0 ? seen : 1;
-        // Each band against the track's own level for that band, squared so the winner shows and
-        // normalised so the three weights read as shares of the column.
-        const double relative[3] = {
-            (bass / divisor) / qMax(m_bandReference[0], 1e-6),
-            (mids / divisor) / qMax(m_bandReference[1], 1e-6),
-            (treble / divisor) / qMax(m_bandReference[2], 1e-6),
+        // Each band against the track's OWN median for that band. Over a whole track every band
+        // therefore averages 1, so no band can claim the picture by spanning more octaves — which
+        // is what the mid band did — and the colour follows only what changes locally. This is the
+        // segment shares; the wave's height comes from the envelope's amplitude.
+        const double heights[3] = {
+            qMin(8.0, (bass / divisor) / qMax(m_bandReference[0], 1e-6)),
+            qMin(8.0, (mids / divisor) / qMax(m_bandReference[1], 1e-6)),
+            qMin(8.0, (treble / divisor) / qMax(m_bandReference[2], 1e-6)),
         };
-        // Cubed, so a band that leads by a third takes most of the column instead of a third of it.
-        double shares[3] = {relative[0] * relative[0] * relative[0],
-                            relative[1] * relative[1] * relative[1],
-                            relative[2] * relative[2] * relative[2]};
-        const double shareTotal = shares[0] + shares[1] + shares[2];
-        if (shareTotal <= 1e-12) {
-            shares[0] = shares[1] = shares[2] = 1.0 / 3.0;
-        } else {
-            for (double &share : shares) {
-                share /= shareTotal;
-            }
-        }
         pixels.append(QVariantMap{{QStringLiteral("min"), low},
                                   {QStringLiteral("max"), high},
                                   {QStringLiteral("low"), bass / divisor},
                                   {QStringLiteral("mid"), mids / divisor},
                                   {QStringLiteral("high"), treble / divisor},
-                                  {QStringLiteral("w0"), shares[0]},
-                                  {QStringLiteral("w1"), shares[1]},
-                                  {QStringLiteral("w2"), shares[2]}});
+                                  {QStringLiteral("h0"), heights[0]},
+                                  {QStringLiteral("h1"), heights[1]},
+                                  {QStringLiteral("h2"), heights[2]}});
     }
     // A column whose bands are nearly equal has no dominant colour, and tiny measurement noise
     // would then flip it between red, green and violet from one pixel to the next. Averaging the
-    // shares with the neighbours settles those columns and leaves real changes sharp.
+    // heights with the neighbours settles those columns and leaves real changes sharp.
     if (pixels.size() > 5) {
         QVariantList smoothed;
         smoothed.reserve(pixels.size());
         for (int x = 0; x < pixels.size(); ++x) {
             QVariantMap pixel = pixels.at(x).toMap();
-            double shares[3] = {0.0, 0.0, 0.0};
+            double heights[3] = {0.0, 0.0, 0.0};
             int weight = 0;
             for (int offset = -2; offset <= 2; ++offset) {
                 const int neighbour = x + offset;
@@ -214,14 +204,14 @@ QVariantList Waveform::profile(int width, double windowStart, double span) const
                 }
                 const QVariantMap around = pixels.at(neighbour).toMap();
                 const double kernel = 3 - std::abs(offset);
-                shares[0] += around.value(QStringLiteral("w0")).toDouble() * kernel;
-                shares[1] += around.value(QStringLiteral("w1")).toDouble() * kernel;
-                shares[2] += around.value(QStringLiteral("w2")).toDouble() * kernel;
+                heights[0] += around.value(QStringLiteral("h0")).toDouble() * kernel;
+                heights[1] += around.value(QStringLiteral("h1")).toDouble() * kernel;
+                heights[2] += around.value(QStringLiteral("h2")).toDouble() * kernel;
                 weight += kernel;
             }
             if (weight > 0) {
                 for (int band = 0; band < 3; ++band) {
-                    pixel[QStringLiteral("w%1").arg(band)] = shares[band] / weight;
+                    pixel[QStringLiteral("h%1").arg(band)] = heights[band] / weight;
                 }
             }
             smoothed.append(pixel);

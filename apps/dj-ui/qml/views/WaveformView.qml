@@ -167,12 +167,32 @@ Item {
                 const pixels = envelope.profile(Math.round(width), view.windowStart, view.zoomSpan);
                 const coloured = UiSettings.waveformStyle === "coloured";
                 if (coloured) {
+                    // One colour per column, chosen by which band leads there, mixed with the
+                    // runner-up so the transition is continuous. Mixing all three at once was the
+                    // mistake: equal parts red, green and violet are grey-green, so a kick and a
+                    // hi-hat painted the same colour.
+                    const colours = [Qt.color(UiSettings.waveformLowColor),
+                                     Qt.color(UiSettings.waveformMidColor),
+                                     Qt.color(UiSettings.waveformHighColor)];
                     for (let x = 0; x < pixels.length; ++x) {
                         const pixel = pixels[x];
-                        const top = middle - pixel.max * middle;
-                        const bottom = middle - pixel.min * middle;
-                        context.fillStyle = view.bandColor(pixel);
-                        context.fillRect(x, top, 1, Math.max(1, bottom - top));
+                        const half = Math.abs(pixel.max) * middle;
+                        if (half < 0.5) {
+                            continue;
+                        }
+                        const bandValues = [pixel.h0, pixel.h1, pixel.h2];
+                        const order = [0, 1, 2].sort((left, right) =>
+                                                      bandValues[right] - bandValues[left]);
+                        const lead = bandValues[order[0]];
+                        const runnerUp = bandValues[order[1]];
+                        const span = lead + runnerUp;
+                        const share = span > 0.0001 ? lead / span : 1.0;
+                        const first = colours[order[0]];
+                        const second = colours[order[1]];
+                        context.fillStyle = Qt.rgba(first.r * share + second.r * (1.0 - share),
+                                                    first.g * share + second.g * (1.0 - share),
+                                                    first.b * share + second.b * (1.0 - share), 1.0);
+                        context.fillRect(x, middle - half, 1, Math.max(1, half * 2));
                     }
                 } else {
                     context.strokeStyle = "#5fa8d3";
