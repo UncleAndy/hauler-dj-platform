@@ -38,10 +38,10 @@ impl Fingerprint {
     }
 }
 
-const MAGIC: &[u8; 8] = b"DJWAVE02";
+const MAGIC: &[u8; 8] = b"DJWAVE03";
 
-/// Bytes per column on disk: two extremes as i16 and two band levels as u8.
-const BUCKET_BYTES: usize = 6;
+/// Bytes per column on disk: two extremes as i16 and three band levels as u8.
+const BUCKET_BYTES: usize = 7;
 
 /// Envelope cache in a directory of its own.
 #[derive(Debug, Clone)]
@@ -110,7 +110,8 @@ impl WaveformCache {
                 min: f32::from(min) / 32_767.0,
                 max: f32::from(max) / 32_767.0,
                 low: dequantise_band(column[4]),
-                high: dequantise_band(column[5]),
+                mid: dequantise_band(column[5]),
+                high: dequantise_band(column[6]),
             });
         }
         Some(Peaks {
@@ -137,7 +138,11 @@ impl WaveformCache {
             let max = quantise(bucket.max);
             writer.write_all(&min.to_le_bytes())?;
             writer.write_all(&max.to_le_bytes())?;
-            writer.write_all(&[quantise_band(bucket.low), quantise_band(bucket.high)])?;
+            writer.write_all(&[
+                quantise_band(bucket.low),
+                quantise_band(bucket.mid),
+                quantise_band(bucket.high),
+            ])?;
         }
         writer.flush()?;
         Ok(entry)

@@ -215,15 +215,28 @@ int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socket
             // The coloured style needs the band levels; a reader that silently dropped them would
             // still draw, in one colour, and nobody would notice until they looked closely.
             double loudestBass = 0.0;
+            double loudestMids = 0.0;
             double loudestTreble = 0.0;
             const QVariantList columnList = waveform.columns();
             for (const QVariant &entry : columnList) {
                 const QVariantMap column = entry.toMap();
                 loudestBass = qMax(loudestBass, column.value(QStringLiteral("low")).toDouble());
+                loudestMids = qMax(loudestMids, column.value(QStringLiteral("mid")).toDouble());
                 loudestTreble = qMax(loudestTreble, column.value(QStringLiteral("high")).toDouble());
             }
-            if (loudestBass <= 0.0 && loudestTreble <= 0.0) {
+            if (loudestBass <= 0.0 && loudestMids <= 0.0 && loudestTreble <= 0.0) {
                 failure = QStringLiteral("the envelope carries no band levels");
+                loop.quit();
+                return;
+            }
+            // The fixture is a 440 Hz tone, which lives in the mid band: if the three bands were
+            // really one number copied three times, this would not hold.
+            if (loudestMids <= loudestBass || loudestMids <= loudestTreble) {
+                failure = QStringLiteral("the mid band is not dominant for a 440 Hz tone: "
+                                         "low %1 mid %2 high %3")
+                              .arg(loudestBass)
+                              .arg(loudestMids)
+                              .arg(loudestTreble);
                 loop.quit();
                 return;
             }
@@ -251,9 +264,9 @@ int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socket
             std::fprintf(stdout, "dj-ui: profile tiles the track at 640, 901 and 1280 px\n");
             std::fprintf(stdout,
                          "dj-ui: waveform loaded: %d columns of %d frames at %d Hz, covering %.0f "
-                         "of %.0f frames; bands low %.3f high %.3f\n",
+                         "of %.0f frames; bands low %.3f mid %.3f high %.3f\n",
                          waveform.buckets(), waveform.framesPerBucket(), waveform.sampleRate(),
-                         covered, duration, loudestBass, loudestTreble);
+                         covered, duration, loudestBass, loudestMids, loudestTreble);
             if (!loadSecondPath.isEmpty()) {
                 stage = SendingLoadSecond;
                 commandId = bridge.load(QStringLiteral("B"), loadSecondPath);
@@ -424,7 +437,7 @@ int main(int argc, char *argv[])
     const QCommandLineOption bandColorOption(
         QStringLiteral("waveform-band-colors"),
         QStringLiteral("Three colours for bass, mids and treble, comma separated "
-                       "(default #e0512f,#e8b53a,#dfeaf7)."),
+                       "(default #c33a26,#7aca4c,#9b6bd8)."),
         QStringLiteral("low,mid,high"));
     const QCommandLineOption loadSecondOption(
         QStringLiteral("load-b"),

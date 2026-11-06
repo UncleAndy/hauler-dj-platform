@@ -35,3 +35,4 @@ result-*
 /build-*/
 *.qmlc
 .qmlls.ini
+/tmp

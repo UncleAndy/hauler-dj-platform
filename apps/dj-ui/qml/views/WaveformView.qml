@@ -48,21 +48,27 @@ Item {
     readonly property real windowStart: playheadRatio - zoomSpan / 2
     readonly property real windowEnd: playheadRatio + zoomSpan / 2
 
-    // Bass warm, mids amber, treble cold — three colours from the settings, interpolated by the
-    // ratio between the two bands in this column. A track with a heavy low end reads differently
-    // from one full of hats, and the palette is the user's to change.
-    function bandColor(bass, treble) {
-        const total = bass + treble;
-        const mix = total > 0.0001 ? treble / total : 0.5;
+    // Three bands, three colours, mixed by their own weights: what the analysis measured decides
+    // the hue of the column, so a kick and a hi-hat look different without anyone choosing per frame.
+    function bandColor(bass, mids, treble) {
+        const total = bass + mids + treble;
+        if (total <= 0.0001) {
+            return Qt.color(UiSettings.waveformMidColor);
+        }
         const low = Qt.color(UiSettings.waveformLowColor);
         const mid = Qt.color(UiSettings.waveformMidColor);
         const high = Qt.color(UiSettings.waveformHighColor);
-        const from = mix < 0.5 ? low : mid;
-        const to = mix < 0.5 ? mid : high;
-        const t = mix < 0.5 ? mix * 2 : (mix - 0.5) * 2;
-        return Qt.rgba(from.r + (to.r - from.r) * t,
-                       from.g + (to.g - from.g) * t,
-                       from.b + (to.b - from.b) * t, 1.0);
+        const weights = [bass / total, mids / total, treble / total];
+        const colors = [low, mid, high];
+        let r = 0.0;
+        let g = 0.0;
+        let b = 0.0;
+        for (let index = 0; index < 3; ++index) {
+            r += colors[index].r * weights[index];
+            g += colors[index].g * weights[index];
+            b += colors[index].b * weights[index];
+        }
+        return Qt.rgba(r, g, b, 1.0);
     }
 
     // Where a source frame lands on screen, in pixels; negative ratio means "not a frame".
@@ -169,7 +175,7 @@ Item {
                         const pixel = pixels[x];
                         const top = middle - pixel.max * middle;
                         const bottom = middle - pixel.min * middle;
-                        context.fillStyle = view.bandColor(pixel.low, pixel.high);
+                        context.fillStyle = view.bandColor(pixel.low, pixel.mid, pixel.high);
                         context.fillRect(x, top, 1, Math.max(1, bottom - top));
                     }
                 } else {

@@ -11,8 +11,8 @@ namespace {
 
 // Mirrors the header written by crates/dj-analysis: magic, fingerprint, timebase, columns.
 constexpr int kHeaderBytes = 56;
-// Two extremes as i16 and two band levels as u8, per column.
-constexpr int kColumnBytes = 6;
+// Two extremes as i16 and three band levels as u8, per column.
+constexpr int kColumnBytes = 7;
 
 quint64 readU64(const char *bytes)
 {
@@ -59,7 +59,7 @@ bool Waveform::load(const QString &path)
     const QByteArray bytes = file.readAll();
     file.close();
 
-    if (bytes.size() < kHeaderBytes || std::memcmp(bytes.constData(), "DJWAVE02", 8) != 0) {
+    if (bytes.size() < kHeaderBytes || std::memcmp(bytes.constData(), "DJWAVE03", 8) != 0) {
         m_error = QStringLiteral("%1 is not a waveform file").arg(QFileInfo(path).fileName());
         emit changed();
         return false;
@@ -88,10 +88,12 @@ bool Waveform::load(const QString &path)
         // Bands are stored with a square-root curve, so undo it here: linear levels are what a
         // colour ramp expects.
         const double bass = (column[4] / 255.0) * (column[4] / 255.0);
-        const double treble = (column[5] / 255.0) * (column[5] / 255.0);
+        const double mids = (column[5] / 255.0) * (column[5] / 255.0);
+        const double treble = (column[6] / 255.0) * (column[6] / 255.0);
         columns.append(QVariantMap{{QStringLiteral("min"), static_cast<double>(low) / 32767.0},
                                    {QStringLiteral("max"), static_cast<double>(high) / 32767.0},
                                    {QStringLiteral("low"), bass},
+                                   {QStringLiteral("mid"), mids},
                                    {QStringLiteral("high"), treble}});
     }
 
@@ -140,6 +142,7 @@ QVariantList Waveform::profile(int width, double windowStart, double span) const
         double low = 0.0;
         double high = 0.0;
         double bass = 0.0;
+        double mids = 0.0;
         double treble = 0.0;
         int seen = 0;
         for (int index = first; index <= last && index < total; ++index) {
@@ -147,6 +150,7 @@ QVariantList Waveform::profile(int width, double windowStart, double span) const
             low = qMin(low, column.value(QStringLiteral("min")).toDouble());
             high = qMax(high, column.value(QStringLiteral("max")).toDouble());
             bass += column.value(QStringLiteral("low")).toDouble();
+            mids += column.value(QStringLiteral("mid")).toDouble();
             treble += column.value(QStringLiteral("high")).toDouble();
             ++seen;
         }
@@ -154,6 +158,7 @@ QVariantList Waveform::profile(int width, double windowStart, double span) const
         pixels.append(QVariantMap{{QStringLiteral("min"), low},
                                   {QStringLiteral("max"), high},
                                   {QStringLiteral("low"), bass / divisor},
+                                  {QStringLiteral("mid"), mids / divisor},
                                   {QStringLiteral("high"), treble / divisor}});
     }
     return pixels;

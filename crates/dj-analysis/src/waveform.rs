@@ -22,6 +22,8 @@ pub struct Bucket {
     pub max: f32,
     /// RMS of the low band (below [`LOW_CUTOFF_HZ`]), in [0, 1].
     pub low: f32,
+    /// RMS of the mid band (between the cutoffs), in [0, 1].
+    pub mid: f32,
     /// RMS of the high band (above [`HIGH_CUTOFF_HZ`]), in [0, 1].
     pub high: f32,
 }
@@ -38,12 +40,13 @@ impl Bucket {
         min: 0.0,
         max: 0.0,
         low: 0.0,
+        mid: 0.0,
         high: 0.0,
     };
 
     /// True when the column carries no band information (an envelope written before bands existed).
     pub fn bands_are_missing(&self) -> bool {
-        self.low == 0.0 && self.high == 0.0
+        self.low == 0.0 && self.mid == 0.0 && self.high == 0.0
     }
 }
 
@@ -136,6 +139,7 @@ pub fn analyse(path: &Path, frames_per_bucket: u32) -> Result<Peaks, MediaError>
         let mut min = 0.0f32;
         let mut max = 0.0f32;
         let mut low_energy = 0.0f32;
+        let mut mid_energy = 0.0f32;
         let mut high_energy = 0.0f32;
         for frame in 0..read {
             let left = buffer[frame * 2];
@@ -146,12 +150,14 @@ pub fn analyse(path: &Path, frames_per_bucket: u32) -> Result<Peaks, MediaError>
             max = max.max(high);
 
             let mono = (left + right) * 0.5;
+            // Three bands from two one-pole lowpasses: what is below the low cutoff, the slice
+            // between the cutoffs, and what is left above the high one.
             let bass = low_filter.process(mono);
-            // Treble is what the mix has that a lowpass at the high edge does not: the difference,
-            // which is a highpass without a second coefficient.
-            let smoothed = treble_filter.process(mono);
-            let treble = mono - smoothed;
+            let below_high = treble_filter.process(mono);
+            let mids = below_high - bass;
+            let treble = mono - below_high;
             low_energy += bass * bass;
+            mid_energy += mids * mids;
             high_energy += treble * treble;
             let _ = low_hp.process(mono);
         }
@@ -160,6 +166,7 @@ pub fn analyse(path: &Path, frames_per_bucket: u32) -> Result<Peaks, MediaError>
             min,
             max,
             low: (low_energy / frames).sqrt(),
+            mid: (mid_energy / frames).sqrt(),
             high: (high_energy / frames).sqrt(),
         });
     }

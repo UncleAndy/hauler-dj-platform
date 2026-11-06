@@ -44,9 +44,10 @@ signals:
 private:
     QString m_waveformOutsideColor = QStringLiteral("#101317");
     QString m_waveformStyle = QStringLiteral("coloured");
-    // Warm bass, amber mids, cold highs: the convention DJ software settled on, so a glance at the
-    // strip separates the kick from the hats. Values are ours; ADR-001 forbids taking their assets.
-    QString m_waveformLowColor = QStringLiteral("#e0512f");
-    QString m_waveformMidColor = QStringLiteral("#e8b53a");
-    QString m_waveformHighColor = QStringLiteral("#dfeaf7");
+    // Values measured from the owner's TRAKTOR PRO 4 screenshots (median hue of the strip): bass
+    // dark red, mids green, highs violet-blue, lifted slightly so they read on our darker strip.
+    // Numbers, not assets — ADR-001 forbids taking graphics, and a colour is not a graphic.
+    QString m_waveformLowColor = QStringLiteral("#c33a26");
+    QString m_waveformMidColor = QStringLiteral("#7aca4c");
+    QString m_waveformHighColor = QStringLiteral("#9b6bd8");
 };
