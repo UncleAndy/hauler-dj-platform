@@ -772,6 +772,11 @@ int main(int argc, char *argv[])
         QStringLiteral("layout-check"),
         QStringLiteral("Load the shell, print each region's share of the window and fail when it "
                        "differs from the layout by more than two points."));
+    const QCommandLineOption zoomOption(
+        QStringLiteral("waveform-zoom"),
+        QStringLiteral("Zoom the strip starts at, as a factor (default 10; 1..100). A double click "
+                       "returns to it."),
+        QStringLiteral("factor"));
     const QCommandLineOption frameRateOption(
         QStringLiteral("fps"),
         QStringLiteral("Frames drawn per second (default 20, from display.frame_hz in the settings; "
@@ -838,6 +843,7 @@ int main(int argc, char *argv[])
     parser.addOption(themeCheckOption);
     parser.addOption(benchOption);
     parser.addOption(frameRateOption);
+    parser.addOption(zoomOption);
     parser.addOption(layoutOption);
     parser.addOption(layoutFileOption);
     parser.addOption(layoutCheckOption);
@@ -898,6 +904,14 @@ int main(int argc, char *argv[])
         const int gap = parser.value(barGapOption).toInt(&ok);
         if (!ok || !settings.setWaveformBarGap(gap)) {
             std::fprintf(stderr, "dj-ui: --waveform-bar-gap needs 0..32\n");
+            return 2;
+        }
+    }
+    if (parser.isSet(zoomOption)) {
+        bool ok = false;
+        const double factor = parser.value(zoomOption).toDouble(&ok);
+        if (!ok || !settings.setWaveformZoom(factor)) {
+            std::fprintf(stderr, "dj-ui: --waveform-zoom needs 1..100\n");
             return 2;
         }
     }
@@ -1259,6 +1273,18 @@ int main(int argc, char *argv[])
             std::fprintf(stdout, "dj-ui: deck %s %.0f px tall, strip %.0f px, overview %.0f px\n", id,
                          deck->height(), detail->height(), overview->height());
         }
+        // The zoom a deck opens at, measured from the item itself.
+        if (auto *stripView = findItem(content, QStringLiteral("deckDetail_A")); stripView != nullptr) {
+            const double span = stripView->property("zoomSpan").toDouble();
+            const double factor = span > 0.0 ? 1.0 / span : 0.0;
+            std::fprintf(stdout, "dj-ui: deck A opens at %.1fx zoom (wanted %.1fx)\n", factor,
+                         settings.waveformZoom());
+            if (std::abs(factor - settings.waveformZoom()) > 0.05) {
+                std::fprintf(stderr, "dj-ui: the deck does not open at the zoom setting\n");
+                return 1;
+            }
+        }
+
         // The mixer, measured: the strips in the order the setting names, and the crossfader handle
         // resting in the middle at 0.5 rather than against the left stop.
         QStringList placed;

@@ -34,6 +34,8 @@ class UiSettings : public QObject
     Q_PROPERTY(int frameHz READ frameHz NOTIFY changed)
     // Milliseconds between frames, ready for a Timer interval: QML should not divide on its own.
     Q_PROPERTY(int frameInterval READ frameInterval NOTIFY changed)
+    // Zoom the strip starts at, as a factor: 10 means the visible window is a tenth of the track.
+    Q_PROPERTY(double waveformZoom READ waveformZoom NOTIFY changed)
     // Bar geometry of the spectral waveform. A gap makes the picture read as a bar chart; the
     // waveform in a deck is continuous, so the default gap is zero.
     Q_PROPERTY(int waveformBarWidth READ waveformBarWidth NOTIFY changed)
@@ -70,6 +72,7 @@ public:
 
     QString waveformStyle() const { return m_waveformStyle; }
     int frameHz() const { return m_frameHz; }
+    double waveformZoom() const { return m_waveformZoom; }
     int frameInterval() const { return qMax(1, 1000 / qMax(1, m_frameHz)); }
     int waveformBarWidth() const { return m_waveformBarWidth; }
     int waveformBarGap() const { return m_waveformBarGap; }
@@ -87,6 +90,9 @@ public:
     // Frames per second, 5..240; false when the number is outside what a display can use.
     bool setFrameHz(int hz);
 
+    // Default zoom, 1..100; false when outside that.
+    bool setWaveformZoom(double factor);
+
     // "coloured" or "plain"; anything else is refused.
     bool setWaveformStyle(const QString &style);
 
@@ -101,6 +107,8 @@ private:
     QString m_waveformStyle = QStringLiteral("coloured");
     // Twenty frames a second: the owner's default, and enough with the projection between snapshots.
     int m_frameHz = 20;
+    // Ten times: the whole track on the overview strip, a tenth of it under the playhead.
+    double m_waveformZoom = 10.0;
     // One bar per pixel: the waveform is a continuous curve, and two-pixel bars halve the
     // horizontal detail for nothing.
     int m_waveformBarWidth = 1;

@@ -15,8 +15,11 @@ Item {
 
     required property var deckState
 
-    // Visible fraction of the track: 1.0 is the whole track, 0.02 is fiftyfold zoom.
-    property real zoomSpan: 1.0
+    // Visible fraction of the track. The default is a tenth — tenfold zoom — so a deck opens on the
+    // seconds around the playhead rather than on the whole track; the overview strip below carries
+    // the whole track.
+    readonly property real defaultSpan: 1.0 / Math.max(1.0, UiSettings.waveformZoom)
+    property real zoomSpan: view.defaultSpan
 
     readonly property real columnsPerPixel: (envelope.buckets * zoomSpan) / Math.max(1, width)
     readonly property bool atEnvelopeLimit: columnsPerPixel < 1.0 && envelope.buckets > 0
@@ -116,8 +119,9 @@ Item {
         return ((ratio - view.windowStart) / view.zoomSpan) * width;
     }
 
+    // Double click returns to the default, not to the whole track: the whole track has its own strip.
     function resetZoom() {
-        view.zoomSpan = 1.0;
+        view.zoomSpan = view.defaultSpan;
     }
 
     // Zoom is always about the playhead: it is the centre, so only the span changes.

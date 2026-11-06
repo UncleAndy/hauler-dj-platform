@@ -72,6 +72,19 @@ bool UiSettings::setFrameHz(int hz)
     return true;
 }
 
+bool UiSettings::setWaveformZoom(double factor)
+{
+    if (!(factor >= 1.0 && factor <= 100.0)) {
+        return false;
+    }
+    if (qFuzzyCompare(m_waveformZoom, factor)) {
+        return true;
+    }
+    m_waveformZoom = factor;
+    emit changed();
+    return true;
+}
+
 bool UiSettings::setWaveformBarWidth(int width)
 {
     if (width <= 0 || width > 32) {
