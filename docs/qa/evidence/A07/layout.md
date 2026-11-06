@@ -365,3 +365,25 @@ dj-ui: after the blink the button is #5090f0
 dj-ui: refused load: deck button 1, flashing yes
 dj-ui: a load into a playing deck is refused and the button blinks
 ```
+
+## Пробел: браузер, а не транспорт
+
+Пробел раньше попадал в кнопку, которая держала фокус клавиатуры, — а это была Play, поэтому он
+запускал и останавливал деку. Теперь:
+
+- у кнопок транспорта и панелей `focusPolicy: Qt.NoFocus`: клавиатурный фокус не садится на кнопку,
+  и Пробел не может её нажать;
+- в оболочке есть `Shortcut { sequence: "Space"; context: Qt.ApplicationShortcut }`, который
+  складывает и раскладывает браузер;
+- браузер скрывается целиком, и `SplitView` сам отдаёт его место декам — числа раскладки, которые
+  человек настроил, не трогаются.
+
+Проверка `--space-check` (в гейте) нажимает Пробел по-настоящему, как это делает окно:
+
+```
+dj-ui: the browser key is Space
+dj-ui: deck A playing before yes, after yes; folded yes, unfolded yes
+dj-ui: Space leaves playback alone and folds the browser
+```
+
+То есть воспроизведение не изменилось, а браузер сложился и разложился.

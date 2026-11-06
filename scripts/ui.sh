@@ -119,6 +119,10 @@ case "${1:-}" in
     # it. A waveform that never arrives looks exactly like a track that never loaded.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --strip-check \
       --load "$fixture"
+    # Space belongs to the browser, not to playback: it folds the browser and leaves the decks
+    # alone.
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
+        --space-check --load "$fixture"
     # And the refusal must be visible: pressing the deck's button on a playing deck blinks it
     # red instead of doing nothing.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \

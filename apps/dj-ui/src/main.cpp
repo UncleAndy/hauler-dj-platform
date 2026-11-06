@@ -833,6 +833,10 @@ int main(int argc, char *argv[])
         QStringLiteral("strip-check"),
         QStringLiteral("With --connect and --load: load the track into deck A and require the deck's "
                        "strip to receive the envelope the engine published."));
+    const QCommandLineOption spaceCheckOption(
+        QStringLiteral("space-check"),
+        QStringLiteral("With --connect and --load: prove Space no longer touches playback and folds "
+                       "the browser instead."));
     const QCommandLineOption refusalCheckOption(
         QStringLiteral("refusal-check"),
         QStringLiteral("With --connect and --load: play deck A, ask the shell to load into it, and "
@@ -961,6 +965,7 @@ int main(int argc, char *argv[])
     parser.addOption(gainCheckOption);
     parser.addOption(busyCheckOption);
     parser.addOption(refusalCheckOption);
+    parser.addOption(spaceCheckOption);
     parser.addOption(stripCheckOption);
     parser.addOption(loadOption);
     parser.addOption(loadSecondOption);
@@ -1580,6 +1585,104 @@ int main(int argc, char *argv[])
             }
         }
         std::fprintf(stdout, "dj-ui: layout %s applied as set\n", qPrintable(layout.preset()));
+        return 0;
+    }
+
+    if (parser.isSet(spaceCheckOption)) {
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        const QString track = parser.value(loadOption);
+        bridge->connectToEngine(parser.value(connectOption));
+        QElapsedTimer linking;
+        linking.start();
+        while (!bridge->isConnected() && linking.elapsed() < 3000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QThread::msleep(10);
+        }
+        if (!track.isEmpty()) {
+            bridge->load(QStringLiteral("A"), track);
+        }
+
+        const auto deckPlaying = [&]() {
+            const QVariantList decks = bridge->snapshot().value(QStringLiteral("decks")).toList();
+            for (const QVariant &entry : decks) {
+                const QVariantMap deck = entry.toMap();
+                if (deck.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                    return deck.value(QStringLiteral("playing")).toBool();
+                }
+            }
+            return false;
+        };
+        QElapsedTimer waiting;
+        waiting.start();
+        bool playAsked = false;
+        while (waiting.elapsed() < 10000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            if (!deckPlaying() && !playAsked && waiting.elapsed() > 800) {
+                bridge->play(QStringLiteral("A"), true);
+                playAsked = true;
+            }
+            if (deckPlaying()) {
+                break;
+            }
+            QThread::msleep(20);
+        }
+        if (!deckPlaying()) {
+            std::fprintf(stderr, "dj-ui: deck A never started playing\n");
+            return 1;
+        }
+
+        // A Shortcut is not an item, so it is looked up as an object: the visual tree has no place
+        // for something that draws nothing.
+        auto *toggle = window->findChild<QObject *>(QStringLiteral("browserToggle"));
+        auto *browserPanel = findItem(window->contentItem(), QStringLiteral("browserPanel"));
+        auto *shell = findItem(window->contentItem(), QStringLiteral("globalBar"));
+        if (toggle == nullptr || browserPanel == nullptr || shell == nullptr) {
+            std::fprintf(stderr, "dj-ui: the shell has no browser toggle\n");
+            return 1;
+        }
+        shell = shell->parentItem();
+        std::fprintf(stdout, "dj-ui: the browser key is %s\n",
+                     qPrintable(toggle->property("sequence").toString()));
+        if (toggle->property("sequence").toString() != QStringLiteral("Space")) {
+            std::fprintf(stderr, "dj-ui: the browser is not on Space\n");
+            return 1;
+        }
+
+        // The gesture itself, delivered as the window delivers keys: Space must fold the browser and
+        // leave the deck playing exactly as it was.
+        const auto pressSpace = [&]() {
+            for (const QEvent::Type type : {QEvent::KeyPress, QEvent::KeyRelease}) {
+                QKeyEvent event(type, Qt::Key_Space, Qt::NoModifier, QStringLiteral(" "));
+                QCoreApplication::sendEvent(window, &event);
+            }
+            QCoreApplication::processEvents();
+            QThread::msleep(100);
+            QCoreApplication::processEvents();
+        };
+
+        const bool before = deckPlaying();
+        pressSpace();
+        const bool folded = !browserPanel->isVisible();
+        pressSpace();
+        const bool unfolded = browserPanel->isVisible();
+        const bool after = deckPlaying();
+        std::fprintf(stdout, "dj-ui: deck A playing before %s, after %s; folded %s, unfolded %s\n",
+                     before ? "yes" : "no", after ? "yes" : "no", folded ? "yes" : "no",
+                     unfolded ? "yes" : "no");
+        if (before != after) {
+            std::fprintf(stderr, "dj-ui: Space still reaches playback\n");
+            return 1;
+        }
+        if (!folded || !unfolded) {
+            std::fprintf(stderr, "dj-ui: Space does not fold the browser\n");
+            return 1;
+        }
+        bridge->play(QStringLiteral("A"), false);
+        std::fprintf(stdout, "dj-ui: Space leaves playback alone and folds the browser\n");
         return 0;
     }
 

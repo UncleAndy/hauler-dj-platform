@@ -18,6 +18,21 @@ Item {
     // Which deck the browser loads into; shown there, never guessed.
     property string targetDeck: "A"
 
+    // The browser folds away to give the decks the whole window. Space is its key: playback is not
+    // bound to it, so the room can be resized without touching the sound.
+    property bool browserOpen: true
+
+    function toggleBrowser() {
+        shell.browserOpen = !shell.browserOpen;
+    }
+
+    Shortcut {
+        objectName: "browserToggle"
+        sequence: "Space"
+        context: Qt.ApplicationShortcut
+        onActivated: shell.toggleBrowser()
+    }
+
     // The splitter writes percentages back so the next start has the same proportions.
     function publishRowSizes() {
         const total = rows.height;
@@ -121,6 +136,9 @@ Item {
         BrowserPanel {
             id: browserPanel
             objectName: "browserPanel"
+            // A hidden item takes no room in a SplitView, which is how the fold works without
+            // touching any of the numbers the user set.
+            visible: shell.browserOpen
             target: shell.targetDeck
             SplitView.preferredHeight: shell.height * LayoutState.browserPercent / 100.0
             SplitView.minimumHeight: 90

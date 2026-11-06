@@ -173,6 +173,9 @@ Pane {
                 text: panel.playing ? qsTr("Pause") : qsTr("Play")
                 font.pixelSize: 11
                 enabled: panel.live
+                // Buttons must not take keyboard focus: Space belongs to the browser, not to
+                // whichever control happened to be focused.
+                focusPolicy: Qt.NoFocus
                 highlighted: panel.playing
                 onClicked: Bridge.play(panel.deckId, !panel.playing)
             }
@@ -180,18 +183,21 @@ Pane {
                 text: qsTr("Cue")
                 font.pixelSize: 11
                 enabled: panel.live
+                focusPolicy: Qt.NoFocus
                 onClicked: Bridge.cue(panel.deckId, "Jump", 0)
             }
             Button {
                 text: qsTr("Set")
                 font.pixelSize: 11
                 enabled: panel.live
+                focusPolicy: Qt.NoFocus
                 onClicked: Bridge.cue(panel.deckId, "Set", 0)
             }
             Button {
                 text: qsTr("Loop")
                 font.pixelSize: 11
                 enabled: panel.live
+                focusPolicy: Qt.NoFocus
                 checkable: false
                 highlighted: panel.loop !== null && panel.loop !== undefined
                 onClicked: {
