@@ -154,7 +154,7 @@ impl Peaks {
 ///
 /// A 500-pixel overview of a five-minute track needs about 512 frames per bucket at 48 kHz; the
 /// zoomed view asks for finer buckets from the same file. One number, no magic per call site.
-pub const OVERVIEW_FRAMES_PER_BUCKET: u32 = 512;
+pub const OVERVIEW_FRAMES_PER_BUCKET: u32 = 128;
 
 /// Decode `path` and build its envelope.
 ///
@@ -167,23 +167,26 @@ pub fn analyse(path: &Path, frames_per_bucket: u32) -> Result<Peaks, MediaError>
     let mut buffer = vec![0.0f32; bucket_frames * 2];
     let mut buckets = Vec::new();
 
-    // The transform length is the bucket rounded up to a power of two; a longer bucket is cut, a
-    // shorter one is zero-padded, so every column carries the same spectral resolution.
-    let fft_size = bucket_frames.next_power_of_two().max(64);
+    // Two resolutions on purpose. The amplitude of a column wants a short window: 128 samples at
+    // 48 kHz is 2.7 ms, which is what makes drum hits needles instead of humps. The BANDS want a
+    // long one: with 128 samples the frequency resolution is 375 Hz and bass cannot be told from
+    // mids at all, so the spectrum is taken over a 1024-sample window that lags the column by its
+    // own length and overlaps the next one by 7/8.
+    let fft_size = bucket_frames.next_power_of_two().max(1024);
     let bin_hz = sample_rate as f32 / fft_size as f32;
-    // Hann window: without it a tone that does not fit the bucket leaks across the whole spectrum
-    // and every column looks bright.
     let window: Vec<f32> = (0..fft_size)
         .map(|index| {
             let phase = std::f32::consts::TAU * index as f32 / fft_size as f32;
             0.5 - 0.5 * phase.cos()
         })
         .collect();
-    // A Hann window halves the energy; dividing by its mean restores the amplitude the FFT reports.
     let window_gain: f32 = window.iter().sum::<f32>() / fft_size as f32;
     let mut real = vec![0.0f32; fft_size];
     let mut imag = vec![0.0f32; fft_size];
     let mut magnitudes = vec![0.0f32; fft_size / 2 + 1];
+    // Rolling history of the mix, so the long window always has its 1024 samples.
+    let mut history = vec![0.0f32; fft_size];
+    let mut history_at = 0usize;
 
     loop {
         let read = decoder.read_frames(&mut buffer)?;
@@ -199,14 +202,13 @@ pub fn analyse(path: &Path, frames_per_bucket: u32) -> Result<Peaks, MediaError>
             let right = buffer[frame * 2 + 1];
             min = min.min(left.min(right));
             max = max.max(left.max(right));
+            history[(history_at + frame) % fft_size] = (left + right) * 0.5;
         }
+        history_at = (history_at + read) % fft_size;
 
+        // Oldest first, so the window lines up with time.
         for (index, slot) in real.iter_mut().enumerate() {
-            *slot = if index < read {
-                (buffer[index * 2] + buffer[index * 2 + 1]) * 0.5 * window[index]
-            } else {
-                0.0
-            };
+            *slot = history[(history_at + index) % fft_size] * window[index];
         }
         imag.iter_mut().for_each(|slot| *slot = 0.0);
         fft_in_place(&mut real, &mut imag);

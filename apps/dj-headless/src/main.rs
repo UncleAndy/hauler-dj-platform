@@ -476,7 +476,7 @@ fn run_waveform(run: &WaveformRun) -> ExitCode {
 fn parse_waveform(argv: &[String]) -> Result<Action, CliError> {
     let mut input: Option<PathBuf> = None;
     let mut output: Option<PathBuf> = None;
-    let mut frames_per_bucket = 512u32;
+    let mut frames_per_bucket = dj_analysis::OVERVIEW_FRAMES_PER_BUCKET;
     let mut index = 0;
     while index < argv.len() {
         let flag = argv[index].as_str();

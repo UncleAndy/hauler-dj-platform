@@ -18,6 +18,7 @@
 #include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <QElapsedTimer>
+#include <QJsonDocument>
 #include <QEventLoop>
 #include <QGuiApplication>
 #include <QImage>
@@ -171,21 +172,29 @@ int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socket
         }
         switch (stage) {
         case SendingLoad: {
-            // A load is acknowledged as accepted; the deck is playable when the state says Ready.
+            // The state is an enum serialised as a one-key map: {"Loading":{"progress":0}},
+            // {"Ready"} or {"Failed":{"message":"..."}}. Reading it with toString() gave an empty
+            // string, so the check treated the very first "Loading" snapshot as "ready" and failed
+            // as soon as the loader needed longer than one snapshot — which it did once the
+            // envelope resolution went up.
             const QVariantMap deckState = deckById(snapshot, QStringLiteral("A"));
-            const QString load = deckState.value(QStringLiteral("load")).toString();
-            if (!load.isEmpty() && load != QStringLiteral("Ready")) {
-                return;
+            // Unit variants ("Ready") serialise as a string, variants with data as a one-key map
+            // ({"Loading":{"progress":0}}). Both shapes have to be understood, or "Ready" reads as
+            // "not loaded yet" and the check waits until the watchdog gives up.
+            const QVariant loadValue = deckState.value(QStringLiteral("load"));
+            const QVariantMap loadState = loadValue.toMap();
+            const QString state = loadValue.typeId() == QMetaType::QString
+                ? loadValue.toString()
+                : (loadState.isEmpty() ? QString() : loadState.firstKey());
+            if (state.isEmpty() || state == QStringLiteral("Loading")) {
+                return; // still working; the loader is off the audio path by design
             }
-            if (load.isEmpty()) {
-                // The deck is still `Empty` — wait for the loader, it is off the audio path.
-                if (!deckState.contains(QStringLiteral("load"))) {
-                    return;
-                }
-            }
-            if (loadTitle.isEmpty()) {
-                // Already requested on connect; wait for the loader to publish `Ready`.
-                loadTitle = QStringLiteral("requested");
+            if (state == QStringLiteral("Failed")) {
+                failure = QStringLiteral("the deck failed to load: %1")
+                              .arg(loadState.value(state).toMap()
+                                       .value(QStringLiteral("message"))
+                                       .toString());
+                loop.quit();
                 return;
             }
             const QVariantMap track = deckState.value(QStringLiteral("track")).toMap();
@@ -195,6 +204,9 @@ int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socket
             // the deck has no picture however good the snapshot is.
             const QVariantMap reference = deckState.value(QStringLiteral("waveform")).toMap();
             if (reference.isEmpty()) {
+                std::fprintf(stderr, "dj-ui: deck state: %s\n",
+                             QJsonDocument::fromVariant(deckState).toJson(QJsonDocument::Compact)
+                                 .constData());
                 failure = QStringLiteral("the deck published no waveform");
                 loop.quit();
                 return;
@@ -558,6 +570,11 @@ int main(int argc, char *argv[])
         QStringLiteral("Trim the three bands before colouring, comma separated "
                        "(default 1,1,1). Raise the low gain to see more bass colour."),
         QStringLiteral("low,mid,high"));
+    const QCommandLineOption spanOption(
+        QStringLiteral("waveform-span"),
+        QStringLiteral("Window to render for --waveform-png: START,SPAN as fractions of the track "
+                       "(default 0,1). Use a small span to check a zoomed view."),
+        QStringLiteral("START,SPAN"));
     const QCommandLineOption waveformPngOption(
         QStringLiteral("waveform-png"),
         QStringLiteral("Render a waveform envelope to an image and exit: PATH OUT.png"),
@@ -588,6 +605,7 @@ int main(int argc, char *argv[])
     parser.addOption(bandColorOption);
     parser.addOption(expectSpreadOption);
     parser.addOption(waveformPngOption);
+    parser.addOption(spanOption);
     parser.addOption(bandGainOption);
     parser.addOption(barWidthOption);
     parser.addOption(barGapOption);
@@ -689,7 +707,21 @@ int main(int argc, char *argv[])
         const int barWidth = settings.waveformBarWidth();
         const int barGap = settings.waveformBarGap();
         const int barCount = qMax(1, width / (barWidth + barGap));
-        const QVariantList pixels = envelope.profile(barCount, 0.0, 1.0);
+        double windowStart = 0.0;
+        double windowSpan = 1.0;
+        if (parser.isSet(spanOption)) {
+            const QStringList span = parser.value(spanOption).split(',');
+            bool ok = span.size() == 2;
+            if (ok) {
+                windowStart = span.at(0).toDouble(&ok);
+                windowSpan = span.at(1).toDouble(&ok);
+            }
+            if (!ok || windowStart < 0.0 || windowSpan <= 0.0 || windowStart + windowSpan > 1.0001) {
+                std::fprintf(stderr, "dj-ui: --waveform-span needs START,SPAN within 0..1\n");
+                return 2;
+            }
+        }
+        const QVariantList pixels = envelope.profile(barCount, windowStart, windowSpan);
         QImage image(width, height, QImage::Format_RGB32);
         image.fill(QColor(settings.waveformStyle() == QStringLiteral("coloured")
                               ? QStringLiteral("#141414")

@@ -173,7 +173,12 @@ QVariantList Waveform::profile(int columns, double windowStart, double span) con
         int first = previous;
         int last = next - 1;
         if (last < first) {
-            first = qBound(0, coveredFrom, qMax(0, total - 1));
+            // Zoomed in further than one envelope column per bar: take the column under the middle
+            // of this bar, not the first column of the window. The old fallback made every bar of a
+            // zoomed view show the same column, so the whole strip carried one column's amplitude
+            // and pulsed with the music as the playhead moved through it.
+            const double middle = windowStart + span * (double(bar) + 0.5) / double(columns);
+            first = qBound(0, int(std::floor(middle * double(total))), qMax(0, total - 1));
             last = first;
         }
         previous = next;
