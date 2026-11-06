@@ -75,7 +75,7 @@ public:
     // "headroom, close, clipping" and nothing else in the window uses those words.
     QString themeMeterGreen() const { return QStringLiteral("#3fbf5f"); }
     QString themeMeterYellow() const { return QStringLiteral("#e0c020"); }
-    QString themeMeterRed() const { return QStringLiteral("#e05252"); }
+    QString themeMeterRed() const { return QStringLiteral("#ff4438"); }
     QString themeMarker() const { return QStringLiteral("#e2c07f"); }
     QString themePlayhead() const { return QStringLiteral("#f0f3f6"); }
     QString themeWaveBackground() const { return QStringLiteral("#141414"); }

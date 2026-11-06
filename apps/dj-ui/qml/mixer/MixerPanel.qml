@@ -25,6 +25,12 @@ Pane {
     readonly property real masterGain: Bridge.snapshot.master_gain !== undefined
                                        ? Bridge.snapshot.master_gain : 1.0
 
+    // One meter band for the whole mixer. The master's knob stands above its meter, so that column
+    // decides how much room a meter gets; the deck meters take the same height instead of running
+    // taller, and everything lines up at the bottom.
+    readonly property real masterKnobSide: Math.max(14, Math.min(30, stripRow.height * 0.32))
+    readonly property real meterHeight: Math.max(14, stripRow.height - masterKnobSide - 17)
+
     function deckOf(id) {
         for (let index = 0; index < mixer.decks.length; ++index) {
             if (mixer.decks[index].deck === id) {
@@ -49,8 +55,12 @@ Pane {
         spacing: 6
 
         RowLayout {
+            id: stripRow
+            objectName: "stripRow"
             Layout.fillWidth: true
             Layout.fillHeight: true
+            // A meter band has to survive a short window: knob, label and at least 14 px of meter.
+            Layout.minimumHeight: 52
             spacing: 4
 
             Repeater {
@@ -69,17 +79,16 @@ Pane {
                 spacing: 2
                 // The knob has to leave the meter room to exist: the mixer is the shortest band of
                 // the shell, and a fixed 34 px knob with a label under it left the meter at nothing.
-                readonly property real knobSide: Math.max(16, Math.min(30, masterColumn.height * 0.5))
 
                 MasterKnob {
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: masterColumn.knobSide
-                    Layout.preferredHeight: masterColumn.knobSide
+                    Layout.preferredWidth: mixer.masterKnobSide
+                    Layout.preferredHeight: mixer.masterKnobSide
                     gain: mixer.masterGain
                 }
                 MasterMeter {
                     Layout.fillWidth: true
-                    Layout.fillHeight: true
+                    Layout.preferredHeight: mixer.meterHeight
                     Layout.minimumHeight: 10
                     peak: mixer.masterPeak
                 }
@@ -205,7 +214,9 @@ Pane {
                                                      || strip.modelData === "C"
 
                     Layout.fillWidth: true
-                    Layout.fillHeight: true
+                    Layout.fillHeight: false
+                    // Bottom-anchored: the meters of every strip end on the same line as the master's.
+                    Layout.alignment: Qt.AlignBottom
                     spacing: 2
 
                     Label {
@@ -219,7 +230,8 @@ Pane {
                     // and right to left for the right-hand ones, so nothing but the direction differs.
                     RowLayout {
                         Layout.fillWidth: true
-                        Layout.fillHeight: true
+                        Layout.fillHeight: false
+                        Layout.preferredHeight: mixer.meterHeight
                         spacing: 4
                         layoutDirection: strip.knobLeft ? Qt.LeftToRight : Qt.RightToLeft
 
