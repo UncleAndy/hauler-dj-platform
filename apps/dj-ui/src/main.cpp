@@ -1631,14 +1631,47 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: the shell has no deck buttons\n");
             return 1;
         }
+        // A playing deck's button is blue before anything is pressed: the browser tells the truth
+        // about the decks it feeds.
+        const QColor accent(settings.themeAccent());
+        const auto faceOf = [](QQuickItem *button) {
+            return button->property("faceColor").value<QColor>();
+        };
+        std::fprintf(stdout, "dj-ui: deck A is playing, its browser button is %s\n",
+                     qPrintable(faceOf(deckButton).name()));
+        if (faceOf(deckButton) != accent) {
+            std::fprintf(stderr, "dj-ui: a playing deck's button is not marked as playing\n");
+            return 1;
+        }
+
         // Pressing the button is the way a person finds out; it has to blink.
         QMetaObject::invokeMethod(deckButton, "clicked");
         QMetaObject::invokeMethod(deckLoad, "clicked");
         QCoreApplication::processEvents();
+        const QColor whileFlashing = faceOf(deckButton);
+        const bool flashingNow = deckButton->property("flashing").toBool()
+            || deckLoad->property("flashing").toBool();
+        if (whileFlashing != QColor(settings.themeDanger())) {
+            std::fprintf(stderr, "dj-ui: the refusal did not turn the button red\n");
+            return 1;
+        }
+        // ... and it has to come back to blue, not to grey, once the blink is over.
+        QElapsedTimer blink;
+        blink.start();
+        while (blink.elapsed() < 1200) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 30);
+            QThread::msleep(20);
+        }
+        const QColor afterBlink = faceOf(deckButton);
+        std::fprintf(stdout, "dj-ui: after the blink the button is %s\n",
+                     qPrintable(afterBlink.name()));
+        if (afterBlink != accent) {
+            std::fprintf(stderr, "dj-ui: the button did not return to its playing colour\n");
+            return 1;
+        }
         const int buttonRefusals = deckButton->property("refusals").toInt();
         const int loadRefusals = deckLoad->property("refusals").toInt();
-        const bool flashing = deckButton->property("flashing").toBool()
-            || deckLoad->property("flashing").toBool();
+        const bool flashing = flashingNow;
         std::fprintf(stdout, "dj-ui: refused load: browser button %d, deck button %d, flashing %s\n",
                      buttonRefusals, loadRefusals, flashing ? "yes" : "no");
         if (!refused.toBool() && buttonRefusals > 0 && loadRefusals > 0 && flashing) {

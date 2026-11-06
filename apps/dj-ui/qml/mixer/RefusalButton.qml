@@ -15,6 +15,22 @@ Button {
     property bool flashOn: false
     property int pulses: 6
 
+    // The deck this button belongs to is playing: the face is blue, so "playing" is readable from
+    // the browser without looking at the deck. A refusal blinks red on top of that and returns to
+    // blue, not to grey.
+    property bool playing: false
+
+    readonly property color faceColor: control.flashOn
+                                       ? UiSettings.themeDanger
+                                       : (control.playing ? UiSettings.themeAccent
+                                                          : (control.down || control.checked
+                                                             ? UiSettings.themeAccentDim
+                                                             : UiSettings.themeRaised))
+    readonly property color faceTextColor: control.flashOn
+                                           ? UiSettings.themeBackground
+                                           : (control.playing ? UiSettings.themeTextOnAccent
+                                                              : UiSettings.themeText)
+
     // Signal a refusal: three red blinks, then back to normal.
     function refuse() {
         control.refusals += 1;
@@ -43,16 +59,16 @@ Button {
 
     background: Rectangle {
         radius: 2
-        color: control.flashOn ? UiSettings.themeDanger
-                               : (control.down || control.checked ? UiSettings.themeAccentDim
-                                                                  : UiSettings.themeRaised)
-        border.color: control.flashOn ? UiSettings.themeDanger : UiSettings.themeBorder
+        color: control.faceColor
+        border.color: control.flashOn ? UiSettings.themeDanger
+                                      : (control.playing ? UiSettings.themeAccent
+                                                         : UiSettings.themeBorder)
         border.width: 1
     }
     contentItem: Text {
         text: control.text
         font: control.font
-        color: control.flashOn ? UiSettings.themeBackground : UiSettings.themeText
+        color: control.faceTextColor
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
     }

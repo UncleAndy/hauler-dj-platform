@@ -138,6 +138,8 @@ Pane {
                     implicitHeight: 18
                     checkable: true
                     checked: browser.target === modelData
+                    // Blue for a playing deck: the browser tells the truth about the decks it feeds.
+                    playing: browser.deckIsPlaying(modelData)
                     // Not disabled: pressing a playing deck's button is how a person learns why
                     // nothing happened. It blinks red instead of doing nothing at all.
                     ToolTip.visible: hovered && browser.deckIsPlaying(modelData)

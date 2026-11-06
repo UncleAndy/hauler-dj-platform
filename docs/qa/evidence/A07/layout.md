@@ -313,3 +313,20 @@ dj-ui: a playing deck refuses a load, a stopped one takes it
 dj-ui: refused load: browser button 1, deck button 1, flashing yes
 dj-ui: a load into a playing deck is refused and the button blinks
 ```
+
+## Синий — значит играет
+
+Кнопка деки в браузере теперь **синяя, пока дека играет** (`themeAccent`, текст — цветом фона), и
+после мигания отказом возвращается именно в синий, а не в серый.
+
+Цвет лица кнопки считается в одном месте — `RefusalButton.faceColor`: мигание → `themeDanger`,
+иначе играет → `themeAccent`, иначе нажата/выбрана → `themeAccentDim`, иначе `themeRaised`. Поэтому
+состояния не могут «забыть» друг о друге.
+
+Проверка в `--refusal-check` смотрит три момента: до нажатия, в момент вспышки и через 1,2 с после:
+
+```
+dj-ui: deck A is playing, its browser button is #5090f0   — синяя
+dj-ui: after the blink the button is #5090f0              — и осталась синей
+dj-ui: refused load: browser button 1, deck button 1, flashing yes
+```
