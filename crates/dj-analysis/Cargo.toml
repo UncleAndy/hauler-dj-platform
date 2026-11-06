@@ -12,3 +12,6 @@ dj-codec = { path = "../dj-codec" }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+dj-audio-core = { path = "../dj-audio-core" }

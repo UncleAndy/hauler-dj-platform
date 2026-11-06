@@ -36,6 +36,7 @@ case "${1:-}" in
     # property would warn here instead of silently keeping the default.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --smoke \
       --waveform-outside-color "#30343c"
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --smoke --waveform-style plain
     # The load dialog must not depend on a desktop package: a missing GTK schema aborts the
     # process, and that only shows when a user clicks. Checked here, headless.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --dialog-check

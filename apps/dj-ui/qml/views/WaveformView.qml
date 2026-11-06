@@ -48,6 +48,28 @@ Item {
     readonly property real windowStart: playheadRatio - zoomSpan / 2
     readonly property real windowEnd: playheadRatio + zoomSpan / 2
 
+    // Bass warm, mids neutral, treble cold. The mix is the ratio between the two bands in this
+    // column, so a track with a heavy low end reads differently from one full of hats.
+    function bandColor(bass, treble) {
+        const total = bass + treble;
+        const mix = total > 0.0001 ? treble / total : 0.5;
+        const warm = [224, 122, 60];
+        const neutral = [107, 168, 216];
+        const cold = [226, 240, 255];
+        let from = warm;
+        let to = neutral;
+        let t = mix * 2;
+        if (mix > 0.5) {
+            from = neutral;
+            to = cold;
+            t = (mix - 0.5) * 2;
+        }
+        const channel = function (index) {
+            return Math.round(from[index] + (to[index] - from[index]) * t);
+        };
+        return "rgb(" + channel(0) + "," + channel(1) + "," + channel(2) + ")";
+    }
+
     // Where a source frame lands on screen, in pixels; negative ratio means "not a frame".
     function xOfFrame(frame) {
         if (view.framesPerBucket <= 0 || view.columns <= 0 || frame === null || frame === undefined) {
@@ -140,27 +162,62 @@ Item {
                 const visible = Math.max(1, lastColumn - firstColumn);
                 const group = Math.max(1, Math.ceil(visible / width));
 
-                context.strokeStyle = "#5fa8d3";
-                context.beginPath();
-                for (let start = firstColumn; start < lastColumn; start += group) {
-                    let low = 0.0;
-                    let high = 0.0;
-                    for (let index = start; index < Math.min(start + group, lastColumn); ++index) {
-                        const column = envelope.columns[index];
-                        if (column === undefined) {
+                // Two ways to draw the same envelope. `coloured` paints each column by its own band
+                // content — bass warm, treble cold — so a listener can see where the low end is;
+                // `plain` keeps one colour and lets the shape speak.
+                const coloured = UiSettings.waveformStyle === "coloured";
+                if (coloured) {
+                    for (let start = firstColumn; start < lastColumn; start += group) {
+                        let low = 0.0;
+                        let high = 0.0;
+                        let bass = 0.0;
+                        let treble = 0.0;
+                        let seen = 0;
+                        for (let index = start; index < Math.min(start + group, lastColumn); ++index) {
+                            const column = envelope.columns[index];
+                            if (column === undefined) {
+                                continue;
+                            }
+                            low = Math.min(low, column.min);
+                            high = Math.max(high, column.max);
+                            bass += column.low !== undefined ? column.low : 0.0;
+                            treble += column.high !== undefined ? column.high : 0.0;
+                            seen += 1;
+                        }
+                        const x = ((start / total) - view.windowStart) / view.zoomSpan * width;
+                        const span = Math.max(1.0, width / Math.max(1, visible / group));
+                        if (x < -span || x > width) {
                             continue;
                         }
-                        low = Math.min(low, column.min);
-                        high = Math.max(high, column.max);
+                        context.fillStyle = view.bandColor(seen > 0 ? bass / seen : 0.0,
+                                                          seen > 0 ? treble / seen : 0.0);
+                        const top = middle - high * middle;
+                        const bottom = middle - low * middle;
+                        context.fillRect(x, top, span, Math.max(1.0, bottom - top));
                     }
-                    const x = ((start / total) - view.windowStart) / view.zoomSpan * width + 0.5;
-                    if (x < -1 || x > width + 1) {
-                        continue;
+                } else {
+                    context.strokeStyle = "#5fa8d3";
+                    context.beginPath();
+                    for (let start = firstColumn; start < lastColumn; start += group) {
+                        let low = 0.0;
+                        let high = 0.0;
+                        for (let index = start; index < Math.min(start + group, lastColumn); ++index) {
+                            const column = envelope.columns[index];
+                            if (column === undefined) {
+                                continue;
+                            }
+                            low = Math.min(low, column.min);
+                            high = Math.max(high, column.max);
+                        }
+                        const x = ((start / total) - view.windowStart) / view.zoomSpan * width + 0.5;
+                        if (x < -1 || x > width + 1) {
+                            continue;
+                        }
+                        context.moveTo(x, middle - high * middle);
+                        context.lineTo(x, middle - low * middle);
                     }
-                    context.moveTo(x, middle - high * middle);
-                    context.lineTo(x, middle - low * middle);
+                    context.stroke();
                 }
-                context.stroke();
 
                 // The loop, if one is set: a tinted band across the whole height.
                 if (view.loopRegion !== null && view.loopRegion.start !== undefined) {

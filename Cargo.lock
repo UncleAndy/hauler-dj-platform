@@ -234,6 +234,7 @@ dependencies = [
 name = "dj-analysis"
 version = "0.1.0"
 dependencies = [
+ "dj-audio-core",
  "dj-codec",
 ]
 

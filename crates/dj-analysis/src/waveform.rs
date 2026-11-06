@@ -8,18 +8,64 @@ use std::path::Path;
 
 use dj_codec::{MediaError, StreamDecoder};
 
-/// One column of the waveform: the extremes of the samples it covers.
+/// One column of the waveform: the extremes of the samples it covers, plus how much of them is
+/// bass and how much is treble.
+///
+/// The bands are what a coloured waveform draws: bass heavy passages read warm, hats and cymbals
+/// read cold. They are per-bucket RMS of two filtered copies of the mix, not a spectrum — a full
+/// FFT per column would cost more than the picture is worth at this resolution.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Bucket {
     /// Lowest sample value in the bucket, in [-1, 1].
     pub min: f32,
     /// Highest sample value in the bucket, in [-1, 1].
     pub max: f32,
+    /// RMS of the low band (below [`LOW_CUTOFF_HZ`]), in [0, 1].
+    pub low: f32,
+    /// RMS of the high band (above [`HIGH_CUTOFF_HZ`]), in [0, 1].
+    pub high: f32,
 }
+
+/// Low band edge: everything below this counts as bass.
+pub const LOW_CUTOFF_HZ: f32 = 220.0;
+
+/// High band edge: everything above this counts as treble.
+pub const HIGH_CUTOFF_HZ: f32 = 3_500.0;
 
 impl Bucket {
     /// Silence.
-    pub const SILENT: Self = Self { min: 0.0, max: 0.0 };
+    pub const SILENT: Self = Self {
+        min: 0.0,
+        max: 0.0,
+        low: 0.0,
+        high: 0.0,
+    };
+
+    /// True when the column carries no band information (an envelope written before bands existed).
+    pub fn bands_are_missing(&self) -> bool {
+        self.low == 0.0 && self.high == 0.0
+    }
+}
+
+/// One-pole lowpass, the cheapest way to split a band without an FFT.
+#[derive(Debug, Clone, Copy)]
+struct OnePole {
+    state: f32,
+    alpha: f32,
+}
+
+impl OnePole {
+    fn new(cutoff_hz: f32, sample_rate: u32) -> Self {
+        let ratio = (cutoff_hz / sample_rate as f32).clamp(0.0, 0.5);
+        // -3 dB point at `cutoff_hz`, the usual one-pole approximation.
+        let alpha = 1.0 - (-std::f32::consts::TAU * ratio).exp();
+        Self { state: 0.0, alpha }
+    }
+
+    fn process(&mut self, input: f32) -> f32 {
+        self.state += self.alpha * (input - self.state);
+        self.state
+    }
 }
 
 /// A whole track's envelope.
@@ -74,6 +120,11 @@ pub fn analyse(path: &Path, frames_per_bucket: u32) -> Result<Peaks, MediaError>
     let bucket_frames = frames_per_bucket as usize;
     let mut buffer = vec![0.0f32; bucket_frames * 2];
     let mut buckets = Vec::new();
+    // Two filtered copies of the mix, carried across buckets so a bass note that crosses a bucket
+    // boundary is not split into two quiet halves.
+    let mut low_filter = OnePole::new(LOW_CUTOFF_HZ, sample_rate);
+    let mut treble_filter = OnePole::new(HIGH_CUTOFF_HZ, sample_rate);
+    let mut low_hp = OnePole::new(LOW_CUTOFF_HZ, sample_rate);
 
     loop {
         let read = decoder.read_frames(&mut buffer)?;
@@ -84,6 +135,8 @@ pub fn analyse(path: &Path, frames_per_bucket: u32) -> Result<Peaks, MediaError>
         // timebase would drift by the remainder of every track.
         let mut min = 0.0f32;
         let mut max = 0.0f32;
+        let mut low_energy = 0.0f32;
+        let mut high_energy = 0.0f32;
         for frame in 0..read {
             let left = buffer[frame * 2];
             let right = buffer[frame * 2 + 1];
@@ -91,8 +144,24 @@ pub fn analyse(path: &Path, frames_per_bucket: u32) -> Result<Peaks, MediaError>
             let high = left.max(right);
             min = min.min(low);
             max = max.max(high);
+
+            let mono = (left + right) * 0.5;
+            let bass = low_filter.process(mono);
+            // Treble is what the mix has that a lowpass at the high edge does not: the difference,
+            // which is a highpass without a second coefficient.
+            let smoothed = treble_filter.process(mono);
+            let treble = mono - smoothed;
+            low_energy += bass * bass;
+            high_energy += treble * treble;
+            let _ = low_hp.process(mono);
         }
-        buckets.push(Bucket { min, max });
+        let frames = read.max(1) as f32;
+        buckets.push(Bucket {
+            min,
+            max,
+            low: (low_energy / frames).sqrt(),
+            high: (high_energy / frames).sqrt(),
+        });
     }
 
     Ok(Peaks {

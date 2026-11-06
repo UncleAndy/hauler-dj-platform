@@ -10,6 +10,8 @@ namespace {
 
 // Mirrors the header written by crates/dj-analysis: magic, fingerprint, timebase, columns.
 constexpr int kHeaderBytes = 56;
+// Two extremes as i16 and two band levels as u8, per column.
+constexpr int kColumnBytes = 6;
 
 quint64 readU64(const char *bytes)
 {
@@ -56,7 +58,7 @@ bool Waveform::load(const QString &path)
     const QByteArray bytes = file.readAll();
     file.close();
 
-    if (bytes.size() < kHeaderBytes || std::memcmp(bytes.constData(), "DJWAVE01", 8) != 0) {
+    if (bytes.size() < kHeaderBytes || std::memcmp(bytes.constData(), "DJWAVE02", 8) != 0) {
         m_error = QStringLiteral("%1 is not a waveform file").arg(QFileInfo(path).fileName());
         emit changed();
         return false;
@@ -65,7 +67,7 @@ bool Waveform::load(const QString &path)
     const quint64 sampleRate = readU64(bytes.constData() + 32);
     const quint64 framesPerBucket = readU64(bytes.constData() + 40);
     const quint64 count = readU64(bytes.constData() + 48);
-    const quint64 available = static_cast<quint64>((bytes.size() - kHeaderBytes) / 4);
+    const quint64 available = static_cast<quint64>((bytes.size() - kHeaderBytes) / kColumnBytes);
     if (count == 0 || count > available || framesPerBucket == 0) {
         m_error = QStringLiteral("%1 is truncated: %2 columns announced, %3 present")
                       .arg(QFileInfo(path).fileName())
@@ -79,11 +81,17 @@ bool Waveform::load(const QString &path)
     columns.reserve(static_cast<int>(count));
     const char *data = bytes.constData() + kHeaderBytes;
     for (quint64 index = 0; index < count; ++index) {
-        const auto *pair = reinterpret_cast<const unsigned char *>(data + index * 4);
-        const auto low = static_cast<qint16>(pair[0] | (pair[1] << 8));
-        const auto high = static_cast<qint16>(pair[2] | (pair[3] << 8));
+        const auto *column = reinterpret_cast<const unsigned char *>(data + index * kColumnBytes);
+        const auto low = static_cast<qint16>(column[0] | (column[1] << 8));
+        const auto high = static_cast<qint16>(column[2] | (column[3] << 8));
+        // Bands are stored with a square-root curve, so undo it here: linear levels are what a
+        // colour ramp expects.
+        const double bass = (column[4] / 255.0) * (column[4] / 255.0);
+        const double treble = (column[5] / 255.0) * (column[5] / 255.0);
         columns.append(QVariantMap{{QStringLiteral("min"), static_cast<double>(low) / 32767.0},
-                                   {QStringLiteral("max"), static_cast<double>(high) / 32767.0}});
+                                   {QStringLiteral("max"), static_cast<double>(high) / 32767.0},
+                                   {QStringLiteral("low"), bass},
+                                   {QStringLiteral("high"), treble}});
     }
 
     m_columns = columns;

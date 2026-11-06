@@ -212,11 +212,26 @@ int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socket
                 loop.quit();
                 return;
             }
+            // The coloured style needs the band levels; a reader that silently dropped them would
+            // still draw, in one colour, and nobody would notice until they looked closely.
+            double loudestBass = 0.0;
+            double loudestTreble = 0.0;
+            const QVariantList columnList = waveform.columns();
+            for (const QVariant &entry : columnList) {
+                const QVariantMap column = entry.toMap();
+                loudestBass = qMax(loudestBass, column.value(QStringLiteral("low")).toDouble());
+                loudestTreble = qMax(loudestTreble, column.value(QStringLiteral("high")).toDouble());
+            }
+            if (loudestBass <= 0.0 && loudestTreble <= 0.0) {
+                failure = QStringLiteral("the envelope carries no band levels");
+                loop.quit();
+                return;
+            }
             std::fprintf(stdout,
                          "dj-ui: waveform loaded: %d columns of %d frames at %d Hz, covering %.0f "
-                         "of %.0f frames\n",
+                         "of %.0f frames; bands low %.3f high %.3f\n",
                          waveform.buckets(), waveform.framesPerBucket(), waveform.sampleRate(),
-                         covered, duration);
+                         covered, duration, loudestBass, loudestTreble);
             if (!loadSecondPath.isEmpty()) {
                 stage = SendingLoadSecond;
                 commandId = bridge.load(QStringLiteral("B"), loadSecondPath);
@@ -380,6 +395,10 @@ int main(int argc, char *argv[])
         QStringLiteral("Colour of the regions before the start and after the end of a track "
                        "(default: the strip background, #101317)."),
         QStringLiteral("colour"));
+    const QCommandLineOption styleOption(
+        QStringLiteral("waveform-style"),
+        QStringLiteral("coloured (default: bass warm, treble cold) or plain."),
+        QStringLiteral("style"));
     const QCommandLineOption loadSecondOption(
         QStringLiteral("load-b"),
         QStringLiteral("With --self-check: load this file into deck B as well."),
@@ -394,6 +413,7 @@ int main(int argc, char *argv[])
     parser.addOption(loadOption);
     parser.addOption(loadSecondOption);
     parser.addOption(outsideColorOption);
+    parser.addOption(styleOption);
     parser.addOption(dialogCheckOption);
     parser.process(app);
 
@@ -410,6 +430,11 @@ int main(int argc, char *argv[])
         && !settings.setWaveformOutsideColor(parser.value(outsideColorOption))) {
         std::fprintf(stderr, "dj-ui: %s is not a colour\n",
                      qPrintable(parser.value(outsideColorOption)));
+        return 2;
+    }
+    if (parser.isSet(styleOption) && !settings.setWaveformStyle(parser.value(styleOption))) {
+        std::fprintf(stderr, "dj-ui: %s is not a waveform style (coloured or plain)\n",
+                     qPrintable(parser.value(styleOption)));
         return 2;
     }
     qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "UiSettings", &settings);

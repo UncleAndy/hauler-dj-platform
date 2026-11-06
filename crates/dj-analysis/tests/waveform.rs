@@ -4,6 +4,23 @@ use std::path::{Path, PathBuf};
 
 use dj_analysis::{Fingerprint, OVERVIEW_FRAMES_PER_BUCKET, Peaks, WaveformCache, analyse};
 
+fn sine_file(dir: &Path, name: &str, frequency: f32) -> PathBuf {
+    let rate = 48_000u32;
+    let frames = rate as usize; // one second
+    let mut samples = Vec::with_capacity(frames * 2);
+    for frame in 0..frames {
+        let value = (frame as f32 / rate as f32 * frequency * std::f32::consts::TAU).sin() * 0.5;
+        samples.push(value);
+        samples.push(value);
+    }
+    let path = dir.join(name);
+    let file = std::fs::File::create(&path).unwrap_or_else(|err| panic!("{err}"));
+    let mut writer = std::io::BufWriter::new(file);
+    dj_audio_core::wav::write_pcm16_interleaved(&mut writer, rate, 2, &samples)
+        .unwrap_or_else(|err| panic!("{err}"));
+    path
+}
+
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../dj-codec/tests/fixtures/audio")
@@ -204,4 +221,62 @@ fn an_empty_envelope_is_harmless() {
     assert_eq!(empty.frames(), 0);
     assert_eq!(empty.peak(), 0.0);
     assert_eq!(empty.bucket_for(9_999), 0);
+}
+
+#[test]
+fn the_bands_separate_bass_from_treble() {
+    // This is what makes a coloured waveform honest: the bass column and the treble column must come
+    // from the audio itself, not from a colour chosen per bucket by the renderer.
+    let dir = std::env::temp_dir().join(format!("dj-analysis-bands-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap_or_else(|err| panic!("{err}"));
+
+    let bass =
+        analyse(&sine_file(&dir, "bass.wav", 60.0), 512).unwrap_or_else(|err| panic!("{err}"));
+    let treble =
+        analyse(&sine_file(&dir, "treble.wav", 9_000.0), 512).unwrap_or_else(|err| panic!("{err}"));
+
+    let bass_column = bass.buckets[bass.buckets.len() / 2];
+    let treble_column = treble.buckets[treble.buckets.len() / 2];
+
+    assert!(
+        bass_column.low > bass_column.high * 3.0,
+        "a 60 Hz tone must read as bass: low {} high {}",
+        bass_column.low,
+        bass_column.high
+    );
+    assert!(
+        treble_column.high > treble_column.low * 3.0,
+        "a 9 kHz tone must read as treble: low {} high {}",
+        treble_column.low,
+        treble_column.high
+    );
+    assert!(
+        !bass_column.bands_are_missing() && !treble_column.bands_are_missing(),
+        "bands are always written by the current analysis"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn the_cache_keeps_the_bands() {
+    let dir = std::env::temp_dir().join(format!("dj-analysis-band-cache-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap_or_else(|err| panic!("{err}"));
+    let bass = sine_file(&dir, "bass.wav", 60.0);
+
+    let cache = WaveformCache::new(dir.join("cache"));
+    let (computed, _) = cache
+        .get_or_analyse(&bass, 512)
+        .unwrap_or_else(|err| panic!("{err}"));
+    let (cached, from_cache) = cache
+        .get_or_analyse(&bass, 512)
+        .unwrap_or_else(|err| panic!("{err}"));
+    assert!(from_cache);
+
+    let before = computed.buckets[computed.buckets.len() / 2].low;
+    let after = cached.buckets[cached.buckets.len() / 2].low;
+    assert!(
+        (before - after).abs() < 0.01,
+        "the band survives the byte storage: {before} vs {after}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
 }

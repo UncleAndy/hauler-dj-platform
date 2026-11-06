@@ -38,7 +38,10 @@ impl Fingerprint {
     }
 }
 
-const MAGIC: &[u8; 8] = b"DJWAVE01";
+const MAGIC: &[u8; 8] = b"DJWAVE02";
+
+/// Bytes per column on disk: two extremes as i16 and two band levels as u8.
+const BUCKET_BYTES: usize = 6;
 
 /// Envelope cache in a directory of its own.
 #[derive(Debug, Clone)]
@@ -97,15 +100,17 @@ impl WaveformCache {
             return None;
         }
 
-        let mut raw = vec![0u8; bucket_count * 4];
+        let mut raw = vec![0u8; bucket_count * BUCKET_BYTES];
         reader.read_exact(&mut raw).ok()?;
         let mut buckets = Vec::with_capacity(bucket_count);
-        for pair in raw.chunks_exact(4) {
-            let min = i16::from_le_bytes([pair[0], pair[1]]);
-            let max = i16::from_le_bytes([pair[2], pair[3]]);
+        for column in raw.chunks_exact(BUCKET_BYTES) {
+            let min = i16::from_le_bytes([column[0], column[1]]);
+            let max = i16::from_le_bytes([column[2], column[3]]);
             buckets.push(Bucket {
                 min: f32::from(min) / 32_767.0,
                 max: f32::from(max) / 32_767.0,
+                low: dequantise_band(column[4]),
+                high: dequantise_band(column[5]),
             });
         }
         Some(Peaks {
@@ -132,6 +137,7 @@ impl WaveformCache {
             let max = quantise(bucket.max);
             writer.write_all(&min.to_le_bytes())?;
             writer.write_all(&max.to_le_bytes())?;
+            writer.write_all(&[quantise_band(bucket.low), quantise_band(bucket.high)])?;
         }
         writer.flush()?;
         Ok(entry)
@@ -154,6 +160,18 @@ impl WaveformCache {
         let _ = self.store(path, &peaks);
         Ok((peaks, false))
     }
+}
+
+/// Band levels are stored with a square-root curve: a bass line at -30 dB still has to be visible
+/// next to a loud passage, and a linear byte would flatten it to zero.
+fn quantise_band(value: f32) -> u8 {
+    let scaled = (value.clamp(0.0, 1.0).sqrt() * 255.0).round();
+    scaled.clamp(0.0, 255.0) as u8
+}
+
+fn dequantise_band(byte: u8) -> f32 {
+    let normalised = f32::from(byte) / 255.0;
+    normalised * normalised
 }
 
 fn quantise(value: f32) -> i16 {
