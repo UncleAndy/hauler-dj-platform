@@ -6,6 +6,7 @@
 #pragma once
 
 #include <QColor>
+#include <QPointer>
 #include <QQuickPaintedItem>
 #include <QVariantList>
 
@@ -38,7 +39,7 @@ public:
 
     void paint(QPainter *painter) override;
 
-    Waveform *waveform() const { return m_waveform; }
+    Waveform *waveform() const { return m_waveform.data(); }
     void setWaveform(Waveform *waveform);
 
     double windowStart() const { return m_windowStart; }
@@ -80,7 +81,9 @@ signals:
     void appearanceChanged();
 
 private:
-    Waveform *m_waveform = nullptr;
+    // QPointer, not a raw pointer: the envelope is a QML object of the deck panel and may be destroyed
+    // before this item. A raw pointer here turns a shutdown into a heap corruption report.
+    QPointer<Waveform> m_waveform;
     double m_windowStart = 0.0;
     double m_span = 1.0;
     double m_playheadRatio = 0.0;

@@ -864,6 +864,11 @@ int main(int argc, char *argv[])
         QStringLiteral("strip-check"),
         QStringLiteral("With --connect and --load: load the track into deck A and require the deck's "
                        "strip to receive the envelope the engine published."));
+    const QCommandLineOption exitAfterOption(
+        QStringLiteral("exit-after"),
+        QStringLiteral("Close the window after this many milliseconds: the shutdown path, exercised "
+                       "instead of described."),
+        QStringLiteral("ms"));
     const QCommandLineOption windowCheckOption(
         QStringLiteral("window-check"),
         QStringLiteral("With --session-file: restore the remembered window shape, toggle it with F11 "
@@ -1012,6 +1017,7 @@ int main(int argc, char *argv[])
     parser.addOption(spaceCheckOption);
     parser.addOption(wheelCheckOption);
     parser.addOption(windowCheckOption);
+    parser.addOption(exitAfterOption);
     parser.addOption(stripCheckOption);
     parser.addOption(loadOption);
     parser.addOption(loadSecondOption);
@@ -2555,6 +2561,17 @@ int main(int argc, char *argv[])
                                                      : defaultSocketPath();
     bridge->connectToEngine(path);
     std::fprintf(stdout, "dj-ui: connecting to %s\n", qPrintable(path));
+
+    if (parser.isSet(exitAfterOption)) {
+        bool ok = false;
+        const int after = parser.value(exitAfterOption).toInt(&ok);
+        if (!ok || after < 0) {
+            std::fprintf(stderr, "dj-ui: --exit-after needs milliseconds\n");
+            return 2;
+        }
+        // The shutdown path, exercised instead of described: close the window the way a person does.
+        QTimer::singleShot(after, qApp, &QCoreApplication::quit);
+    }
 
     return app.exec();
 }

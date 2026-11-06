@@ -16,7 +16,9 @@ WaveformItem::WaveformItem(QQuickItem *parent)
 
 void WaveformItem::paint(QPainter *painter)
 {
-    if (m_waveform == nullptr) {
+    // The envelope is a QML object of the deck panel: it can be destroyed before this item, and a raw
+    // pointer here would paint through freed memory at shutdown.
+    if (m_waveform.isNull()) {
         return;
     }
     WaveformStyle style;
@@ -50,11 +52,11 @@ void WaveformItem::setWaveform(Waveform *waveform)
     if (m_waveform == waveform) {
         return;
     }
-    if (m_waveform != nullptr) {
+    if (!m_waveform.isNull()) {
         disconnect(m_waveform, nullptr, this, nullptr);
     }
     m_waveform = waveform;
-    if (m_waveform != nullptr) {
+    if (!m_waveform.isNull()) {
         // A new envelope, or a new one loaded into the same object, repaints: this is how the
         // waveform appears after a track is loaded.
         connect(m_waveform, &Waveform::changed, this, [this] { update(); });

@@ -127,6 +127,18 @@ case "${1:-}" in
     else
       QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --self-check
     fi
+    # Shutting down with a track loaded and the engine connected: the envelope and the items are
+    # destroyed in an order nobody chose, and a heap corruption there shows up only at exit.
+    if [ -f "$fixture" ]; then
+      QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
+          --load "$fixture" --exit-after 1200 > "${TMPDIR:-/tmp}/dj-shutdown.log" 2>&1
+      if grep -qE "corrupted|free\(\)|Aborted|double free" "${TMPDIR:-/tmp}/dj-shutdown.log"; then
+        echo "ui.sh: the UI did not shut down cleanly" >&2
+        cat "${TMPDIR:-/tmp}/dj-shutdown.log" >&2
+        exit 1
+      fi
+      echo "dj-ui: the UI shuts down cleanly with a track loaded"
+    fi
     # The picture, end to end: the envelope the engine published must reach the strip that draws
     # it. A waveform that never arrives looks exactly like a track that never loaded.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --strip-check \
