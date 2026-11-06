@@ -1,12 +1,12 @@
 // The waveform of a deck, drawn from the cached envelope (DJP-MEDIA-003, DJP-UI-004).
 //
-// The timebase is source frames: column n covers frames [n*F, (n+1)*F), so the playhead, the hotcue
-// markers and the loop edges are all placed as frame / F / columns — no fudge factor that would move
-// the picture away from the sound.
+// The timebase is source frames: column n covers frames [n*F, (n+1)*F). Positions are computed as
+// frame / F / columns, the same formula Rust uses, so a marker cannot drift away from the sound.
 //
-// Zoom re-cuts the same envelope: out, several buckets collapse into a pixel; in, one bucket spans
-// several pixels. It never invents detail — a finer envelope is the engine's job, and the deck says
-// when the picture is at its limit instead of pretending.
+// The view is a scrolling strip: the playback position sits at the horizontal centre and the
+// waveform moves under it. Zoom therefore has only one pivot — the playhead — and the regions before
+// the start and after the end of the track are filled with their own colour, so a half-empty strip
+// reads as "outside the track" rather than as silence in it.
 import QtQuick
 import QtQuick.Controls
 
@@ -15,10 +15,9 @@ Item {
 
     required property var deckState
 
-    // Visible window over the track, in fractions of its length.
-    property real zoomStart: 0.0
+    // Visible fraction of the track: 1.0 is the whole track, 0.02 is fiftyfold zoom.
     property real zoomSpan: 1.0
-    // Columns drawn per pixel before the envelope runs out of detail.
+
     readonly property real columnsPerPixel: (envelope.buckets * zoomSpan) / Math.max(1, width)
     readonly property bool atEnvelopeLimit: columnsPerPixel < 1.0 && envelope.buckets > 0
 
@@ -39,33 +38,32 @@ Item {
     readonly property var loopRegion: deckState !== undefined && deckState.loop_region !== undefined
                                       ? deckState.loop_region : null
 
-    function resetZoom() {
-        view.zoomStart = 0.0;
-        view.zoomSpan = 1.0;
+    // Fraction of the track the playhead sits at; the strip is always centred on it.
+    readonly property real playheadRatio: {
+        if (view.framesPerBucket <= 0 || view.columns <= 0) {
+            return 0.0;
+        }
+        return Math.min(1.0, (view.sourceFrame / view.framesPerBucket) / view.columns);
     }
+    readonly property real windowStart: playheadRatio - zoomSpan / 2
+    readonly property real windowEnd: playheadRatio + zoomSpan / 2
 
-    function zoomAt(factor, pivotRatio) {
-        const pivot = view.zoomStart + view.zoomSpan * pivotRatio;
-        let span = Math.min(1.0, Math.max(0.02, view.zoomSpan / factor));
-        let start = pivot - span * pivotRatio;
-        start = Math.min(Math.max(0.0, start), 1.0 - span);
-        view.zoomSpan = span;
-        view.zoomStart = start;
-    }
-
-    // Fraction of the track a source frame sits at.
-    function ratioOf(frame) {
+    // Where a source frame lands on screen, in pixels; negative ratio means "not a frame".
+    function xOfFrame(frame) {
         if (view.framesPerBucket <= 0 || view.columns <= 0 || frame === null || frame === undefined) {
             return -1;
         }
-        return (frame / view.framesPerBucket) / view.columns;
+        const ratio = (frame / view.framesPerBucket) / view.columns;
+        return ((ratio - view.windowStart) / view.zoomSpan) * width;
     }
 
-    function xOf(ratio) {
-        if (ratio < 0) {
-            return -1;
-        }
-        return ((ratio - view.zoomStart) / view.zoomSpan) * width;
+    function resetZoom() {
+        view.zoomSpan = 1.0;
+    }
+
+    // Zoom is always about the playhead: it is the centre, so only the span changes.
+    function zoomBy(factor) {
+        view.zoomSpan = Math.min(1.0, Math.max(0.02, view.zoomSpan / factor));
     }
 
     // Load once per reference: the snapshot repeats the same path twenty times a second.
@@ -110,22 +108,35 @@ Item {
                 context.fillRect(0, 0, width, height);
 
                 const middle = height / 2;
+                const total = envelope.buckets;
+
+                // Everything outside the track is its own colour, so it cannot be mistaken for a
+                // quiet passage: before the first frame and after the last one.
+                const startX = ((0 - view.windowStart) / view.zoomSpan) * width;
+                const endX = ((1 - view.windowStart) / view.zoomSpan) * width;
+                const outside = UiSettings.waveformOutsideColor;
+                if (startX > 0) {
+                    context.fillStyle = outside;
+                    context.fillRect(0, 0, Math.min(width, startX), height);
+                }
+                if (endX < width) {
+                    context.fillStyle = outside;
+                    context.fillRect(Math.max(0, endX), 0, width - Math.max(0, endX), height);
+                }
+
                 context.strokeStyle = "#242a33";
                 context.beginPath();
                 context.moveTo(0, middle);
                 context.lineTo(width, middle);
                 context.stroke();
 
-                const total = envelope.buckets;
                 if (total === 0 || width <= 0) {
                     return;
                 }
 
-                // The visible slice of the envelope, in columns. Out, the extremes of a group are
-                // kept so a peak never disappears; in, a column becomes a block of pixels with its
-                // true extent, so the picture stops short of inventing detail.
-                const firstColumn = Math.max(0, Math.floor(total * view.zoomStart));
-                const lastColumn = Math.min(total, Math.ceil(total * (view.zoomStart + view.zoomSpan)));
+                // Only the columns inside the window are drawn; out of view they cost nothing.
+                const firstColumn = Math.max(0, Math.floor(total * view.windowStart));
+                const lastColumn = Math.min(total, Math.ceil(total * view.windowEnd));
                 const visible = Math.max(1, lastColumn - firstColumn);
                 const group = Math.max(1, Math.ceil(visible / width));
 
@@ -142,8 +153,7 @@ Item {
                         low = Math.min(low, column.min);
                         high = Math.max(high, column.max);
                     }
-                    const ratio = start / total;
-                    const x = view.xOf(ratio) + 0.5;
+                    const x = ((start / total) - view.windowStart) / view.zoomSpan * width + 0.5;
                     if (x < -1 || x > width + 1) {
                         continue;
                     }
@@ -154,11 +164,15 @@ Item {
 
                 // The loop, if one is set: a tinted band across the whole height.
                 if (view.loopRegion !== null && view.loopRegion.start !== undefined) {
-                    const from = view.xOf(view.ratioOf(view.loopRegion.start));
-                    const to = view.xOf(view.ratioOf(view.loopRegion.end));
-                    if (from >= 0 && to > from) {
-                        context.fillStyle = "rgba(127, 176, 226, 0.14)";
-                        context.fillRect(from, 0, to - from, height);
+                    const from = view.xOfFrame(view.loopRegion.start);
+                    const to = view.xOfFrame(view.loopRegion.end);
+                    if (to > from) {
+                        const left = Math.max(0, from);
+                        const right = Math.min(width, to);
+                        if (right > left) {
+                            context.fillStyle = "rgba(127, 176, 226, 0.14)";
+                            context.fillRect(left, 0, right - left, height);
+                        }
                         context.strokeStyle = "#7fb0e2";
                         context.beginPath();
                         context.moveTo(from, 0);
@@ -170,26 +184,25 @@ Item {
                 }
 
                 // Hotcues: the engine's frames, so a marker cannot drift from the sound.
+                context.font = "9px sans-serif";
                 for (let slot = 0; slot < view.hotcues.length; ++slot) {
-                    const x = view.xOf(view.ratioOf(view.hotcues[slot]));
+                    const x = view.xOfFrame(view.hotcues[slot]);
                     if (x < 0 || x > width) {
                         continue;
                     }
                     context.fillStyle = "#e2c07f";
                     context.fillRect(x - 1, 0, 2, 6);
-                    context.font = "9px sans-serif";
                     context.fillText(String(slot + 1), x + 3, 9);
                 }
 
-                // Playhead from the engine's own frame count, never from a local timer.
-                const playhead = view.xOf(view.ratioOf(view.sourceFrame));
-                if (playhead >= 0 && playhead <= width) {
-                    context.strokeStyle = "#f0f3f6";
-                    context.beginPath();
-                    context.moveTo(playhead, 0);
-                    context.lineTo(playhead, height);
-                    context.stroke();
-                }
+                // The playhead is the centre of the strip by construction; drawn from the engine's
+                // own frame count, never from a local timer.
+                const playhead = ((view.playheadRatio - view.windowStart) / view.zoomSpan) * width;
+                context.strokeStyle = "#f0f3f6";
+                context.beginPath();
+                context.moveTo(playhead, 0);
+                context.lineTo(playhead, height);
+                context.stroke();
             }
 
             Connections {
@@ -197,10 +210,13 @@ Item {
                 function onChanged() { canvas.requestPaint() }
             }
             Connections {
+                target: UiSettings
+                function onChanged() { canvas.requestPaint() }
+            }
+            Connections {
                 target: view
                 function onSourceFrameChanged() { canvas.requestPaint() }
                 function onZoomSpanChanged() { canvas.requestPaint() }
-                function onZoomStartChanged() { canvas.requestPaint() }
                 function onHotcuesChanged() { canvas.requestPaint() }
             }
             onWidthChanged: requestPaint()
@@ -210,8 +226,7 @@ Item {
                 anchors.fill: parent
                 acceptedButtons: Qt.LeftButton
                 onWheel: function (wheel) {
-                    const pivot = Math.min(1.0, Math.max(0.0, wheel.x / Math.max(1, canvas.width)));
-                    view.zoomAt(wheel.angleDelta.y > 0 ? 1.25 : 0.8, pivot);
+                    view.zoomBy(wheel.angleDelta.y > 0 ? 1.25 : 0.8);
                 }
                 onDoubleClicked: view.resetZoom()
             }

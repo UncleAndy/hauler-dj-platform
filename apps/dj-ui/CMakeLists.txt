@@ -10,6 +10,8 @@ qt_add_executable(dj-ui
     src/BridgeClient.h
     src/Waveform.cpp
     src/Waveform.h
+    src/UiSettings.cpp
+    src/UiSettings.h
 )
 
 qt_add_qml_module(dj-ui

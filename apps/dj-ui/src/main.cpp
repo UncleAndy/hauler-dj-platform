@@ -12,6 +12,7 @@
 //                         publish `playing`, then exit 0. This is the A06 acceptance, headless.
 
 #include "BridgeClient.h"
+#include "UiSettings.h"
 #include "Waveform.h"
 
 #include <QCommandLineOption>
@@ -374,6 +375,11 @@ int main(int argc, char *argv[])
         QStringLiteral("dialog-check"),
         QStringLiteral("Check the in-app file browser without a display: the QML module loads and "
                        "lists a directory."));
+    const QCommandLineOption outsideColorOption(
+        QStringLiteral("waveform-outside-color"),
+        QStringLiteral("Colour of the regions before the start and after the end of a track "
+                       "(default: the strip background, #101317)."),
+        QStringLiteral("colour"));
     const QCommandLineOption loadSecondOption(
         QStringLiteral("load-b"),
         QStringLiteral("With --self-check: load this file into deck B as well."),
@@ -387,6 +393,7 @@ int main(int argc, char *argv[])
     parser.addOption(selfCheckOption);
     parser.addOption(loadOption);
     parser.addOption(loadSecondOption);
+    parser.addOption(outsideColorOption);
     parser.addOption(dialogCheckOption);
     parser.process(app);
 
@@ -398,6 +405,14 @@ int main(int argc, char *argv[])
     // paint the first deck's waveform.
     qmlRegisterType<Waveform>("DjPlatform.Ui", 1, 0, "WaveformEnvelope");
     Waveform waveform; // used by the headless self-check
+    UiSettings settings;
+    if (parser.isSet(outsideColorOption)
+        && !settings.setWaveformOutsideColor(parser.value(outsideColorOption))) {
+        std::fprintf(stderr, "dj-ui: %s is not a colour\n",
+                     qPrintable(parser.value(outsideColorOption)));
+        return 2;
+    }
+    qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "UiSettings", &settings);
 
     if (parser.isSet(selfCheckOption)) {
         const QString path = parser.isSet(connectOption) ? parser.value(connectOption)
