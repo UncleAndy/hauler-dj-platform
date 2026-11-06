@@ -31,7 +31,6 @@ qt_add_qml_module(dj-ui
         qml/shell/GlobalBar.qml
         qml/browser/BrowserPanel.qml
         qml/decks/DeckPanel.qml
-        qml/decks/LoadDialog.qml
         qml/views/WaveformView.qml
         qml/views/TrackOverview.qml
         qml/mixer/Crossfader.qml

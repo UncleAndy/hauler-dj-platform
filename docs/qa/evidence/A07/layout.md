@@ -352,3 +352,16 @@ dj-ui: after the blink the button is #5090f0
 
 `--smoke` по-прежнему требует ноль предупреждений Qt при загрузке сцены, поэтому undefined-цвет
 больше не проскочит.
+
+## Кнопки Load в деке больше нет
+
+Треки приходят из браузера — кнопкой деки там. Кнопка Load в деке была вторым путём к тому же
+действию и ушла вместе со своим диалогом: `LoadDialog.qml` и его регистрация в сборке удалены, в
+панели деки остались Play, Cue, Set, Loop.
+
+Проверка отказа (`--refusal-check`) теперь смотрит только кнопку браузера:
+
+```
+dj-ui: refused load: deck button 1, flashing yes
+dj-ui: a load into a playing deck is refused and the button blinks
+```

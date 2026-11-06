@@ -1653,8 +1653,7 @@ int main(int argc, char *argv[])
         QCoreApplication::processEvents();
 
         auto *deckButton = findItem(window->contentItem(), QStringLiteral("deckButton_A"));
-        auto *deckLoad = findItem(window->contentItem(), QStringLiteral("deckLoad_A"));
-        if (deckButton == nullptr || deckLoad == nullptr) {
+        if (deckButton == nullptr) {
             std::fprintf(stderr, "dj-ui: the shell has no deck buttons\n");
             return 1;
         }
@@ -1673,11 +1672,9 @@ int main(int argc, char *argv[])
 
         // Pressing the button is the way a person finds out; it has to blink.
         QMetaObject::invokeMethod(deckButton, "clicked");
-        QMetaObject::invokeMethod(deckLoad, "clicked");
         QCoreApplication::processEvents();
         const QColor whileFlashing = faceOf(deckButton);
-        const bool flashingNow = deckButton->property("flashing").toBool()
-            || deckLoad->property("flashing").toBool();
+        const bool flashingNow = deckButton->property("flashing").toBool();
         if (whileFlashing != QColor(settings.themeDanger())) {
             std::fprintf(stderr, "dj-ui: the refusal did not turn the button red\n");
             return 1;
@@ -1697,11 +1694,10 @@ int main(int argc, char *argv[])
             return 1;
         }
         const int buttonRefusals = deckButton->property("refusals").toInt();
-        const int loadRefusals = deckLoad->property("refusals").toInt();
         const bool flashing = flashingNow;
-        std::fprintf(stdout, "dj-ui: refused load: browser button %d, deck button %d, flashing %s\n",
-                     buttonRefusals, loadRefusals, flashing ? "yes" : "no");
-        if (!refused.toBool() && buttonRefusals > 0 && loadRefusals > 0 && flashing) {
+        std::fprintf(stdout, "dj-ui: refused load: deck button %d, flashing %s\n", buttonRefusals,
+                     flashing ? "yes" : "no");
+        if (!refused.toBool() && buttonRefusals > 0 && flashing) {
             bridge->play(QStringLiteral("A"), false);
             std::fprintf(stdout, "dj-ui: a load into a playing deck is refused and the button blinks\n");
             return 0;

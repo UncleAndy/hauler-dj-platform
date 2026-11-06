@@ -2,7 +2,8 @@
 //
 // The arrangement follows the reference: the deck's letter and the track's title share one line, the
 // zoomed strip takes the room, the whole track sits under it as a thin overview, and the transport
-// controls are a row at the bottom. Nothing is optimistic: pressing Play sends a command and waits,
+// controls are a row at the bottom. There is no load button: tracks come from the browser, into the
+// deck's own button there, which is also the only place that has to say "this deck is playing". Nothing is optimistic: pressing Play sends a command and waits,
 // and the button only reads "playing" once a snapshot says so.
 import QtQuick
 import QtQuick.Controls
@@ -168,23 +169,6 @@ Pane {
             Layout.fillWidth: true
             spacing: 4
 
-            RefusalButton {
-                objectName: "deckLoad_" + panel.deckId
-                text: qsTr("Load")
-                font.pixelSize: 11
-                // A deck that is playing is not a destination. The button stays live so the refusal
-                // can be seen: three red blinks say why, and the engine refuses the same load too.
-                enabled: panel.live
-                ToolTip.visible: hovered && panel.playing
-                ToolTip.text: qsTr("stop the deck to load another track")
-                onClicked: {
-                    if (panel.playing) {
-                        refuse();
-                        return;
-                    }
-                    loadDialog.open();
-                }
-            }
             Button {
                 text: panel.playing ? qsTr("Pause") : qsTr("Play")
                 font.pixelSize: 11
@@ -241,10 +225,4 @@ Pane {
         return qsTr("ready");
     }
 
-    LoadDialog {
-        id: loadDialog
-        deckId: panel.deckId
-        deckLabel: panel.deckLabel
-        onPicked: function (path) { Bridge.load(panel.deckId, path) }
-    }
 }
