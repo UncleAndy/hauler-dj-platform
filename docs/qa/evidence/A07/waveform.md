@@ -936,6 +936,31 @@ height' = height^p,   p = waveform-contrast, по умолчанию 1,4
 Сообщение владельца: при закрытии окна процесс иногда печатает
 `corrupted double-linked list` и падает с `Аварийный останов`.
 
+### Настоящая причина (найдена после воспроизведения)
+
+Воспроизвелось в песочнице: `--exit-after 200` с живым движком падало 20 раз из 36, а без движка —
+ни разу. Valgrind показал точку:
+
+```
+Invalid read of size 4
+   by BridgeClient::setStatus(QString const&)        BridgeClient.cpp:395
+   by BridgeClient::onDisconnected()                 BridgeClient.cpp:172
+   by doActivate<false>(QObject*, int, void**)       libQt6Core
+```
+
+`QLocalSocket` — член `BridgeClient`. При уничтожении клиента сокет в своём деструкторе испускает
+`disconnected()`, слот `onDisconnected()` идёт в `setStatus()` и `emit statusChanged()` — уже в объект,
+который наполовину разобран, и в QML-сцену, которая уничтожена. Отсюда порча кучи на выходе, и тем
+вероятнее, чем раньше закрыть окно (снапшоты ещё идут, сцена жива, сокет открыт).
+
+Исправление: у `BridgeClient` теперь есть деструктор, который первым делом снимает все связи сокета и
+поднимает флаг `m_shuttingDown`; `setStatus`, `setConnected` и `onDisconnected` при этом флаге молчат.
+
+Проверка после правки: 48 прогонов (задержки 0, 50, 120, 200, 400, 900 мс по 8) — ни одного падения;
+valgrind — осталась только известная безобидная перегрузка в `QGuiApplication::init()`.
+
+### Прежняя гипотеза (сырой указатель)
+
 Причина — сырой указатель между QML и C++. `WaveformItem` держал `Waveform *m_waveform`, а сам конверт
 (`WaveformEnvelope`) — объект QML панели деки. При закрытии QML уничтожает объекты в своём порядке, и
 если конверт умирает раньше полосы, `setWaveform(nullptr)` шёл в `disconnect()` по освобождённому

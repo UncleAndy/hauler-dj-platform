@@ -66,6 +66,10 @@ class BridgeClient : public QObject
 
 public:
     explicit BridgeClient(QObject *parent = nullptr);
+    // The socket is a member: its destructor emits disconnected(), which lands in onDisconnected()
+    // while the QML scene that listens to this object is already gone. That signal has to stop before
+    // the members start dying.
+    ~BridgeClient() override;
 
     bool isConnected() const { return m_connected; }
     QString status() const { return m_status; }
@@ -116,6 +120,8 @@ private:
     void setConnected(bool connected);
 
     QLocalSocket m_socket;
+    // Set while the object is being torn down: no signals out to a half-destroyed scene.
+    bool m_shuttingDown = false;
     QByteArray m_buffer;
     bool m_connected = false;
     bool m_handshakeSent = false;

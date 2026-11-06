@@ -168,6 +168,9 @@ void BridgeClient::onConnected()
 
 void BridgeClient::onDisconnected()
 {
+    if (m_shuttingDown) {
+        return;
+    }
     setConnected(false);
     setStatus(QStringLiteral("disconnected"));
 }
@@ -387,9 +390,19 @@ int BridgeClient::setChannelGain(const QString &deck, double gain)
     return sendCommand(deck, command);
 }
 
+BridgeClient::~BridgeClient()
+{
+    // Before the members go: a socket that is still open emits disconnected() from its own destructor,
+    // and the slot would then touch a client mid-destruction and emit into a QML scene that has already
+    // been torn down. That is the heap corruption seen when the window is closed right after the start.
+    m_shuttingDown = true;
+    disconnect(&m_socket, nullptr, this, nullptr);
+    m_socket.abort();
+}
+
 void BridgeClient::setStatus(const QString &status)
 {
-    if (m_status == status) {
+    if (m_shuttingDown || m_status == status) {
         return;
     }
     m_status = status;
@@ -398,7 +411,7 @@ void BridgeClient::setStatus(const QString &status)
 
 void BridgeClient::setConnected(bool connected)
 {
-    if (m_connected == connected) {
+    if (m_shuttingDown || m_connected == connected) {
         return;
     }
     m_connected = connected;
