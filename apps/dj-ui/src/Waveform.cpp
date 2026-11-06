@@ -504,7 +504,7 @@ double Waveform::smoothingHeat(double zoom)
     return anchors[last].heat;
 }
 
-double Waveform::s_defaultContrast = 1.25;
+double Waveform::s_defaultContrast = 1.4;
 
 void Waveform::setDefaultContrast(double power)
 {

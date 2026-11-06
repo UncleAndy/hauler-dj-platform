@@ -938,7 +938,7 @@ int main(int argc, char *argv[])
     const QCommandLineOption contrastOption(
         QStringLiteral("waveform-contrast"),
         QStringLiteral("How much the strip separates loud from quiet: the height is raised to this "
-                       "power (default 1.25; 0.5..3). 1.0 draws the amplitudes as they are."),
+                       "power (default 1.4; 0.5..3). 1.0 draws the amplitudes as they are."),
         QStringLiteral("power"));
     const QCommandLineOption zoomOption(
         QStringLiteral("waveform-zoom"),

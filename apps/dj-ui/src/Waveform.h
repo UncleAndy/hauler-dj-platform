@@ -128,6 +128,6 @@ private:
     // *visible window* would make every bar's height depend on where the window sits — the strip
     // would pump as it scrolled, which the self-check refuses.
     std::vector<double> m_rampLoudest;
-    double m_contrast = 1.25;
+    double m_contrast = 1.4;
     static double s_defaultContrast;
 };
