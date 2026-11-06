@@ -138,8 +138,8 @@ Item {
                 // the reference algorithm: block i covers an equal slice of time and gets one RMS
                 // per band, one amplitude and one colour. Integer positions mean no two bars can
                 // land on the same pixel, which is what used to produce moiré.
-                const barWidth = 2;
-                const barGap = 1;
+                const barWidth = Math.max(1, UiSettings.waveformBarWidth);
+                const barGap = Math.max(0, UiSettings.waveformBarGap);
                 const step = barWidth + barGap;
                 const barCount = Math.max(1, Math.floor(width / step));
                 const bars = envelope.profile(barCount, view.windowStart, view.zoomSpan);
@@ -149,10 +149,9 @@ Item {
                     const bar = bars[index];
                     // Amplitude is already normalised against the loudest block of the track, so a
                     // quiet track still fills the strip instead of drawing a thin line.
-                    const half = bar.amplitude * middle;
-                    if (half < 0.5) {
-                        continue;
-                    }
+                    // Never skip a bar: silence still draws the centre line, so the waveform stays
+                    // one continuous shape instead of splitting into separate vertical strokes.
+                    const half = Math.max(0.5, bar.amplitude * middle);
                     const x = index * step;
                     context.fillStyle = coloured ? bar.rgb : flatColour;
                     context.fillRect(x, middle - half, barWidth, Math.max(1, half * 2));

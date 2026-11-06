@@ -58,3 +58,23 @@ bool UiSettings::setWaveformBandColor(const QString &band, const QString &color)
     }
     return true;
 }
+
+bool UiSettings::setWaveformBarWidth(int width)
+{
+    if (width <= 0 || width > 32) {
+        return false;
+    }
+    m_waveformBarWidth = width;
+    emit changed();
+    return true;
+}
+
+bool UiSettings::setWaveformBarGap(int gap)
+{
+    if (gap < 0 || gap > 32) {
+        return false;
+    }
+    m_waveformBarGap = gap;
+    emit changed();
+    return true;
+}

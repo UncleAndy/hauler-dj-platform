@@ -494,6 +494,14 @@ int main(int argc, char *argv[])
         QStringLiteral("waveform-style"),
         QStringLiteral("coloured (default: bass warm, treble cold) or plain."),
         QStringLiteral("style"));
+    const QCommandLineOption barWidthOption(
+        QStringLiteral("waveform-bar-width"),
+        QStringLiteral("Width of one waveform bar in pixels (default 2)."),
+        QStringLiteral("px"));
+    const QCommandLineOption barGapOption(
+        QStringLiteral("waveform-bar-gap"),
+        QStringLiteral("Space between bars in pixels (default 0: a continuous waveform)."),
+        QStringLiteral("px"));
     const QCommandLineOption bandGainOption(
         QStringLiteral("waveform-band-gain"),
         QStringLiteral("Trim the three bands before colouring, comma separated "
@@ -530,6 +538,8 @@ int main(int argc, char *argv[])
     parser.addOption(expectSpreadOption);
     parser.addOption(waveformPngOption);
     parser.addOption(bandGainOption);
+    parser.addOption(barWidthOption);
+    parser.addOption(barGapOption);
     parser.addOption(dialogCheckOption);
     parser.process(app);
 
@@ -566,6 +576,22 @@ int main(int argc, char *argv[])
                              qPrintable(parts.at(index)), qPrintable(bands.at(index)));
                 return 2;
             }
+        }
+    }
+    if (parser.isSet(barWidthOption)) {
+        bool ok = false;
+        const int width = parser.value(barWidthOption).toInt(&ok);
+        if (!ok || !settings.setWaveformBarWidth(width)) {
+            std::fprintf(stderr, "dj-ui: --waveform-bar-width needs 1..32\n");
+            return 2;
+        }
+    }
+    if (parser.isSet(barGapOption)) {
+        bool ok = false;
+        const int gap = parser.value(barGapOption).toInt(&ok);
+        if (!ok || !settings.setWaveformBarGap(gap)) {
+            std::fprintf(stderr, "dj-ui: --waveform-bar-gap needs 0..32\n");
+            return 2;
         }
     }
     double bandGain[3] = {1.0, 1.0, 1.0};
@@ -609,8 +635,8 @@ int main(int argc, char *argv[])
         }
         const int width = 1200;
         const int height = 160;
-        const int barWidth = 2;
-        const int barGap = 1;
+        const int barWidth = settings.waveformBarWidth();
+        const int barGap = settings.waveformBarGap();
         const int barCount = qMax(1, width / (barWidth + barGap));
         const QVariantList pixels = envelope.profile(barCount, 0.0, 1.0);
         QImage image(width, height, QImage::Format_RGB32);
@@ -620,10 +646,7 @@ int main(int argc, char *argv[])
         int painted = 0;
         for (int index = 0; index < pixels.size(); ++index) {
             const QVariantMap pixel = pixels.at(index).toMap();
-            const double half = pixel.value(QStringLiteral("amplitude")).toDouble() * middle;
-            if (half < 0.5) {
-                continue;
-            }
+            const double half = qMax(0.5, pixel.value(QStringLiteral("amplitude")).toDouble() * middle);
             painter.fillRect(QRectF(index * (barWidth + barGap), middle - half, barWidth,
                                     qMax(1.0, half * 2)),
                              QColor(pixel.value(QStringLiteral("rgb")).toString()));
