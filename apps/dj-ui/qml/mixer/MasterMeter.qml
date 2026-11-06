@@ -77,13 +77,16 @@ Item {
             anchors.bottom: parent.bottom
             height: meter.height - 4
             radius: 1
+            // A gradient runs from the top down, while the thresholds are measured from the bottom:
+            // red sits at the top edge, yellow below it, green fills the rest. Getting this backwards
+            // put the red block at the foot of the meter, where silence lives.
             gradient: Gradient {
-                GradientStop { position: 0.00; color: UiSettings.themeMeterGreen }
-                GradientStop { position: meter.yellowFrom; color: UiSettings.themeMeterGreen }
-                GradientStop { position: meter.yellowFrom + 0.001; color: UiSettings.themeMeterYellow }
-                GradientStop { position: meter.redFrom; color: UiSettings.themeMeterYellow }
-                GradientStop { position: meter.redFrom + 0.001; color: UiSettings.themeMeterRed }
-                GradientStop { position: 1.00; color: UiSettings.themeMeterRed }
+                GradientStop { position: 0.00; color: UiSettings.themeMeterRed }
+                GradientStop { position: 1.0 - meter.redFrom; color: UiSettings.themeMeterRed }
+                GradientStop { position: 1.0 - meter.redFrom + 0.001; color: UiSettings.themeMeterYellow }
+                GradientStop { position: 1.0 - meter.yellowFrom; color: UiSettings.themeMeterYellow }
+                GradientStop { position: 1.0 - meter.yellowFrom + 0.001; color: UiSettings.themeMeterGreen }
+                GradientStop { position: 1.00; color: UiSettings.themeMeterGreen }
             }
         }
     }

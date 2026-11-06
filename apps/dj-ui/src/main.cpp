@@ -1764,6 +1764,45 @@ int main(int argc, char *argv[])
                      meter->property("redFromDb").toDouble(),
                      meter->property("ceilingDb").toDouble());
 
+        // And the picture itself: a gradient runs top-down while the thresholds are measured from the
+        // bottom, so the colours can be logical in the properties and upside down on screen. Drive the
+        // meter past 0 dB — that is the only place red exists — and read the pixels: red at the top,
+        // yellow under it, green at the foot.
+        meter->setProperty("peak", QVariant(1.4));
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        const QImage frame = window->grabWindow();
+        if (frame.isNull()) {
+            std::fprintf(stdout, "dj-ui: the window would not render, so the meter colours are unread\n");
+        } else {
+            const QPointF origin = meter->mapToItem(content, QPointF(0, 0));
+            const double ratio = content->width() > 0
+                ? static_cast<double>(frame.width()) / content->width() : 1.0;
+            const auto sample = [&](double downFromTop) {
+                const int x = static_cast<int>((origin.x() + meter->width() / 2.0) * ratio);
+                const int y = static_cast<int>((origin.y() + downFromTop) * ratio);
+                return frame.pixelColor(x, y);
+            };
+            const double height = meter->height();
+            const QColor head = sample(height * 0.08);
+            const QColor middle = sample(height * 0.18);
+            const QColor foot = sample(height * 0.90);
+            std::fprintf(stdout, "dj-ui: above 0 dB the master meter reads %s near the top, %s under "
+                                 "it and %s at the foot\n",
+                         qPrintable(head.name()), qPrintable(middle.name()), qPrintable(foot.name()));
+            if (!(head.red() > head.green() + 40 && head.red() > head.blue() + 40)) {
+                std::fprintf(stderr, "dj-ui: the master meter is not red at the top\n");
+                return 1;
+            }
+            if (!(middle.red() > 150 && middle.green() > 120 && middle.blue() < 100)) {
+                std::fprintf(stderr, "dj-ui: the master meter is not yellow under the red\n");
+                return 1;
+            }
+            if (!(foot.green() > foot.red() + 20)) {
+                std::fprintf(stderr, "dj-ui: the master meter is not green at the bottom\n");
+                return 1;
+            }
+        }
+
         std::fprintf(stdout, "dj-ui: the master knob and meter work\n");
         return 0;
     }
