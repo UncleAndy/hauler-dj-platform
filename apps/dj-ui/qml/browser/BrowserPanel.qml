@@ -77,24 +77,6 @@ Pane {
         return true;
     }
 
-    // The one place a row acts: the mouse and the button both come through here, so a check can call
-    // it and exercise the same path the user does.
-    function activate(index) {
-        if (index < 0 || index >= Browser.entries.length) {
-            browser.lastAction = "nothing at " + index;
-            return false;
-        }
-        const entry = Browser.entries[index];
-        if (entry.dir === true) {
-            Browser.open(entry.path);
-            browser.lastAction = "opened " + entry.path;
-            return true;
-        }
-        Bridge.load(browser.target, entry.path);
-        browser.lastAction = "loaded " + entry.path + " into " + browser.target;
-        return true;
-    }
-
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 6
@@ -217,26 +199,6 @@ Pane {
                         }
                     }
                 }
-            }
-        }
-
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 6
-            Label {
-                Layout.fillWidth: true
-                text: browser.selected !== null
-                      ? qsTr("%1 → deck %2").arg(browser.selected.name).arg(browser.target)
-                      : qsTr("nothing selected")
-                color: UiSettings.themeTextDim
-                font.pixelSize: 10
-                elide: Text.ElideRight
-            }
-            Button {
-                text: qsTr("Load")
-                font.pixelSize: 10
-                enabled: browser.selected !== null && browser.selected.dir !== true
-                onClicked: browser.loadInto(browser.target)
             }
         }
 
