@@ -62,16 +62,26 @@ Pane {
             // the knob — that is the "shorter at the top" the owner asked for, which the layout check
             // measures against the deck meters.
             ColumnLayout {
+                id: masterColumn
                 objectName: "masterColumn"
                 Layout.preferredWidth: 34
                 Layout.fillHeight: true
-                spacing: 3
+                spacing: 2
+                // The knob has to leave the meter room to exist: the mixer is the shortest band of
+                // the shell, and a fixed 34 px knob with a label under it left the meter at nothing.
+                readonly property real knobSide: Math.max(16, Math.min(30, masterColumn.height * 0.5))
 
                 MasterKnob {
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 34
-                    Layout.preferredHeight: 34
+                    Layout.preferredWidth: masterColumn.knobSide
+                    Layout.preferredHeight: masterColumn.knobSide
                     gain: mixer.masterGain
+                }
+                MasterMeter {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.minimumHeight: 10
+                    peak: mixer.masterPeak
                 }
                 Label {
                     text: mixer.masterGain > 0.0
@@ -82,11 +92,7 @@ Pane {
                     font.pixelSize: 9
                     Layout.alignment: Qt.AlignHCenter
                 }
-                MasterMeter {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    peak: mixer.masterPeak
-                }
+
             }
 
             Repeater {

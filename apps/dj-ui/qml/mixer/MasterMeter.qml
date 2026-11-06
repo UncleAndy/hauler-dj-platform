@@ -13,6 +13,9 @@ Item {
 
     objectName: "masterMeter"
 
+    // It is a strip, not a line: below this it stops reading as a scale.
+    implicitHeight: 40
+
     // Where the colours change. -6 dB is where a mix stops having room; -1 dB is where the limiter
     // starts to matter.
     readonly property real yellowFrom: 0.5

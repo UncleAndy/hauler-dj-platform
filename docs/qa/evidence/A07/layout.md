@@ -545,7 +545,13 @@ dj-ui: every crossfader law travels to the engine and back
 метры остаются в акценте: цвет говорит «запас / близко / клиппинг», и если он есть у всех, он не
 говорит ничего.
 
-Отказ, если колонка мастера не между A и B, если ручка не круглая (разница сторон больше 1 px),
+Высота ручки — доля высоты колонки (не больше 30 px, не меньше 16): микшер — самая низкая полоса
+оболочки, и фиксированные 34 px с подписью под ними оставляли метеру ноль пикселей. Подпись
+переехала под метер, чтобы низ метера совпал с низом канальных метеров: короче сверху — да,
+висеть в воздухе — нет.
+
+Отказ, если колонка мастера не между A и B, если ручка не круглая (разница сторон больше 1 px) или
+ниже 16 px, если метер ниже 10 px или не совпадает с канальными по низу (допуск 2 px),
 если метер начинается не ниже ручки и не ниже канальных метров, если цвета не различаются между
 собой или совпадают с акцентом, если команда громкости не доходит до снапшота или если метер
 остаётся на нуле при играющей деке.
@@ -553,9 +559,11 @@ dj-ui: every crossfader law travels to the engine and back
 Проверка в гейте:
 
 ```
-dj-ui: the master column sits at 300 px, between A at 266 and B at 334
-dj-ui: the master knob is 34 x 34 px
-dj-ui: the master meter starts 17 px below the knob, 37 px below the deck meters
+dj-ui: the master column sits at 298 px, between A at 266 and B at 330
+dj-ui: the master knob is 30 x 30 px
+dj-ui: master column 73 px tall, knob 30, meter 28
+dj-ui: deck meter A 46 px tall
+dj-ui: the master meter starts 2 px below the knob, 18 px below the deck meters, and ends 0 px from them (28 px tall)
 dj-ui: master meter colours #3fbf5f #e0c020 #e05252
 dj-ui: master gain 0.5 -> snapshot says 0,50
 dj-ui: deck A playing yes, its own peak 1,000, master peak 0,354

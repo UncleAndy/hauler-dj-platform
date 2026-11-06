@@ -1549,15 +1549,26 @@ int main(int argc, char *argv[])
         const double knobBottom = knob->mapToItem(content, QPointF(0, knob->height())).y();
         const double meterTop = meter->mapToItem(content, QPointF(0, 0)).y();
         const double deckMeterTop = meterA->mapToItem(content, QPointF(0, 0)).y();
+        std::fprintf(stdout, "dj-ui: master column %.0f px tall, knob %.0f, meter %.0f\n",
+                     column->height(), knob->height(), meter->height());
+        std::fprintf(stdout, "dj-ui: deck meter A %.0f px tall\n", meterA->height());
+        const double meterBottom = meter->mapToItem(content, QPointF(0, meter->height())).y();
+        const double deckMeterBottom = meterA->mapToItem(content, QPointF(0, meterA->height())).y();
         std::fprintf(stdout, "dj-ui: the master meter starts %.0f px below the knob, %.0f px below "
-                             "the deck meters\n",
-                     meterTop - knobBottom, meterTop - deckMeterTop);
+                             "the deck meters, and ends %.0f px from them (%.0f px tall)\n",
+                     meterTop - knobBottom, meterTop - deckMeterTop, meterBottom - deckMeterBottom,
+                     meter->height());
         if (meterTop < knobBottom) {
             std::fprintf(stderr, "dj-ui: the master knob overlaps the meter\n");
             return 1;
         }
         if (meterTop <= deckMeterTop) {
             std::fprintf(stderr, "dj-ui: the master meter is not shorter at the top\n");
+            return 1;
+        }
+        // Shorter at the top, level at the bottom: a meter that floats looks like a mistake.
+        if (std::abs(meterBottom - deckMeterBottom) > 2.0) {
+            std::fprintf(stderr, "dj-ui: the master meter does not line up at the bottom\n");
             return 1;
         }
         // Three colours, and none of them the accent: the master must be findable by colour alone.
