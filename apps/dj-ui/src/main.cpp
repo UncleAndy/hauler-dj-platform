@@ -1922,6 +1922,23 @@ int main(int argc, char *argv[])
             }
         }
 
+        // The four laws cost one row of small squares: a selector that eats the width it is meant to
+        // save is worse than no selector.
+        if (auto *curve = findItem(content, QStringLiteral("curveButton_constant_power"));
+            curve != nullptr) {
+            const double width = curve->width();
+            const double height = curve->height();
+            std::fprintf(stdout, "dj-ui: curve buttons are %.0f x %.0f px\n", width, height);
+            if (std::abs(width - height) > 0.5) {
+                std::fprintf(stderr, "dj-ui: the curve buttons are not square\n");
+                return 1;
+            }
+            if (width > 20.0 || height > 20.0) {
+                std::fprintf(stderr, "dj-ui: the curve buttons are too big\n");
+                return 1;
+            }
+        }
+
         // The wheel has to reach 100x, not 50x: the deepest step is the one a person tries when they
         // want a single beat across the strip.
         if (auto *viewA = findItem(content, QStringLiteral("deckDetail_A")); viewA != nullptr) {

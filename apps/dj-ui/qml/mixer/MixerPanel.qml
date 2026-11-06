@@ -143,53 +143,58 @@ Pane {
             Layout.preferredHeight: 30
         }
 
-        // The law in force, as four small buttons. They show what the engine published — a selector
+        // The law in force, as four small squares. They show what the engine published — a selector
         // that lights up on the click rather than on the ack would lie the moment a command is
-        // refused (DJP-ARCH-004).
+        // refused (DJP-ARCH-004). Squares, not bars: the choices are four, and width is better spent
+        // on the strips.
         RowLayout {
+            id: curveRow
             objectName: "crossfaderCurves"
-            Layout.fillWidth: true
-            Layout.preferredHeight: 18
-            spacing: 3
+            Layout.alignment: Qt.AlignHCenter
+            Layout.preferredHeight: 16
+            spacing: 4
 
             readonly property string current: Bridge.snapshot.crossfader_curve !== undefined
                                                 ? Bridge.snapshot.crossfader_curve : "constant_power"
 
             Repeater {
                 model: [
-                    { law: "constant_power", label: qsTr("Const") },
-                    { law: "linear", label: qsTr("Linear") },
-                    { law: "smooth", label: qsTr("Smooth") },
-                    { law: "sharp", label: qsTr("Sharp") }
+                    { law: "constant_power", label: "CP", hint: qsTr("Constant power: −3 dB at the centre") },
+                    { law: "linear", label: "LN", hint: qsTr("Linear: each side falls linearly") },
+                    { law: "smooth", label: "SM", hint: qsTr("Smooth: holds level, falls in the middle") },
+                    { law: "sharp", label: "SH", hint: qsTr("Sharp: cut, both channels open in the middle") }
                 ]
 
                 delegate: Rectangle {
                     required property var modelData
                     objectName: "curveButton_" + modelData.law
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
+                    readonly property bool lit: curveRow.current === modelData.law
+                    // A square of the row's height, so four choices cost one row of sixteen pixels.
+                    Layout.preferredWidth: height
+                    Layout.preferredHeight: 16
                     radius: 2
-                    color: parent.current === modelData.law ? UiSettings.themePanel : UiSettings.themeSurface
+                    color: lit ? UiSettings.themePanel : UiSettings.themeSurface
                     border.width: 1
-                    border.color: parent.current === modelData.law ? UiSettings.themeAccent
-                                                                   : UiSettings.themeBorder
+                    border.color: lit ? UiSettings.themeAccent : UiSettings.themeBorder
 
                     Text {
                         anchors.centerIn: parent
                         text: parent.modelData.label
-                        font.pixelSize: 9
-                        color: parent.parent.current === parent.modelData.law
-                               ? UiSettings.themeText : UiSettings.themeTextDim
+                        font.pixelSize: 8
+                        color: parent.lit ? UiSettings.themeText : UiSettings.themeTextDim
                     }
 
                     MouseArea {
                         anchors.fill: parent
+                        hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: Bridge.setCrossfaderCurve(parent.modelData.law)
+                        ToolTip.visible: containsMouse
+                        ToolTip.text: parent.modelData.hint
                     }
                 }
             }
         }
-    }
+        }
 
 }
