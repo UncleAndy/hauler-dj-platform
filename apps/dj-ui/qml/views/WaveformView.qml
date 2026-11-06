@@ -43,10 +43,67 @@ Item {
         if (view.framesPerBucket <= 0 || view.columns <= 0) {
             return 0.0;
         }
-        return Math.min(1.0, (view.sourceFrame / view.framesPerBucket) / view.columns);
+        return Math.min(1.0, (view.shownFrame / view.framesPerBucket) / view.columns);
+    }
+
+    // The engine publishes twenty states a second — the right rate for numbers, far too coarse for
+    // a strip that scrolls past the playhead. Between snapshots the position is projected from the
+    // last one with the track's own sample rate and tempo, and every new snapshot puts it back on
+    // the engine's number. The picture therefore moves on every frame, and it still cannot drift.
+    readonly property bool playing: deckState !== undefined && deckState.playing === true
+    readonly property real tempoRatio: deckState !== undefined && deckState.tempo_ratio !== undefined
+                                       ? deckState.tempo_ratio : 1.0
+    property real shownFrame: sourceFrame
+    property real anchorFrame: sourceFrame
+    property double anchorMilliseconds: 0
+
+    onSourceFrameChanged: {
+        view.anchorFrame = view.sourceFrame;
+        view.anchorMilliseconds = Date.now();
+        view.shownFrame = view.sourceFrame;
+    }
+    onPlayingChanged: {
+        view.anchorFrame = view.sourceFrame;
+        view.anchorMilliseconds = Date.now();
+    }
+
+    function advance() {
+        if (!view.playing || view.tempoRatio <= 0) {
+            return;
+        }
+        const seconds = (Date.now() - view.anchorMilliseconds) / 1000.0;
+        const travelled = seconds * envelope.sampleRate * view.tempoRatio;
+        const limit = view.columns * view.framesPerBucket;
+        view.shownFrame = Math.min(view.anchorFrame + travelled, Math.max(0, limit - 1));
+    }
+
+    Timer {
+        interval: 16
+        repeat: true
+        running: view.playing
+        onTriggered: view.advance()
     }
     readonly property real windowStart: playheadRatio - zoomSpan / 2
     readonly property real windowEnd: playheadRatio + zoomSpan / 2
+
+    // The loop as fractions of the track: the strip paints in fractions, so the conversion happens
+    // once here instead of per frame inside the painter.
+    readonly property real loopRatioFrom: {
+        const region = view.loopRegion;
+        if (region === null || region.start === undefined || view.framesPerBucket <= 0
+                || view.columns <= 0) {
+            return -1;
+        }
+        return (region.start / view.framesPerBucket) / view.columns;
+    }
+    readonly property real loopRatioTo: {
+        const region = view.loopRegion;
+        if (region === null || region.end === undefined || view.framesPerBucket <= 0
+                || view.columns <= 0) {
+            return -1;
+        }
+        return (region.end / view.framesPerBucket) / view.columns;
+    }
 
     // Where a source frame lands on screen, in pixels; negative ratio means "not a frame".
     function xOfFrame(frame) {
@@ -96,146 +153,34 @@ Item {
         color: UiSettings.waveformStyle === "coloured" ? UiSettings.themeWaveBackground : UiSettings.themeSurface
         radius: 3
 
-        Canvas {
-            id: canvas
+        // The strip is drawn in C++ (WaveformItem): a fast scroll redraws it every frame, and a
+        // QML Canvas cost a map per bar and a script call per rectangle, which is what made the
+        // movement feel like a slideshow.
+        WaveformStrip {
+            id: strip
             anchors.fill: parent
             anchors.margins: 2
 
-            onPaint: {
-                const context = getContext("2d");
-                context.reset();
-                context.fillStyle = UiSettings.themeSurface.toString();
-                context.fillRect(0, 0, width, height);
+            waveform: envelope
+            windowStart: view.windowStart
+            span: view.zoomSpan
+            playheadRatio: view.playheadRatio
+            hotcues: view.hotcues
+            hasLoop: view.loopRatioFrom >= 0
+            loopFrom: Math.max(0.0, view.loopRatioFrom)
+            loopTo: Math.max(0.0, view.loopRatioTo)
 
-                const middle = height / 2;
-                const total = envelope.buckets;
-
-                // Everything outside the track is its own colour, so it cannot be mistaken for a
-                // quiet passage: before the first frame and after the last one.
-                const startX = ((0 - view.windowStart) / view.zoomSpan) * width;
-                const endX = ((1 - view.windowStart) / view.zoomSpan) * width;
-                const outside = UiSettings.waveformOutsideColor;
-                if (startX > 0) {
-                    context.fillStyle = outside;
-                    context.fillRect(0, 0, Math.min(width, startX), height);
-                }
-                if (endX < width) {
-                    context.fillStyle = outside;
-                    context.fillRect(Math.max(0, endX), 0, width - Math.max(0, endX), height);
-                }
-
-                context.strokeStyle = UiSettings.themeBorder.toString();
-                context.beginPath();
-                context.moveTo(0, middle);
-                context.lineTo(width, middle);
-                context.stroke();
-
-                if (total === 0 || width <= 0) {
-                    return;
-                }
-
-                // The window is split into bars of a fixed width, which is the segmentation step of
-                // the reference algorithm: block i covers an equal slice of time and gets one RMS
-                // per band, one amplitude and one colour. Integer positions mean no two bars can
-                // land on the same pixel, which is what used to produce moiré.
-                const barWidth = Math.max(1, UiSettings.waveformBarWidth);
-                const barGap = Math.max(0, UiSettings.waveformBarGap);
-                const step = barWidth + barGap;
-                const barCount = Math.max(1, Math.floor(width / step));
-                const bars = envelope.profile(barCount, view.windowStart, view.zoomSpan);
-                const coloured = UiSettings.waveformStyle === "coloured";
-                const flatColour = UiSettings.waveformMidColor;
-                for (let index = 0; index < bars.length; ++index) {
-                    const bar = bars[index];
-                    if (bar.outside) {
-                        // The area beyond the track keeps the strip colour, not a bar.
-                        continue;
-                    }
-                    // Amplitude is already normalised against the loudest block of the track, so a
-                    // quiet track still fills the strip instead of drawing a thin line.
-                    // Never skip a bar: silence still draws the centre line, so the waveform stays
-                    // one continuous shape instead of splitting into separate vertical strokes.
-                    const half = Math.max(0.5, bar.amplitude * middle);
-                    const x = index * step;
-                    if (!coloured) {
-                        context.fillStyle = flatColour;
-                        context.fillRect(x, middle - half, barWidth, Math.max(1, half * 2));
-                    } else {
-                        // Full brightness at the centre axis, about half of it at the tips: the
-                        // reference waveform glows from the middle outwards instead of being a flat
-                        // block of colour. Three stacked slices give that for the cost of two
-                        // extra rectangles per bar.
-                        const glow = [0.42, 1.0, 0.42];
-                        const base = Qt.color(bar.rgb);
-                        for (let slice = 0; slice < 3; ++slice) {
-                            const from = middle - half + (2 * half) * slice / 3.0;
-                            const to = middle - half + (2 * half) * (slice + 1) / 3.0;
-                            context.fillStyle = Qt.rgba(base.r * glow[slice],
-                                                        base.g * glow[slice],
-                                                        base.b * glow[slice], 1.0);
-                            context.fillRect(x, from, barWidth, Math.max(1, to - from));
-                        }
-                    }
-                }
-                // The loop, if one is set: a tinted band across the whole height.
-                if (view.loopRegion !== null && view.loopRegion.start !== undefined) {
-                    const from = view.xOfFrame(view.loopRegion.start);
-                    const to = view.xOfFrame(view.loopRegion.end);
-                    if (to > from) {
-                        const left = Math.max(0, from);
-                        const right = Math.min(width, to);
-                        if (right > left) {
-                            context.fillStyle = "rgba(127, 176, 226, 0.14)";
-                            context.fillRect(left, 0, right - left, height);
-                        }
-                        context.strokeStyle = UiSettings.themeAccent.toString();
-                        context.beginPath();
-                        context.moveTo(from, 0);
-                        context.lineTo(from, height);
-                        context.moveTo(to, 0);
-                        context.lineTo(to, height);
-                        context.stroke();
-                    }
-                }
-
-                // Hotcues: the engine's frames, so a marker cannot drift from the sound.
-                context.font = "9px sans-serif";
-                for (let slot = 0; slot < view.hotcues.length; ++slot) {
-                    const x = view.xOfFrame(view.hotcues[slot]);
-                    if (x < 0 || x > width) {
-                        continue;
-                    }
-                    context.fillStyle = UiSettings.themeMarker.toString();
-                    context.fillRect(x - 1, 0, 2, 6);
-                    context.fillText(String(slot + 1), x + 3, 9);
-                }
-
-                // The playhead is the centre of the strip by construction; drawn from the engine's
-                // own frame count, never from a local timer.
-                const playhead = ((view.playheadRatio - view.windowStart) / view.zoomSpan) * width;
-                context.strokeStyle = UiSettings.themePlayhead.toString();
-                context.beginPath();
-                context.moveTo(playhead, 0);
-                context.lineTo(playhead, height);
-                context.stroke();
-            }
-
-            Connections {
-                target: envelope
-                function onChanged() { canvas.requestPaint() }
-            }
-            Connections {
-                target: UiSettings
-                function onChanged() { canvas.requestPaint() }
-            }
-            Connections {
-                target: view
-                function onSourceFrameChanged() { canvas.requestPaint() }
-                function onZoomSpanChanged() { canvas.requestPaint() }
-                function onHotcuesChanged() { canvas.requestPaint() }
-            }
-            onWidthChanged: requestPaint()
-            onHeightChanged: requestPaint()
+            coloured: UiSettings.waveformStyle === "coloured"
+            barWidth: UiSettings.waveformBarWidth
+            barGap: UiSettings.waveformBarGap
+            background: UiSettings.waveformStyle === "coloured" ? UiSettings.themeWaveBackground
+                                                                : UiSettings.themeSurface
+            outside: UiSettings.waveformOutsideColor
+            flat: UiSettings.waveformMidColor
+            border: UiSettings.themeBorder
+            accent: UiSettings.themeAccent
+            marker: UiSettings.themeMarker
+            playhead: UiSettings.themePlayhead
 
             MouseArea {
                 anchors.fill: parent

@@ -14,6 +14,8 @@
 #include "BridgeClient.h"
 #include "UiSettings.h"
 #include "Waveform.h"
+#include "WaveformItem.h"
+#include "WaveformPainter.h"
 
 #include <QCommandLineOption>
 #include <QCommandLineParser>
@@ -643,6 +645,10 @@ int main(int argc, char *argv[])
         QStringLiteral("Trim the three bands before colouring, comma separated "
                        "(default 1,1,1). Raise the low gain to see more bass colour."),
         QStringLiteral("low,mid,high"));
+    const QCommandLineOption benchOption(
+        QStringLiteral("waveform-bench"),
+        QStringLiteral("Redraw the strip N times and report the cost of a frame, in milliseconds."),
+        QStringLiteral("frames"));
     const QCommandLineOption themeCheckOption(
         QStringLiteral("ui-theme-check"),
         QStringLiteral("Grab the shell and fail unless it is dark: a light panel means the palette "
@@ -690,6 +696,7 @@ int main(int argc, char *argv[])
     parser.addOption(spanOption);
     parser.addOption(screenshotOption);
     parser.addOption(themeCheckOption);
+    parser.addOption(benchOption);
     parser.addOption(bandGainOption);
     parser.addOption(barWidthOption);
     parser.addOption(barGapOption);
@@ -703,6 +710,7 @@ int main(int argc, char *argv[])
     // A type, not a singleton: two decks hold two envelopes, and a singleton made the second deck
     // paint the first deck's waveform.
     qmlRegisterType<Waveform>("DjPlatform.Ui", 1, 0, "WaveformEnvelope");
+    qmlRegisterType<WaveformItem>("DjPlatform.Ui", 1, 0, "WaveformStrip");
     Waveform waveform; // used by the headless self-check
     UiSettings settings;
     if (parser.isSet(outsideColorOption)
@@ -942,6 +950,65 @@ int main(int argc, char *argv[])
     if (engine.rootObjects().isEmpty()) {
         std::fprintf(stderr, "dj-ui: the QML scene did not load\n");
         return 1;
+    }
+
+    // A frame of the strip, timed: the same code the deck runs, painted into an image instead of a
+    // window, so the number means something on a machine without a display.
+    if (parser.isSet(benchOption)) {
+        const QString path = parser.value(loadOption);
+        Waveform envelope;
+        if (path.isEmpty()) {
+            // A five-minute track at one hundred columns per second: the size a real envelope has,
+            // so the figure does not flatter a tiny fixture.
+            envelope.loadSynthetic(30000);
+        } else if (!envelope.load(path)) {
+            std::fprintf(stderr, "dj-ui: %s\n", qPrintable(envelope.error()));
+            return 1;
+        }
+        bool ok = false;
+        const int frames = parser.value(benchOption).toInt(&ok);
+        const int count = ok && frames > 0 ? frames : 200;
+        QImage image(1200, 160, QImage::Format_RGB32);
+        WaveformStyle style;
+        style.background = QColor(QStringLiteral("#141414"));
+        style.outside = QColor(QStringLiteral("#101010"));
+        style.flat = QColor(QStringLiteral("#5b636d"));
+        style.border = QColor(QStringLiteral("#383838"));
+        style.accent = QColor(QStringLiteral("#5090f0"));
+        style.marker = QColor(QStringLiteral("#e2c07f"));
+        style.playhead = QColor(QStringLiteral("#f0f3f6"));
+        style.barWidth = settings.waveformBarWidth();
+        style.barGap = settings.waveformBarGap();
+
+        std::vector<double> costs;
+        costs.reserve(std::size_t(count));
+        for (int frame = 0; frame < count; ++frame) {
+            // Scroll across the track, the way a second of playback at fiftyfold zoom does.
+            const double start = 0.5 * double(frame) / double(count);
+            QElapsedTimer timer;
+            timer.start();
+            QPainter painter(&image);
+            paintWaveform(painter, envelope, style, image.rect(), start, 0.1, start + 0.05, {}, false,
+                          0.0, 0.0);
+            painter.end();
+            costs.push_back(double(timer.nsecsElapsed()) / 1.0e6);
+        }
+        std::sort(costs.begin(), costs.end());
+        const auto at = [&costs](double share) {
+            const std::size_t index = std::size_t(qBound(0.0, share, 1.0) * double(costs.size() - 1));
+            return costs[index];
+        };
+        std::fprintf(stdout,
+                     "dj-ui: frame cost p50 %.2f ms, p99 %.2f ms, max %.2f ms over %d frames\n",
+                     at(0.50), at(0.99), costs.back(), count);
+        // A frame has a 16.7 ms budget at 60 Hz; taking more than half of it to paint the strip
+        // means the strip, not the display, sets the frame rate.
+        if (at(0.99) > 8.0) {
+            std::fprintf(stderr, "dj-ui: a frame costs %.2f ms, too much to scroll smoothly\n",
+                         at(0.99));
+            return 1;
+        }
+        return 0;
     }
 
     if (parser.isSet(themeCheckOption) || parser.isSet(screenshotOption)) {

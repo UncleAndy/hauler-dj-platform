@@ -8,6 +8,7 @@
 #pragma once
 
 #include <QColor>
+#include <QRgb>
 #include <QObject>
 #include <QString>
 #include <QVariantList>
@@ -26,6 +27,24 @@ class Waveform : public QObject
     Q_PROPERTY(QString error READ error NOTIFY changed)
 
 public:
+    // One envelope column, parsed once at load: min and max of the mix, and the linear RMS of the
+    // three bands. Keeping the numbers in plain floats instead of a QVariantMap per column is what
+    // makes redrawing a frame cheap — 1200 bars are read sixty times a second.
+    struct Column {
+        float minimum = 0.0F;
+        float maximum = 0.0F;
+        float low = 0.0F;
+        float mid = 0.0F;
+        float high = 0.0F;
+    };
+
+    // One bar of the drawn strip, ready to paint.
+    struct Bar {
+        float amplitude = 0.0F;
+        QRgb colour = 0;
+        bool outside = false;
+    };
+
     explicit Waveform(QObject *parent = nullptr);
 
     QVariantList columns() const { return m_columns; }
@@ -46,6 +65,15 @@ public:
     // time blocks, which is the segmentation step of the reference algorithm; every block gets the
     // RMS of each band, its amplitude, and the colour those three numbers produce.
     Q_INVOKABLE QVariantList profile(int columns, double windowStart, double span) const;
+
+    // Fill an envelope without a file, for the frame-cost measurement and for the gate on machines
+    // that have no media fixtures. The shape is deterministic, so a figure from one machine can be
+    // compared with another.
+    void loadSynthetic(int columns);
+
+    // The same profile, but as plain structs in a vector: the drawing path uses this and never
+    // touches QVariantList, so a frame costs no allocations.
+    std::vector<Bar> bars(int columns, double windowStart, double span) const;
 
     // Envelope columns the last `profile` call consumed; equals `buckets` for the whole track.
     Q_INVOKABLE int lastCoveredBuckets() const { return m_lastCovered; }
@@ -72,6 +100,7 @@ private:
     int rampForZoom(double columnsPerBar) const;
 
     QVariantList m_columns;
+    std::vector<Column> m_raw;
     int m_framesPerBucket = 0;
     int m_sampleRate = 0;
     QString m_source;

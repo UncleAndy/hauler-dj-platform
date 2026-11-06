@@ -88,6 +88,8 @@ bool Waveform::load(const QString &path)
 
     QVariantList columns;
     columns.reserve(static_cast<int>(count));
+    std::vector<Column> raw;
+    raw.reserve(static_cast<std::size_t>(count));
     const char *data = bytes.constData() + kHeaderBytes;
     for (quint64 index = 0; index < count; ++index) {
         const auto *column = reinterpret_cast<const unsigned char *>(data + index * kColumnBytes);
@@ -98,6 +100,11 @@ bool Waveform::load(const QString &path)
             const double normalised = static_cast<double>(value) / 255.0;
             return normalised * normalised;
         };
+        raw.push_back(Column{static_cast<float>(low) / 32767.0F,
+                             static_cast<float>(high) / 32767.0F,
+                             static_cast<float>(square(column[4])),
+                             static_cast<float>(square(column[5])),
+                             static_cast<float>(square(column[6]))});
         columns.append(QVariantMap{{QStringLiteral("min"), static_cast<double>(low) / 32767.0},
                                    {QStringLiteral("max"), static_cast<double>(high) / 32767.0},
                                    {QStringLiteral("low"), square(column[4])},
@@ -106,6 +113,7 @@ bool Waveform::load(const QString &path)
     }
 
     m_columns = columns;
+    m_raw = std::move(raw);
     m_framesPerBucket = static_cast<int>(framesPerBucket);
     m_sampleRate = static_cast<int>(sampleRate);
     m_source = path;
@@ -120,10 +128,8 @@ void Waveform::measure()
     // The reference algorithm normalises against the loudest block of the whole track, per channel.
     // The height of a bar is the peak of its block, so drum hits become needles instead of humps.
     double loudest = 0.0;
-    for (const QVariant &entry : m_columns) {
-        const QVariantMap column = entry.toMap();
-        const double peak = qMax(qAbs(column.value(QStringLiteral("min")).toDouble()),
-                                 qAbs(column.value(QStringLiteral("max")).toDouble()));
+    for (const Column &entry : m_raw) {
+        const double peak = qMax(qAbs(double(entry.minimum)), qAbs(double(entry.maximum)));
         loudest = qMax(loudest, peak);
     }
     m_maxAmplitude = qMax(loudest, 1e-6);
@@ -131,11 +137,10 @@ void Waveform::measure()
     // than treble in any recording, and without this every bar lands on the red end of the scale no
     // matter what the music does. The perceptual weights of the specification then apply on top.
     std::array<std::vector<double>, 3> samples;
-    for (const QVariant &entry : m_columns) {
-        const QVariantMap column = entry.toMap();
-        samples[0].push_back(column.value(QStringLiteral("low")).toDouble());
-        samples[1].push_back(column.value(QStringLiteral("mid")).toDouble());
-        samples[2].push_back(column.value(QStringLiteral("high")).toDouble());
+    for (const Column &entry : m_raw) {
+        samples[0].push_back(entry.low);
+        samples[1].push_back(entry.mid);
+        samples[2].push_back(entry.high);
     }
     for (int band = 0; band < 3; ++band) {
         std::sort(samples[band].begin(), samples[band].end());
@@ -149,39 +154,65 @@ void Waveform::measure()
     m_peakRamps = peakRamps();
 }
 
-QVariantList Waveform::profile(int columns, double windowStart, double span) const
+void Waveform::loadSynthetic(int columns)
 {
-    QVariantList bars;
-    m_lastCovered = 0;
-    if (columns <= 0 || m_columns.isEmpty() || span <= 0.0) {
-        return bars;
+    const int count = qMax(1, columns);
+    m_columns.clear();
+    m_raw.clear();
+    m_columns.reserve(count);
+    m_raw.reserve(std::size_t(count));
+    for (int index = 0; index < count; ++index) {
+        // A slow swell with a beat on top: the same mixture of near and far detail a track has.
+        const double phase = double(index) / double(count);
+        const double swell = 0.55 + 0.35 * std::sin(phase * 6.2831853 * 3.0);
+        const double beat = 0.15 * std::sin(phase * 6.2831853 * 240.0);
+        const auto level = float(qBound(0.0, swell + beat, 1.0));
+        const auto band = [&](double weight) {
+            return float(qBound(0.0, double(level) * weight, 1.0));
+        };
+        m_raw.push_back(Column{level, level, band(0.9), band(0.5), band(0.25)});
     }
-    const int total = m_columns.size();
-    bars.reserve(columns);
+    m_framesPerBucket = 128;
+    m_sampleRate = 48000;
+    m_source = QStringLiteral("synthetic");
+    m_error.clear();
+    measure();
+    emit changed();
+}
+
+std::vector<Waveform::Bar> Waveform::bars(int columns, double windowStart, double span) const
+{
+    std::vector<Bar> result;
+    m_lastCovered = 0;
+    if (columns <= 0 || m_raw.empty() || span <= 0.0) {
+        return result;
+    }
+    const int total = int(m_raw.size());
+    result.reserve(std::size_t(columns));
 
     // Integer edges per block: the ranges tile the window by construction, so no column of the
     // envelope is counted twice and none is skipped.
     const int coveredFrom = qBound(0, int(std::floor(windowStart * total)), total);
     const int coveredTo = qBound(0, int(std::ceil((windowStart + span) * total)), total);
     m_lastCovered = qMax(0, coveredTo - coveredFrom);
-    const double columnsPerBar =
-        columns > 0 ? double(m_lastCovered) / double(columns) : 0.0;
+    const double columnsPerBar = double(m_lastCovered) / double(columns);
+    const double *ramp = m_peakRamps.empty()
+        ? nullptr
+        : m_peakRamps.at(std::size_t(rampForZoom(columnsPerBar))).data();
 
     int previous = coveredFrom;
     for (int bar = 0; bar < columns; ++bar) {
         // A bar that lies wholly before the start or after the end of the track is not silence in
-        // the track, it is outside it. It used to be clamped to the nearest column, so the empty
-        // margins carried the edge column's colour and looked like a piece of another waveform.
+        // the track, it is outside it: it gets its own colour instead of the edge column's.
         const double barStart = windowStart + span * double(bar) / double(columns);
         const double barEnd = windowStart + span * double(bar + 1) / double(columns);
         if (barEnd <= 0.0 || barStart >= 1.0) {
-            bars.append(QVariantMap{{QStringLiteral("amplitude"), 0.0},
-                                    {QStringLiteral("rgb"), QString()},
-                                    {QStringLiteral("outside"), true}});
+            Bar empty;
+            empty.outside = true;
+            result.push_back(empty);
             continue;
         }
-        const double edge = windowStart + span * double(bar + 1) / double(columns);
-        int next = qBound(0, int(std::floor(edge * double(total))), total);
+        int next = qBound(0, int(std::floor(barEnd * total)), total);
         if (next < previous) {
             next = previous;
         }
@@ -189,38 +220,16 @@ QVariantList Waveform::profile(int columns, double windowStart, double span) con
         int last = next - 1;
         if (last < first) {
             // Zoomed in further than one envelope column per bar: take the column under the middle
-            // of this bar, not the first column of the window. The old fallback made every bar of a
-            // zoomed view show the same column, so the whole strip carried one column's amplitude
-            // and pulsed with the music as the playhead moved through it.
+            // of this bar, not the first column of the window.
             const double middle = windowStart + span * (double(bar) + 0.5) / double(columns);
-            first = qBound(0, int(std::floor(middle * double(total))), qMax(0, total - 1));
+            first = qBound(0, int(std::floor(middle * total)), qMax(0, total - 1));
             last = first;
         }
         previous = next;
 
-        // RMS of each band over the block: sqrt of the mean of the squares, as the reference
-        // defines it. The bands are already RMS per envelope column, so their squares average.
-        double energy[3] = {0.0, 0.0, 0.0};
-        int seen = 0;
-        for (int index = first; index <= last && index < total; ++index) {
-            const QVariantMap column = m_columns.at(index).toMap();
-            energy[0] += column.value(QStringLiteral("low")).toDouble()
-                * column.value(QStringLiteral("low")).toDouble();
-            energy[1] += column.value(QStringLiteral("mid")).toDouble()
-                * column.value(QStringLiteral("mid")).toDouble();
-            energy[2] += column.value(QStringLiteral("high")).toDouble()
-                * column.value(QStringLiteral("high")).toDouble();
-            ++seen;
-        }
-        const double divisor = seen > 0 ? seen : 1;
-        double bands[3] = {0.0, 0.0, 0.0};
-        for (int band = 0; band < 3; ++band) {
-            bands[band] = std::sqrt(energy[band] / divisor) * m_bandGain[band];
-        }
-        // The colour of a bar is the average of the columns it covers, taken from the table that
-        // was computed once at load. Deriving it here instead made it depend on the visible window:
-        // as the waveform scrolled, every frame re-smoothed a different set of neighbours and the
-        // whole strip shimmered in time with the music.
+        // The colour of a bar is the average of the columns it covers, taken from the table that was
+        // computed once at load: deriving it here would make it depend on the visible window, and the
+        // strip would shimmer as it scrolled.
         double red = 0.0;
         double green = 0.0;
         double blue = 0.0;
@@ -234,25 +243,44 @@ QVariantList Waveform::profile(int columns, double windowStart, double span) con
         const QColor colour = counted > 0
             ? QColor::fromRgbF(red / counted, green / counted, blue / counted)
             : QColor(0, 0, 0);
-        // Height: the average of the pre-smoothed peaks over the columns this bar covers. A raw
-        // peak picks whichever column happened to be loudest, so with several columns per bar the
-        // outline jumps from bar to bar — that is the moiré. The smoothing is prepared once for the
-        // whole track, per zoom level, so it cannot depend on where the window sits.
-        const double *ramp = m_peakRamps.at(rampForZoom(columnsPerBar)).data();
-        double rampSum = 0.0;
-        int rampSeen = 0;
-        for (int index = first; index <= last && index < total; ++index) {
-            rampSum += ramp[index];
-            ++rampSeen;
-        }
-        const double peak = rampSeen > 0 ? rampSum / rampSeen : 0.0;
-        bars.append(QVariantMap{
-            {QStringLiteral("amplitude"), qBound(0.0, peak / m_maxAmplitude, 1.0)},
-            {QStringLiteral("rgb"), colour.name()},
-            {QStringLiteral("outside"), false}});
-    }
 
-    return bars;
+        // Height: the average of the pre-smoothed peaks over the columns this bar covers. A raw peak
+        // picks whichever column happened to be loudest, so with several columns per bar the outline
+        // jumps from bar to bar — that is the moiré. The smoothing is prepared once for the whole
+        // track, per zoom level, so it cannot depend on where the window sits.
+        double height = 0.0;
+        if (ramp != nullptr) {
+            double rampSum = 0.0;
+            int rampSeen = 0;
+            for (int index = first; index <= last && index < total; ++index) {
+                rampSum += ramp[index];
+                ++rampSeen;
+            }
+            height = rampSeen > 0 ? (rampSum / rampSeen) / m_maxAmplitude : 0.0;
+        }
+
+        Bar entry;
+        entry.amplitude = float(qBound(0.0, height, 1.0));
+        entry.colour = colour.rgb();
+        result.push_back(entry);
+    }
+    return result;
+}
+
+QVariantList Waveform::profile(int columns, double windowStart, double span) const
+{
+    // The QML and the offline renderer read this shape; the live strip uses `bars` and never pays
+    // for a QVariantMap per bar.
+    QVariantList list;
+    const std::vector<Bar> built = bars(columns, windowStart, span);
+    list.reserve(int(built.size()));
+    for (const Bar &bar : built) {
+        list.append(QVariantMap{
+            {QStringLiteral("amplitude"), double(bar.amplitude)},
+            {QStringLiteral("rgb"), bar.outside ? QString() : QColor(bar.colour).name()},
+            {QStringLiteral("outside"), bar.outside}});
+    }
+    return list;
 }
 
 void Waveform::setPalette(const QColor &low, const QColor &mid, const QColor &high)
@@ -276,11 +304,8 @@ std::vector<QColor> Waveform::columnColours() const
     static const double perception[3] = {1.0, 1.5, 2.5};
     std::vector<QColor> colours;
     colours.reserve(std::size_t(m_columns.size()));
-    for (const QVariant &entry : m_columns) {
-        const QVariantMap column = entry.toMap();
-        const double bands[3] = {column.value(QStringLiteral("low")).toDouble(),
-                                 column.value(QStringLiteral("mid")).toDouble(),
-                                 column.value(QStringLiteral("high")).toDouble()};
+    for (const Column &entry : m_raw) {
+        const double bands[3] = {entry.low, entry.mid, entry.high};
         double raw[3] = {0.0, 0.0, 0.0};
         for (int band = 0; band < 3; ++band) {
             // Against the square root of the band's typical level: full equalisation paints a
@@ -334,13 +359,11 @@ std::vector<std::vector<double>> Waveform::peakRamps() const
     // strip pump.
     std::vector<double> raw;
     raw.reserve(std::size_t(m_columns.size()));
-    for (const QVariant &entry : m_columns) {
-        const QVariantMap column = entry.toMap();
-        raw.push_back(qMax(qAbs(column.value(QStringLiteral("min")).toDouble()),
-                           qAbs(column.value(QStringLiteral("max")).toDouble())));
+    for (const Column &entry : m_raw) {
+        raw.push_back(qMax(qAbs(double(entry.minimum)), qAbs(double(entry.maximum))));
     }
 
-    static const int radii[] = {0, 2, 4, 8, 16};
+    static const int radii[] = {0, 2, 4, 8, 16, 32};
     std::vector<std::vector<double>> ramps;
     ramps.reserve(sizeof(radii) / sizeof(radii[0]));
     for (const int radius : radii) {
@@ -372,13 +395,14 @@ int Waveform::rampForZoom(double columnsPerBar) const
 {
     // Zoomed in (a bar is one column or less) there is nothing to smooth: transients must stay
     // needles. Zoomed out, the radius grows with the columns per bar, chosen from the fixed set.
-    static const int radii[] = {0, 2, 4, 8, 16};
+    static const int radii[] = {0, 2, 4, 8, 16, 32};
     if (columnsPerBar <= 1.5) {
         return 0; // one bar is one column or less: nothing to smooth
     }
-    // Twice the columns per bar: a bar then averages over what is effectively a smooth slope
-    // instead of sampling the jagged edge of the envelope.
-    const double wanted = columnsPerBar * 2.0;
+    // Eight bars' worth of columns: a bar then reads the trend across its neighbourhood instead of
+    // the jagged edge of its own few columns. Pink noise — statistically the steadiest material there
+    // is — used to wander by ten pixels on the overview; that is the residual wave the eye catches.
+    const double wanted = columnsPerBar * 8.0;
     for (int index = 1; index < int(sizeof(radii) / sizeof(radii[0])); ++index) {
         if (radii[index] >= wanted) {
             return index;
