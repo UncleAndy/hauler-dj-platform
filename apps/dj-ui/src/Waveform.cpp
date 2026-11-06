@@ -210,7 +210,9 @@ std::vector<Waveform::Bar> Waveform::bars(int columns, double windowStart, doubl
     // slice and the outline needs ironing or it grains; zoomed in, a bar is a few milliseconds and
     // ironing would flatten the hits. Between the two the ramp fades in with the window, so every
     // step of the wheel changes the amount of smoothing instead of flipping it on at one zoom.
-    const double smoothWeight = qBound(0.0, (span - 0.35) / 0.55, 1.0);
+    // Never zero. At the deepest zoom a little blend is what keeps the strip from turning into a
+    // comb of repeated envelope columns; at the whole track it is full.
+    const double smoothWeight = qBound(0.5, 0.5 + 0.5 * (span - 0.05) / 0.85, 1.0);
     const int level = rampForZoom(columnsPerBar);
     const double *ramp = (!m_peakRamps.empty() && smoothWeight > 0.0)
         ? m_peakRamps.at(std::size_t(level)).data()
@@ -408,7 +410,9 @@ std::vector<std::vector<double>> Waveform::peakRamps() const
         raw.push_back(qMax(qAbs(double(entry.minimum)), qAbs(double(entry.maximum))));
     }
 
-    static const int radii[] = {0, 2, 4, 8, 16, 32};
+    // Radius 1 is not "no smoothing": it is the smallest blend, and at the deepest zoom it is what
+    // turns the envelope's stair steps into a slope instead of leaving the eye a comb.
+    static const int radii[] = {1, 4, 8, 16, 32, 64};
     std::vector<std::vector<double>> ramps;
     ramps.reserve(sizeof(radii) / sizeof(radii[0]));
     for (const int radius : radii) {
@@ -440,9 +444,11 @@ int Waveform::rampForZoom(double columnsPerBar) const
 {
     // Zoomed in (a bar is one column or less) there is nothing to smooth: transients must stay
     // needles. Zoomed out, the radius grows with the columns per bar, chosen from the fixed set.
-    static const int radii[] = {0, 2, 4, 8, 16, 32};
+    static const int radii[] = {1, 4, 8, 16, 32, 64};
     if (columnsPerBar <= 1.5) {
-        return 0; // one bar is one column or less: nothing to smooth
+        // One bar is one column or less: blend the neighbours only, so the steps between envelope
+        // columns read as a slope rather than as a comb of equal-height runs.
+        return 0;
     }
     // Eight bars' worth of columns: a bar then reads the trend across its neighbourhood instead of
     // the jagged edge of its own few columns. Pink noise — statistically the steadiest material there

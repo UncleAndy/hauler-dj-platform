@@ -127,7 +127,7 @@ Item {
 
     // Zoom is always about the playhead: it is the centre, so only the span changes.
     function zoomBy(factor) {
-        view.zoomSpan = Math.min(1.0, Math.max(0.01, view.zoomSpan / factor));
+        view.zoomSpan = Math.min(1.0, Math.max(0.0025, view.zoomSpan / factor));
     }
 
 

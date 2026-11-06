@@ -93,7 +93,7 @@ public:
     // Frames per second, 5..240; false when the number is outside what a display can use.
     bool setFrameHz(int hz);
 
-    // Default zoom, 1..100; false when outside that.
+    // Default zoom, 1..400; false when outside that.
     bool setWaveformZoom(double factor);
 
     // "coloured" or "plain"; anything else is refused.

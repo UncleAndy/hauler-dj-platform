@@ -74,7 +74,7 @@ bool UiSettings::setFrameHz(int hz)
 
 bool UiSettings::setWaveformZoom(double factor)
 {
-    if (!(factor >= 1.0 && factor <= 100.0)) {
+    if (!(factor >= 1.0 && factor <= 400.0)) {
         return false;
     }
     if (qFuzzyCompare(m_waveformZoom, factor)) {
