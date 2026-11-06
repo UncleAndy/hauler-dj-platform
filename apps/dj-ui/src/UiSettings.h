@@ -20,6 +20,8 @@ class UiSettings : public QObject
     Q_PROPERTY(QString themeRaised READ themeRaised CONSTANT)
     Q_PROPERTY(QString themeBorder READ themeBorder CONSTANT)
     Q_PROPERTY(QString themeText READ themeText CONSTANT)
+    // Text on the accent: near-black, because the accent is bright.
+    Q_PROPERTY(QString themeTextOnAccent READ themeTextOnAccent CONSTANT)
     Q_PROPERTY(QString themeTextDim READ themeTextDim CONSTANT)
     Q_PROPERTY(QString themeAccent READ themeAccent CONSTANT)
     Q_PROPERTY(QString themeAccentDim READ themeAccentDim CONSTANT)
@@ -59,6 +61,7 @@ public:
     QString themePanel() const { return QStringLiteral("#181818"); }
     QString themeRaised() const { return QStringLiteral("#282828"); }
     QString themeBorder() const { return QStringLiteral("#383838"); }
+    QString themeTextOnAccent() const { return QStringLiteral("#0b0b0b"); }
     QString themeText() const { return QStringLiteral("#c8c8c8"); }
     QString themeTextDim() const { return QStringLiteral("#8a8a8a"); }
     QString themeAccent() const { return QStringLiteral("#5090f0"); }

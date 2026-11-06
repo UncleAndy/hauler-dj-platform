@@ -121,8 +121,10 @@ Pane {
                 enabled: Browser.entries.length > 0
                 onClicked: Browser.up()
             }
+            // The target is named in words, not painted into one of the buttons: at rest every deck
+            // button looks the same, and only a playing deck stands out.
             Label {
-                text: qsTr("→")
+                text: qsTr("→ %1").arg(browser.target)
                 color: UiSettings.themeTextDim
                 font.pixelSize: 10
             }
@@ -136,9 +138,8 @@ Pane {
                     padding: 2
                     implicitWidth: 20
                     implicitHeight: 18
-                    checkable: true
-                    checked: browser.target === modelData
                     // Blue for a playing deck: the browser tells the truth about the decks it feeds.
+                    // The chosen target is not a colour of its own — it is written in the header.
                     playing: browser.deckIsPlaying(modelData)
                     // Not disabled: pressing a playing deck's button is how a person learns why
                     // nothing happened. It blinks red instead of doing nothing at all.

@@ -330,3 +330,25 @@ dj-ui: deck A is playing, its browser button is #5090f0   — синяя
 dj-ui: after the blink the button is #5090f0              — и осталась синей
 dj-ui: refused load: browser button 1, deck button 1, flashing yes
 ```
+
+## Одинаковые кнопки в покое, и ни одного undefined
+
+**Тёмно-синяя «A» в начале.** Кнопки дек были `checkable` и красились по `checked`, а цель браузера
+по умолчанию — дека A. То есть цвет говорил не «играет», а «это цель», и одна кнопка всегда выглядела
+выбранной. Убрано: кнопки больше не переключаемые, цель показана словами в шапке (`→ A`), а лицо
+кнопки в покое у всех четырёх одно — `themeRaised`.
+
+**`Unable to assign [undefined] to QColor`.** `RefusalButton` красил текст на синем через
+`UiSettings.themeTextOnAccent`, а такого свойства в настройках не было — только в старом `Theme.qml`.
+Свойство добавлено (`#0b0b0b`, как и было в измеренной палитре), предупреждение ушло.
+
+Проверки:
+
+```
+dj-ui: deck buttons at rest are all #282828   — в --layout-check, все четыре одинаковы
+dj-ui: deck A is playing, its browser button is #5090f0
+dj-ui: after the blink the button is #5090f0
+```
+
+`--smoke` по-прежнему требует ноль предупреждений Qt при загрузке сцены, поэтому undefined-цвет
+больше не проскочит.

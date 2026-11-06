@@ -20,12 +20,12 @@ Button {
     // blue, not to grey.
     property bool playing: false
 
+    // Suspended and normal buttons look the same unless the deck is playing; only a press is drawn.
     readonly property color faceColor: control.flashOn
                                        ? UiSettings.themeDanger
                                        : (control.playing ? UiSettings.themeAccent
-                                                          : (control.down || control.checked
-                                                             ? UiSettings.themeAccentDim
-                                                             : UiSettings.themeRaised))
+                                                          : (control.down ? UiSettings.themeAccentDim
+                                                                          : UiSettings.themeRaised))
     readonly property color faceTextColor: control.flashOn
                                            ? UiSettings.themeBackground
                                            : (control.playing ? UiSettings.themeTextOnAccent

@@ -1428,6 +1428,33 @@ int main(int argc, char *argv[])
             std::fprintf(stdout, "dj-ui: deck %s %.0f px tall, strip %.0f px, overview %.0f px\n", id,
                          deck->height(), detail->height(), overview->height());
         }
+        // At rest nothing plays, so every deck button in the browser must look the same: a button
+        // that wears a selection colour just because it is the first in the row says nothing true.
+        {
+            QColor first;
+            for (const char *id : {"A", "B", "C", "D"}) {
+                auto *button = findItem(content,
+                                        QStringLiteral("deckButton_%1").arg(QString::fromLatin1(id)));
+                if (button == nullptr) {
+                    std::fprintf(stderr, "dj-ui: the browser has no button for deck %s\n", id);
+                    return 1;
+                }
+                const QColor face = button->property("faceColor").value<QColor>();
+                if (first.isValid() && face != first) {
+                    std::fprintf(stderr, "dj-ui: deck %s looks different at rest (%s against %s)\n",
+                                 id, qPrintable(face.name()), qPrintable(first.name()));
+                    return 1;
+                }
+                first = face;
+            }
+            std::fprintf(stdout, "dj-ui: deck buttons at rest are all %s\n",
+                         qPrintable(first.name()));
+            if (first != QColor(settings.themeRaised())) {
+                std::fprintf(stderr, "dj-ui: deck buttons do not wear the resting colour\n");
+                return 1;
+            }
+        }
+
         // The zoom a deck opens at, measured from the item itself.
         if (auto *stripView = findItem(content, QStringLiteral("deckDetail_A")); stripView != nullptr) {
             const double span = stripView->property("zoomSpan").toDouble();
