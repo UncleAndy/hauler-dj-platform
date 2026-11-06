@@ -26,6 +26,7 @@
 #include <QGuiApplication>
 #include <QPalette>
 #include <QDir>
+#include <QThread>
 #include <QMap>
 #include <QTemporaryDir>
 #include <QImage>
@@ -715,6 +716,10 @@ int main(int argc, char *argv[])
         QStringLiteral("connect"),
         QStringLiteral("Engine socket to connect to (default: %1).").arg(defaultSocketPath()),
         QStringLiteral("path"));
+    const QCommandLineOption stripCheckOption(
+        QStringLiteral("strip-check"),
+        QStringLiteral("With --connect and --load: load the track into deck A and require the deck's "
+                       "strip to receive the envelope the engine published."));
     const QCommandLineOption gainCheckOption(
         QStringLiteral("gain-check"),
         QStringLiteral("With --connect: send a channel gain and require the snapshot to carry it "
@@ -819,6 +824,7 @@ int main(int argc, char *argv[])
     parser.addOption(connectOption);
     parser.addOption(selfCheckOption);
     parser.addOption(gainCheckOption);
+    parser.addOption(stripCheckOption);
     parser.addOption(loadOption);
     parser.addOption(loadSecondOption);
     parser.addOption(outsideColorOption);
@@ -1345,6 +1351,70 @@ int main(int argc, char *argv[])
             }
         }
         std::fprintf(stdout, "dj-ui: layout %s applied as set\n", qPrintable(layout.preset()));
+        return 0;
+    }
+
+    if (parser.isSet(stripCheckOption)) {
+        // The picture is the thing the user sees, so it gets its own measurement: the envelope the
+        // engine publishes has to reach the strip that draws it.
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        QEventLoop settle;
+        QTimer::singleShot(600, &settle, &QEventLoop::quit);
+        settle.exec();
+
+        // The shell connects at the end of main; this mode returns before that, so the link is made
+        // here or the check would measure a UI that never heard from the engine.
+        if (parser.isSet(connectOption)) {
+            bridge->connectToEngine(parser.value(connectOption));
+            QElapsedTimer linking;
+            linking.start();
+            while (!bridge->isConnected() && linking.elapsed() < 3000) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                QThread::msleep(10);
+            }
+            std::fprintf(stdout, "dj-ui: strip check link %s\n",
+                         bridge->isConnected() ? "up" : "down");
+        }
+
+        auto *detail = findItem(window->contentItem(), QStringLiteral("deckDetail_A"));
+        if (detail == nullptr) {
+            std::fprintf(stderr, "dj-ui: deck A has no strip\n");
+            return 1;
+        }
+        auto *envelope = qobject_cast<QObject *>(detail->property("envelope").value<QObject *>());
+        if (envelope == nullptr) {
+            std::fprintf(stderr, "dj-ui: the strip has no envelope\n");
+            return 1;
+        }
+        const QString track = parser.value(loadOption);
+        if (!track.isEmpty() && bridge->isConnected()) {
+            bridge->load(QStringLiteral("A"), track);
+            std::fprintf(stdout, "dj-ui: asked deck A for %s\n", qPrintable(track));
+        }
+
+        QElapsedTimer waited;
+        waited.start();
+        int buckets = 0;
+        while (waited.elapsed() < 15000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+            buckets = envelope->property("buckets").toInt();
+            if (buckets > 0) {
+                break;
+            }
+            QThread::msleep(20);
+        }
+        const QString error = envelope->property("error").toString();
+        std::fprintf(stdout, "dj-ui: strip A holds %d columns after %lld ms%s%s\n", buckets,
+                     static_cast<long long>(waited.elapsed()),
+                     error.isEmpty() ? "" : ", error: ", qPrintable(error));
+        if (buckets <= 0) {
+            std::fprintf(stderr, "dj-ui: the strip never received an envelope\n");
+            return 1;
+        }
         return 0;
     }
 

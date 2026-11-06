@@ -103,7 +103,9 @@ Pane {
         }
     }
 
-    onStateChanged: reload()
+    // The property is `deck`; `onStateChanged` would listen to every Item's built-in state and
+    // fire never, which is how the strip lost its picture.
+    onDeckChanged: reload()
     Component.onCompleted: reload()
 
     ColumnLayout {

@@ -112,6 +112,10 @@ case "${1:-}" in
     else
       QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --self-check
     fi
+    # The picture, end to end: the envelope the engine published must reach the strip that draws
+    # it. A waveform that never arrives looks exactly like a track that never loaded.
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --strip-check \
+      --load "$fixture"
     # The channel gain, end to end: the UI's command must reach the deck it names and come back
     # in the snapshot. A knob that turns but changes nothing is the failure this catches.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --gain-check
