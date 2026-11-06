@@ -470,20 +470,31 @@ int Waveform::rampForZoom(double columnsPerBar, double zoom) const
 
 double Waveform::smoothingHeat(double zoom)
 {
-    // How much stronger than the medium setting the smoothing is. It climbs to about forty times and
-    // then flattens, because past that the strip shows so little of the track that more ironing only
-    // makes the beat look soft. Beyond two hundred times it eases off again: at that zoom a bar is a
-    // fraction of an envelope column, the picture is built of a handful of columns, and blurring them
-    // together hides the only detail there is left.
+    // How much stronger than the medium setting the smoothing is, as a curve in the zoom.
+    //
+    // It climbs from the medium setting at 15x to its full strength around 60x, eases off gently
+    // through 100-200x — the owner found that band slightly over-soft — and drops away after 200x,
+    // where a bar is a fraction of an envelope column and blurring hides the only detail left.
+    // Anchors, in log zoom: (15, 1.0), (60, 2.05), (200, 1.9), (400, 1.1).
     if (!(zoom > 15.0)) {
         return 1.0;
     }
-    const double peak = 200.0;
-    const double reached = qMin(zoom, peak) / 15.0 - 1.0;
-    const double rise = 1.0 + 1.5 * reached / (reached + 2.0);
-    if (zoom <= peak) {
-        return rise;
+    struct Anchor {
+        double zoom;
+        double heat;
+    };
+    static const Anchor anchors[] = {{15.0, 1.0}, {60.0, 2.05}, {200.0, 1.9}, {400.0, 1.1}};
+    const int last = int(sizeof(anchors) / sizeof(anchors[0])) - 1;
+    if (zoom >= anchors[last].zoom) {
+        return anchors[last].heat;
     }
-    const double past = qBound(0.0, std::log(zoom / peak) / std::log(400.0 / peak), 1.0);
-    return rise - 1.2 * past;
+    for (int index = 0; index < last; ++index) {
+        if (zoom <= anchors[index + 1].zoom) {
+            const double from = std::log(anchors[index].zoom);
+            const double to = std::log(anchors[index + 1].zoom);
+            const double at = (std::log(zoom) - from) / (to - from);
+            return anchors[index].heat + at * (anchors[index + 1].heat - anchors[index].heat);
+        }
+    }
+    return anchors[last].heat;
 }
