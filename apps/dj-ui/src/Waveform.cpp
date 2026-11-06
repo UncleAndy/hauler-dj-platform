@@ -233,6 +233,51 @@ QVariantList Waveform::profile(int columns, double windowStart, double span) con
             {QStringLiteral("amplitude"), qBound(0.0, peak / m_maxAmplitude, 1.0)},
             {QStringLiteral("rgb"), colour.name()}});
     }
+    // Smooth the hue across neighbouring bars. Samples of a real track change colour over roughly
+    // twenty pixels, not between two of them: without this every colour boundary is a hard step,
+    // which reads as stripes instead of a continuous spectrum.
+    if (bars.size() > 3) {
+        QVariantList smoothed;
+        smoothed.reserve(bars.size());
+        // A wide kernel on purpose: measured on the reference, a colour boundary takes about
+        // twenty pixels to cross, so smoothing over three bars does nothing visible.
+        constexpr int radius = 12;
+        double kernel[2 * radius + 1];
+        double kernelSum = 0.0;
+        for (int step = -radius; step <= radius; ++step) {
+            const double weight = std::exp(-0.5 * (step / 5.0) * (step / 5.0));
+            kernel[step + radius] = weight;
+            kernelSum += weight;
+        }
+        Q_UNUSED(kernelSum)
+        for (int index = 0; index < bars.size(); ++index) {
+            const QVariantMap bar = bars.at(index).toMap();
+            double red = 0.0;
+            double green = 0.0;
+            double blue = 0.0;
+            double weight = 0.0;
+            for (int step = -radius; step <= radius; ++step) {
+                const int neighbour = index + step;
+                if (neighbour < 0 || neighbour >= bars.size()) {
+                    continue;
+                }
+                const QColor colour(
+                    bars.at(neighbour).toMap().value(QStringLiteral("rgb")).toString());
+                const double amount = kernel[step + radius];
+                red += colour.redF() * amount;
+                green += colour.greenF() * amount;
+                blue += colour.blueF() * amount;
+                weight += amount;
+            }
+            const QColor blended = weight > 0.0
+                ? QColor::fromRgbF(red / weight, green / weight, blue / weight)
+                : QColor(0, 0, 0);
+            smoothed.append(QVariantMap{
+                {QStringLiteral("amplitude"), bar.value(QStringLiteral("amplitude"))},
+                {QStringLiteral("rgb"), blended.name()}});
+        }
+        return smoothed;
+    }
     return bars;
 }
 

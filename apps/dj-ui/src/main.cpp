@@ -21,6 +21,7 @@
 #include <QEventLoop>
 #include <QGuiApplication>
 #include <QImage>
+#include <QLinearGradient>
 #include <QPainter>
 #include <QQmlApplicationEngine>
 #include <QQmlComponent>
@@ -649,9 +650,19 @@ int main(int argc, char *argv[])
         for (int index = 0; index < pixels.size(); ++index) {
             const QVariantMap pixel = pixels.at(index).toMap();
             const double half = qMax(0.5, pixel.value(QStringLiteral("amplitude")).toDouble() * middle);
-            painter.fillRect(QRectF(index * (barWidth + barGap), middle - half, barWidth,
-                                    qMax(1.0, half * 2)),
-                             QColor(pixel.value(QStringLiteral("rgb")).toString()));
+            // Full brightness at the centre axis, about half at the tips — the glow the deck draws.
+            const QColor colour(pixel.value(QStringLiteral("rgb")).toString());
+            static const double glow[3] = {0.42, 1.0, 0.42};
+            const double x = index * (barWidth + barGap);
+            for (int slice = 0; slice < 3; ++slice) {
+                const double from = middle - half + (2 * half) * slice / 3.0;
+                const double to = middle - half + (2 * half) * (slice + 1) / 3.0;
+                QColor shaded = colour;
+                shaded.setRedF(qBound(0.0, colour.redF() * glow[slice], 1.0));
+                shaded.setGreenF(qBound(0.0, colour.greenF() * glow[slice], 1.0));
+                shaded.setBlueF(qBound(0.0, colour.blueF() * glow[slice], 1.0));
+                painter.fillRect(QRectF(x, from, barWidth, qMax(1.0, to - from)), shaded);
+            }
             ++painted;
         }
         painter.end();

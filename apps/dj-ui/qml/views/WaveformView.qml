@@ -153,10 +153,26 @@ Item {
                     // one continuous shape instead of splitting into separate vertical strokes.
                     const half = Math.max(0.5, bar.amplitude * middle);
                     const x = index * step;
-                    context.fillStyle = coloured ? bar.rgb : flatColour;
-                    context.fillRect(x, middle - half, barWidth, Math.max(1, half * 2));
+                    if (!coloured) {
+                        context.fillStyle = flatColour;
+                        context.fillRect(x, middle - half, barWidth, Math.max(1, half * 2));
+                    } else {
+                        // Full brightness at the centre axis, about half of it at the tips: the
+                        // reference waveform glows from the middle outwards instead of being a flat
+                        // block of colour. Three stacked slices give that for the cost of two
+                        // extra rectangles per bar.
+                        const glow = [0.42, 1.0, 0.42];
+                        const base = Qt.color(bar.rgb);
+                        for (let slice = 0; slice < 3; ++slice) {
+                            const from = middle - half + (2 * half) * slice / 3.0;
+                            const to = middle - half + (2 * half) * (slice + 1) / 3.0;
+                            context.fillStyle = Qt.rgba(base.r * glow[slice],
+                                                        base.g * glow[slice],
+                                                        base.b * glow[slice], 1.0);
+                            context.fillRect(x, from, barWidth, Math.max(1, to - from));
+                        }
+                    }
                 }
-
                 // The loop, if one is set: a tinted band across the whole height.
                 if (view.loopRegion !== null && view.loopRegion.start !== undefined) {
                     const from = view.xOfFrame(view.loopRegion.start);
