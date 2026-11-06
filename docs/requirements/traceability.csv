@@ -73,7 +73,7 @@ DJP-MEDIA-008,media,P1,R1,DJP-SRS-001 §5,,,unverified,,,
 DJP-MEDIA-009,media,P2,R2,DJP-SRS-001 §5,,,unverified,,,
 DJP-MEDIA-010,media,P2,R3,DJP-SRS-001 §5,,,unverified,,,
 DJP-MEDIA-011,media,P3,R3,DJP-SRS-001 §5,,,unverified,,,
-DJP-MIX-001,dsp,P0,R0,DJP-SRS-001 §5,crates/dj-mixer/src/lib.rs,mixer::routing_puts_each_channel_only_where_it_belongs; mixer::the_limiter_keeps_the_master_below_full_scale; mixer::meters_report_peak_and_rms_of_the_channel; rt_contract::mixing_a_block_does_not_allocate,passing,docs/qa/evidence/A04/summary.md,,2026-11-05
+DJP-MIX-001,dsp,P0,R0,DJP-SRS-001 §5,каналы A и B через микшер: gain · fader · crossfader · лимитер; одновременно обе деки на одном устройстве подтверждены на слух,mixer::routing_puts_each_channel_only_where_it_belongs; mixer::the_limiter_keeps_the_master_below_full_scale; dj-engine --device (проверка владельца),passing,docs/qa/evidence/A04/summary.md,docs/qa/evidence/A07/track-loading.md,2026-11-05
 DJP-MIX-002,dsp,P1,R1,DJP-SRS-001 §5,,,unverified,,,
 DJP-MIX-003,dsp,P1,R1,DJP-SRS-001 §5,partial: crates/dj-mixer (шина cue с PFL и cue_gain; cue-mix / booth / независимые шины — нет),mixer::routing_puts_each_channel_only_where_it_belongs,unverified,docs/qa/evidence/A04/summary.md,,2026-11-05
 DJP-MIX-004,dsp,P1,R1,DJP-SRS-001 §5,partial: crates/dj-mixer (два закона кривой и назначение A/B/thru; пресеты и sharp-кривые — R1),mixer::the_constant_power_crossfader_isolates_the_extremes; mixer::the_linear_curve_is_linear,unverified,docs/qa/evidence/A04/summary.md,,2026-11-05
