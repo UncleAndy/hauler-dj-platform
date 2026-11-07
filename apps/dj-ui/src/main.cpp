@@ -3408,6 +3408,40 @@ int main(int argc, char *argv[])
             return 1;
         }
 
+        // The strip has to agree with the mode: every saved loop bright, the button lit; and all of
+        // them dim, the button dark, once the mode goes off.
+        const auto litLoops = [&]() {
+            int lit = 0;
+            if (strip == nullptr) {
+                return lit;
+            }
+            for (const QVariant &entry : strip->property("padLoops").toList()) {
+                if (entry.toMap().value(QStringLiteral("active")).toBool()) {
+                    ++lit;
+                }
+            }
+            return lit;
+        };
+        const int litOn = litLoops();
+        const bool buttonOn = loopButton->property("active").toBool();
+        bridge->setLoopMode(QStringLiteral("A"), false);
+        pump(40);
+        const int litOff = litLoops();
+        const bool buttonOff = loopButton->property("active").toBool();
+        std::fprintf(stdout,
+                     "dj-ui: with the mode on %d loop(s) lit and the button %s; off — %d lit, button %s\n",
+                     litOn, buttonOn ? "lit" : "dark", litOff, buttonOff ? "lit" : "dark");
+        if (litOn < 2 || !buttonOn) {
+            std::fprintf(stderr, "dj-ui: the mode is on but the loops are not all lit\n");
+            return 1;
+        }
+        if (litOff != 0 || buttonOff) {
+            std::fprintf(stderr, "dj-ui: switching the mode off left loops lit or the button on\n");
+            return 1;
+        }
+        bridge->setLoopMode(QStringLiteral("A"), true);
+        pump(40);
+
         // Dropped before the first saved loop: it must wrap at that loop's end, not run on.
         bridge->seek(QStringLiteral("A"), 5000);
         bridge->play(QStringLiteral("A"), true);

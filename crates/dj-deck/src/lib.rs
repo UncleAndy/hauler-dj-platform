@@ -690,6 +690,16 @@ impl Deck {
             return false;
         }
         self.pad_loops[slot] = region;
+        // A loop that has just been saved is the pad's now. Keeping the button's copy would arm the same
+        // region twice and paint two overlapping highlights for one loop.
+        if let (Some(saved), Some(pad)) = (region, self.loop_region)
+            && saved == pad
+        {
+            self.loop_region = None;
+            self.loop_buffer = None;
+            self.reading_loop_buffer = false;
+            self.drain_until = None;
+        }
         self.rebuild_armed();
         true
     }
@@ -706,10 +716,16 @@ impl Deck {
             return None;
         }
         if let Some(region) = self.pad_loops[slot] {
-            // Arming the loop and moving the playhead are one gesture, so the decoder has to move with
-            // it: setting `position` alone leaves the sound where it was while the marker jumps ahead,
-            // and the two only meet again at the loop's end.
-            self.set_loop(Some(region));
+            // The pad's loop is already saved, so it is armed by the mode rather than copied into the
+            // button's slot: one loop, one region on the strip.
+            self.loop_mode = true;
+            self.loop_region = None;
+            self.rebuild_armed();
+            self.loop_buffer = None;
+            self.reading_loop_buffer = false;
+            self.drain_until = None;
+            // Arming the loop and moving the playhead are one gesture, so the decoder moves with it:
+            // setting `position` alone leaves the sound where it was while the marker jumps ahead.
             let landed = self.seek(region.start.0);
             return Some(landed);
         }

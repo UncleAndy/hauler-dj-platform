@@ -118,18 +118,14 @@ fn a_loop_wraps_at_the_exact_sample() {
 
 #[test]
 fn switching_loop_mode_off_stops_the_copy_repeating() {
-    // A loop played from a pad is captured the same way the button's loop is. Switching the mode off
-    // must stop the copy repeating: it runs to its end, the track carries on from there, and the switch
-    // costs no seek.
+    // The button's loop is the one held in memory, so it is the one that could go on repeating behind a
+    // switched-off mode. Switching off must stop that: the copy runs to its end, the track carries on
+    // from there, and the switch costs no seek.
     let mut deck = deck_with_ramp(44_100);
     let region = FrameRange::new(1_000, 2_000).unwrap_or_else(|| panic!("region"));
-    assert!(deck.set_pad_loop(0, Some(region)));
-    deck.set_loop_mode(true);
-    assert_eq!(
-        deck.jump_pad(0),
-        Some(1_000),
-        "the pad takes the playhead to the loop start"
-    );
+    deck.set_loop(Some(region));
+    assert_eq!(deck.active_loops().len(), 1, "the button's loop is armed");
+    deck.seek(1_000);
     deck.play();
 
     // One pass fills the capture; the next wrap is served from memory.
@@ -160,6 +156,41 @@ fn switching_loop_mode_off_stops_the_copy_repeating() {
         3_000,
         "the playhead ran past the loop's end"
     );
+}
+
+#[test]
+fn a_loop_is_armed_once_however_it_was_made() {
+    // One loop is one region on the strip. The button's loop, once saved on a pad, belongs to the pad;
+    // pressing that pad arms the mode without adding a second copy of the same region.
+    let mut deck = deck_with_ramp(44_100);
+    let region = FrameRange::new(1_000, 2_000).unwrap_or_else(|| panic!("region"));
+
+    deck.set_loop(Some(region));
+    assert_eq!(deck.active_loops().len(), 1, "the button's loop is armed");
+
+    assert!(deck.set_pad_loop(2, Some(region)));
+    assert!(
+        deck.loop_region().is_none(),
+        "saving the button's loop moves it to the pad"
+    );
+    assert_eq!(
+        deck.active_loops(),
+        &[region],
+        "one loop is armed once, not twice"
+    );
+
+    deck.set_loop_mode(false);
+    assert!(deck.active_loops().is_empty());
+    assert_eq!(
+        deck.jump_pad(2),
+        Some(1_000),
+        "the pad arms it and takes the playhead"
+    );
+    assert!(
+        deck.loop_region().is_none(),
+        "the pad did not copy itself into the button's slot"
+    );
+    assert_eq!(deck.active_loops(), &[region]);
 }
 
 #[test]

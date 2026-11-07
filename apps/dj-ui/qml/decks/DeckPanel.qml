@@ -617,8 +617,10 @@ Pane {
                         Bridge.cue(panel.deckId, "Jump", pad.index);
                     } else if (panel.loop !== null && panel.loop !== undefined) {
                         // An empty pad while a loop is active stores that loop: the four bars become part
-                        // of the set, which is what a DJ does between two mixes.
+                        // of the set, which is what a DJ does between two mixes. The loop lives on the
+                        // pad from now on, so the deck's own copy — and its remembered outline — go away.
                         Bridge.setPadLoop(panel.deckId, pad.index);
+                        panel.savedLoop = null;
                     } else {
                         Bridge.cue(panel.deckId, "Set", pad.index);
                     }
