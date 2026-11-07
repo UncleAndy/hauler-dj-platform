@@ -1,0 +1,96 @@
+{
+  "applied": {
+    "high_db": 0.0,
+    "low_db": 0.0,
+    "mid_db": 6.0
+  },
+  "asked": {
+    "high_db": 0.0,
+    "low_db": 0.0,
+    "mid_db": 6.0
+  },
+  "failures": [],
+  "flat_max_db": 6.0,
+  "points": [
+    {
+      "error_db": 0.011,
+      "hz": 20.0,
+      "measured_db": 0.02,
+      "reported_db": 0.01
+    },
+    {
+      "error_db": 0.01,
+      "hz": 40.0,
+      "measured_db": 0.03,
+      "reported_db": 0.02
+    },
+    {
+      "error_db": 0.009,
+      "hz": 60.0,
+      "measured_db": 0.06,
+      "reported_db": 0.05
+    },
+    {
+      "error_db": 0.005,
+      "hz": 100.0,
+      "measured_db": 0.14,
+      "reported_db": 0.13
+    },
+    {
+      "error_db": -0.003,
+      "hz": 200.0,
+      "measured_db": 0.51,
+      "reported_db": 0.52
+    },
+    {
+      "error_db": 0.001,
+      "hz": 400.0,
+      "measured_db": 1.93,
+      "reported_db": 1.93
+    },
+    {
+      "error_db": -0.0,
+      "hz": 1000.0,
+      "measured_db": 6.0,
+      "reported_db": 6.0
+    },
+    {
+      "error_db": 0.001,
+      "hz": 2000.0,
+      "measured_db": 2.84,
+      "reported_db": 2.84
+    },
+    {
+      "error_db": 0.0,
+      "hz": 4000.0,
+      "measured_db": 0.77,
+      "reported_db": 0.77
+    },
+    {
+      "error_db": 0.0,
+      "hz": 8000.0,
+      "measured_db": 0.17,
+      "reported_db": 0.17
+    },
+    {
+      "error_db": -0.0,
+      "hz": 12000.0,
+      "measured_db": 0.06,
+      "reported_db": 0.06
+    },
+    {
+      "error_db": 0.0,
+      "hz": 16000.0,
+      "measured_db": 0.02,
+      "reported_db": 0.02
+    },
+    {
+      "error_db": -0.0,
+      "hz": 20000.0,
+      "measured_db": 0.0,
+      "reported_db": 0.0
+    }
+  ],
+  "rate": 48000,
+  "tolerance_db": 0.2
+}

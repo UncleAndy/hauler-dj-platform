@@ -1,4 +1,4 @@
-use dj_dsp::{ChannelEq, EqBand, EqGains, EqTable, RANGE_DB, STEP_DB, STEPS};
+use dj_dsp::{BOOST_DB, CUT_DB, ChannelEq, EqBand, EqGains, EqTable, FLOOR_DB, STEP_DB, STEPS};
 
 const RATE: f64 = 48_000.0;
 
@@ -13,18 +13,18 @@ fn flat_eq_is_bypassed_and_unity() {
 }
 
 #[test]
-fn channel_eq_boost_and_cut() {
+fn the_boost_is_capped_at_the_dj_limit_and_the_cut_reaches_the_floor() {
+    // Asymmetric on purpose: a lift raises the loudness of the whole channel (+12 dB of low shelf
+    // measured +11 dB RMS on bass-heavy material), a cut only takes one band away.
     let mut eq = ChannelEq::new(RATE);
     eq.set_gains(EqGains {
         low_db: 12.0,
         mid_db: 0.0,
         high_db: 0.0,
     });
+    assert_eq!(eq.gains().low_db, BOOST_DB, "the boost cap did not hold");
     let low_resp = eq.magnitude_db(60.0);
-    assert!(
-        low_resp > 8.0,
-        "low shelf 12dB boost at 60Hz gave {low_resp}dB"
-    );
+    assert!(low_resp > 4.0, "low shelf +6 at 60 Hz gave {low_resp} dB");
 
     eq.set_gains(EqGains {
         low_db: 0.0,
@@ -34,7 +34,7 @@ fn channel_eq_boost_and_cut() {
     let high_resp = eq.magnitude_db(10_000.0);
     assert!(
         high_resp < -8.0,
-        "high shelf -12dB cut at 10kHz gave {high_resp}dB"
+        "high shelf -12 at 10 kHz gave {high_resp} dB"
     );
 }
 
@@ -42,12 +42,12 @@ fn channel_eq_boost_and_cut() {
 fn eq_gains_clamping() {
     let gains = EqGains {
         low_db: 99.0,
-        mid_db: -99.0,
+        mid_db: -999.0,
         high_db: 0.0,
     }
     .clamped();
-    assert_eq!(gains.low_db, RANGE_DB);
-    assert_eq!(gains.mid_db, -RANGE_DB);
+    assert_eq!(gains.low_db, BOOST_DB);
+    assert_eq!(gains.mid_db, FLOOR_DB);
     assert_eq!(gains.high_db, 0.0);
 }
 
@@ -101,11 +101,11 @@ fn every_band_works_inside_its_own_range() {
     let mut eq = ChannelEq::new(RATE);
 
     eq.set_gains(EqGains {
-        low_db: 12.0,
+        low_db: BOOST_DB,
         mid_db: 0.0,
         high_db: 0.0,
     });
-    assert!(eq.magnitude_db(60.0) > 8.0, "low shelf did not lift 60 Hz");
+    assert!(eq.magnitude_db(60.0) > 4.0, "low shelf did not lift 60 Hz");
     assert!(
         eq.magnitude_db(12_000.0).abs() < 0.3,
         "low shelf moved 12 kHz"
@@ -113,11 +113,11 @@ fn every_band_works_inside_its_own_range() {
 
     eq.set_gains(EqGains {
         low_db: 0.0,
-        mid_db: 12.0,
+        mid_db: BOOST_DB,
         high_db: 0.0,
     });
     assert!(
-        eq.magnitude_db(1_000.0) > 8.0,
+        eq.magnitude_db(1_000.0) > 4.0,
         "mid peak did not lift 1 kHz"
     );
     assert!(eq.magnitude_db(60.0).abs() < 0.3, "mid peak moved 60 Hz");
@@ -125,10 +125,10 @@ fn every_band_works_inside_its_own_range() {
     eq.set_gains(EqGains {
         low_db: 0.0,
         mid_db: 0.0,
-        high_db: 12.0,
+        high_db: BOOST_DB,
     });
     assert!(
-        eq.magnitude_db(12_000.0) > 8.0,
+        eq.magnitude_db(12_000.0) > 4.0,
         "high shelf did not lift 12 kHz"
     );
     assert!(eq.magnitude_db(60.0).abs() < 0.3, "high shelf moved 60 Hz");
@@ -136,15 +136,16 @@ fn every_band_works_inside_its_own_range() {
 
 #[test]
 fn the_table_is_as_long_as_the_range_says() {
-    let expected = (2.0 * RANGE_DB / STEP_DB) as usize + 1;
+    let expected = ((BOOST_DB - FLOOR_DB) / STEP_DB) as usize + 1;
     assert_eq!(STEPS, expected, "the table no longer covers the whole knob");
     assert_eq!(
         EqTable::gain_of(EqTable::UNITY_STEP),
         0.0,
-        "unity moved off the middle"
+        "unity moved off its row"
     );
-    assert_eq!(EqTable::gain_of(0), -RANGE_DB);
-    assert_eq!(EqTable::gain_of(STEPS - 1), RANGE_DB);
+    assert_eq!(EqTable::gain_of(0), FLOOR_DB);
+    assert_eq!(EqTable::gain_of(STEPS - 1), BOOST_DB);
+    assert_eq!(CUT_DB, 26.0, "the ordinary cut moved");
 }
 
 #[test]
@@ -165,16 +166,16 @@ fn a_knob_lands_on_the_grid_and_says_where() {
     assert_eq!(applied.mid_db, 0.0, "a band inside half a step is unity");
     assert!(
         (applied.high_db + 25.9).abs() <= STEP_DB / 2.0,
-        "the nearest step to -25.9 is not -25.875: {}",
+        "the nearest step to -25.9 is not -26.0: {}",
         applied.high_db
     );
     let mut overshoot = EqGains::FLAT;
-    overshoot.set_band(EqBand::High, -99.0);
+    overshoot.set_band(EqBand::High, -999.0);
     eq.set_gains(overshoot);
     assert_eq!(
         eq.gains().high_db,
-        -RANGE_DB,
-        "past the end the knob stops at the range"
+        FLOOR_DB,
+        "past the end the knob stops at the floor"
     );
     assert_eq!(applied.band(EqBand::Low), applied.low_db);
 }
@@ -184,7 +185,7 @@ fn a_knob_move_is_the_same_filter_the_curve_describes() {
     // The table is what the callback copies from: if a row were built for the wrong gain, the sound
     // would disagree with the published number, and only a measurement would notice.
     let mut eq = ChannelEq::new(RATE);
-    for gain in [-24.0f32, -12.0, -3.0, 3.0, 12.0, 24.0] {
+    for gain in [-24.0f32, -12.0, -3.0, 3.0, BOOST_DB] {
         let mut gains = EqGains::FLAT;
         gains.set_band(EqBand::High, gain);
         eq.set_gains(gains);
@@ -200,4 +201,26 @@ fn a_knob_move_is_the_same_filter_the_curve_describes() {
             "applied {applied} dB but the filter does {measured:.2} dB at 16 kHz"
         );
     }
+}
+
+#[test]
+fn the_floor_kills_its_band_but_bleeds_upwards() {
+    // Why the isolator is a separate task and not a knob that reaches -120 dB: a shelf with that much
+    // gain has a transition spread over octaves. It does silence its own band, but it also takes -32 dB
+    // out of 1 kHz — measured, not feared — which is a gutted channel, not a killed band. The number is
+    // pinned here so nobody "fixes" the law to the floor believing it is a kill.
+    let mut eq = ChannelEq::new(RATE);
+    let mut gains = EqGains::FLAT;
+    gains.set_band(EqBand::Low, FLOOR_DB);
+    eq.set_gains(gains);
+    assert_eq!(eq.gains().low_db, FLOOR_DB);
+
+    let low = measured_db(&mut eq, 40.0);
+    assert!(low < -60.0, "the floor still passes {low:.1} dB at 40 Hz");
+    let mid = eq.magnitude_db(1_000.0);
+    assert!(
+        mid < -25.0,
+        "the bleed dried up ({mid:.2} dB at 1 kHz): the shelf now behaves like a crossover, so \
+         revisit whether the isolator is still needed"
+    );
 }

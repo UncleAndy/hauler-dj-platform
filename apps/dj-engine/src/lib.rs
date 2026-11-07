@@ -579,6 +579,10 @@ pub struct PreparedTrack {
     pub cues: Vec<(u8, u64)>,
     /// Loop recorded for this file.
     pub loop_region: Option<FrameRange>,
+    /// Gain the channel opens with, from the file's own loudness (DJP-MIX-001 auto-gain).
+    ///
+    /// 1.0 when the file was not measured: a missing number must not silently attenuate a track.
+    pub auto_gain: f32,
 }
 
 /// A change worth writing to the track's metadata file.
@@ -686,6 +690,12 @@ pub fn prepare_track(
         total_frames: info.frames,
         waveform: None, // filled by the caller, which knows the cache directory
     };
+    // Loudness is measured here, on the loader thread: it is a full decode of the file, and the audio
+    // callback must never see it. A file that cannot be measured opens at unity.
+    let auto_gain = dj_analysis::loudness::analyse(path)
+        .map(|loudness| loudness.gain)
+        .unwrap_or(1.0);
+
     Ok(PreparedTrack {
         deck: DeckId::A,
         source: Box::new(prefetcher),
@@ -695,6 +705,7 @@ pub fn prepare_track(
         // What the file remembers is read by the caller: this function knows samples, not sessions.
         cues: Vec::new(),
         loop_region: None,
+        auto_gain,
     })
 }
 
@@ -835,6 +846,11 @@ impl EngineGraph {
                             self.decks[index].set_hotcue(usize::from(slot), frame);
                         }
                         self.decks[index].set_loop(prepared.loop_region);
+                        // The track opens at its own level: a hot master and a quiet one then start
+                        // from the same place, and a +6 dB EQ boost has room instead of the limiter.
+                        if prepared.auto_gain > 0.0 {
+                            self.decks[index].set_gain(prepared.auto_gain);
+                        }
                         self.paths[index] = prepared.path;
                         self.loads_applied += 1;
                     }

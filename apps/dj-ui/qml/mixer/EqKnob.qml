@@ -30,12 +30,16 @@ Item {
     readonly property real capSide: diameter
     objectName: "eq_" + band + "_" + deckId
 
-    readonly property real rangeDb: 26.0
+    // Asymmetric, like a mixer channel: the boost stops at +6 dB — a lift raises the loudness of the
+    // whole channel, and +12 measured +7 dB RMS on pink material and +11 on a bass-heavy one — while
+    // the cut goes to -26, which is a deep cut and not a kill. Zero points straight up; each side gets
+    // 135 degrees of travel, the cut compressed into 26 dB and the boost into 6.
+    readonly property real boostDb: 6.0
+    readonly property real cutDb: 26.0
     // What the knob shows: the hand's number while it is being dragged, the engine's otherwise.
     readonly property real db: knob.dragging ? knob.dragged : knob.value
-    readonly property real fraction: Math.max(0.0, Math.min(1.0,
-                                                    (knob.db + rangeDb) / (2.0 * rangeDb)))
-    readonly property real angle: -135.0 + 270.0 * fraction
+    readonly property real angle: knob.db >= 0.0 ? 135.0 * knob.db / knob.boostDb
+                                                 : 135.0 * knob.db / knob.cutDb
     readonly property real unityAngle: 0.0
 
     property bool dragging: false
@@ -46,7 +50,7 @@ Item {
     property real lastDb: -1.0
 
     function ask(decibels) {
-        const wanted = Math.max(-knob.rangeDb, Math.min(knob.rangeDb, decibels));
+        const wanted = Math.max(-knob.cutDb, Math.min(knob.boostDb, decibels));
         knob.dragged = wanted;
         knob.lastDb = wanted;
         Bridge.setChannelEq(knob.deckId, knob.band, wanted);
@@ -142,9 +146,11 @@ Item {
             if (!knob.dragging) {
                 return;
             }
-            // Half a decibel per pixel: the whole range in about a hundred pixels, fine enough to
-            // hear a step and coarse enough to cross the range in one gesture.
-            knob.ask(knob.pressDb + (knob.pressY - mouse.y) * 0.5);
+            // The hand moves the pointer: -135…+135 over the travel, and the number follows the angle,
+            // so the knob under the finger is the knob doing the work.
+            const share = 1.0 - Math.max(0.0, Math.min(1.0, mouse.y / knob.height));
+            const angle = -135.0 + 270.0 * share;
+            knob.ask(angle >= 0.0 ? angle / 135.0 * knob.boostDb : angle / 135.0 * knob.cutDb);
         }
         onReleased: knob.dragging = false
         onCanceled: knob.dragging = false

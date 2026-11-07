@@ -13,11 +13,11 @@ pub mod biquad;
 pub mod eq;
 
 pub use biquad::Biquad;
-pub use dj_domain::{EQ_RANGE_DB, EqBand, EqGains};
+pub use dj_domain::{EQ_BOOST_DB, EQ_CUT_DB, EQ_FLOOR_DB, EqBand, EqGains};
 pub use eq::{ChannelEq, Crossover, EqTable, STEP_DB, STEPS, Section};
 
-/// How much a band can cut or boost, in decibels.
+/// The knob's ends, re-exported here because this is where a caller looks for them.
 ///
-/// The value is the protocol's (`EQ_RANGE_DB`); the name is kept here because this is where a caller
-/// looks for it.
-pub const RANGE_DB: f32 = EQ_RANGE_DB;
+/// `BOOST` is the DJ cap (+6 dB), `CUT` the ordinary cut (−26 dB) and `FLOOR` the isolator kill
+/// (−120 dB). The filter accepts all three; only the knob law decides which end the hand reaches.
+pub use dj_domain::{EQ_BOOST_DB as BOOST_DB, EQ_CUT_DB as CUT_DB, EQ_FLOOR_DB as FLOOR_DB};

@@ -1,0 +1,96 @@
+{
+  "applied": {
+    "high_db": -26.0,
+    "low_db": 0.0,
+    "mid_db": 0.0
+  },
+  "asked": {
+    "high_db": -26.0,
+    "low_db": 0.0,
+    "mid_db": 0.0
+  },
+  "failures": [],
+  "flat_max_db": 25.998,
+  "points": [
+    {
+      "error_db": 0.011,
+      "hz": 20.0,
+      "measured_db": 0.01,
+      "reported_db": -0.0
+    },
+    {
+      "error_db": 0.011,
+      "hz": 40.0,
+      "measured_db": 0.01,
+      "reported_db": -0.0
+    },
+    {
+      "error_db": 0.01,
+      "hz": 60.0,
+      "measured_db": 0.01,
+      "reported_db": -0.0
+    },
+    {
+      "error_db": 0.008,
+      "hz": 100.0,
+      "measured_db": 0.01,
+      "reported_db": -0.0
+    },
+    {
+      "error_db": 0.001,
+      "hz": 200.0,
+      "measured_db": 0.0,
+      "reported_db": -0.0
+    },
+    {
+      "error_db": 0.001,
+      "hz": 400.0,
+      "measured_db": -0.01,
+      "reported_db": -0.01
+    },
+    {
+      "error_db": 0.001,
+      "hz": 1000.0,
+      "measured_db": -0.3,
+      "reported_db": -0.3
+    },
+    {
+      "error_db": -0.0,
+      "hz": 2000.0,
+      "measured_db": -3.34,
+      "reported_db": -3.34
+    },
+    {
+      "error_db": -0.0,
+      "hz": 4000.0,
+      "measured_db": -13.0,
+      "reported_db": -13.0
+    },
+    {
+      "error_db": -0.0,
+      "hz": 8000.0,
+      "measured_db": -23.16,
+      "reported_db": -23.16
+    },
+    {
+      "error_db": -0.0,
+      "hz": 12000.0,
+      "measured_db": -25.58,
+      "reported_db": -25.58
+    },
+    {
+      "error_db": 0.0,
+      "hz": 16000.0,
+      "measured_db": -25.95,
+      "reported_db": -25.95
+    },
+    {
+      "error_db": -0.0,
+      "hz": 20000.0,
+      "measured_db": -26.0,
+      "reported_db": -26.0
+    }
+  ],
+  "rate": 48000,
+  "tolerance_db": 0.2
+}

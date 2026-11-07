@@ -933,6 +933,8 @@ fn prepared_with(
             start: SourceFrame(start),
             end: SourceFrame(end),
         }),
+        // Built by hand, so no file was measured: the deck opens at unity.
+        auto_gain: 1.0,
     }
 }
 
@@ -1107,7 +1109,7 @@ fn an_eq_knob_outside_the_range_is_clamped_not_refused() {
     };
     let ack = apply(&mut decks, &mut mixer, &command, 0);
     assert_eq!(ack.status, AckStatus::Applied { at_sample: 0 });
-    assert_eq!(decks[0].eq_gains().low_db, dj_domain::EQ_RANGE_DB);
+    assert_eq!(decks[0].eq_gains().low_db, dj_domain::EQ_BOOST_DB);
 }
 
 #[test]
@@ -1232,4 +1234,42 @@ fn a_fader_that_is_not_a_number_is_refused() {
         AckStatus::Rejected(RejectReason::InvalidValue)
     );
     assert_eq!(mixer.channel(0).map(|settings| settings.fader), Some(1.0));
+}
+
+#[test]
+fn a_track_opens_at_the_level_the_loader_measured() {
+    // Auto-gain, end to end: the number the loader computed has to reach the deck's own gain at attach,
+    // because that is what the GAIN knob and the snapshot report.
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav");
+    let mut prepared = match prepare_track(&path, 48_000, 2.0) {
+        Ok(track) => track,
+        Err(message) => panic!("the fixture did not prepare: {message}"),
+    };
+    let measured = prepared.auto_gain;
+    assert!(
+        measured > 0.0 && (measured - 1.0).abs() > 0.01,
+        "the loader measured unity for a drum loop ({measured})"
+    );
+    prepared.deck = DeckId::A;
+
+    let decks = vec![Deck::new(DeckId::A), Deck::new(DeckId::B)];
+    let mixer = mixer_for(48_000);
+    let cells = Arc::new(StateCells::new());
+    let (submissions, submission_rx) = std::sync::mpsc::channel::<Submission>();
+    let (loads, load_rx) = std::sync::mpsc::channel::<GraphLoad>();
+    let mut graph = EngineGraph::new(decks, mixer, submission_rx, cells, 256, load_rx);
+    drop(submissions);
+    loads
+        .send(GraphLoad::Attach(Box::new(prepared)))
+        .unwrap_or_else(|err| panic!("{err}"));
+    let mut master = vec![0.0f32; 512];
+    let mut cue = vec![0.0f32; 512];
+    graph.render_pair(&mut master, &mut cue, 256);
+
+    assert_eq!(
+        graph.decks()[0].gain(),
+        measured,
+        "the deck did not open at the measured level"
+    );
 }

@@ -272,6 +272,11 @@ static int runGainCheck(BridgeClient &bridge, const QString &socketPath, int tim
     double faderC = 1.0;
     double gainB = 1.0;
     double faderB = 1.0;
+    // Deck B is the control hand: it must not follow either command. Its baseline is whatever it holds
+    // when the check starts — auto-gain may already have trimmed it to the track it is carrying, and a
+    // check that expects unity there measures the loader, not the command.
+    double gainBStart = -1.0;
+    double faderBStart = -1.0;
     const char *failure = nullptr;
 
     const auto read = [&]() {
@@ -293,7 +298,10 @@ static int runGainCheck(BridgeClient &bridge, const QString &socketPath, int tim
         read();
         switch (phase) {
         case AwaitSnapshot:
-            std::fprintf(stdout, "dj-ui: sent gain 0.25 to deck C\n");
+            gainBStart = gainB;
+            faderBStart = faderB;
+            std::fprintf(stdout, "dj-ui: sent gain 0.25 to deck C (deck B starts at %.3f)\n",
+                         gainBStart);
             phase = GainSent;
             bridge.setChannelGain(QStringLiteral("C"), 0.25);
             break;
@@ -344,9 +352,10 @@ static int runGainCheck(BridgeClient &bridge, const QString &socketPath, int tim
                      gainC, faderC);
         return 1;
     }
-    if (std::abs(gainB - 1.0) > 0.01 || std::abs(faderB - 1.0) > 0.01) {
-        std::fprintf(stderr, "dj-ui: deck B moved too (gain %.3f, fader %.3f); the command must "
-                             "touch only C\n", gainB, faderB);
+    if (gainBStart < 0.0 || std::abs(gainB - gainBStart) > 0.01
+        || std::abs(faderB - faderBStart) > 0.01) {
+        std::fprintf(stderr, "dj-ui: deck B moved too (gain %.3f -> %.3f, fader %.3f -> %.3f); the "
+                             "command must touch only C\n", gainBStart, gainB, faderBStart, faderB);
         return 1;
     }
     std::fprintf(stdout,

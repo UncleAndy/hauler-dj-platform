@@ -10,6 +10,7 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 pub mod cache;
+pub mod loudness;
 pub mod waveform;
 
 pub use cache::{Fingerprint, WaveformCache, write_envelope};

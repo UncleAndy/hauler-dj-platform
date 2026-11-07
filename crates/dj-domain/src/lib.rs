@@ -204,8 +204,23 @@ impl EqBand {
     }
 }
 
-/// How far a band can cut or boost, in decibels — symmetric around unity.
-pub const EQ_RANGE_DB: f32 = 26.0;
+/// How far a band can be lifted, in decibels — the DJ limit, not the studio one.
+///
+/// The boost is capped low on purpose: a shelf lift raises the loudness of the whole channel, and at
+/// +26 dB one knob could double the level of a bass-heavy track (measured on our own curve: +11 dB
+/// RMS at +12 dB of low shelf). +6 dB is what a mixer channel offers, and it is the number the curve
+/// was measured against.
+pub const EQ_BOOST_DB: f32 = 6.0;
+
+/// How far a band can be cut with the ordinary law: a deep cut, but not a kill.
+pub const EQ_CUT_DB: f32 = 26.0;
+
+/// The floor of the knob, reached only in isolator mode.
+///
+/// -120 dB is silence in practice — a millionth of the signal — and it is still an ordinary shelf
+/// coefficient, so a full kill needs no second filter and no mode in the engine: the knob law
+/// decides how far left the hand can go, the filter simply obeys the number it is given.
+pub const EQ_FLOOR_DB: f32 = -120.0;
 
 /// The three band gains of one channel, in decibels.
 ///
@@ -252,7 +267,7 @@ impl EqGains {
     /// filter that outputs silence and looks like a dead channel.
     pub fn set_band(&mut self, band: EqBand, gain_db: f32) {
         let value = if gain_db.is_finite() {
-            gain_db.clamp(-EQ_RANGE_DB, EQ_RANGE_DB)
+            gain_db.clamp(EQ_FLOOR_DB, EQ_BOOST_DB)
         } else {
             0.0
         };
@@ -342,7 +357,7 @@ pub enum DjCommand {
         deck: DeckId,
         /// Which band moved.
         band: EqBand,
-        /// New gain, clamped to ±`EQ_RANGE_DB` by the engine.
+        /// New gain, clamped to `EQ_FLOOR_DB`…`EQ_BOOST_DB` by the engine.
         gain_db: f32,
     },
     /// Crossfader position, 0.0 = A, 1.0 = B.
@@ -867,7 +882,7 @@ mod tests {
     fn an_eq_gain_is_clamped_and_a_nan_reads_as_unity() {
         let mut gains = EqGains::FLAT;
         gains.set_band(EqBand::Low, 99.0);
-        assert_eq!(gains.low_db, EQ_RANGE_DB);
+        assert_eq!(gains.low_db, EQ_BOOST_DB);
         gains.set_band(EqBand::Mid, f32::NAN);
         assert_eq!(gains.mid_db, 0.0);
         assert_eq!(gains.band(EqBand::High), 0.0);
@@ -876,6 +891,12 @@ mod tests {
             !gains.clamped().is_flat(),
             "clamping dropped the boosted band"
         );
+
+        // A kill is allowed to reach the floor: the knob, not the engine, decides whether the hand can
+        // get there (isolator mode), and the filter simply obeys the number it is given.
+        let mut kill = EqGains::FLAT;
+        kill.set_band(EqBand::Low, -999.0);
+        assert_eq!(kill.low_db, EQ_FLOOR_DB);
     }
 
     #[test]

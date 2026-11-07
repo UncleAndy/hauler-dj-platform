@@ -11,21 +11,21 @@
 //! touched keeps its samples bit for bit — and three knobs at zero cost nothing at all.
 
 use crate::biquad::Biquad;
-pub use dj_domain::{EQ_RANGE_DB, EqBand, EqGains};
+pub use dj_domain::{EQ_BOOST_DB, EQ_CUT_DB, EQ_FLOOR_DB, EqBand, EqGains};
 
 /// Distance between two positions of a knob, in decibels.
 ///
-/// An eighth of a decibel: finer than anyone hears, coarser than the noise of the shelf, and — the
+/// A quarter of a decibel: finer than anyone hears, coarser than the noise of the shelf, and — the
 /// reason for this exact number — representable without error in binary. A decimal step would leave
 /// unity reading as `1.19e-7` dB and turn "flat is a bypass" into a comparison with a tolerance.
-pub const STEP_DB: f32 = 0.125;
+pub const STEP_DB: f32 = 0.25;
 
 /// Rows in the table of one band, both ends of the range included.
 ///
-/// `2 × 26 dB / 0.125 dB + 1`. The test `the_table_is_as_long_as_the_range_says` holds this number
-/// to the arithmetic, because a table one row short turns the top of a knob into a clamped value
-/// nobody notices.
-pub const STEPS: usize = 417;
+/// The range is the whole knob, from the kill floor to the DJ boost cap: `(6 + 120) / 0.25 + 1`. A
+/// table one row short turns the end of the knob into a clamped value nobody notices, so the test
+/// `the_table_is_as_long_as_the_range_says` holds this number to the arithmetic.
+pub const STEPS: usize = 505;
 
 /// Where the bands sit, in hertz, and how wide the peak is.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -122,14 +122,14 @@ impl EqTable {
         if !gain_db.is_finite() {
             return Self::UNITY_STEP;
         }
-        let clamped = gain_db.clamp(-EQ_RANGE_DB, EQ_RANGE_DB);
-        let step = f64::from(clamped + EQ_RANGE_DB) / f64::from(STEP_DB);
+        let clamped = gain_db.clamp(EQ_FLOOR_DB, EQ_BOOST_DB);
+        let step = f64::from(clamped - EQ_FLOOR_DB) / f64::from(STEP_DB);
         (step.round() as usize).min(STEPS - 1)
     }
 
     /// The gain a row means, in decibels.
     pub fn gain_of(step: usize) -> f32 {
-        -EQ_RANGE_DB + (step.min(STEPS - 1) as f32) * STEP_DB
+        EQ_FLOOR_DB + (step.min(STEPS - 1) as f32) * STEP_DB
     }
 
     /// Coefficients of one band at one row.
@@ -137,8 +137,8 @@ impl EqTable {
         self.rows[band.index() * STEPS + step.min(STEPS - 1)]
     }
 
-    /// Where unity sits in the table.
-    pub const UNITY_STEP: usize = (STEPS - 1) / 2;
+    /// Where unity sits in the table: the floor lifted by 120 dB, in quarter-decibel rows.
+    pub const UNITY_STEP: usize = 480;
 }
 
 /// A channel's three-band equaliser, stereo.
