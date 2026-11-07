@@ -1,8 +1,10 @@
 // One band of a channel's three-band EQ (A14, DJP-MIX-002).
 //
-// Round like the master knob, but the value is a band gain in decibels: -26 at the foot, +26 at the
-// top, unity at the top dead centre. The lit arc runs from unity to the knob's angle, so a cut and a
-// boost are told apart by which way the light goes instead of by reading a number across a booth.
+// Round like the master knob and the same size as it: a band control is the same class of control as
+// the master gain, and a smaller cap reads as a lesser one. The value is a band gain in decibels: -26
+// at the foot, +26 at the top, unity at the top dead centre. The lit arc runs from unity to the
+// knob's angle, so a cut and a boost are told apart by which way the light goes instead of by reading
+// a number across a booth.
 //
 // The knob follows the hand while the button is down and the snapshot once it is released: a control
 // that waits for a round trip through the engine reads as dead, and one that keeps its own number
@@ -18,9 +20,11 @@ Item {
     required property string letter
     // The band's gain in decibels, as the engine published it.
     required property real value
+    // Diameter of the cap, taken from the master knob so the two cannot drift apart.
+    required property real diameter
 
-    implicitWidth: 22
-    implicitHeight: 25
+    implicitWidth: diameter
+    implicitHeight: diameter + 11
     objectName: "eq_" + band + "_" + deckId
 
     readonly property real rangeDb: 26.0
@@ -47,7 +51,7 @@ Item {
 
     Item {
         id: face
-        readonly property real side: Math.min(knob.width, 16)
+        readonly property real side: Math.min(knob.width, knob.diameter)
         width: face.side
         height: face.side
         anchors.horizontalCenter: parent.horizontalCenter
@@ -110,12 +114,16 @@ Item {
 
     onAngleChanged: arc.requestPaint()
 
+    // HI / MID / LO, the names a strip in the reference uses: the ear reads the word faster than the
+    // letter, and three of them fit under knobs this size.
     Label {
         text: knob.letter
+        height: 11
         anchors.top: face.bottom
         anchors.horizontalCenter: parent.horizontalCenter
+        verticalAlignment: Text.AlignVCenter
         color: Math.abs(knob.db) < 0.01 ? UiSettings.themeTextDim : UiSettings.themeText
-        font.pixelSize: 7
+        font.pixelSize: 8
     }
 
     MouseArea {

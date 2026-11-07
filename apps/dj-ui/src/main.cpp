@@ -2641,6 +2641,15 @@ int main(int argc, char *argv[])
 
         // The knobs have to exist in the loaded scene: a strip without them is a strip with no way
         // to reach the band, whatever the engine supports.
+        // The window is sized by the session and is not shown in a headless run: measure against the
+        // size a person actually sees, or every number below is about a 0x0 window.
+        window->resize(1366, 768);
+        window->show();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+        QEventLoop settleAgain;
+        QTimer::singleShot(200, &settleAgain, &QEventLoop::quit);
+        settleAgain.exec();
+
         QQuickItem *content = window->contentItem();
         const QString decks[2] = {QStringLiteral("A"), QStringLiteral("B")};
         const QString bands[3] = {QStringLiteral("low"), QStringLiteral("mid"),
@@ -2665,14 +2674,49 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: no meter for deck A\n");
             return 1;
         }
-        const double stackBottom =
-            knobs[0][2]->mapToItem(content, QPointF(0, knobs[0][2]->height())).y();
+        // The bottom of the stack is the LO knob, not whichever band happened to be last in the
+        // array: the knobs are drawn high-to-low, and comparing the top one let the label under the
+        // bottom one overlap the meter while the check stayed green.
+        double stackBottom = 0.0;
+        for (int band = 0; band < 3; ++band) {
+            const double bottom =
+                knobs[0][band]->mapToItem(content, QPointF(0, knobs[0][band]->height())).y();
+            stackBottom = std::max(stackBottom, bottom);
+        }
         const double meterTop = meterA->mapToItem(content, QPointF(0, 0)).y();
         std::fprintf(stdout, "dj-ui: the EQ knobs end at %.0f px, meter A starts at %.0f px\n",
                      stackBottom, meterTop);
         if (stackBottom > meterTop) {
             std::fprintf(stderr, "dj-ui: the EQ knobs overlap the meter\n");
             return 1;
+        }
+
+        // The owner asked for the same cap as the master knob: a band control is the same class of
+        // control as the master gain, and a smaller cap reads as a lesser one. Measured, not assumed.
+        auto *masterKnob = findItem(content, QStringLiteral("masterKnob"));
+        if (masterKnob == nullptr) {
+            std::fprintf(stderr, "dj-ui: no master knob in the mixer\n");
+            return 1;
+        }
+        const double masterSide = masterKnob->width();
+        for (int deck = 0; deck < 2; ++deck) {
+            for (int band = 0; band < 3; ++band) {
+                const double side = knobs[deck][band]->property("diameter").toDouble();
+                if (std::abs(side - masterSide) > 1.0) {
+                    std::fprintf(stderr,
+                                 "dj-ui: the %s %s knob is %.0f px against the master's %.0f px\n",
+                                 qPrintable(decks[deck]), qPrintable(bands[band]), side, masterSide);
+                    return 1;
+                }
+            }
+        }
+        std::fprintf(stdout,
+                     "dj-ui: every EQ knob is %.0f px across, the same cap as the master knob\n",
+                     masterSide);
+        for (int band = 0; band < 3; ++band) {
+            const QString letter = knobs[0][band]->property("letter").toString();
+            std::fprintf(stdout, "dj-ui: the %s knob is labelled %s\n",
+                         qPrintable(bands[band]), qPrintable(letter));
         }
 
         // What the engine says about one band, straight from the published snapshot.

@@ -32,13 +32,29 @@ Pane {
     // The strip band: panel height minus margins, the crossfader and the law buttons. Taken from the
     // panel on purpose — the row's own height depends on what the meters ask for, and reading it back
     // is a loop that settles stale.
-    readonly property real bandHeight: Math.max(56, mixer.height - 86)
+    // Everything in the column that is not the meter band: the pane's own padding, the two gaps, the
+    // crossfader and the row of law buttons. Measured on the built scene, not guessed: with 86 the
+    // strip row came out 18 px shorter than the number the meters were sized from, and the meter grew
+    // into the EQ labels.
+    readonly property real chromeHeight: 104
+    readonly property real bandHeight: Math.max(56, mixer.height - chromeHeight)
     readonly property real masterKnobSide: Math.max(14, Math.min(30, bandHeight * 0.32))
-    // The three EQ knobs of a channel sit above its meter, so the meter gives up that room. The
-    // height is shared by every meter — master included — because channel meters and the master end
-    // on one line at the bottom, and that line is what makes the strip readable at a glance.
-    readonly property real eqStackHeight: 3 * 25 + 2
-    readonly property real meterHeight: Math.max(18, bandHeight - masterKnobSide - 17 - eqStackHeight)
+    // The three EQ knobs of a channel are the size of the master knob, so the strip needs room for
+    // three of those caps plus their labels. The meter gives up exactly that room and not a pixel
+    // more: the height is computed from what the *deck* strip has above and below its meter, because
+    // the deck is the strip that carries the most controls. Every meter in the mixer then takes that
+    // one height, master included: channel meters and the master end on one line at the bottom, and
+    // that line is what makes a strip readable at a glance.
+    readonly property real eqKnobSide: masterKnobSide
+    readonly property real eqLabelHeight: 11
+    readonly property real eqStackHeight: 3 * (eqKnobSide + eqLabelHeight) + 2
+    // The deck letter above the knobs (10 px of text, 2 px of margin, 2 px of gap) and the decibel
+    // label under the meter with its own margin. Measured on the built scene: the number has to come
+    // out even, or the meter grows into the LO label by exactly the difference.
+    readonly property real stripHeaderHeight: 14
+    readonly property real stripFooterHeight: 14
+    readonly property real meterHeight: Math.max(
+        18, bandHeight - stripHeaderHeight - eqStackHeight - stripFooterHeight)
 
     function deckOf(id) {
         for (let index = 0; index < mixer.decks.length; ++index) {
@@ -85,10 +101,13 @@ Pane {
                 Layout.preferredWidth: 34
                 Layout.fillHeight: true
 
+                // The knob sits at the top of its column, level with the channel's top knob: with
+                // every meter the same height, the master column has room to spare above its meter,
+                // and a knob hanging under that gap would read as part of the void.
                 MasterKnob {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    anchors.bottom: masterMeterItem.top
-                    anchors.bottomMargin: 2
+                    anchors.top: parent.top
+                    anchors.topMargin: 2
                     width: mixer.masterKnobSide
                     height: mixer.masterKnobSide
                     gain: mixer.masterGain
@@ -255,9 +274,9 @@ Pane {
 
                 Repeater {
                     model: [
-                        { band: "high", letter: "H" },
-                        { band: "mid", letter: "M" },
-                        { band: "low", letter: "L" }
+                        { band: "high", letter: "HI" },
+                        { band: "mid", letter: "MID" },
+                        { band: "low", letter: "LO" }
                     ]
 
                     delegate: EqKnob {
@@ -266,6 +285,7 @@ Pane {
                         deckId: strip.modelData
                         band: modelData.band
                         letter: modelData.letter
+                        diameter: mixer.eqKnobSide
                         value: strip.bandValue(modelData.band)
                     }
                 }
