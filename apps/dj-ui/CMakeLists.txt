@@ -42,6 +42,7 @@ qt_add_qml_module(dj-ui
         qml/mixer/FaderKnob.qml
         qml/mixer/EqKnob.qml
         qml/mixer/LevelMeter.qml
+        qml/mixer/PitchFader.qml
         qml/mixer/RefusalButton.qml
 )
 

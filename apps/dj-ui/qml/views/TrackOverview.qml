@@ -64,17 +64,36 @@ Item {
         playhead: UiSettings.themePlayhead
     }
 
+    // Scrubbing, not just a click: the hand takes the playhead and moves it, and the engine follows while
+    // the button is down (DJP-DECK-002). A click is the shortest scrub, so both are the same code.
     MouseArea {
         anchors.fill: parent
         acceptedButtons: Qt.LeftButton
-        onClicked: function (mouse) {
+        property bool scrubbing: false
+
+        function moveTo(x) {
             if (overview.columns <= 0 || overview.framesPerBucket <= 0
                     || !Bridge.connected || overview.deckState === undefined) {
                 return;
             }
-            const target = Math.max(0.0, Math.min(1.0, mouse.x / Math.max(1, width)));
+            const target = Math.max(0.0, Math.min(1.0, x / Math.max(1, width)));
             const frame = Math.floor(target * overview.columns * overview.framesPerBucket);
             Bridge.seek(overview.deckState.deck, frame);
         }
+
+        onPressed: function (mouse) {
+            scrubbing = true;
+            moveTo(mouse.x);
+        }
+        onPositionChanged: function (mouse) {
+            if (scrubbing) {
+                moveTo(mouse.x);
+            }
+        }
+        onReleased: scrubbing = false
+        onCanceled: scrubbing = false
+        // A double click returns the playhead to the start of the track, the second thing a hand wants
+        // from a scrubbed bar.
+        onDoubleClicked: moveTo(0)
     }
 }

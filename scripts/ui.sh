@@ -167,6 +167,10 @@ case "${1:-}" in
     # red instead of doing nothing.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --refusal-check --load "$fixture"
+    # The transport, end to end: Play moves the playhead, Stop puts it back on the cue point, and the
+    # hand can scrub the overview — three gestures the deck is asked for by name (DJP-DECK-002).
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
+        --transport-check --load "$fixture"
     # A playing deck must refuse a load, and say so: cutting the track is the one mistake a DJ
     # never forgives.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
@@ -181,6 +185,9 @@ case "${1:-}" in
     # own neutral: a gain or a band goes flat, a fader opens, the master stands at three quarters of its
     # level and the crossfader centres.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --neutral-check
+    # The pitch fader, end to end: the hand's drag has to reach the engine as a rate, and a double click
+    # has to bring the deck back to the file's own speed.
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --pitch-check
     # A13: a cue and a loop are decisions about a file, so they must outlive the engine process. One
     # run stores them, a second engine reads them with no cue command of its own.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \

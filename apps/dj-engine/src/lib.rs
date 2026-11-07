@@ -95,11 +95,21 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
                 target.eject();
                 Ack::applied(id, at)
             }
-            // Tempo needs a resampler the graph does not have yet (A04/M2).
-            DjCommand::SetTempoRatio { .. } => Ack {
-                command_id: id,
-                status: AckStatus::Rejected(RejectReason::NotSupported),
-            },
+            // The deck resamples: the rate is its own, and the pitch moves with it, as on a turntable.
+            // Key lock — the rate without the pitch — is a different task (DJP-DECK-008).
+            DjCommand::SetTempoRatio { ratio, .. } => {
+                if ratio.is_finite()
+                    && (dj_deck::MIN_TEMPO_RATIO..=dj_deck::MAX_TEMPO_RATIO).contains(ratio)
+                {
+                    target.set_tempo(*ratio);
+                    Ack::applied(id, at)
+                } else {
+                    Ack {
+                        command_id: id,
+                        status: AckStatus::Rejected(RejectReason::InvalidValue),
+                    }
+                }
+            }
             _ => unreachable!("only deck commands reach here"),
         };
     }

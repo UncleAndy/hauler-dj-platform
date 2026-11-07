@@ -73,6 +73,26 @@ Pane {
         return panel.timeLabel(panel.deck.source_frame);
     }
 
+    /// The point Stop and Cue return to: hotcue 0 when it is set, the start of the file otherwise.
+    function cueFrame() {
+        const slots = panel.deck.hotcues !== undefined ? panel.deck.hotcues : null;
+        if (slots !== null && slots.length > 0 && slots[0] !== null && slots[0] !== undefined) {
+            return slots[0];
+        }
+        return 0;
+    }
+
+    /// Stop is not Pause: it puts the playhead back on the point the deck starts from, which is what a
+    /// hand expects from the button with that name (DJP-DECK-002).
+    function stop() {
+        Bridge.play(panel.deckId, false);
+        Bridge.seek(panel.deckId, panel.cueFrame());
+    }
+
+    function remainingLabel() {
+        return panel.timeLabel(panel.deck.remaining_frames);
+    }
+
     function lengthLabel() {
         if (panel.columns <= 0 || panel.framesPerBucket <= 0) {
             return "—";
@@ -135,33 +155,59 @@ Pane {
                 elide: Text.ElideRight
             }
             Label {
-                text: panel.positionLabel() + " / " + panel.lengthLabel()
+                objectName: "clock_" + panel.deckId
+                // Elapsed first, then what is left: a DJ reads the time that is running out, not the
+                // time on the clock (DJP-DECK-002).
+                text: panel.positionLabel() + " / −" + panel.remainingLabel()
                 color: UiSettings.themeTextDim
                 font.pixelSize: 11
             }
         }
 
-        // The zoomed strip: what is around the playhead right now.
-        WaveformView {
-            id: detail
-            objectName: "deckDetail_" + panel.deckId
+        // The sticks and the fader in one row: the tempo belongs to the deck, and a hand riding the
+        // fader has to see the playhead at the same time.
+        RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.minimumHeight: 40
-            deckState: panel.deck
-            envelope: envelope
-        }
+            spacing: 4
 
-        // The whole track, with a marker that slides along it; a click here seeks.
-        TrackOverview {
-            objectName: "deckOverview_" + panel.deckId
-            Layout.fillWidth: true
-            // Twice the detail strip's old overview height: the whole track is easier to aim at for a
-            // seek than a hairline, and the zoomed strip still keeps the most room.
-            Layout.preferredHeight: 44
-            Layout.minimumHeight: 28
-            deckState: panel.deck
-            envelope: envelope
+            PitchFader {
+                deckId: panel.deckId
+                ratio: panel.deck !== null && panel.deck.tempo_ratio !== undefined
+                       ? panel.deck.tempo_ratio : 1.0
+                Layout.fillHeight: true
+                Layout.preferredWidth: 24
+                Layout.minimumWidth: 18
+            }
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                spacing: 4
+
+                // The zoomed strip: what is around the playhead right now.
+                WaveformView {
+                    id: detail
+                    objectName: "deckDetail_" + panel.deckId
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.minimumHeight: 40
+                    deckState: panel.deck
+                    envelope: envelope
+                }
+
+                // The whole track, with a marker that slides along it; a click here seeks.
+                TrackOverview {
+                    objectName: "deckOverview_" + panel.deckId
+                    Layout.fillWidth: true
+                    // Twice the detail strip's old overview height: the whole track is easier to aim at for
+                    // a seek than a hairline, and the zoomed strip still keeps the most room.
+                    Layout.preferredHeight: 44
+                    Layout.minimumHeight: 28
+                    deckState: panel.deck
+                    envelope: envelope
+                }
+            }
         }
 
         // Transport, at the bottom where the hand already is.
@@ -170,6 +216,7 @@ Pane {
             spacing: 4
 
             Button {
+                objectName: "play_" + panel.deckId
                 text: panel.playing ? qsTr("Pause") : qsTr("Play")
                 font.pixelSize: 11
                 enabled: panel.live
@@ -179,12 +226,28 @@ Pane {
                 highlighted: panel.playing
                 onClicked: Bridge.play(panel.deckId, !panel.playing)
             }
+            // The cue button of a transport, not a hotcue button: pressed, it stops the deck on the cue
+            // point; held, the deck is silent there; released, it plays from the cue point. That is the
+            // gesture every DJ already knows (DJP-DECK-002).
             Button {
+                objectName: "cue_" + panel.deckId
                 text: qsTr("Cue")
                 font.pixelSize: 11
                 enabled: panel.live
                 focusPolicy: Qt.NoFocus
-                onClicked: Bridge.cue(panel.deckId, "Jump", 0)
+                onPressed: {
+                    Bridge.play(panel.deckId, false);
+                    Bridge.seek(panel.deckId, panel.cueFrame());
+                }
+                onReleased: Bridge.play(panel.deckId, true)
+            }
+            Button {
+                objectName: "stop_" + panel.deckId
+                text: qsTr("Stop")
+                font.pixelSize: 11
+                enabled: panel.live
+                focusPolicy: Qt.NoFocus
+                onClicked: panel.stop()
             }
             Button {
                 text: qsTr("Set")

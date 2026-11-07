@@ -24,6 +24,20 @@ use dj_dsp::ChannelEq;
 /// arrives with the rest of the 44.1 kHz work in A05, and is listed as a limitation of A14.
 pub const EQ_SAMPLE_RATE: f64 = 48_000.0;
 
+/// Slowest and fastest playback rate a deck accepts.
+///
+/// A track can be dragged a long way before it stops being music; outside this the resampler is asked for
+/// material it is not meant to invent.
+pub const MIN_TEMPO_RATIO: f64 = 0.25;
+/// Fastest playback rate a deck accepts.
+pub const MAX_TEMPO_RATIO: f64 = 4.0;
+
+/// Largest block the tempo stage can hold, in frames.
+///
+/// The engine renders fixed blocks far below this; the number only bounds the buffer allocated once, so a
+/// rate change never allocates inside the callback.
+const MAX_TEMPO_BLOCK_FRAMES: usize = 8192;
+
 /// Where a deck reads frames from. Implemented by the prefetcher; tests provide their own.
 pub trait DeckSource: Send {
     /// Sample rate of the material.
@@ -177,6 +191,16 @@ pub struct Deck {
     reading_loop_buffer: bool,
     /// The channel's three-band EQ, applied after the trim and before the mixer (A14).
     eq: ChannelEq,
+    /// Source frames pulled for the tempo stage but not yet played, stereo.
+    ///
+    /// A tempo change is a resampling: the deck asks the source for slightly more (or fewer) frames than
+    /// the block holds and hands out the difference. The tail is kept here so the seam between blocks is
+    /// one frame wide, and nothing is allocated inside the callback.
+    scratch: Vec<f32>,
+    /// Frames at the front of `scratch` carried over from the previous block.
+    scratch_frames: usize,
+    /// Where between two source frames the next output frame sits, 0.0 … 1.0.
+    phase: f64,
 }
 
 impl std::fmt::Debug for Deck {
@@ -212,7 +236,33 @@ impl Deck {
             loop_buffer: None,
             reading_loop_buffer: false,
             eq: ChannelEq::new(EQ_SAMPLE_RATE),
+            scratch: vec![0.0; MAX_TEMPO_BLOCK_FRAMES * 2],
+            scratch_frames: 0,
+            phase: 0.0,
         }
+    }
+
+    /// Set the playback rate: 1.0 is the file's own speed.
+    ///
+    /// The pitch moves with the rate, as on a turntable: changing one without the other is key lock, and
+    /// that is a different task (DJP-DECK-008).
+    pub fn set_tempo(&mut self, ratio: f64) {
+        if !ratio.is_finite() {
+            return;
+        }
+        let clamped = ratio.clamp(MIN_TEMPO_RATIO, MAX_TEMPO_RATIO);
+        if (clamped - self.tempo_ratio).abs() < f64::EPSILON {
+            return;
+        }
+        self.tempo_ratio = clamped;
+        // A rate change keeps the carried frames: they are still the material after the playhead, and
+        // dropping them would drop a fraction of a frame the ear cannot hear but a test can.
+    }
+
+    /// Drop the frames carried for the tempo stage: the playhead is about to move or stop.
+    fn drop_pending(&mut self) {
+        self.scratch_frames = 0;
+        self.phase = 0.0;
     }
 
     /// Which deck this is.
@@ -263,6 +313,7 @@ impl Deck {
         self.playing = false;
         self.loop_region = None;
         self.levels = Levels::SILENT;
+        self.drop_pending();
         // A new track starts with an empty filter history: the tail of the last one is not part of
         // this one, and a stale state produces a click on the first block.
         self.eq.reset();
@@ -278,6 +329,7 @@ impl Deck {
 
     /// Remove the source and return the deck to `Empty`.
     pub fn eject(&mut self) {
+        self.drop_pending();
         self.source = None;
         self.track = None;
         self.playing = false;
@@ -315,16 +367,22 @@ impl Deck {
             return false;
         }
         self.playing = true;
+        // Playback starts from the frame the playhead stands on: the frames carried from before a pause
+        // are not part of this start.
+        self.drop_pending();
         true
     }
 
     /// Stop the transport; the position is kept.
     pub fn pause(&mut self) {
         self.playing = false;
+        self.drop_pending();
     }
 
     /// Seek to a source frame, clamped to the track.
     pub fn seek(&mut self, frame: u64) -> u64 {
+        // A seek moves the playhead: the frames carried for the tempo stage are now behind it.
+        self.drop_pending();
         let Some(source) = self.source.as_mut() else {
             return 0;
         };
@@ -351,6 +409,8 @@ impl Deck {
 
     /// Seek by playing position as a fraction of the track.
     pub fn seek_ratio(&mut self, ratio: f32) -> u64 {
+        // A seek moves the playhead: the frames carried for the tempo stage are now behind it.
+        self.drop_pending();
         let total = self.source.as_ref().and_then(|source| source.frames());
         match total {
             Some(frames) => {
@@ -547,6 +607,82 @@ impl Deck {
         out.fill(0.0);
         if !self.playing || self.source.is_none() {
             self.levels = Levels::SILENT;
+            self.drop_pending();
+            return;
+        }
+
+        if (self.tempo_ratio - 1.0).abs() < 1e-9 {
+            // At the file's own speed the deck is unchanged: same bytes as before the tempo stage existed,
+            // which is what the golden render compares against.
+            self.pull(out);
+        } else {
+            self.render_at_tempo(out);
+        }
+
+        for sample in out.iter_mut() {
+            *sample *= self.gain;
+        }
+        // Trim first, then the EQ: that is the order of a channel strip, and the order the mixer's
+        // contract names when it says a deck arrives already gain-staged and equalised.
+        self.eq.process(out);
+        self.levels = measure_levels(out);
+    }
+
+    /// Play `out` at the deck's tempo: pull more or less source material than the block holds and
+    /// interpolate between the frames the playhead falls between.
+    fn render_at_tempo(&mut self, out: &mut [f32]) {
+        let frames = out.len() / 2;
+        if frames == 0 {
+            return;
+        }
+        let step = self.tempo_ratio;
+        // One frame beyond what the block consumes: the last output frame interpolates between two source
+        // frames, and the second of them may belong to the next block.
+        let need = (self.phase + step * frames as f64).ceil() as usize + 1;
+        let capacity = self.scratch.len() / 2;
+        if need > capacity {
+            // The engine's block is fixed and far below this; a block this large is not a case to allocate
+            // for inside a callback, so it plays at the file's own speed.
+            self.pull(out);
+            return;
+        }
+
+        let mut scratch = std::mem::take(&mut self.scratch);
+        let tail = self.scratch_frames;
+        let missing = need.saturating_sub(tail);
+        if missing > 0 {
+            self.pull(&mut scratch[tail * 2..(tail + missing) * 2]);
+        }
+        let total = tail + missing;
+
+        let mut position = self.phase;
+        for index in 0..frames {
+            let frame = position as usize;
+            if frame + 1 >= total {
+                break; // the source ended inside this block; the rest is the silence it already holds
+            }
+            let fraction = (position - frame as f64) as f32;
+            let left = frame * 2;
+            let right = left + 2;
+            out[index * 2] = scratch[left] * (1.0 - fraction) + scratch[right] * fraction;
+            out[index * 2 + 1] =
+                scratch[left + 1] * (1.0 - fraction) + scratch[right + 1] * fraction;
+            position += step;
+        }
+
+        let consumed = (position as usize).min(total);
+        let rest = total - consumed;
+        scratch.copy_within(consumed * 2..total * 2, 0);
+        self.scratch_frames = rest;
+        self.phase = position - consumed as f64;
+        self.scratch = scratch;
+    }
+
+    /// Fill `out` from the source, honouring the loop and the end of the file. No gain, no EQ, no
+    /// measurement: those belong to the block a listener hears, not to the material pulled for it.
+    fn pull(&mut self, out: &mut [f32]) {
+        out.fill(0.0);
+        if !self.playing || self.source.is_none() {
             return;
         }
 
@@ -649,14 +785,6 @@ impl Deck {
                 self.stats.loop_wraps += 1;
             }
         }
-
-        for sample in out.iter_mut() {
-            *sample *= self.gain;
-        }
-        // Trim first, then the EQ: that is the order of a channel strip, and the order the mixer's
-        // contract names when it says a deck arrives already gain-staged and equalised.
-        self.eq.process(out);
-        self.levels = measure_levels(out);
     }
 
     /// Fill `out` from the captured loop, wrapping at its end. `None` when there is nothing to read.

@@ -157,7 +157,7 @@ fn stop_is_applied_too() {
 }
 
 #[test]
-fn tempo_is_refused_by_name_because_resampling_does_not_exist_yet() {
+fn tempo_reaches_the_deck_and_the_deck_resamples() {
     let mut decks = vec![
         deck_with_tone(DeckId::A, 48_000),
         deck_with_tone(DeckId::B, 48_000),
@@ -176,10 +176,46 @@ fn tempo_is_refused_by_name_because_resampling_does_not_exist_yet() {
         0,
     );
     assert!(
-        matches!(ack.status, AckStatus::Rejected(RejectReason::NotSupported)),
-        "an unimplemented command must be refused explicitly, got {:?}",
+        matches!(ack.status, AckStatus::Applied { .. }),
+        "the engine refused a valid tempo, got {:?}",
         ack.status
     );
+    assert!(
+        (decks[0].tempo_ratio() - 1.05).abs() < 1e-9,
+        "the deck plays at {}",
+        decks[0].tempo_ratio()
+    );
+    assert_eq!(
+        decks[1].tempo_ratio(),
+        1.0,
+        "the command touched the wrong deck"
+    );
+}
+
+#[test]
+fn a_tempo_outside_the_range_is_refused_and_changes_nothing() {
+    let mut decks = vec![
+        deck_with_tone(DeckId::A, 48_000),
+        deck_with_tone(DeckId::B, 48_000),
+    ];
+    let mut mixer = mixer_for(48_000);
+    let ack = apply(
+        &mut decks,
+        &mut mixer,
+        &command(
+            4,
+            DjCommand::SetTempoRatio {
+                deck: DeckId::A,
+                ratio: 9.0,
+            },
+        ),
+        0,
+    );
+    assert!(matches!(
+        ack.status,
+        AckStatus::Rejected(RejectReason::InvalidValue)
+    ));
+    assert_eq!(decks[0].tempo_ratio(), 1.0);
 }
 
 #[test]

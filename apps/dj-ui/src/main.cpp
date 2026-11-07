@@ -938,6 +938,16 @@ int main(int argc, char *argv[])
         QStringLiteral("eq-check"),
         QStringLiteral("With --connect: send three band gains to one deck and require the snapshot "
                        "to apply them and the strip's knobs to show those numbers."));
+    const QCommandLineOption transportOption(
+        QStringLiteral("transport-check"),
+        QStringLiteral("With --connect and --load: play the deck, stop it and require the playhead to "
+                       "return to the cue point, scrub the overview with the hand, and require the "
+                       "clock to show the time left rather than the length."));
+    const QCommandLineOption pitchOption(
+        QStringLiteral("pitch-check"),
+        QStringLiteral("With --connect: drag a deck's pitch fader and require the engine to play at "
+                       "the rate the hand asked for, then double click it back to the file's own "
+                       "speed."));
     const QCommandLineOption neutralOption(
         QStringLiteral("neutral-check"),
         QStringLiteral("With --connect: seat every mouse-driven control away from its neutral "
@@ -1084,6 +1094,8 @@ int main(int argc, char *argv[])
     parser.addOption(gainCheckOption);
     parser.addOption(eqCheckOption);
     parser.addOption(neutralOption);
+    parser.addOption(pitchOption);
+    parser.addOption(transportOption);
     parser.addOption(busyCheckOption);
     parser.addOption(refusalCheckOption);
     parser.addOption(spaceCheckOption);
@@ -3043,6 +3055,281 @@ int main(int argc, char *argv[])
         return 0;
     }
 
+
+
+
+    if (parser.isSet(transportOption)) {
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        bridge->connectToEngine(parser.value(connectOption));
+        QElapsedTimer linking;
+        linking.start();
+        while (!bridge->isConnected() && linking.elapsed() < 3000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QThread::msleep(10);
+        }
+        if (!bridge->isConnected()) {
+            std::fprintf(stderr, "dj-ui: no engine\n");
+            return 1;
+        }
+        window->resize(1366, 768);
+        window->show();
+        const auto pump = [&](int rounds) {
+            for (int step = 0; step < rounds; ++step) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+                QThread::msleep(5);
+            }
+        };
+        pump(60);
+
+        const auto fieldOf = [&](const char *field) {
+            for (const QVariant &entry : bridge->snapshot().value(QStringLiteral("decks")).toList()) {
+                const QVariantMap map = entry.toMap();
+                if (map.value(QStringLiteral("deck")).toString() != QStringLiteral("A")) {
+                    continue;
+                }
+                return map.value(QString::fromLatin1(field)).toDouble();
+            }
+            return -1.0;
+        };
+        const auto playing = [&]() {
+            for (const QVariant &entry : bridge->snapshot().value(QStringLiteral("decks")).toList()) {
+                const QVariantMap map = entry.toMap();
+                if (map.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                    return map.value(QStringLiteral("playing")).toBool();
+                }
+            }
+            return false;
+        };
+        // The point Stop returns to is hotcue 0 when the track carries one, the start of the file
+        // otherwise: the check reads the deck's own answer instead of assuming zero.
+        const auto cuePoint = [&]() {
+            for (const QVariant &entry : bridge->snapshot().value(QStringLiteral("decks")).toList()) {
+                const QVariantMap map = entry.toMap();
+                if (map.value(QStringLiteral("deck")).toString() != QStringLiteral("A")) {
+                    continue;
+                }
+                // `slots` is a Qt keyword: the list is named for what it holds.
+                const QVariantList cues = map.value(QStringLiteral("hotcues")).toList();
+                if (!cues.isEmpty() && cues[0].isValid() && !cues[0].isNull()) {
+                    return cues[0].toDouble();
+                }
+                return 0.0;
+            }
+            return 0.0;
+        };
+        const auto press = [&](QQuickItem *item) {
+            if (item == nullptr) {
+                return false;
+            }
+            const QPointF at = item->mapToScene(QPointF(item->width() / 2.0, item->height() / 2.0));
+            QMouseEvent down(QEvent::MouseButtonPress, at, window->mapToGlobal(at.toPoint()),
+                             Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(window, &down);
+            QCoreApplication::processEvents();
+            return true;
+        };
+        const auto release = [&](QQuickItem *item) {
+            if (item == nullptr) {
+                return false;
+            }
+            const QPointF at = item->mapToScene(QPointF(item->width() / 2.0, item->height() / 2.0));
+            QMouseEvent up(QEvent::MouseButtonRelease, at, window->mapToGlobal(at.toPoint()),
+                           Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(window, &up);
+            QCoreApplication::processEvents();
+            return true;
+        };
+
+        // Loaded already by --load; wait for the deck to carry a track.
+        const QString path = parser.value(loadOption);
+        if (path.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: --transport-check needs --load\n");
+            return 1;
+        }
+        // A check of the transport needs a track: the load is part of the setup, not something the
+        // production code does on its own.
+        bridge->load(QStringLiteral("A"), path);
+        QElapsedTimer ready;
+        ready.start();
+        while (ready.elapsed() < 15000 && fieldOf("remaining_frames") <= 0.0) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QThread::msleep(20);
+        }
+        // A fresh engine is not guaranteed: the checks of a gate run share one, so the deck is put in a
+        // known state before the transport is measured — silent, at its cue point.
+        bridge->play(QStringLiteral("A"), false);
+        pump(30);
+        bridge->seek(QStringLiteral("A"), 0);
+        pump(30);
+        // The snapshot carries the position and what is left of it; their sum is the track.
+        const double totalFrames = fieldOf("source_frame")
+                                   + fieldOf("remaining_frames");
+        auto *playButton = findItem(window->contentItem(), QStringLiteral("play_A"));
+        auto *stopButton = findItem(window->contentItem(), QStringLiteral("stop_A"));
+        auto *cueButton = findItem(window->contentItem(), QStringLiteral("cue_A"));
+        auto *overview = findItem(window->contentItem(), QStringLiteral("deckOverview_A"));
+        auto *clock = findItem(window->contentItem(), QStringLiteral("clock_A"));
+        if (playButton == nullptr || stopButton == nullptr || cueButton == nullptr
+            || overview == nullptr || clock == nullptr) {
+            std::fprintf(stderr, "dj-ui: the deck is missing its transport, its clock or its overview\n");
+            return 1;
+        }
+
+        // Play, let the playhead move, then Stop: the deck must be silent and back at the cue point.
+        press(playButton);
+        pump(5);
+        release(playButton);
+        pump(60);
+        if (!playing()) {
+            std::fprintf(stderr, "dj-ui: the play button did not start the deck\n");
+            return 1;
+        }
+        const double moved = fieldOf("source_frame");
+        const double cue = cuePoint();
+        press(stopButton);
+        release(stopButton);
+        pump(40);
+        const double stoppedAt = fieldOf("source_frame");
+        std::fprintf(stdout,
+                     "dj-ui: play moved the playhead to %.0f, stop put it back at %.0f (the cue point "
+                     "is %.0f) and left the deck %s\n",
+                     moved, stoppedAt, cue, playing() ? "playing" : "silent");
+        if (playing()) {
+            std::fprintf(stderr, "dj-ui: stop left the deck playing\n");
+            return 1;
+        }
+        if (std::abs(stoppedAt - cue) > 1.0) {
+            std::fprintf(stderr, "dj-ui: stop did not return the playhead to the cue point\n");
+            return 1;
+        }
+
+        // Scrub: drag the hand across the overview and require the engine's playhead to follow.
+        const QPointF from = overview->mapToScene(QPointF(overview->width() * 0.2, overview->height() / 2));
+        const QPointF to = overview->mapToScene(QPointF(overview->width() * 0.6, overview->height() / 2));
+        QMouseEvent down(QEvent::MouseButtonPress, from, window->mapToGlobal(from.toPoint()),
+                         Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(window, &down);
+        QMouseEvent along(QEvent::MouseMove, to, window->mapToGlobal(to.toPoint()), Qt::LeftButton,
+                          Qt::LeftButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(window, &along);
+        QMouseEvent up(QEvent::MouseButtonRelease, to, window->mapToGlobal(to.toPoint()),
+                       Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(window, &up);
+        pump(40);
+        const double scrubbed = fieldOf("source_frame");
+        const double total = totalFrames;
+        std::fprintf(stdout, "dj-ui: scrubbing to sixty per cent of the overview put the playhead at "
+                             "%.0f of %.0f frames\n", scrubbed, total);
+        if (total <= 0.0 || scrubbed < total * 0.45 || scrubbed > total * 0.75) {
+            std::fprintf(stderr, "dj-ui: the scrub did not move the playhead where the hand went\n");
+            return 1;
+        }
+
+        // The clock counts down, so it must show the time left, not the length.
+        const QString shown = clock->property("text").toString();
+        std::fprintf(stdout, "dj-ui: the deck's clock reads %s\n", qPrintable(shown));
+        if (!shown.contains(QStringLiteral("−")) || shown.contains(QStringLiteral("—"))) {
+            std::fprintf(stderr, "dj-ui: the clock does not show the time left\n");
+            return 1;
+        }
+        return 0;
+    }
+
+    if (parser.isSet(pitchOption)) {
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        bridge->connectToEngine(parser.value(connectOption));
+        QElapsedTimer linking;
+        linking.start();
+        while (!bridge->isConnected() && linking.elapsed() < 3000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QThread::msleep(10);
+        }
+        if (!bridge->isConnected()) {
+            std::fprintf(stderr, "dj-ui: no engine\n");
+            return 1;
+        }
+        const auto pump = [&](int rounds) {
+            for (int step = 0; step < rounds; ++step) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+                QThread::msleep(5);
+            }
+        };
+        const auto tempoOf = [&](const char *deck) {
+            for (const QVariant &entry : bridge->snapshot().value(QStringLiteral("decks")).toList()) {
+                const QVariantMap map = entry.toMap();
+                if (map.value(QStringLiteral("deck")).toString() == QString::fromLatin1(deck)) {
+                    return map.value(QStringLiteral("tempo_ratio")).toDouble();
+                }
+            }
+            return -1.0;
+        };
+        auto *pitch = findItem(window->contentItem(), QStringLiteral("pitch_A"));
+        if (pitch == nullptr) {
+            std::fprintf(stderr, "dj-ui: deck A has no pitch fader\n");
+            return 1;
+        }
+        pump(20);
+        const double perPixel = pitch->property("ratioPerPixel").toDouble();
+        if (!(perPixel > 0.0)) {
+            std::fprintf(stderr, "dj-ui: the pitch fader has no throw (%g per pixel)\n", perPixel);
+            return 1;
+        }
+
+        const QPointF grab = pitch->mapToScene(QPointF(pitch->width() / 2.0,
+                                                       pitch->height() / 2.0));
+        const auto send = [&](QEvent::Type type, const QPointF &at) {
+            QMouseEvent event(type, at, window->mapToGlobal(at.toPoint()), Qt::LeftButton,
+                              Qt::LeftButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(window, &event);
+            QCoreApplication::processEvents();
+        };
+        send(QEvent::MouseButtonPress, grab);
+        send(QEvent::MouseMove, grab - QPointF(0, 10));
+        pump(30);
+        const double asked = pitch->property("lastRatio").toDouble();
+        const double playing = tempoOf("A");
+        const double other = tempoOf("B");
+        const double expected = 1.0 + 10.0 * perPixel;
+        std::fprintf(stdout,
+                     "dj-ui: ten pixels up the pitch fader asks for %.4f and the engine plays at "
+                     "%.4f (deck B at %.3f)\n", asked, playing, other);
+        if (std::abs(asked - expected) > 0.001 || std::abs(playing - expected) > 0.001) {
+            std::fprintf(stderr, "dj-ui: the pitch fader and the engine disagree about the rate\n");
+            return 1;
+        }
+        if (playing <= 1.0 || std::abs(other - 1.0) > 1e-9) {
+            std::fprintf(stderr, "dj-ui: the pitch moved the wrong deck or the wrong way\n");
+            return 1;
+        }
+
+        // The same gesture back down, and a double click to the file's own speed.
+        send(QEvent::MouseMove, grab);
+        pump(20);
+        if (std::abs(tempoOf("A") - 1.0) > 0.002) {
+            std::fprintf(stderr, "dj-ui: the fader did not come back to the file's speed\n");
+            return 1;
+        }
+        send(QEvent::MouseMove, grab - QPointF(0, 10));
+        pump(20);
+        send(QEvent::MouseButtonDblClick, grab);
+        send(QEvent::MouseButtonRelease, grab);
+        pump(30);
+        const double reset = tempoOf("A");
+        std::fprintf(stdout, "dj-ui: a double click put the pitch back at %.3f\n", reset);
+        if (std::abs(reset - 1.0) > 1e-6) {
+            std::fprintf(stderr, "dj-ui: a double click did not return the deck to its own speed\n");
+            return 1;
+        }
+        return 0;
+    }
 
     if (parser.isSet(neutralOption)) {
         auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());

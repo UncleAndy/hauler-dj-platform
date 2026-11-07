@@ -474,3 +474,197 @@ fn a_loop_longer_than_the_budget_is_not_captured() {
         "a loop over the budget must stay unbuffered rather than silently allocate"
     );
 }
+
+/// A pure tone, so the tempo stage can be measured in pitch and not only in position.
+struct ToneSource {
+    frames: u64,
+    position: u64,
+}
+
+impl DeckSource for ToneSource {
+    fn sample_rate(&self) -> u32 {
+        48_000
+    }
+
+    fn frames(&self) -> Option<u64> {
+        Some(self.frames)
+    }
+
+    fn read(&mut self, out: &mut [f32]) -> Result<usize, String> {
+        let want = out.len() / 2;
+        let available = usize::try_from(self.frames.saturating_sub(self.position)).unwrap_or(0);
+        let take = want.min(available);
+        for index in 0..take {
+            let frame = self.position + index as u64;
+            let value =
+                (std::f64::consts::TAU * 440.0 * frame as f64 / 48_000.0).sin() as f32 * 0.5;
+            out[index * 2] = value;
+            out[index * 2 + 1] = value;
+        }
+        self.position += take as u64;
+        Ok(take)
+    }
+
+    fn seek(&mut self, frame: u64) -> Result<u64, String> {
+        self.position = frame.min(self.frames.saturating_sub(1));
+        Ok(self.position)
+    }
+}
+
+fn tone_deck(frames: u64) -> Deck {
+    let mut deck = Deck::new(DeckId::A);
+    deck.attach(
+        Box::new(ToneSource {
+            frames,
+            position: 0,
+        }),
+        None,
+    );
+    deck
+}
+
+/// Zero crossings on the left channel: two per cycle, so the pitch is countable.
+fn crossings(block: &[f32]) -> usize {
+    let mut count = 0usize;
+    let mut last = 0.0f32;
+    for frame in block.chunks_exact(2) {
+        let value = frame[0];
+        if (last < 0.0 && value >= 0.0) || (last > 0.0 && value <= 0.0) {
+            count += 1;
+        }
+        last = value;
+    }
+    count
+}
+
+#[test]
+fn a_deck_at_its_own_speed_renders_the_same_bytes_as_before_the_tempo_stage() {
+    // The golden render compares bytes: a tempo stage that touched the signal at unity would move every
+    // baseline in the repository.
+    let mut deck = deck_with_ramp(48_000);
+    deck.play();
+    let mut block = vec![0.0f32; 512];
+    deck.render(&mut block);
+    let mut reference = vec![0.0f32; 512];
+    deck_with_ramp(48_000);
+    let mut other = deck_with_ramp(48_000);
+    other.play();
+    other.render(&mut reference);
+    assert_eq!(block, reference);
+    assert_eq!(deck.tempo_ratio(), 1.0);
+}
+
+#[test]
+fn a_faster_tempo_plays_the_material_faster_and_says_so() {
+    let mut deck = deck_with_ramp(48_000);
+    deck.set_tempo(1.08);
+    assert_eq!(deck.tempo_ratio(), 1.08);
+    deck.play();
+    // A thousand frames is two thousand samples: the block is interleaved stereo.
+    let mut block = vec![0.0f32; 2000];
+    deck.render(&mut block);
+    // The playhead moved through eight per cent more material than it played.
+    let played = deck.position() as f64;
+    assert!(
+        (played - 1080.0).abs() < 3.0,
+        "1000 frames at 1.08 advanced the source to {played}"
+    );
+    // And the value at the end of the block is the material from the end of that advance, not the
+    // material 1000 frames in: the ramp encodes its own frame number.
+    let last = block[block.len() - 2] as f64;
+    let expected = f64::from(ramp(1079));
+    assert!(
+        (last - expected).abs() < 1e-4,
+        "the last frame played {last} instead of {expected}"
+    );
+}
+
+#[test]
+fn a_slower_tempo_stretches_the_material() {
+    let mut deck = deck_with_ramp(48_000);
+    deck.set_tempo(0.92);
+    deck.play();
+    let mut block = vec![0.0f32; 2000];
+    deck.render(&mut block);
+    let played = deck.position() as f64;
+    assert!(
+        (played - 920.0).abs() < 3.0,
+        "1000 frames at 0.92 advanced the source to {played}"
+    );
+    let last = block[block.len() - 2] as f64;
+    let expected = f64::from(ramp(919));
+    assert!(
+        (last - expected).abs() < 1e-4,
+        "the last frame played {last} instead of {expected}"
+    );
+}
+
+#[test]
+fn the_pitch_follows_the_rate_as_on_a_turntable() {
+    // Key lock is a separate task (DJP-DECK-008); this is the vinyl behaviour R0 asks for, and it is
+    // measured rather than assumed: the same tone, eight per cent faster, crosses zero eight per cent
+    // more often.
+    let mut plain = tone_deck(480_000);
+    plain.play();
+    let mut reference = vec![0.0f32; 9600];
+    plain.render(&mut reference);
+    let baseline = crossings(&reference);
+
+    let mut fast = tone_deck(480_000);
+    fast.set_tempo(1.08);
+    fast.play();
+    let mut moved = vec![0.0f32; 9600];
+    fast.render(&mut moved);
+    let higher = crossings(&moved);
+
+    let ratio = higher as f64 / baseline as f64;
+    assert!(
+        (ratio - 1.08).abs() < 0.04,
+        "eight per cent faster gave {ratio:.3} times the crossings ({baseline} -> {higher})"
+    );
+}
+
+#[test]
+fn a_seek_drops_the_frames_carried_by_the_tempo_stage() {
+    // Without this the first block after a seek would start with a fraction of the material from before
+    // it — an audible tick at every jump, and a picture that disagrees with the sound.
+    let mut deck = deck_with_ramp(48_000);
+    deck.set_tempo(1.08);
+    deck.play();
+    let mut block = vec![0.0f32; 512];
+    deck.render(&mut block);
+
+    deck.seek(5_000);
+    deck.render(&mut block);
+    let first = block[0] as f64;
+    let expected = f64::from(ramp(5_000));
+    assert!(
+        (first - expected).abs() < 1e-4,
+        "the block after the seek started at {first} instead of {expected}"
+    );
+}
+
+#[test]
+fn a_loop_still_wraps_at_tempo() {
+    let mut deck = deck_with_ramp(48_000);
+    deck.set_tempo(1.05);
+    deck.set_loop(Some(FrameRange {
+        start: SourceFrame(1000),
+        end: SourceFrame(2000),
+    }));
+    deck.seek(1000);
+    deck.play();
+    let mut block = vec![0.0f32; 512];
+    for _ in 0..20 {
+        deck.render(&mut block);
+    }
+    let position = deck.position();
+    assert!(
+        (1000..2000).contains(&position),
+        "the playhead left the loop while playing at tempo: {position}"
+    );
+    assert!(
+        deck.stats().loop_wraps > 0,
+        "twenty blocks at 1.05 did not wrap a 1000-frame loop"
+    );
+}

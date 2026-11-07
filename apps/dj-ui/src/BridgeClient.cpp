@@ -408,6 +408,16 @@ int BridgeClient::setChannelGain(const QString &deck, double gain)
     return sendCommand(deck, command);
 }
 
+int BridgeClient::setTempo(const QString &deck, double ratio)
+{
+    QJsonObject options;
+    options.insert(QStringLiteral("deck"), deck);
+    options.insert(QStringLiteral("ratio"), ratio);
+    QJsonObject command;
+    command.insert(QStringLiteral("SetTempoRatio"), options);
+    return sendCommand(deck, command);
+}
+
 int BridgeClient::setChannelFader(const QString &deck, double position)
 {
     QJsonObject options;

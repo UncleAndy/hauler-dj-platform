@@ -96,6 +96,8 @@ public:
     Q_INVOKABLE int setLoop(const QString &deck, bool enabled, qulonglong start, qulonglong end);
     Q_INVOKABLE int setCrossfader(double position);
     Q_INVOKABLE int setChannelGain(const QString &deck, double gain);
+    /// Playback rate of a deck: 1.0 is the file's own speed, and the pitch moves with it.
+    Q_INVOKABLE int setTempo(const QString &deck, double ratio);
 
     // The channel fader of a deck, 0 … 1 (1.0 is unity). A different control from the gain: the gain
     // lines a track up before the EQ, the fader is ridden after it.
