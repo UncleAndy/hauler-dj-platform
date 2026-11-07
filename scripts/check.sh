@@ -10,6 +10,7 @@ if [ -z "${DJ_PLATFORM_DEVSHELL:-}" ]; then
   exec nix develop --command bash "$0" "$@"
 fi
 
+bash scripts/check-fixtures.sh
 bash scripts/check-rust.sh
 bash scripts/check-docs.sh
 bash scripts/ui.sh --smoke

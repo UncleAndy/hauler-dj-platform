@@ -17,12 +17,18 @@
 7. Merge в `main` для DSP, лицензий, файлового ввода и аппаратных команд требует человека.
 8. Если данных нет — создаётся ADR/исследовательская задача со статусом `unknown`, а не выдуманная
    спецификация протокола.
+9. Эталонные аудиофайлы (`crates/dj-codec/tests/fixtures/audio/`) не перезаписываются «чтобы тест
+   прошёл». Их хэши лежат в `audio.sha256`; изменение файла — отдельный коммит с причиной и
+   обновлённым манифестом, иначе гейт падает (`scripts/check-fixtures.sh`).
+10. Строка в `traceability.csv` — обещание: `passing` без теста или команды и `passing`/`review` без
+    существующего файла свидетельств валят `scripts/check-docs.sh`. `unverified` — законный статус,
+    выдуманный `passing` — нет.
 
 ## Рабочий цикл
 
 ```bash
 nix develop                      # окружение закреплено flake.lock
-bash scripts/check.sh                 # fmt + clippy + tests + traceability + UI smoke
+bash scripts/check.sh                 # фикстуры + fmt/clippy/tests + traceability + UI smoke
 bash scripts/ui.sh --smoke            # только UI-гейт
 ```
 

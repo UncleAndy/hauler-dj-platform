@@ -86,7 +86,7 @@ DJP-MIX-009,dsp,P2,R3,DJP-SRS-001 §5,,,unverified,,,
 DJP-MIX-010,dsp,P2,R3,DJP-SRS-001 §5,,,unverified,,,
 DJP-MIX-011,dsp,P2,R3,DJP-SRS-001 §5,,,unverified,,,
 DJP-MIX-012,dsp,P2,R3,DJP-SRS-001 §5,,,unverified,,,
-DJP-NFR-001,qa,,,DJP-SRS-001 §7,crates/dj-testkit/src/rt.rs; crates/dj-audio-core/tests/no_forbidden_primitives.rs,rt_contract::the_instrumentation_sees_a_deliberate_allocation; no_forbidden_primitives::the_core_crate_holds_no_blocking_primitives,passing,docs/qa/evidence/A01/summary.md,,2026-11-05
+DJP-NFR-001,qa,,,DJP-SRS-001 §7,crates/dj-testkit/src/rt.rs; crates/dj-audio-core/tests/no_forbidden_primitives.rs; scripts/check-fixtures.sh,rt_contract::the_instrumentation_sees_a_deliberate_allocation; no_forbidden_primitives::the_core_crate_holds_no_blocking_primitives; check-fixtures.sh: 6 golden files match the manifest,passing,docs/qa/evidence/A01/summary.md; docs/qa/evidence/A11/summary.md,,2026-11-06
 DJP-NFR-002,qa,,,DJP-SRS-001 §7,,,unverified,,,
 DJP-NFR-003,qa,P0,R0,DJP-SRS-001 §7,стоимость обработки блока: p50 8 мкс; p99 12 мкс; max 22 мкс при периоде 5 333 мкс — 0.225 %,docs/qa/evidence/A06/device-output-signal.json; engine::the_callback_path_does_not_allocate,review,docs/qa/evidence/A06/device-output.md,,2026-11-05
 DJP-NFR-004,qa,,,DJP-SRS-001 §7,,,unverified,,,

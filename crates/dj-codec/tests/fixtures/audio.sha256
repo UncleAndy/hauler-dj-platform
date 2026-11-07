@@ -1,0 +1,6 @@
+77cf7a50a40399984b1242c98b381482b943e54dcc42f8b7c6b6e3cb8e749596  crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav
+71d313b1f91e0f1b07fdf6332dd2f91ad634a5cf5bfe1bf976527f2f025f9fb0  crates/dj-codec/tests/fixtures/audio/silence-then-tone-2s-44100.flac
+de92249017ab272ed9a5b00e71e377fbef664406e074c5313d7b070d4f51d9dd  crates/dj-codec/tests/fixtures/audio/tone-1s-44100-cbr.mp3
+32f5d099cd597cfb9f20d47807d72307fda4a040251e92cb52bbc64eecd7528e  crates/dj-codec/tests/fixtures/audio/tone-1s-44100.flac
+b4a3fbcbecc413937cded7f86dd7efe9a7f7a7b087548f33ac511582dc6e0a1c  crates/dj-codec/tests/fixtures/audio/tone-1s-44100.ogg
+aafdcae91da9237c15d37add36a11b8f5c1b1a923dd1b5e16fffb82e9fa7a305  crates/dj-codec/tests/fixtures/audio/tone-1s-44100-vbr.mp3

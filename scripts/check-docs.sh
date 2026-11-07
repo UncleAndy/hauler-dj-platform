@@ -39,6 +39,32 @@ if [ "$bad_rows" -ne 0 ]; then
   status=1
 fi
 
+# A row may only claim a state that another person can check: `passing` needs a test or a command,
+# `review` and `passing` need an evidence file that exists today.
+while IFS=, read -r id owner priority risk source what how state evidence _rest; do
+  [ "$id" = "req_id" ] && continue
+  case "$state" in
+    passing|review|unverified|planned) ;;
+    *)
+      echo "traceability: ${id} has status '${state}', which is not passing/review/unverified/planned" >&2
+      status=1
+      continue
+      ;;
+  esac
+  if [ "$state" = "passing" ] && [ -z "$how" ]; then
+    echo "traceability: ${id} is passing but names no test or command" >&2
+    status=1
+  fi
+  if [ "$state" = "passing" ] || [ "$state" = "review" ]; then
+    [ -z "$evidence" ] && continue
+    first="${evidence%%;*}"
+    if [ ! -e "$first" ]; then
+      echo "traceability: ${id} points at evidence that does not exist: ${first}" >&2
+      status=1
+    fi
+  fi
+done < "$csv"
+
 if [ "$status" -eq 0 ]; then
   echo "traceability: every DJP-* requirement has an owned row, every row has 11 fields"
 fi
