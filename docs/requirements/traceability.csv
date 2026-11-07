@@ -41,7 +41,7 @@ DJP-ENV-002,architect,P0,R0,DJP-SRS-001 §2,crates/dj-audio-io (master-путь 
 DJP-ENV-003,architect,P0,R0,DJP-SRS-001 §2,flake.nix; rust-toolchain.toml; Cargo.toml; CMakeLists.txt,,review,docs/qa/evidence/A00/summary.md,,
 DJP-ENV-004,architect,P1,R1,DJP-SRS-001 §2,,,unverified,,,
 DJP-ENV-005,architect,P1,R1,DJP-SRS-001 §2,,,unverified,,,
-DJP-ENV-006,architect,P1,R1,DJP-SRS-001 §2,,,unverified,docs/adr/0005-audio-devices-and-routes.md,,2026-11-05
+DJP-ENV-006,architect,P1,R1,DJP-SRS-001 §2,настройки между запусками: устройство; микшер; деки,crates/dj-session::store; tests/session.rs::a_session_round_trips,review,docs/qa/evidence/A08/summary.md,,2026-11-06
 DJP-ENV-007,architect,P2,R2,DJP-SRS-001 §2,,,unverified,docs/adr/0005-audio-devices-and-routes.md,,2026-11-05
 DJP-FX-001,dsp,P1,R1,DJP-SRS-001 §5,,,unverified,,,
 DJP-FX-002,dsp,P1,R1,DJP-SRS-001 §5,,,unverified,,,
@@ -109,8 +109,8 @@ DJP-REMIX-004,ml,P2,R2,DJP-SRS-001 §5,,,unverified,,,
 DJP-REMIX-005,ml,P2,R3,DJP-SRS-001 §5,,,unverified,,,
 DJP-REMIX-006,ml,P2,R3,DJP-SRS-001 §5,,,unverified,,,
 DJP-SET-001,media,P1,R1,DJP-SRS-001 §5,crates/dj-config (все критичные значения как параметры с дефолтами из замеров; UI-поверхность — A10),dj_config::defaults_are_the_values_the_measurements_justified; dj_config::nonsense_is_rejected_with_the_field_named; dj_config::settings_survive_a_round_trip,review,docs/operations/settings.md,,2026-11-05
-DJP-SET-002,media,P1,R1,DJP-SRS-001 §5,,,unverified,,,
-DJP-SET-003,media,P1,R1,DJP-SRS-001 §5,,,unverified,,,
+DJP-SET-002,media,P1,R1,DJP-SRS-001 §5,документ сессии djp-session-v1 с версией и цепочкой миграций; аудио не копируется,schemas/session-v1.json; tests/session.rs::an_older_document_is_migrated; the_document_holds_paths_not_audio,review,docs/qa/evidence/A08/summary.md,,2026-11-06
+DJP-SET-003,media,P1,R1,DJP-SRS-001 §5,атомарная запись; бэкап предыдущей; отказ документу новее сборки; автосохранение вне аудиопотока,tests/session.rs::a_broken_document_costs_one_write_not_the_setup; autosave_coalesces_and_lands_the_last_document,review,docs/qa/evidence/A08/summary.md,,2026-11-06
 DJP-SET-004,media,P2,R2,DJP-SRS-001 §5,,,unverified,,,
 DJP-SET-005,media,P2,R3,DJP-SRS-001 §5,,,unverified,,,
 DJP-STEM-001,ml,P2,R2,DJP-SRS-001 §5,,,unverified,,,

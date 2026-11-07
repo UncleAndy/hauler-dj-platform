@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hauler-dj.local/schemas/session-v1.json",
+  "title": "Session document v1 (DJP-SET-002)",
+  "description": "The working state saved between runs: audio device, mixer and what sat on each deck. Paths and numbers, never audio.",
+  "type": "object",
+  "required": [
+    "schema",
+    "version"
+  ],
+  "properties": {
+    "schema": {
+      "const": "djp-session-v1"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Schema version. A newer one is refused by name; an older one is migrated."
+    },
+    "updated_at_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "audio": {
+      "type": "object",
+      "properties": {
+        "device": {
+          "type": "string"
+        },
+        "sample_rate": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 48000
+        },
+        "block": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 256
+        }
+      },
+      "additionalProperties": false
+    },
+    "mixer": {
+      "type": "object",
+      "properties": {
+        "crossfader_curve": {
+          "type": "string",
+          "enum": [
+            "linear",
+            "constant_power",
+            "smooth",
+            "sharp"
+          ]
+        },
+        "crossfader": {
+          "type": "number"
+        },
+        "master_gain": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "decks": {
+      "type": "object",
+      "description": "Deck id (A…D) to its saved state.",
+      "patternProperties": {
+        "^[A-D]$": {
+          "type": "object",
+          "properties": {
+            "track": {
+              "type": "string",
+              "description": "Path to the audio file; the audio itself is never copied in."
+            },
+            "position_frames": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "gain": {
+              "type": "number",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": true,
+  "$comment": "Unknown properties are preserved on rewrite, so a newer build's fields survive a round trip through an older one."
+}
