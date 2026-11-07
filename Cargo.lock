@@ -312,6 +312,7 @@ version = "0.1.0"
 dependencies = [
  "dj-codec",
  "dj-domain",
+ "dj-dsp",
 ]
 
 [[package]]
@@ -325,6 +326,9 @@ dependencies = [
 [[package]]
 name = "dj-dsp"
 version = "0.1.0"
+dependencies = [
+ "dj-domain",
+]
 
 [[package]]
 name = "dj-engine"

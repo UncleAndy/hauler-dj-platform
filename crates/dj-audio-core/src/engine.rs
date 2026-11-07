@@ -174,7 +174,9 @@ impl Engine {
                 self.playing = enabled;
                 Some(Ack::applied(command_id, at_sample))
             }
-            DjCommand::SetCrossfaderCurve { .. } | DjCommand::SetMasterGain { .. } => {
+            DjCommand::SetCrossfaderCurve { .. }
+            | DjCommand::SetMasterGain { .. }
+            | DjCommand::SetChannelEq { .. } => {
                 Some(Ack::rejected(command_id, RejectReason::NotSupported))
             }
             DjCommand::SetChannelGain { linear_gain, .. } => {
@@ -256,6 +258,8 @@ impl Engine {
                 levels: dj_domain::Levels::SILENT,
                 linear_gain: self.gain,
                 tempo_ratio: self.tempo_ratio,
+                // The A01 renderer is a bare tone: no mixer, no channel EQ.
+                eq: dj_domain::EqGains::FLAT,
             }],
         }
     }

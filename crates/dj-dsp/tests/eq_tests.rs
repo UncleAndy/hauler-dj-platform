@@ -1,4 +1,4 @@
-use dj_dsp::{ChannelEq, EqGains, RANGE_DB};
+use dj_dsp::{ChannelEq, EqBand, EqGains, EqTable, RANGE_DB, STEP_DB, STEPS};
 
 const RATE: f64 = 48_000.0;
 
@@ -132,4 +132,72 @@ fn every_band_works_inside_its_own_range() {
         "high shelf did not lift 12 kHz"
     );
     assert!(eq.magnitude_db(60.0).abs() < 0.3, "high shelf moved 60 Hz");
+}
+
+#[test]
+fn the_table_is_as_long_as_the_range_says() {
+    let expected = (2.0 * RANGE_DB / STEP_DB) as usize + 1;
+    assert_eq!(STEPS, expected, "the table no longer covers the whole knob");
+    assert_eq!(
+        EqTable::gain_of(EqTable::UNITY_STEP),
+        0.0,
+        "unity moved off the middle"
+    );
+    assert_eq!(EqTable::gain_of(0), -RANGE_DB);
+    assert_eq!(EqTable::gain_of(STEPS - 1), RANGE_DB);
+}
+
+#[test]
+fn a_knob_lands_on_the_grid_and_says_where() {
+    let mut eq = ChannelEq::new(RATE);
+    eq.set_gains(EqGains {
+        low_db: 6.07,
+        mid_db: -0.04,
+        high_db: -25.9,
+    });
+    let applied = eq.gains();
+    // The published value is the applied one: a knob cannot show a number the filter is not using.
+    assert!(
+        (applied.low_db - 6.07).abs() <= STEP_DB / 2.0,
+        "{}",
+        applied.low_db
+    );
+    assert_eq!(applied.mid_db, 0.0, "a band inside half a step is unity");
+    assert!(
+        (applied.high_db + 25.9).abs() <= STEP_DB / 2.0,
+        "the nearest step to -25.9 is not -25.875: {}",
+        applied.high_db
+    );
+    let mut overshoot = EqGains::FLAT;
+    overshoot.set_band(EqBand::High, -99.0);
+    eq.set_gains(overshoot);
+    assert_eq!(
+        eq.gains().high_db,
+        -RANGE_DB,
+        "past the end the knob stops at the range"
+    );
+    assert_eq!(applied.band(EqBand::Low), applied.low_db);
+}
+
+#[test]
+fn a_knob_move_is_the_same_filter_the_curve_describes() {
+    // The table is what the callback copies from: if a row were built for the wrong gain, the sound
+    // would disagree with the published number, and only a measurement would notice.
+    let mut eq = ChannelEq::new(RATE);
+    for gain in [-24.0f32, -12.0, -3.0, 3.0, 12.0, 24.0] {
+        let mut gains = EqGains::FLAT;
+        gains.set_band(EqBand::High, gain);
+        eq.set_gains(gains);
+        let applied = eq.gains().high_db;
+        let measured = measured_db(&mut eq, 16_000.0);
+        let reported = eq.magnitude_db(16_000.0);
+        assert!(
+            (measured - reported).abs() < 0.2,
+            "asked {gain} dB, applied {applied}: curve {reported:.2}, filter {measured:.2}"
+        );
+        assert!(
+            (measured - f64::from(applied)).abs() < 1.0,
+            "applied {applied} dB but the filter does {measured:.2} dB at 16 kHz"
+        );
+    }
 }

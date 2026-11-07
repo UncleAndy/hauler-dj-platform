@@ -52,8 +52,12 @@ impl DeckId {
     }
 }
 
-/// Total number of coalesced slots: one per continuous control per deck.
-pub const COALESCE_SLOTS: usize = CoalesceKey::COUNT * DeckId::COUNT;
+/// One coalesced slot per continuous control per deck, plus one per EQ band per deck.
+///
+/// The EQ needs its own block: a band is a separate knob, and with one slot per channel two knobs
+/// moving at once would overwrite each other, so one of them would silently stop following the hand.
+pub const COALESCE_SLOTS: usize =
+    (CoalesceKey::COUNT - 1) * DeckId::COUNT + EqBand::COUNT * DeckId::COUNT;
 
 /// Position in the *source* material, in frames.
 ///
@@ -152,6 +156,123 @@ impl CrossfaderCurve {
     }
 }
 
+/// A band of the channel three-band equaliser (A14, DJP-MIX-002).
+///
+/// The band travels in the protocol rather than in the shell: a client names the knob it moved, and
+/// the engine answers with the value it actually applied, so three knobs cannot each keep their own
+/// idea of the setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EqBand {
+    /// Low shelf.
+    Low,
+    /// Mid peak.
+    Mid,
+    /// High shelf.
+    High,
+}
+
+impl EqBand {
+    /// Every band, in table order.
+    pub const ALL: [Self; 3] = [Self::Low, Self::Mid, Self::High];
+
+    /// How many bands a channel has.
+    pub const COUNT: usize = Self::ALL.len();
+
+    /// Stable index, used by the command queue and by the coefficient table.
+    pub fn index(self) -> usize {
+        match self {
+            Self::Low => 0,
+            Self::Mid => 1,
+            Self::High => 2,
+        }
+    }
+
+    /// Name used on the wire and on the command line.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Mid => "mid",
+            Self::High => "high",
+        }
+    }
+
+    /// Parse a name; `None` for anything unknown, so a typo cannot silently move another band.
+    pub fn parse(name: &str) -> Option<Self> {
+        let wanted = name.trim().to_ascii_lowercase();
+        Self::ALL.into_iter().find(|band| band.as_str() == wanted)
+    }
+}
+
+/// How far a band can cut or boost, in decibels — symmetric around unity.
+pub const EQ_RANGE_DB: f32 = 26.0;
+
+/// The three band gains of one channel, in decibels.
+///
+/// This is both the payload of a knob command and the published state, so the number a person moves
+/// and the number the strip draws are one number.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct EqGains {
+    /// Low shelf gain.
+    #[serde(default)]
+    pub low_db: f32,
+    /// Mid peak gain.
+    #[serde(default)]
+    pub mid_db: f32,
+    /// High shelf gain.
+    #[serde(default)]
+    pub high_db: f32,
+}
+
+impl EqGains {
+    /// Everything at unity: the section is then skipped rather than multiplied by one.
+    pub const FLAT: Self = Self {
+        low_db: 0.0,
+        mid_db: 0.0,
+        high_db: 0.0,
+    };
+
+    /// True when no band would change the signal.
+    pub fn is_flat(&self) -> bool {
+        self.low_db == 0.0 && self.mid_db == 0.0 && self.high_db == 0.0
+    }
+
+    /// One band's gain.
+    pub fn band(&self, band: EqBand) -> f32 {
+        match band {
+            EqBand::Low => self.low_db,
+            EqBand::Mid => self.mid_db,
+            EqBand::High => self.high_db,
+        }
+    }
+
+    /// Set one band, clamped into the accepted range.
+    ///
+    /// A value that is not a number is refused as unity: a NaN from a broken client must not become a
+    /// filter that outputs silence and looks like a dead channel.
+    pub fn set_band(&mut self, band: EqBand, gain_db: f32) {
+        let value = if gain_db.is_finite() {
+            gain_db.clamp(-EQ_RANGE_DB, EQ_RANGE_DB)
+        } else {
+            0.0
+        };
+        match band {
+            EqBand::Low => self.low_db = value,
+            EqBand::Mid => self.mid_db = value,
+            EqBand::High => self.high_db = value,
+        }
+    }
+
+    /// Every band inside the range and finite.
+    pub fn clamped(self) -> Self {
+        let mut out = self;
+        for band in EqBand::ALL {
+            out.set_band(band, out.band(band));
+        }
+        out
+    }
+}
+
 /// One when the field is absent, so an older snapshot reads as unity gain rather than as silence.
 fn unity() -> f32 {
     1.0
@@ -212,6 +333,18 @@ pub enum DjCommand {
         /// Linear gain.
         linear_gain: f32,
     },
+    /// One band of a channel's three-band equaliser, in decibels (A14, DJP-MIX-002).
+    ///
+    /// One band per command: the shell sends exactly the band the hand touched, and the queue keeps
+    /// a slot per band, so two knobs moving together do not cancel each other.
+    SetChannelEq {
+        /// Target deck / channel.
+        deck: DeckId,
+        /// Which band moved.
+        band: EqBand,
+        /// New gain, clamped to ±`EQ_RANGE_DB` by the engine.
+        gain_db: f32,
+    },
     /// Crossfader position, 0.0 = A, 1.0 = B.
     SetCrossfader {
         /// Linear position.
@@ -251,6 +384,7 @@ impl DjCommand {
             | DjCommand::Eject { .. } => true,
             DjCommand::SetTempoRatio { .. }
             | DjCommand::SetChannelGain { .. }
+            | DjCommand::SetChannelEq { .. }
             | DjCommand::SetCrossfader { .. }
             | DjCommand::SetCrossfaderCurve { .. }
             | DjCommand::SetMasterGain { .. } => false,
@@ -264,12 +398,18 @@ impl DjCommand {
     pub fn coalesce_slot(&self) -> Option<usize> {
         let key = self.coalesce_key()?;
         let deck = match self {
-            DjCommand::SetTempoRatio { deck, .. } | DjCommand::SetChannelGain { deck, .. } => {
-                deck.index()
-            }
+            DjCommand::SetTempoRatio { deck, .. }
+            | DjCommand::SetChannelGain { deck, .. }
+            | DjCommand::SetChannelEq { deck, .. } => deck.index(),
             _ => 0,
         };
-        Some(key.index() * DeckId::COUNT + deck)
+        Some(match self {
+            // The EQ block lives after the deck-wide controls, so the two schemes cannot overlap.
+            DjCommand::SetChannelEq { band, .. } => {
+                CoalesceKey::EQ_SLOT_BASE + deck * EqBand::COUNT + band.index()
+            }
+            _ => key.index() * DeckId::COUNT + deck,
+        })
     }
 
     /// Slot a continuous control collapses into, or `None` for critical commands.
@@ -280,6 +420,7 @@ impl DjCommand {
         match self {
             DjCommand::SetTempoRatio { .. } => Some(CoalesceKey::Tempo),
             DjCommand::SetChannelGain { .. } => Some(CoalesceKey::ChannelGain),
+            DjCommand::SetChannelEq { .. } => Some(CoalesceKey::ChannelEq),
             DjCommand::SetCrossfader { .. } => Some(CoalesceKey::Crossfader),
             DjCommand::SetCrossfaderCurve { .. } => Some(CoalesceKey::CrossfaderCurve),
             DjCommand::SetMasterGain { .. } => Some(CoalesceKey::MasterGain),
@@ -301,11 +442,20 @@ pub enum CoalesceKey {
     CrossfaderCurve,
     /// Master gain: only the last value matters.
     MasterGain,
+    /// One band of a deck's equaliser: the last value of that band wins.
+    ChannelEq,
 }
 
 impl CoalesceKey {
     /// Number of distinct coalesced controls.
-    pub const COUNT: usize = 3;
+    ///
+    /// This has to name every variant: it sizes the queue, and it used to say three while five keys
+    /// existed, so the master gain landed past the end of the array.
+    pub const COUNT: usize = 6;
+
+    /// First slot of the EQ block: the deck-wide controls come first, one block of `DeckId::COUNT`
+    /// slots each.
+    pub const EQ_SLOT_BASE: usize = (Self::COUNT - 1) * DeckId::COUNT;
 
     /// Stable index of this key, used by the fixed-size queue.
     pub fn index(self) -> usize {
@@ -315,6 +465,7 @@ impl CoalesceKey {
             CoalesceKey::Crossfader => 2,
             CoalesceKey::CrossfaderCurve => 3,
             CoalesceKey::MasterGain => 4,
+            CoalesceKey::ChannelEq => 5,
         }
     }
 }
@@ -498,6 +649,11 @@ pub struct DeckSnapshot {
     pub linear_gain: f32,
     /// Current tempo ratio.
     pub tempo_ratio: f64,
+    /// The three band gains in force on this channel (A14), already on the knob's grid.
+    ///
+    /// Defaulted so a snapshot from a build without the EQ still parses here.
+    #[serde(default)]
+    pub eq: EqGains,
 }
 
 /// Where a deck's waveform envelope lives (DJP-MEDIA-003).
@@ -632,6 +788,60 @@ mod tests {
         let decoded: ScheduledCommand =
             serde_json::from_str(&json).unwrap_or_else(|err| panic!("{err}"));
         assert_eq!(decoded, scheduled);
+    }
+
+    #[test]
+    fn every_coalesced_control_has_its_own_slot() {
+        let keys = [
+            CoalesceKey::Tempo,
+            CoalesceKey::ChannelGain,
+            CoalesceKey::Crossfader,
+            CoalesceKey::CrossfaderCurve,
+            CoalesceKey::MasterGain,
+            CoalesceKey::ChannelEq,
+        ];
+        for key in keys {
+            // The queue is sized from COUNT, and COUNT once said three while five keys existed: the
+            // master gain then landed past the end of the array, inside the audio callback.
+            assert!(
+                key.index() < CoalesceKey::COUNT,
+                "{key:?} is outside the table"
+            );
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for deck in [DeckId::A, DeckId::B, DeckId::C, DeckId::D] {
+            for band in EqBand::ALL {
+                let command = DjCommand::SetChannelEq {
+                    deck,
+                    band,
+                    gain_db: 3.0,
+                };
+                let slot = command.coalesce_slot().unwrap_or(usize::MAX);
+                assert!(
+                    slot < COALESCE_SLOTS,
+                    "{deck:?} {band:?} lands outside the queue"
+                );
+                assert!(
+                    seen.insert(slot),
+                    "{deck:?} {band:?} shares a slot with another control"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_eq_gain_is_clamped_and_a_nan_reads_as_unity() {
+        let mut gains = EqGains::FLAT;
+        gains.set_band(EqBand::Low, 99.0);
+        assert_eq!(gains.low_db, EQ_RANGE_DB);
+        gains.set_band(EqBand::Mid, f32::NAN);
+        assert_eq!(gains.mid_db, 0.0);
+        assert_eq!(gains.band(EqBand::High), 0.0);
+        assert!(!gains.is_flat(), "the boosted low band was forgotten");
+        assert!(
+            !gains.clamped().is_flat(),
+            "clamping dropped the boosted band"
+        );
     }
 
     #[test]

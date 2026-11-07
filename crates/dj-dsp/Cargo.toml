@@ -8,7 +8,9 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
-
+# The band and the gains are protocol types: the shell names the knob it moved and reads back the
+# value the engine applied, so there is one definition and not a translation per side.
+dj-domain = { path = "../dj-domain" }
 
 [lints]
 workspace = true

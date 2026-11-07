@@ -10,6 +10,9 @@ authors.workspace = true
 [dependencies]
 dj-codec = { path = "../dj-codec" }
 dj-domain = { path = "../dj-domain" }
+# The channel's three-band EQ sits on the deck: a deck reaches the mixer already gain-staged and
+# equalised, which is the order the mixer's own contract names (DJP-ARCH-006).
+dj-dsp = { path = "../dj-dsp" }
 
 [lints]
 workspace = true

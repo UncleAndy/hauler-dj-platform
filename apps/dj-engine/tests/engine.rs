@@ -9,7 +9,8 @@
 
 use dj_deck::Deck;
 use dj_domain::{
-    AckStatus, CueAction, DeckId, DeckLoad, DjCommand, RejectReason, ScheduledCommand, SourceFrame,
+    AckStatus, CueAction, DeckId, DeckLoad, DjCommand, EqBand, RejectReason, ScheduledCommand,
+    SourceFrame,
 };
 use dj_engine::Routed;
 use dj_engine::{
@@ -19,6 +20,11 @@ use dj_engine::{
 use dj_mixer::{ChannelSettings, CrossAssign, CrossfaderCurve, Mixer};
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
+
+// The allocation counter only counts in a binary that installs it: without this line the two
+// `does_not_allocate` tests below passed on a counter that never saw an allocation.
+#[global_allocator]
+static ALLOCATOR: dj_testkit::rt::CountingAllocator = dj_testkit::rt::CountingAllocator;
 
 fn deck_with_tone(id: DeckId, rate: u32) -> Deck {
     struct Tone;
@@ -1051,4 +1057,89 @@ fn an_edit_survives_a_restart() {
         "the loop was cleared, not forgotten"
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn an_eq_knob_reaches_only_its_own_band_and_its_own_deck() {
+    let mut decks = vec![
+        deck_with_tone(DeckId::A, 48_000),
+        deck_with_tone(DeckId::B, 48_000),
+    ];
+    let mut mixer = mixer_for(48_000);
+    let command = ScheduledCommand {
+        id: 12,
+        effective_sample: 0,
+        command: DjCommand::SetChannelEq {
+            deck: DeckId::B,
+            band: EqBand::Mid,
+            gain_db: -6.0,
+        },
+    };
+    let ack = apply(&mut decks, &mut mixer, &command, 0);
+    assert_eq!(ack.status, AckStatus::Applied { at_sample: 0 });
+
+    assert_eq!(decks[1].eq_gains().mid_db, -6.0);
+    assert_eq!(
+        decks[1].eq_gains().low_db,
+        0.0,
+        "the mid knob moved the low band"
+    );
+    assert!(decks[0].eq_gains().is_flat(), "the knob on B moved A");
+
+    // What the strip draws comes from the published snapshot, so it has to agree with the deck.
+    let published = snapshot(&decks, &mixer, 1, 0, 48_000, 1);
+    assert_eq!(published.decks[1].eq.mid_db, -6.0);
+    assert!(published.decks[0].eq.is_flat());
+}
+
+#[test]
+fn an_eq_knob_outside_the_range_is_clamped_not_refused() {
+    let mut decks = vec![deck_with_tone(DeckId::A, 48_000)];
+    let mut mixer = mixer_for(48_000);
+    let command = ScheduledCommand {
+        id: 1,
+        effective_sample: 0,
+        command: DjCommand::SetChannelEq {
+            deck: DeckId::A,
+            band: EqBand::Low,
+            gain_db: 99.0,
+        },
+    };
+    let ack = apply(&mut decks, &mut mixer, &command, 0);
+    assert_eq!(ack.status, AckStatus::Applied { at_sample: 0 });
+    assert_eq!(decks[0].eq_gains().low_db, dj_domain::EQ_RANGE_DB);
+}
+
+#[test]
+fn moving_an_eq_knob_does_not_allocate_in_the_render_path() {
+    // The coefficients of every knob position are built with the deck, so a move is a lookup and a
+    // copy. If a `powf` or a `sin_cos` creeps back into this path, this counter is what notices —
+    // and no listening test would have.
+    let mut decks = vec![deck_with_tone(DeckId::A, 48_000)];
+    let mut mixer = mixer_for(48_000);
+    let mut block = vec![0.0f32; 256 * 2];
+    let _ = decks[0].play();
+    decks[0].render(&mut block); // warm: the first render touches the atomics and the table
+    dj_testkit::rt::reset();
+    {
+        let _scope = dj_testkit::rt::RtScope::enter();
+        for step in 0..16u64 {
+            let command = ScheduledCommand {
+                id: step,
+                effective_sample: step,
+                command: DjCommand::SetChannelEq {
+                    deck: DeckId::A,
+                    band: EqBand::High,
+                    gain_db: step as f32 * 0.5 - 4.0,
+                },
+            };
+            let _ = apply(&mut decks, &mut mixer, &command, step);
+            decks[0].render(&mut block);
+        }
+    }
+    assert_eq!(
+        dj_testkit::rt::allocations_in_rt(),
+        0,
+        "an EQ knob allocated inside the render path"
+    );
 }

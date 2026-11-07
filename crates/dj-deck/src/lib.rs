@@ -12,8 +12,17 @@
 
 use dj_codec::Prefetcher;
 use dj_domain::{
-    DeckId, DeckLoad, DeckSnapshot, FrameRange, HOTCUE_SLOTS, Levels, SourceFrame, TrackMeta,
+    DeckId, DeckLoad, DeckSnapshot, EqGains, FrameRange, HOTCUE_SLOTS, Levels, SourceFrame,
+    TrackMeta,
 };
+use dj_dsp::ChannelEq;
+
+/// Sample rate the equaliser's table is built for.
+///
+/// Files in this project are required to be 48 kHz (no resampling yet), and the device runs at the
+/// same rate, so one table serves every deck. A 44.1 kHz source would need its own table; that
+/// arrives with the rest of the 44.1 kHz work in A05, and is listed as a limitation of A14.
+pub const EQ_SAMPLE_RATE: f64 = 48_000.0;
 
 /// Where a deck reads frames from. Implemented by the prefetcher; tests provide their own.
 pub trait DeckSource: Send {
@@ -166,6 +175,8 @@ pub struct Deck {
     loop_buffer: Option<LoopBuffer>,
     /// True while the playhead reads the captured loop instead of the source.
     reading_loop_buffer: bool,
+    /// The channel's three-band EQ, applied after the trim and before the mixer (A14).
+    eq: ChannelEq,
 }
 
 impl std::fmt::Debug for Deck {
@@ -200,6 +211,7 @@ impl Deck {
             loop_config: LoopConfig::default(),
             loop_buffer: None,
             reading_loop_buffer: false,
+            eq: ChannelEq::new(EQ_SAMPLE_RATE),
         }
     }
 
@@ -251,6 +263,9 @@ impl Deck {
         self.playing = false;
         self.loop_region = None;
         self.levels = Levels::SILENT;
+        // A new track starts with an empty filter history: the tail of the last one is not part of
+        // this one, and a stale state produces a click on the first block.
+        self.eq.reset();
     }
 
     /// Take the source out, leaving the deck empty and playable-ready.
@@ -272,6 +287,7 @@ impl Deck {
         self.reading_loop_buffer = false;
         self.levels = Levels::SILENT;
         self.load = DeckLoad::Empty;
+        self.eq.reset();
     }
 
     /// Record a failed load; the deck stays empty but the reason is visible.
@@ -477,6 +493,17 @@ impl Deck {
         self.hotcues
     }
 
+    /// Set the three band gains. Cheap by construction: the coefficients were tabulated when the
+    /// deck was built, so this is safe to call from the audio callback.
+    pub fn set_eq_gains(&mut self, gains: EqGains) {
+        self.eq.set_gains(gains);
+    }
+
+    /// The band gains in force, as applied — already on the knob's grid.
+    pub fn eq_gains(&self) -> EqGains {
+        self.eq.gains()
+    }
+
     /// Set channel gain, linear.
     pub fn set_gain(&mut self, gain: f32) {
         if gain.is_finite() {
@@ -626,6 +653,9 @@ impl Deck {
         for sample in out.iter_mut() {
             *sample *= self.gain;
         }
+        // Trim first, then the EQ: that is the order of a channel strip, and the order the mixer's
+        // contract names when it says a deck arrives already gain-staged and equalised.
+        self.eq.process(out);
         self.levels = measure_levels(out);
     }
 
@@ -688,6 +718,7 @@ impl Deck {
             levels: self.levels,
             linear_gain: self.gain,
             tempo_ratio: self.tempo_ratio,
+            eq: self.eq.gains(),
         }
     }
 }

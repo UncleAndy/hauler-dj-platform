@@ -6,8 +6,9 @@
 //! bumping the protocol version, which is exactly the conversation we want to force.
 
 use dj_domain::{
-    Ack, CommandId, CrossfaderCurve, DeckId, DeckLoad, DeckSnapshot, DjCommand, FrameRange, Levels,
-    RejectReason, STATE_PROTOCOL, ScheduledCommand, Snapshot, SourceFrame, TrackMeta,
+    Ack, CommandId, CrossfaderCurve, DeckId, DeckLoad, DeckSnapshot, DjCommand, EqBand, EqGains,
+    FrameRange, Levels, RejectReason, STATE_PROTOCOL, ScheduledCommand, Snapshot, SourceFrame,
+    TrackMeta,
 };
 
 fn play() -> DjCommand {
@@ -35,6 +36,32 @@ fn a_continuous_control_names_its_deck_and_units() {
         serde_json::to_string(&gain).unwrap_or_default(),
         r#"{"SetChannelGain":{"deck":"B","linear_gain":0.5}}"#
     );
+}
+
+#[test]
+fn an_eq_knob_names_its_band_and_the_deck_it_belongs_to() {
+    let command = DjCommand::SetChannelEq {
+        deck: DeckId::B,
+        band: EqBand::Mid,
+        gain_db: -4.5,
+    };
+    assert_eq!(
+        serde_json::to_string(&command).unwrap_or_default(),
+        r#"{"SetChannelEq":{"deck":"B","band":"mid","gain_db":-4.5}}"#
+    );
+}
+
+#[test]
+fn a_snapshot_from_before_the_eq_still_reads_as_flat() {
+    // A client of the previous build must keep working: the field is defaulted, and three bands at
+    // unity is what a channel without an EQ is doing.
+    let json = r#"{"deck":"A","load":"Empty","playing":false,"source_frame":0,
+        "remaining_frames":null,"position_ratio":null,"track":null,"loop_region":null,
+        "hotcues":[null,null,null,null,null,null,null,null],
+        "levels":{"peak_left":0.0,"peak_right":0.0},"linear_gain":1.0,"tempo_ratio":1.0}"#;
+    let deck: DeckSnapshot = serde_json::from_str(json).unwrap_or_else(|err| panic!("{err}"));
+    assert_eq!(deck.eq, EqGains::FLAT);
+    assert!(deck.eq.is_flat());
 }
 
 #[test]
@@ -118,6 +145,11 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
             },
             linear_gain: 1.0,
             tempo_ratio: 1.0,
+            eq: EqGains {
+                low_db: 3.0,
+                mid_db: -4.5,
+                high_db: 0.0,
+            },
         }],
     };
     assert_eq!(
@@ -132,7 +164,8 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
             r#""duration_frames":124800,"bpm":128.0,"key":"8A"},"loop_region":null,"#,
             r#""hotcues":[1000,null,null,null,null,null,null,null],"#,
             r#""levels":{"peak_left":0.5,"peak_right":0.25},"#,
-            r#""linear_gain":1.0,"tempo_ratio":1.0}]}"#
+            r#""linear_gain":1.0,"tempo_ratio":1.0,"#,
+            r#""eq":{"low_db":3.0,"mid_db":-4.5,"high_db":0.0}}]}"#
         )
     );
 }

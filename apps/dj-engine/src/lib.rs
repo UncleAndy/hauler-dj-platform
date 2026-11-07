@@ -14,8 +14,8 @@ use dj_codec::{PrefetchConfig, Prefetcher};
 use dj_deck::{Deck, DeckSource};
 use dj_domain::CommandId;
 use dj_domain::{
-    Ack, AckStatus, CueAction, DeckId, DeckLoad, DeckSnapshot, DjCommand, FrameRange, Levels,
-    RejectReason, ScheduledCommand, Snapshot, SourceFrame, TrackMeta,
+    Ack, AckStatus, CueAction, DeckId, DeckLoad, DeckSnapshot, DjCommand, EqGains, FrameRange,
+    Levels, RejectReason, ScheduledCommand, Snapshot, SourceFrame, TrackMeta,
 };
 use dj_mixer::{ChannelSettings, CrossAssign, CrossfaderCurve, Mixer};
 
@@ -133,6 +133,25 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
                 },
             }
         }
+        DjCommand::SetChannelEq {
+            deck,
+            band,
+            gain_db,
+        } => match decks.iter_mut().find(|candidate| candidate.id() == *deck) {
+            Some(target) => {
+                // The coefficients for every knob position were tabulated when the deck was built, so
+                // this arm is a lookup and a copy of five numbers — a knob is allowed in the callback,
+                // arithmetic is not.
+                let mut gains = target.eq_gains();
+                gains.set_band(*band, *gain_db);
+                target.set_eq_gains(gains);
+                Ack::applied(id, at)
+            }
+            None => Ack {
+                command_id: id,
+                status: AckStatus::Rejected(RejectReason::InvalidValue),
+            },
+        },
         _ => Ack {
             command_id: id,
             status: AckStatus::Rejected(RejectReason::NotSupported),
@@ -247,6 +266,11 @@ struct DeckCells {
     loop_start: AtomicU64,
     loop_end: AtomicU64,
     hotcues: [AtomicU64; HOTCUE_SLOTS],
+    // The three band gains as applied, so the publisher can say what the strip should draw without
+    // borrowing the deck.
+    eq_low: AtomicU32,
+    eq_mid: AtomicU32,
+    eq_high: AtomicU32,
 }
 
 impl DeckCells {
@@ -262,6 +286,9 @@ impl DeckCells {
             loop_start: AtomicU64::new(EMPTY),
             loop_end: AtomicU64::new(EMPTY),
             hotcues: std::array::from_fn(|_| AtomicU64::new(EMPTY)),
+            eq_low: AtomicU32::new(0),
+            eq_mid: AtomicU32::new(0),
+            eq_high: AtomicU32::new(0),
         }
     }
 }
@@ -364,6 +391,10 @@ impl StateCells {
             for (slot, cue) in deck.hotcues().iter().enumerate() {
                 cells.hotcues[slot].store(cue.unwrap_or(EMPTY), Ordering::Relaxed);
             }
+            let eq = deck.eq_gains();
+            cells.eq_low.store(eq.low_db.to_bits(), Ordering::Relaxed);
+            cells.eq_mid.store(eq.mid_db.to_bits(), Ordering::Relaxed);
+            cells.eq_high.store(eq.high_db.to_bits(), Ordering::Relaxed);
         }
     }
 
@@ -425,6 +456,11 @@ impl StateCells {
                 },
                 linear_gain: f32::from_bits(cells.gain.load(Ordering::Relaxed)),
                 tempo_ratio: f64::from_bits(cells.tempo.load(Ordering::Relaxed)),
+                eq: EqGains {
+                    low_db: f32::from_bits(cells.eq_low.load(Ordering::Relaxed)),
+                    mid_db: f32::from_bits(cells.eq_mid.load(Ordering::Relaxed)),
+                    high_db: f32::from_bits(cells.eq_high.load(Ordering::Relaxed)),
+                },
             });
         }
         Snapshot {
