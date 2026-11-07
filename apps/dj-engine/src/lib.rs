@@ -27,6 +27,12 @@ type CuePad = (Option<String>, Option<String>);
 /// One deck's eight pads.
 type DeckPads = [CuePad; HOTCUE_SLOTS];
 
+/// A loop on a pad, as frames of the source file.
+type PadLoop = Option<(u64, u64)>;
+
+/// One deck's eight loop pads.
+type DeckLoops = [PadLoop; HOTCUE_SLOTS];
+
 pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, clock: u64) -> Ack {
     let id = command.id;
     let at = command.effective_sample.max(clock);
@@ -37,6 +43,7 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
         DjCommand::Play { deck, .. }
         | DjCommand::Cue { deck, .. }
         | DjCommand::SetCueMeta { deck, .. }
+        | DjCommand::SetPadLoop { deck, .. }
         | DjCommand::SeekFrames { deck, .. }
         | DjCommand::SetLoop { deck, .. }
         | DjCommand::SetTempoRatio { deck, .. }
@@ -66,6 +73,17 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
                 }
                 Ack::applied(id, at)
             }
+            DjCommand::SetPadLoop { slot, .. } => {
+                let region = target.loop_region();
+                if target.set_pad_loop(usize::from(*slot), region) {
+                    Ack::applied(id, at)
+                } else {
+                    Ack {
+                        command_id: id,
+                        status: AckStatus::Rejected(RejectReason::InvalidValue),
+                    }
+                }
+            }
             DjCommand::SetCueMeta {
                 slot, label, color, ..
             } => {
@@ -85,7 +103,7 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
                         target.delete_hotcue(usize::from(slot));
                         true
                     }
-                    CueAction::Jump(slot) => target.jump_hotcue(usize::from(slot)).is_some(),
+                    CueAction::Jump(slot) => target.jump_pad(usize::from(slot)).is_some(),
                 };
                 if done {
                     Ack::applied(id, at)
@@ -296,6 +314,9 @@ pub struct DeckStatic {
     pub total_frames: Option<u64>,
     /// Waveform envelope, once the loader has built it.
     pub waveform: Option<dj_domain::Waveform>,
+    /// Correction measured from the file's loudness, linear; applied with the trim, shown beside the
+    /// clock, and never written into the knob.
+    pub auto_gain: f32,
 }
 
 impl DeckStatic {
@@ -316,6 +337,7 @@ impl DeckStatic {
             track: snapshot.track.clone(),
             total_frames,
             waveform: snapshot.waveform.clone(),
+            auto_gain: snapshot.auto_gain,
         }
     }
 }
@@ -404,6 +426,8 @@ pub struct StateCells {
     /// Strings cannot live in an atomic cell, and a name changes once in a while rather than every
     /// block: the command thread writes here, the publisher thread reads. Neither is the callback.
     cue_meta: std::sync::Mutex<Vec<DeckPads>>,
+    /// Loops on pads, per deck: a range is not an atomic word either.
+    pad_loops: std::sync::Mutex<Vec<DeckLoops>>,
 }
 
 impl Default for StateCells {
@@ -437,6 +461,44 @@ impl StateCells {
         if let Some(hex) = color {
             guard[deck][slot].1 = Some(hex);
         }
+    }
+
+    /// Put a loop on a pad where the publisher will find it.
+    pub fn set_pad_loop(&self, deck: usize, slot: usize, region: PadLoop) {
+        if slot >= HOTCUE_SLOTS {
+            return;
+        }
+        let mut guard = self
+            .pad_loops
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        while guard.len() <= deck {
+            guard.push(std::array::from_fn(|_| None));
+        }
+        guard[deck][slot] = region;
+    }
+
+    /// Forget a deck's loops: a new track brings its own.
+    pub fn clear_pad_loops(&self, deck: usize) {
+        let mut guard = self
+            .pad_loops
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(slots) = guard.get_mut(deck) {
+            *slots = std::array::from_fn(|_| None);
+        }
+    }
+
+    /// What the publisher reads for one deck.
+    fn pad_loops_of(&self, deck: usize) -> DeckLoops {
+        let guard = self
+            .pad_loops
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        guard
+            .get(deck)
+            .cloned()
+            .unwrap_or_else(|| std::array::from_fn(|_| None))
     }
 
     /// Forget a deck's names and colours: a new track brings its own.
@@ -473,6 +535,7 @@ impl StateCells {
             count: AtomicUsize::new(0),
             decks: std::array::from_fn(|_| DeckCells::new()),
             cue_meta: std::sync::Mutex::new(Vec::new()),
+            pad_loops: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -576,6 +639,18 @@ impl StateCells {
                     start: SourceFrame(loop_start),
                     end: SourceFrame(loop_end),
                 }),
+                pad_loops: {
+                    let loops = self.pad_loops_of(index);
+                    loops
+                        .iter()
+                        .map(|region| {
+                            region.map(|(start, end)| FrameRange {
+                                start: SourceFrame(start),
+                                end: SourceFrame(end),
+                            })
+                        })
+                        .collect()
+                },
                 cue_labels: {
                     let meta = self.cue_meta_of(index);
                     meta.iter().map(|(label, _)| label.clone()).collect()
@@ -597,6 +672,7 @@ impl StateCells {
                     peak_right: f32::from_bits(cells.peak_right.load(Ordering::Relaxed)),
                 },
                 linear_gain: f32::from_bits(cells.gain.load(Ordering::Relaxed)),
+                auto_gain: fixed.auto_gain,
                 tempo_ratio: f64::from_bits(cells.tempo.load(Ordering::Relaxed)),
                 fader: f32::from_bits(cells.fader.load(Ordering::Relaxed)),
                 eq: EqGains {
@@ -671,6 +747,8 @@ pub struct PreparedTrack {
     pub cues: Vec<(u8, u64)>,
     /// Names and colours of those cues, restored at attach (DJP-DECK-003).
     pub cue_meta: Vec<(u8, Option<String>, Option<String>)>,
+    /// Loops stored on pads, restored at attach (DJP-DECK-004).
+    pub pad_loops: Vec<(u8, u64, u64)>,
     /// Loop recorded for this file.
     pub loop_region: Option<FrameRange>,
     /// Gain the channel opens with, from the file's own loudness (DJP-MIX-001 auto-gain).
@@ -688,6 +766,8 @@ pub struct MetaEdit {
     pub cues: Vec<(u8, u64)>,
     /// Names and colours of those cues, slot first; an absent half means "keep what is on disk".
     pub cue_meta: Vec<(u8, Option<String>, Option<String>)>,
+    /// Loops on pads: slot, start and end in frames.
+    pub pad_loops: Vec<(u8, u64, u64)>,
     /// The active loop as `(start, end)` frames.
     pub loop_region: Option<(u64, u64)>,
 }
@@ -785,6 +865,7 @@ pub fn prepare_track(
         track: Some(track.clone()),
         total_frames: info.frames,
         waveform: None, // filled by the caller, which knows the cache directory
+        auto_gain: 1.0, // the loader fills it in below: this function knows samples, not levels
     };
     // Loudness is measured here, on the loader thread: it is a full decode of the file, and the audio
     // callback must never see it. A file that cannot be measured opens at unity.
@@ -801,6 +882,7 @@ pub fn prepare_track(
         // What the file remembers is read by the caller: this function knows samples, not sessions.
         cues: Vec::new(),
         cue_meta: Vec::new(),
+        pad_loops: Vec::new(),
         loop_region: None,
         auto_gain,
     })
@@ -881,6 +963,7 @@ impl EngineGraph {
             // cue position is.
             DjCommand::Cue { deck, .. }
             | DjCommand::SetCueMeta { deck, .. }
+            | DjCommand::SetPadLoop { deck, .. }
             | DjCommand::SetLoop { deck, .. } => *deck,
             _ => return,
         };
@@ -913,10 +996,19 @@ impl EngineGraph {
         let loop_region = deck
             .loop_region()
             .map(|region| (region.start.0, region.end.0));
+        let pad_loops: Vec<(u8, u64, u64)> = deck
+            .pad_loops()
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, region)| {
+                region.map(|region| (slot as u8, region.start.0, region.end.0))
+            })
+            .collect();
         let _ = sink.send(MetaEdit {
             path,
             cues,
             cue_meta,
+            pad_loops,
             loop_region,
         });
     }
@@ -961,6 +1053,21 @@ impl EngineGraph {
                             self.decks[index].set_hotcue(usize::from(slot), frame);
                         }
                         self.cells.clear_cue_meta(index);
+                        self.cells.clear_pad_loops(index);
+                        for (slot, start, end) in &prepared.pad_loops {
+                            self.decks[index].set_pad_loop(
+                                usize::from(*slot),
+                                Some(FrameRange {
+                                    start: SourceFrame(*start),
+                                    end: SourceFrame(*end),
+                                }),
+                            );
+                            self.cells.set_pad_loop(
+                                index,
+                                usize::from(*slot),
+                                Some((*start, *end)),
+                            );
+                        }
                         for (slot, label, color) in &prepared.cue_meta {
                             self.decks[index].set_cue_meta(
                                 usize::from(*slot),
@@ -977,9 +1084,8 @@ impl EngineGraph {
                         self.decks[index].set_loop(prepared.loop_region);
                         // The track opens at its own level: a hot master and a quiet one then start
                         // from the same place, and a +6 dB EQ boost has room instead of the limiter.
-                        if prepared.auto_gain > 0.0 {
-                            self.decks[index].set_gain(prepared.auto_gain);
-                        }
+                        // The measured correction is applied on top of the trim, not written into it.
+                        self.decks[index].set_auto_gain(prepared.auto_gain);
                         self.paths[index] = prepared.path;
                         self.loads_applied += 1;
                     }
@@ -1013,6 +1119,20 @@ impl EngineGraph {
             self.note_edit(&submission.command);
             // A pad's name and colour are strings, so they cannot ride in a cell: the publisher gets
             // them from the cells' own map, written here on the command path.
+            if let DjCommand::SetPadLoop { deck, slot } = &submission.command.command
+                && let Some(index) = self
+                    .decks
+                    .iter()
+                    .position(|candidate| candidate.id() == *deck)
+            {
+                let region = self.decks[index]
+                    .pad_loops()
+                    .get(usize::from(*slot))
+                    .copied()
+                    .flatten()
+                    .map(|region| (region.start.0, region.end.0));
+                self.cells.set_pad_loop(index, usize::from(*slot), region);
+            }
             if let DjCommand::SetCueMeta {
                 deck,
                 slot,

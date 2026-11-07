@@ -36,14 +36,14 @@ pub fn restore(
                 .iter()
                 .map(|cue| (cue.slot, cue.label.clone(), cue.color.clone()))
                 .collect();
-            prepared.loop_region = loaded
+            // Loops come back on their pads, not as one active loop: which four bars were being played
+            // when the file was closed is not something a track remembers.
+            prepared.pad_loops = loaded
                 .meta
                 .loops
-                .first()
-                .map(|stored| dj_domain::FrameRange {
-                    start: dj_domain::SourceFrame(stored.start),
-                    end: dj_domain::SourceFrame(stored.end),
-                });
+                .iter()
+                .map(|stored| (stored.slot, stored.start, stored.end))
+                .collect();
             loaded.conflict.map(|(loser, winner)| {
                 format!(
                     "{}: metadata disagreed (revision {} vs {}), used {}",
@@ -93,16 +93,17 @@ pub fn write_edit(store: &Store, volume: &str, root: &Path, edit: &MetaEdit) -> 
             }
         })
         .collect();
+    // Pads carry the loops now: the slot is the pad, so a stored four bars come back on the pad the DJ
+    // put them on (DJP-DECK-004). The active loop is a runtime state and is not written here.
     meta.loops = edit
-        .loop_region
-        .map(|(start, end)| {
-            vec![dj_library::Loop {
-                slot: 0,
-                start,
-                end,
-            }]
+        .pad_loops
+        .iter()
+        .map(|(slot, start, end)| dj_library::Loop {
+            slot: *slot,
+            start: *start,
+            end: *end,
         })
-        .unwrap_or_default();
+        .collect();
     if existed {
         meta.bump(now_ms);
     }

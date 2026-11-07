@@ -26,6 +26,7 @@ class WaveformItem : public QQuickPaintedItem
     Q_PROPERTY(bool coloured READ coloured WRITE setColoured NOTIFY appearanceChanged)
     Q_PROPERTY(int barWidth READ barWidth WRITE setBarWidth NOTIFY appearanceChanged)
     Q_PROPERTY(int barGap READ barGap WRITE setBarGap NOTIFY appearanceChanged)
+    Q_PROPERTY(int markFont READ markFont WRITE setMarkFont NOTIFY appearanceChanged)
     Q_PROPERTY(QColor background READ background WRITE setBackground NOTIFY appearanceChanged)
     Q_PROPERTY(QColor outside READ outside WRITE setOutside NOTIFY appearanceChanged)
     Q_PROPERTY(QColor flat READ flat WRITE setFlat NOTIFY appearanceChanged)
@@ -61,6 +62,8 @@ public:
     int barWidth() const { return m_barWidth; }
     void setBarWidth(int value);
     int barGap() const { return m_barGap; }
+    int markFont() const { return m_markFont; }
+    void setMarkFont(int value);
     void setBarGap(int value);
     QColor background() const { return m_background; }
     void setBackground(const QColor &value);
@@ -94,6 +97,7 @@ private:
     bool m_coloured = true;
     int m_barWidth = 2;
     int m_barGap = 0;
+    int m_markFont = 9;
     QColor m_background;
     QColor m_outside;
     QColor m_flat;

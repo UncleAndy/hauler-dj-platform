@@ -77,6 +77,7 @@ impl Engine {
         let ack = match &scheduled.command {
             DjCommand::Cue { .. }
             | DjCommand::SetCueMeta { .. }
+            | DjCommand::SetPadLoop { .. }
             | DjCommand::SeekFrames { .. }
             | DjCommand::SetLoop { .. } => Ack::rejected(scheduled.id, RejectReason::NotSupported),
             _ => self.queue.push(scheduled),
@@ -208,6 +209,7 @@ impl Engine {
             }
             DjCommand::Cue { .. }
             | DjCommand::SetCueMeta { .. }
+            | DjCommand::SetPadLoop { .. }
             | DjCommand::SeekFrames { .. }
             | DjCommand::SetLoop { .. }
             | DjCommand::Load { .. }
@@ -258,10 +260,12 @@ impl Engine {
                 track: None,
                 loop_region: None,
                 hotcues: vec![None; dj_domain::HOTCUE_SLOTS],
+                pad_loops: Vec::new(),
                 cue_labels: Vec::new(),
                 cue_colors: Vec::new(),
                 levels: dj_domain::Levels::SILENT,
                 linear_gain: self.gain,
+                auto_gain: 1.0,
                 tempo_ratio: self.tempo_ratio,
                 // The A01 renderer is a bare tone: no mixer, so no channel fader or EQ.
                 fader: 1.0,

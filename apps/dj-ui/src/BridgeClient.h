@@ -98,6 +98,9 @@ public:
     Q_INVOKABLE int setChannelGain(const QString &deck, double gain);
     /// Playback rate of a deck: 1.0 is the file's own speed, and the pitch moves with it.
     Q_INVOKABLE int setTempo(const QString &deck, double ratio);
+    /// Store the deck's active loop on a pad (DJP-DECK-004).
+    Q_INVOKABLE int setPadLoop(const QString &deck, int slot);
+
     /// A hotcue's name and colour; an empty string leaves that half alone (DJP-DECK-003).
     Q_INVOKABLE int setCueMeta(const QString &deck, int slot, const QString &label,
                                const QString &color);

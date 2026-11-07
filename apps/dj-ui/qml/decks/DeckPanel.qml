@@ -111,6 +111,43 @@ Pane {
         return slot < list.length && list[slot] !== null && list[slot] !== undefined ? list[slot] : "";
     }
 
+    function padLoop(slot) {
+        const loops = panel.deck !== null && panel.deck.pad_loops !== undefined
+                      ? panel.deck.pad_loops : [];
+        const region = slot < loops.length ? loops[slot] : null;
+        return region === null || region === undefined ? null : region;
+    }
+
+    /// Setting a loop takes two presses: the first marks the start, the second closes and activates it.
+    property bool loopPending: false
+    property real loopStartFrame: 0
+
+    function pressLoop(cancel) {
+        const frame = panel.deck !== null && panel.deck.source_frame !== undefined
+                      ? panel.deck.source_frame : 0;
+        if (cancel) {
+            panel.loopPending = false;
+            return;
+        }
+        if (panel.loop !== null && panel.loop !== undefined) {
+            Bridge.setLoop(panel.deckId, false, 0, 0);
+            panel.loopPending = false;
+            return;
+        }
+        if (!panel.loopPending) {
+            panel.loopPending = true;
+            panel.loopStartFrame = frame;
+            return;
+        }
+        const from = Math.min(panel.loopStartFrame, frame);
+        const to = Math.max(panel.loopStartFrame, frame);
+        panel.loopPending = false;
+        if (to - from < 480) {
+            return;
+        }
+        Bridge.setLoop(panel.deckId, true, from, to);
+    }
+
     function hotcueColor(slot, fallback) {
         const list = panel.deck !== null && panel.deck.cue_colors !== undefined
                      ? panel.deck.cue_colors : [];
@@ -297,15 +334,15 @@ Pane {
                 onClicked: Bridge.cue(panel.deckId, "Set", 0)
             }
             Button {
-                text: qsTr("Loop")
+                objectName: "loop_" + panel.deckId
+                text: panel.loopPending ? qsTr("Loop …") : qsTr("Loop")
                 font.pixelSize: 11
                 enabled: panel.live
                 focusPolicy: Qt.NoFocus
                 checkable: false
-                highlighted: panel.loop !== null && panel.loop !== undefined
-                onClicked: {
-                    const from = panel.deck.source_frame !== undefined ? panel.deck.source_frame : 0;
-                    Bridge.setLoop(panel.deckId, panel.loop === null, from, from + 48000);
+                highlighted: (panel.loop !== null && panel.loop !== undefined) || panel.loopPending
+                onClicked: function (mouse) {
+                    panel.pressLoop((mouse.modifiers & Qt.ShiftModifier) !== 0);
                 }
             }
             Item { Layout.fillWidth: true }
@@ -423,27 +460,34 @@ Pane {
             required property int index
             objectName: "cuepad_" + panel.deckId + "_" + pad.index
             readonly property var frame: panel.hotcueFrame(pad.index)
+            readonly property var loop: panel.padLoop(pad.index)
             readonly property string label: panel.hotcueLabel(pad.index)
             Layout.fillWidth: true
             Layout.preferredHeight: 20
             Layout.minimumWidth: 14
             radius: 2
-            color: pad.frame !== null
-                   ? panel.hotcueColor(pad.index, panel.cuePalette[pad.index % panel.cuePalette.length])
-                   : UiSettings.themeRaised
+            // A loop pad is amber and says so with ⟲: the colour is the only thing a glance reads.
+            color: pad.loop !== null
+                   ? panel.loopColor
+                   : (pad.frame !== null
+                      ? panel.hotcueColor(pad.index, panel.cuePalette[pad.index % panel.cuePalette.length])
+                      : UiSettings.themeRaised)
             border.width: 1
             border.color: UiSettings.themeBorder
-            opacity: pad.frame !== null ? 1.0 : 0.7
+            opacity: pad.frame !== null || pad.loop !== null ? 1.0 : 0.7
 
             Text {
                 anchors.fill: parent
                 anchors.margins: 1
-                text: pad.label.length > 0 ? pad.label : String(pad.index + 1)
+                text: pad.loop !== null ? "⟲" : (pad.label.length > 0 ? pad.label
+                                                                   : String(pad.index + 1))
                 font.pixelSize: 8
+                font.bold: true
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideRight
-                color: UiSettings.themeText
+                // Dark on a lit pad, dim on an empty one: a bright pad with white text is a blank.
+                color: pad.frame !== null || pad.loop !== null ? "#101010" : UiSettings.themeTextDim
             }
 
             MouseArea {
@@ -460,10 +504,14 @@ Pane {
                     }
                     if (mouse.modifiers & Qt.ShiftModifier) {
                         Bridge.cue(panel.deckId, "Delete", pad.index);
-                    } else if (pad.frame === null) {
-                        Bridge.cue(panel.deckId, "Set", pad.index);
-                    } else {
+                    } else if (pad.loop !== null || pad.frame !== null) {
                         Bridge.cue(panel.deckId, "Jump", pad.index);
+                    } else if (panel.loop !== null && panel.loop !== undefined) {
+                        // An empty pad while a loop is active stores that loop: the four bars become part
+                        // of the set, which is what a DJ does between two mixes.
+                        Bridge.setPadLoop(panel.deckId, pad.index);
+                    } else {
+                        Bridge.cue(panel.deckId, "Set", pad.index);
                     }
                 }
             }

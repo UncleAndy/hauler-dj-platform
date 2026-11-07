@@ -25,6 +25,9 @@ struct CueMark
 struct WaveformStyle
 {
     bool coloured = true;
+    /// Height of a pad's number, in pixels: a full-track strip has no room for the size the zoomed
+    /// strip uses, and a clipped number is not a label.
+    int markFont = 9;
     int barWidth = 2;
     int barGap = 0;
     // Top to bottom brightness of a bar: the reference waveform glows from the centre outwards

@@ -175,9 +175,14 @@ pub struct Deck {
     playing: bool,
     position: u64,
     gain: f32,
+    /// Correction from the file's own loudness, applied with the trim but never written into it: the
+    /// knob belongs to the hand, and a knob that moves by itself is a knob nobody trusts.
+    auto_gain: f32,
     tempo_ratio: f64,
     loop_region: Option<FrameRange>,
     hotcues: [Option<u64>; HOTCUE_SLOTS],
+    /// Loops stored on pads: a pad holds either a point or a loop (DJP-DECK-003/004).
+    pad_loops: [Option<FrameRange>; HOTCUE_SLOTS],
     /// Names and colours of the hotcues: what a pad shows besides its position (DJP-DECK-003).
     cue_labels: [Option<String>; HOTCUE_SLOTS],
     cue_colors: [Option<String>; HOTCUE_SLOTS],
@@ -236,9 +241,11 @@ impl Deck {
             playing: false,
             position: 0,
             gain: 1.0,
+            auto_gain: 1.0,
             tempo_ratio: 1.0,
             loop_region: None,
             hotcues: [None; HOTCUE_SLOTS],
+            pad_loops: [None; HOTCUE_SLOTS],
             cue_labels: std::array::from_fn(|_| None),
             cue_colors: std::array::from_fn(|_| None),
             track: None,
@@ -274,6 +281,20 @@ impl Deck {
             .map_or(f64::from(self.output_rate), |source| {
                 f64::from(source.sample_rate())
             })
+    }
+
+    /// The correction the loader measured for this file; 1.0 when it could not measure one.
+    pub fn set_auto_gain(&mut self, gain: f32) {
+        self.auto_gain = if gain.is_finite() && gain > 0.0 {
+            gain
+        } else {
+            1.0
+        };
+    }
+
+    /// The correction in force, linear.
+    pub fn auto_gain(&self) -> f32 {
+        self.auto_gain
     }
 
     /// Set the playback rate: 1.0 is the file's own speed.
@@ -355,6 +376,8 @@ impl Deck {
         // Leaving them behind put the previous file's cue on an empty pad, and a click on that pad
         // jumped into a position the new track never had.
         self.hotcues = [None; HOTCUE_SLOTS];
+        self.pad_loops = [None; HOTCUE_SLOTS];
+        self.auto_gain = 1.0;
         self.cue_labels = std::array::from_fn(|_| None);
         self.cue_colors = std::array::from_fn(|_| None);
         // A new track starts with an empty filter history: the tail of the last one is not part of
@@ -562,6 +585,35 @@ impl Deck {
         true
     }
 
+    /// Store a loop on a pad, or clear it. A pad holds one thing: a loop replaces the point in it.
+    pub fn set_pad_loop(&mut self, slot: usize, region: Option<FrameRange>) -> bool {
+        if slot >= HOTCUE_SLOTS {
+            return false;
+        }
+        self.pad_loops[slot] = region;
+        true
+    }
+
+    /// Loops stored on pads, slot for slot.
+    pub fn pad_loops(&self) -> &[Option<FrameRange>; HOTCUE_SLOTS] {
+        &self.pad_loops
+    }
+
+    /// Press a pad: a loop pad activates its loop and takes the playhead to its start, a point pad
+    /// jumps to its frame.
+    pub fn jump_pad(&mut self, slot: usize) -> Option<u64> {
+        if slot >= HOTCUE_SLOTS {
+            return None;
+        }
+        if let Some(region) = self.pad_loops[slot] {
+            self.loop_region = Some(region);
+            self.position = region.start.0;
+            self.drop_pending();
+            return Some(self.position);
+        }
+        self.jump_hotcue(slot)
+    }
+
     /// Name and colour of a hotcue: what a pad shows besides its position.
     ///
     /// Either half may be absent, and `None` means "leave this half alone": renaming a pad must not
@@ -701,8 +753,11 @@ impl Deck {
             self.render_at_tempo(out, step);
         }
 
+        // Trim, then the measured correction: both are gain staging before the EQ, and neither one is
+        // visible on the knob.
+        let staging = self.gain * self.auto_gain;
         for sample in out.iter_mut() {
-            *sample *= self.gain;
+            *sample *= staging;
         }
         // Trim first, then the EQ: that is the order of a channel strip, and the order the mixer's
         // contract names when it says a deck arrives already gain-staged and equalised.
@@ -935,10 +990,12 @@ impl Deck {
                 .iter()
                 .map(|slot| slot.map(SourceFrame))
                 .collect(),
+            pad_loops: self.pad_loops.to_vec(),
             cue_labels: self.cue_labels.to_vec(),
             cue_colors: self.cue_colors.to_vec(),
             levels: self.levels,
             linear_gain: self.gain,
+            auto_gain: self.auto_gain,
             tempo_ratio: self.tempo_ratio,
             // The channel fader belongs to the mixer strip, not to the deck: a deck on its own is at
             // unity, and the engine's snapshot fills the fader in from the strip.

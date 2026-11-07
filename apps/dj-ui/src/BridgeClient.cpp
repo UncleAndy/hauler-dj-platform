@@ -418,6 +418,16 @@ int BridgeClient::setTempo(const QString &deck, double ratio)
     return sendCommand(deck, command);
 }
 
+int BridgeClient::setPadLoop(const QString &deck, int slot)
+{
+    QJsonObject options;
+    options.insert(QStringLiteral("deck"), deck);
+    options.insert(QStringLiteral("slot"), slot);
+    QJsonObject command;
+    command.insert(QStringLiteral("SetPadLoop"), options);
+    return sendCommand(deck, command);
+}
+
 int BridgeClient::setCueMeta(const QString &deck, int slot, const QString &label,
                              const QString &color)
 {

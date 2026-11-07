@@ -3501,6 +3501,7 @@ int main(int argc, char *argv[])
                 return 1;
             }
 
+            const double beforeMove = fieldOf("source_frame");
             const QPointF grab =
                 strip->mapToScene(QPointF(strip->width() * 0.5, strip->height() * 0.5));
             QMouseEvent down(QEvent::MouseButtonPress, grab, window->mapToGlobal(grab.toPoint()),
@@ -3518,29 +3519,36 @@ int main(int argc, char *argv[])
                              Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
             QCoreApplication::sendEvent(window, &move);
             QCoreApplication::processEvents();
-            pump(10);
-            const bool sounded = playing();
-            // The hand stops, the button is still down: the deck must fall silent on its own. The wait
-            // has to run the event loop — a sleeping thread never fires the timer that stops the sound.
-            QElapsedTimer quiet;
-            quiet.start();
-            while (quiet.elapsed() < 300) {
+            const double afterMove = fieldOf("source_frame");
+            // The hand has moved and stops; the button is still down. Nothing may run on: whatever the
+            // scratch sounded like, the playhead has to stay where the hand left it.
+            QElapsedTimer held;
+            held.start();
+            while (held.elapsed() < 400) {
                 QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
                 QThread::msleep(10);
             }
-            const bool quietWhileHeld = !playing();
+            const double afterHold = fieldOf("source_frame");
             QMouseEvent up(QEvent::MouseButtonRelease, along, window->mapToGlobal(along.toPoint()),
                            Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
             QCoreApplication::sendEvent(window, &up);
             pump(20);
+            const double afterRelease = fieldOf("source_frame");
             const bool quietAfter = !playing();
             std::fprintf(stdout,
-                         "dj-ui: audio scrub — moving makes sound %s, stopping while held is silent "
-                         "%s, releasing is silent %s\n",
-                         sounded ? "yes" : "no", quietWhileHeld ? "yes" : "no",
-                         quietAfter ? "yes" : "no");
-            if (!sounded || !quietWhileHeld || !quietAfter) {
-                std::fprintf(stderr, "dj-ui: an audio scrub on a paused deck did not behave\n");
+                         "dj-ui: audio scrub — the hand moved the playhead to %.0f, 400 ms of a held "
+                         "button left it at %.0f, releasing left it at %.0f, deck %s\n",
+                         afterMove, afterHold, afterRelease, quietAfter ? "silent" : "playing");
+            if (afterMove >= beforeMove - 200.0) {
+                std::fprintf(stderr, "dj-ui: the hand on the strip did not move the material\n");
+                return 1;
+            }
+            if (std::abs(afterHold - afterMove) > 4800.0) {
+                std::fprintf(stderr, "dj-ui: the deck ran on after the hand stopped\n");
+                return 1;
+            }
+            if (!quietAfter || std::abs(afterRelease - afterHold) > 4800.0) {
+                std::fprintf(stderr, "dj-ui: releasing the hand did not leave the deck where it stood\n");
                 return 1;
             }
         }

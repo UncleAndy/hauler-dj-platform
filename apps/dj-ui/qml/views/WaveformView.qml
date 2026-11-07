@@ -52,11 +52,12 @@ Item {
     /// The deck was playing before the hand touched the strip.
     property bool scrubWasPlaying: false
 
-    // A hand that stops moving stops making sound. Eighty milliseconds is between two moves of a
-    // deliberate drag and longer than the gap between the moves of a fast one.
+    // A hand that stops moving stops making sound. Twenty-eight milliseconds is shorter than the gap
+    // between two moves of a deliberate drag, so the deck only ever plays a grain of what the hand
+    // passes over — a scratch, not a snippet running on under the playhead.
     Timer {
         id: scrubIdle
-        interval: 80
+        interval: 28
         repeat: false
         onTriggered: {
             if (view.scrubHeld && !view.scrubWasPlaying && view.deckId.length > 0) {
@@ -200,6 +201,8 @@ Item {
             span: view.zoomSpan
             playheadRatio: view.playheadRatio
             cues: view.cueMarks
+            // The zoomed strip has room for a readable number.
+            markFont: 9
             hasLoop: view.loopRatioFrom >= 0
             loopFrom: Math.max(0.0, view.loopRatioFrom)
             loopTo: Math.max(0.0, view.loopRatioTo)
@@ -281,6 +284,9 @@ Item {
                     view.scrubHeld = false;
                     scrubIdle.stop();
                     if (view.scrubAudio && !hand.wasPlaying) {
+                        // The playhead ends where the hand left it: a grain of audio played while the hand
+                        // moved, and the position must not keep the distance the grain covered.
+                        Bridge.seek(view.deckId, Math.floor(view.shownFrame));
                         Bridge.play(view.deckId, false);
                     }
                 }

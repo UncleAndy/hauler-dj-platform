@@ -962,11 +962,13 @@ fn prepared_with(
             track: None,
             total_frames: Some(480_000),
             waveform: None,
+            auto_gain: 1.0,
         },
         path: Some(std::path::PathBuf::from("/tmp/dj-engine-cue-test.wav")),
         cues,
-        // Built by hand: the pads carry no names or colours of their own here.
+        // Built by hand: the pads carry no names, colours or loops of their own here.
         cue_meta: Vec::new(),
+        pad_loops: Vec::new(),
         loop_region: loop_region.map(|(start, end)| dj_domain::FrameRange {
             start: SourceFrame(start),
             end: SourceFrame(end),
@@ -1129,7 +1131,8 @@ fn an_edit_survives_a_restart() {
         path: track.clone(),
         cues: vec![(0, 4_800), (5, 96_000)],
         cue_meta: vec![(0, Some("Intro".to_string()), Some("#4a86c8".to_string()))],
-        loop_region: Some((12_000, 24_000)),
+        pad_loops: vec![(0, 12_000, 24_000)],
+        loop_region: None,
     };
     dj_engine::meta::write_edit(&store, "vol", &dir, &edit).expect("write");
 
@@ -1147,8 +1150,11 @@ fn an_edit_survives_a_restart() {
         ],
         "a pad's name and colour travel with the file"
     );
-    let region = prepared.loop_region.expect("the loop came back");
-    assert_eq!((region.start.0, region.end.0), (12_000, 24_000));
+    assert_eq!(
+        prepared.pad_loops,
+        vec![(0, 12_000, 24_000)],
+        "a loop comes back on its pad"
+    );
 
     // And a second edit keeps the fields it does not touch, because it starts from the file.
     let second = dj_engine::MetaEdit {
@@ -1156,15 +1162,20 @@ fn an_edit_survives_a_restart() {
         cues: vec![(0, 4_800)],
         // No name asked for this time: the one on disk must survive the rewrite.
         cue_meta: Vec::new(),
+        pad_loops: vec![(3, 1_000, 2_000)],
         loop_region: None,
     };
     dj_engine::meta::write_edit(&store, "vol", &dir, &second).expect("second write");
     let loaded = store.load("vol", &dir, &track).expect("load");
     assert_eq!(loaded.meta.revision, 2, "each edit is a revision");
     assert_eq!(loaded.meta.cues.len(), 1);
-    assert!(
-        loaded.meta.loops.is_empty(),
-        "the loop was cleared, not forgotten"
+    // The pads carry the loops: the second edit asked for one on pad 3, and the first edit's loop on
+    // pad 0 is not there any more because the edit is the whole set, not an addition.
+    assert_eq!(loaded.meta.loops.len(), 1, "one stored loop, on pad 3");
+    assert_eq!(loaded.meta.loops[0].slot, 3);
+    assert_eq!(
+        (loaded.meta.loops[0].start, loaded.meta.loops[0].end),
+        (1_000, 2_000)
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1377,8 +1388,13 @@ fn a_track_opens_at_the_level_the_loader_measured() {
 
     assert_eq!(
         graph.decks()[0].gain(),
+        1.0,
+        "the measured correction must not move the user's trim"
+    );
+    assert_eq!(
+        graph.decks()[0].auto_gain(),
         measured,
-        "the deck did not open at the measured level"
+        "the deck did not take the measured correction"
     );
 }
 

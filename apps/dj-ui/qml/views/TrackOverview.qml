@@ -72,6 +72,9 @@ Item {
         span: 1.0
         playheadRatio: overview.ratio
         cues: overview.cueMarks
+        // A whole track in a hundred pixels: the number has to be half the size, or it covers the
+        // strip instead of naming a point on it.
+        markFont: 5
         hasLoop: overview.loopFrom >= 0.0
         loopFrom: Math.max(0.0, overview.loopFrom)
         loopTo: Math.max(0.0, overview.loopTo)

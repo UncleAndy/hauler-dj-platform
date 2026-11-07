@@ -320,6 +320,14 @@ pub enum DjCommand {
         /// Target deck.
         deck: DeckId,
     },
+    /// Store the deck's active loop on a pad, so the same four bars come back with one press
+    /// (DJP-DECK-003, DJP-DECK-004).
+    SetPadLoop {
+        /// Target deck.
+        deck: DeckId,
+        /// Hotcue slot `0..8`.
+        slot: u8,
+    },
     /// The name and the colour of a hotcue: what makes a pad recognisable in a dark booth.
     ///
     /// A cue's position is a `Cue` command; this one only writes what a hand sees, and it is critical
@@ -418,6 +426,7 @@ impl DjCommand {
     pub fn is_critical(&self) -> bool {
         match self {
             DjCommand::Play { .. }
+            | DjCommand::SetPadLoop { .. }
             | DjCommand::SetCueMeta { .. }
             | DjCommand::Cue { .. }
             | DjCommand::SeekFrames { .. }
@@ -687,6 +696,9 @@ pub struct DeckSnapshot {
     pub loop_region: Option<FrameRange>,
     /// Stored hotcues; slot order is stable across snapshots.
     pub hotcues: Vec<Option<SourceFrame>>,
+    /// Loops stored on pads; a pad holds a point or a loop, never both.
+    #[serde(default)]
+    pub pad_loops: Vec<Option<FrameRange>>,
     /// Names of the hotcues, slot for slot; `None` where a cue has no name or no cue exists.
     ///
     /// Defaulted, so a state document written before pads had names still reads: a client that knows
@@ -706,6 +718,9 @@ pub struct DeckSnapshot {
     pub waveform: Option<Waveform>,
     /// Current linear gain.
     pub linear_gain: f32,
+    /// Correction the loader measured for this file, linear. Not a knob: shown beside the clock.
+    #[serde(default = "unity")]
+    pub auto_gain: f32,
     /// Current tempo ratio.
     pub tempo_ratio: f64,
     /// Channel fader in force, linear: 1.0 is unity, 0.0 is silence.

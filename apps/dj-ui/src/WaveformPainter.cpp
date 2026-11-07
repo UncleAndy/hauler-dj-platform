@@ -99,8 +99,13 @@ void paintWaveform(QPainter &painter, const Waveform &waveform, const WaveformSt
         const QColor colour = cue.color.isValid() ? cue.color : style.marker;
         painter.setPen(colour);
         painter.drawLine(x, area.top(), x, area.bottom());
-        painter.fillRect(QRect(x - 1, area.top(), 3, 4), colour);
-        painter.drawText(x + 3, area.top() + 9,
+        painter.fillRect(QRect(x - 1, area.top(), 3, 3), colour);
+        // The baseline sits a font height below the top edge, so the glyph is whole: a number cut in
+        // half by the strip's border names nothing.
+        QFont font = painter.font();
+        font.setPixelSize(std::max(5, style.markFont));
+        painter.setFont(font);
+        painter.drawText(x + 3, area.top() + std::max(5, style.markFont) + 1,
                          cue.label.isEmpty() ? QString::number(slot + 1) : cue.label);
     }
 

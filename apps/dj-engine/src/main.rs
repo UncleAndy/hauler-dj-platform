@@ -439,6 +439,7 @@ fn run(argv: &[String]) -> Result<(), String> {
                         track: None,
                         total_frames: None,
                         waveform: None,
+                        auto_gain: 1.0,
                     },
                 });
                 let path = std::path::PathBuf::from(&request.path);
@@ -480,6 +481,7 @@ fn run(argv: &[String]) -> Result<(), String> {
                                 track: None,
                                 total_frames: None,
                                 waveform: None,
+                                auto_gain: 1.0,
                             },
                         });
                     }

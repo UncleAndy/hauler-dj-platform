@@ -25,6 +25,7 @@ void WaveformItem::paint(QPainter *painter)
     style.coloured = m_coloured;
     style.barWidth = m_barWidth;
     style.barGap = m_barGap;
+    style.markFont = m_markFont;
     style.background = m_background;
     style.outside = m_outside;
     style.flat = m_flat;
@@ -216,4 +217,13 @@ void WaveformItem::setPlayhead(const QColor &value)
     m_playhead = value;
     update();
     emit appearanceChanged();
+}
+
+void WaveformItem::setMarkFont(int value)
+{
+    if (m_markFont == value) {
+        return;
+    }
+    m_markFont = value;
+    update();
 }
