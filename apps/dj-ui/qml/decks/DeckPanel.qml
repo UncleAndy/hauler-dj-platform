@@ -144,15 +144,15 @@ Pane {
         return frame >= region.start && frame < region.end;
     }
 
-    /// The Loop button. Two presses make a loop; with a loop already known it is a mode switch, and a
-    /// mode switch never moves the playhead — only entering a loop from outside it does.
+    /// The Loop button. A press inside a known loop switches that loop on where the playhead stands; a
+    /// press outside it starts a new loop instead of dragging the DJ back into the old one. Shift is a
+    /// plain mode switch and never moves anything.
     function pressLoop(cancel) {
         const frame = panel.deck !== null && panel.deck.source_frame !== undefined
                       ? panel.deck.source_frame : 0;
         const active = panel.loop !== null && panel.loop !== undefined;
         const known = active ? panel.loop : panel.savedLoop;
 
-        // Shift switches the loop mode and nothing else: no seek, ever.
         if (cancel) {
             if (panel.loopPending) {
                 panel.loopPending = false;
@@ -169,19 +169,21 @@ Pane {
             return;
         }
 
-        // A known loop: inside it the press only switches the mode on where the playhead stands; from
-        // outside it enters at the beginning, which is what a hand expects of a loop button.
-        if (known !== null && known !== undefined) {
-            if (!panel.loopContains(known, frame)) {
-                panel.seekInto(known);
-            }
+        // Inside the loop that is already known: switch it on where it stands, no jump.
+        if (known !== null && known !== undefined && panel.loopContains(known, frame)) {
             if (!active) {
                 Bridge.setLoop(panel.deckId, true, known.start, known.end);
             }
             return;
         }
 
+        // Outside it: this press marks the start of another loop. The old one is switched off so it
+        // cannot wrap while the pair is being made, but its edges stay on the strip.
         if (!panel.loopPending) {
+            if (active) {
+                panel.savedLoop = panel.loop;
+                Bridge.setLoop(panel.deckId, false, 0, 0);
+            }
             panel.loopPending = true;
             panel.loopStartFrame = frame;
             return;

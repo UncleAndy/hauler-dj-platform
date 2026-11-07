@@ -3305,6 +3305,29 @@ int main(int argc, char *argv[])
             return 1;
         }
 
+        // From outside the loop a press starts another one: it must mark a new start, not drag the hand
+        // back into the loop that was already there.
+        bridge->seek(QStringLiteral("A"), 5000);
+        pump(20);
+        const double outsideBefore = frames();
+        click(Qt::NoModifier);
+        const double outsideAfter = frames();
+        const double freshMark = stripProp("pendingFrom");
+        std::fprintf(stdout, "dj-ui: a press outside the loop left a marker at %.4f, playhead %.0f -> %.0f\n",
+                     freshMark, outsideBefore, outsideAfter);
+        if (freshMark < 0.0) {
+            std::fprintf(stderr, "dj-ui: a press outside the loop did not mark a new start\n");
+            return 1;
+        }
+        if (std::abs(outsideAfter - outsideBefore) > 64.0) {
+            std::fprintf(stderr, "dj-ui: a press outside the loop jumped the playhead\n");
+            return 1;
+        }
+        if (!loopRegion().isEmpty()) {
+            std::fprintf(stderr, "dj-ui: the old loop is still in force while a new one is being marked\n");
+            return 1;
+        }
+
         bridge->play(QStringLiteral("A"), false);
         return 0;
     }
