@@ -256,11 +256,23 @@ Pane {
         return hex !== null && hex !== undefined && String(hex).length > 0 ? String(hex) : fallback;
     }
 
-    /// The measured correction, in decibels: shown, never applied to a knob.
-    readonly property real autoGainDb: {
-        const gain = panel.deck !== null && panel.deck.auto_gain !== undefined
-                     ? panel.deck.auto_gain : 1.0;
-        return gain > 0.0 ? 20.0 * Math.log(gain) / Math.LN10 : 0.0;
+    /// The measured level correction, in decibels: shown, never applied to a knob.
+    ///
+    /// `null` means the file's level was never measured, which is a different thing from a correction
+    /// of zero and has to read differently too.
+    readonly property var autoGainDb: {
+        const value = panel.deck.auto_gain_db;
+        return value === undefined || value === null ? null : Number(value);
+    }
+
+    /// The correction as a person reads it, or an empty string when there is nothing measured.
+    function autoGainText() {
+        if (panel.autoGainDb === null) {
+            return "";
+        }
+        const db = panel.autoGainDb;
+        const sign = db > 0 ? "+" : (db < 0 ? "\u2212" : "");
+        return sign + Math.abs(db).toFixed(1) + qsTr(" dB");
     }
 
     function remainingLabel() {
@@ -328,24 +340,27 @@ Pane {
                 font.pixelSize: 12
                 elide: Text.ElideRight
             }
-            Label {
-                objectName: "clock_" + panel.deckId
-                // Elapsed first, then what is left: a DJ reads the time that is running out, not the
-                // time on the clock (DJP-DECK-002).
-                text: panel.positionLabel() + " / −" + panel.remainingLabel()
+            RowLayout {
+                spacing: 6
+                Label {
+                    objectName: "clock_" + panel.deckId
+                    // Elapsed first, then what is left: a DJ reads the time that is running out, not
+                    // the time on the clock (DJP-DECK-002).
+                    text: panel.positionLabel() + " / −" + panel.remainingLabel()
+                    color: UiSettings.themeTextDim
+                    font.pixelSize: 11
+                }
                 Label {
                     objectName: "autogain_" + panel.deckId
-                    anchors.left: parent.right
-                    anchors.leftMargin: 6
-                    anchors.verticalCenter: parent.verticalCenter
-                    // Only when there is something to say: a "+0,0 дБ" on every track is noise.
-                    visible: Math.abs(panel.autoGainDb) >= 0.5
-                    text: (panel.autoGainDb > 0 ? "+" : "") + panel.autoGainDb.toFixed(1) + qsTr(" dB")
+                    // Every measured track says what was done to its level: a DJ who cannot see the
+                    // correction cannot trust the fader either. A track nobody measured says nothing.
+                    visible: panel.autoGainDb !== null
+                    text: panel.autoGainText()
+                    // A correction worth a glance is bright; one under half a decibel is a footnote.
+                    opacity: panel.autoGainDb !== null && Math.abs(panel.autoGainDb) >= 0.5 ? 1.0 : 0.55
                     color: UiSettings.themeTextDim
                     font.pixelSize: 9
                 }
-                color: UiSettings.themeTextDim
-                font.pixelSize: 11
             }
         }
 

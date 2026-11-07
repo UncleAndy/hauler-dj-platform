@@ -963,6 +963,7 @@ fn prepared_with(
             total_frames: Some(480_000),
             waveform: None,
             auto_gain: 1.0,
+            auto_gain_db: None,
         },
         path: Some(std::path::PathBuf::from("/tmp/dj-engine-cue-test.wav")),
         cues,
@@ -973,8 +974,9 @@ fn prepared_with(
             start: SourceFrame(start),
             end: SourceFrame(end),
         }),
-        // Built by hand, so no file was measured: the deck opens at unity.
+        // Built by hand, so no file was measured: the deck opens at unity and says nothing.
         auto_gain: 1.0,
+        auto_gain_db: None,
     }
 }
 
@@ -1395,6 +1397,17 @@ fn a_track_opens_at_the_level_the_loader_measured() {
         graph.decks()[0].auto_gain(),
         measured,
         "the deck did not take the measured correction"
+    );
+    // The correction in decibels has to reach the *snapshot*: the shell has nothing else to draw, and a
+    // snapshot that says 1.0 about a trimmed track hides the only place the number could be seen.
+    let published = graph.decks()[0].snapshot();
+    let correction = published
+        .auto_gain_db
+        .unwrap_or_else(|| panic!("the snapshot carries no measured correction"));
+    let expected = 20.0 * measured.log10();
+    assert!(
+        (correction - expected).abs() < 0.05,
+        "the snapshot says {correction} dB where the loader measured {expected} dB"
     );
 }
 

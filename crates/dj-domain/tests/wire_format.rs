@@ -193,6 +193,7 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
             },
             linear_gain: 1.0,
             auto_gain: 1.0,
+            auto_gain_db: Some(-3.5),
             tempo_ratio: 1.0,
             fader: 0.85,
             eq: EqGains {
@@ -219,7 +220,7 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
             r##""cue_colors":["#5fb85f",null,null,null,null,null,null,null],"##,
             r#""levels":{"peak_left":0.5,"peak_right":0.25},"#,
             r#""linear_gain":1.0,"#,
-            r#""auto_gain":1.0,"tempo_ratio":1.0,"fader":0.85,"#,
+            r#""auto_gain":1.0,"auto_gain_db":-3.5,"tempo_ratio":1.0,"fader":0.85,"#,
             r#""eq":{"low_db":3.0,"mid_db":-4.5,"high_db":0.0}}]}"#
         )
     );

@@ -330,6 +330,8 @@ pub struct DeckStatic {
     /// Correction measured from the file's loudness, linear; applied with the trim, shown beside the
     /// clock, and never written into the knob.
     pub auto_gain: f32,
+    /// The same correction in decibels, `None` when the level of this file was never measured.
+    pub auto_gain_db: Option<f32>,
 }
 
 impl DeckStatic {
@@ -351,6 +353,7 @@ impl DeckStatic {
             total_frames,
             waveform: snapshot.waveform.clone(),
             auto_gain: snapshot.auto_gain,
+            auto_gain_db: snapshot.auto_gain_db,
         }
     }
 }
@@ -742,6 +745,7 @@ impl StateCells {
                 },
                 linear_gain: f32::from_bits(cells.gain.load(Ordering::Relaxed)),
                 auto_gain: fixed.auto_gain,
+                auto_gain_db: fixed.auto_gain_db,
                 tempo_ratio: f64::from_bits(cells.tempo.load(Ordering::Relaxed)),
                 fader: f32::from_bits(cells.fader.load(Ordering::Relaxed)),
                 eq: EqGains {
@@ -824,6 +828,8 @@ pub struct PreparedTrack {
     ///
     /// 1.0 when the file was not measured: a missing number must not silently attenuate a track.
     pub auto_gain: f32,
+    /// The same correction in decibels; `None` when the level was not measured.
+    pub auto_gain_db: Option<f32>,
 }
 
 /// A change worth writing to the track's metadata file.
@@ -935,12 +941,20 @@ pub fn prepare_track(
         total_frames: info.frames,
         waveform: None, // filled by the caller, which knows the cache directory
         auto_gain: 1.0, // the loader fills it in below: this function knows samples, not levels
+        auto_gain_db: None,
     };
     // Loudness is measured here, on the loader thread: it is a full decode of the file, and the audio
-    // callback must never see it. A file that cannot be measured opens at unity.
-    let auto_gain = dj_analysis::loudness::analyse(path)
-        .map(|loudness| loudness.gain)
-        .unwrap_or(1.0);
+    // callback must never see it. A file that cannot be measured opens at unity and says nothing.
+    let measured = dj_analysis::loudness::analyse(path).ok();
+    let auto_gain = measured.map_or(1.0, |loudness| loudness.gain);
+    let auto_gain_db = measured
+        .and_then(|loudness| loudness.rms_db)
+        .map(|rms_db| dj_analysis::loudness::TARGET_RMS_DB - rms_db);
+    // The published deck description carries the correction too: the shell reads the snapshot, and a
+    // snapshot that says "1.0" about a trimmed track hides the only place the number could be seen.
+    let mut static_info = static_info;
+    static_info.auto_gain = auto_gain;
+    static_info.auto_gain_db = auto_gain_db;
 
     Ok(PreparedTrack {
         deck: DeckId::A,
@@ -954,6 +968,7 @@ pub fn prepare_track(
         pad_loops: Vec::new(),
         loop_region: None,
         auto_gain,
+        auto_gain_db,
     })
 }
 
@@ -1154,7 +1169,7 @@ impl EngineGraph {
                         // The track opens at its own level: a hot master and a quiet one then start
                         // from the same place, and a +6 dB EQ boost has room instead of the limiter.
                         // The measured correction is applied on top of the trim, not written into it.
-                        self.decks[index].set_auto_gain(prepared.auto_gain);
+                        self.decks[index].set_auto_gain(prepared.auto_gain, prepared.auto_gain_db);
                         self.paths[index] = prepared.path;
                         self.loads_applied += 1;
                     }

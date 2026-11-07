@@ -269,6 +269,7 @@ impl Engine {
                 levels: dj_domain::Levels::SILENT,
                 linear_gain: self.gain,
                 auto_gain: 1.0,
+                auto_gain_db: None,
                 tempo_ratio: self.tempo_ratio,
                 // The A01 renderer is a bare tone: no mixer, so no channel fader or EQ.
                 fader: 1.0,

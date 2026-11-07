@@ -11,6 +11,7 @@
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QFile>
 #include <QMouseEvent>
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -65,6 +66,57 @@ bool waitFor(const std::function<bool()> &condition, int timeout_ms)
     return condition();
 }
 
+/// Write a stereo 48 kHz sine of the given amplitude: a track whose level is exactly what a case needs.
+///
+/// The auto-gain cases cannot use the shared fixture: its correction is large enough that the old shell
+/// showed it too, so a defect in the quiet half would go unnoticed.
+QString writeTone(const QString &path, double amplitude, double seconds)
+{
+    const int rate = 48000;
+    const int frames = int(rate * seconds);
+    QByteArray data;
+    data.reserve(frames * 4);
+    for (int i = 0; i < frames; ++i) {
+        const double value = amplitude * std::sin(2.0 * M_PI * 440.0 * i / rate);
+        const auto sample = static_cast<qint16>(std::lround(value * 32767.0));
+        for (int channel = 0; channel < 2; ++channel) {
+            data.append(char(sample & 0xff));
+            data.append(char((sample >> 8) & 0xff));
+        }
+    }
+    QByteArray header;
+    const auto put32 = [&header](quint32 value) {
+        header.append(char(value & 0xff));
+        header.append(char((value >> 8) & 0xff));
+        header.append(char((value >> 16) & 0xff));
+        header.append(char((value >> 24) & 0xff));
+    };
+    const auto put16 = [&header](quint16 value) {
+        header.append(char(value & 0xff));
+        header.append(char((value >> 8) & 0xff));
+    };
+    header.append("RIFF");
+    put32(quint32(36 + data.size()));
+    header.append("WAVEfmt ");
+    put32(16);
+    put16(1);
+    put16(2);
+    put32(quint32(rate));
+    put32(quint32(rate * 4));
+    put16(4);
+    put16(16);
+    header.append("data");
+    put32(quint32(data.size()));
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        return QString();
+    }
+    file.write(header);
+    file.write(data);
+    file.close();
+    return path;
+}
+
 /// What a case says when it fails.
 using Reason = QString;
 
@@ -85,6 +137,13 @@ public:
     {
         m_bridge.play(m_deck, false);
         m_bridge.load(m_deck, m_fixture);
+    }
+
+    /// Put a specific file on the deck.
+    void load(const QString &path)
+    {
+        m_bridge.play(m_deck, false);
+        m_bridge.load(m_deck, path);
     }
 
     /// Empty the deck: what the strips paint has to come from the file, not from what was on screen.
@@ -184,6 +243,7 @@ public:
     bool stripLoopActive() const { return flag(stripName(), "loopActive"); }
     double stripPending() const { return property(stripName(), "pendingFrom"); }
 
+    QString deckId() const { return m_deck; }
     QString stripName() const { return QStringLiteral("waveStrip_") + m_deck; }
     QString padName(int slot) const { return QStringLiteral("cuepad_%1_%2").arg(m_deck).arg(slot); }
     QString loopButtonName() const { return QStringLiteral("loop_") + m_deck; }
@@ -358,6 +418,42 @@ int runScenarios(BridgeClient &bridge, QQuickWindow &window, const QString &deck
     }
 
     std::vector<Case> cases;
+
+    cases.push_back({"the clock says how much the track's level was corrected",
+                     [](Runner &run, Reason &why) {
+                         run.reload();
+                         if (!waitFor([&] { return run.total() > 0.0; }, 6000)) {
+                             why = QStringLiteral("the track did not load");
+                             return false;
+                         }
+                         const double gain = run.deck().value(QStringLiteral("auto_gain")).toDouble();
+                         if (!(gain > 0.0)) {
+                             why = QStringLiteral("the snapshot carries no auto_gain");
+                             return false;
+                         }
+                         const double db = 20.0 * std::log10(gain);
+                         QQuickItem *label = run.item(QStringLiteral("autogain_") + run.deckId());
+                         if (label == nullptr) {
+                             why = QStringLiteral("there is no correction label beside the clock");
+                             return false;
+                         }
+                         if (std::abs(db) >= 0.5 && !label->isVisible()) {
+                             why = QStringLiteral("the correction is %1 dB but the label is hidden")
+                                       .arg(db, 0, 'f', 1);
+                             return false;
+                         }
+                         const QString text = label->property("text").toString();
+                         // The label writes the sign as a typographic minus and the magnitude as a
+                         // number: compare the number, not the character.
+                         if (std::abs(db) >= 0.5
+                             && !text.contains(QString::number(std::abs(db), 'f', 1))) {
+                             why = QStringLiteral("the label reads \"%1\" for %2 dB")
+                                       .arg(text, QString::number(db, 'f', 1));
+                             return false;
+                         }
+                         return true;
+                     }});
+
 
     // ---- marking and closing a loop ----------------------------------------------------------
     cases.push_back({"a press with no loop marks a start, and only that",
@@ -1258,6 +1354,62 @@ int runScenarios(BridgeClient &bridge, QQuickWindow &window, const QString &deck
                          }
                          if (!waitFor([&] { return int(run.stripLoops().size()) > 0; }, 3000)) {
                              why = QStringLiteral("the reloaded track shows no loop mark on the strip");
+                             return false;
+                         }
+                         return true;
+                     }});
+
+    cases.push_back({"a small level correction is shown beside the clock",
+                     [](Runner &run, Reason &why) {
+                         // 0,343 amplitude of a sine is 12,3 dBFS RMS: the correction is +0,3 dB, the
+                         // size a hand would call "nothing" — and exactly the size the shell used to
+                         // swallow whole.
+                         const QString path = writeTone(QStringLiteral("/tmp/dj-scenario-autogain.wav"),
+                                                        0.343, 2.0);
+                         if (path.isEmpty()) {
+                             why = QStringLiteral("the tone for the case could not be written");
+                             return false;
+                         }
+                         run.load(path);
+                         // Wait for this file, not for "a track": the deck keeps the previous one until
+                         // the loader's attach lands, and that moment briefly has no measured level.
+                         const auto arrived = [&] {
+                             const QVariant value = run.deck().value(QStringLiteral("auto_gain_db"));
+                             return std::abs(run.total() - 96000.0) < 2.0 && value.isValid()
+                                    && !value.isNull();
+                         };
+                         if (!waitFor(arrived, 8000)) {
+                             why = QStringLiteral("the quiet track did not arrive with a measured "
+                                                  "level (total %1 frames, auto_gain %2)")
+                                       .arg(run.total(), 0, 'f', 0)
+                                       .arg(run.deck().value(QStringLiteral("auto_gain")).toDouble(),
+                                            0, 'f', 3);
+                             return false;
+                         }
+                         const QVariant raw = run.deck().value(QStringLiteral("auto_gain_db"));
+                         if (!raw.isValid() || raw.isNull()) {
+                             why = QStringLiteral("the snapshot says nothing about the measured level");
+                             return false;
+                         }
+                         const double db = raw.toDouble();
+                         if (std::abs(db - 0.3) > 0.4) {
+                             why = QStringLiteral("the correction is %1 dB, not the +0,3 dB of this tone")
+                                       .arg(db, 0, 'f', 2);
+                             return false;
+                         }
+                         QQuickItem *label = run.item(QStringLiteral("autogain_") + run.deckId());
+                         if (label == nullptr) {
+                             why = QStringLiteral("there is no correction label beside the clock");
+                             return false;
+                         }
+                         if (!label->isVisible()) {
+                             why = QStringLiteral("the correction of %1 dB is measured but not shown")
+                                       .arg(db, 0, 'f', 1);
+                             return false;
+                         }
+                         const QString text = label->property("text").toString();
+                         if (!text.contains(QStringLiteral("0.3"))) {
+                             why = QStringLiteral("the label reads \"%1\"").arg(text);
                              return false;
                          }
                          return true;

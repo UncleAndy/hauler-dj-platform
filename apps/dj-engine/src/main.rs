@@ -440,6 +440,7 @@ fn run(argv: &[String]) -> Result<(), String> {
                         total_frames: None,
                         waveform: None,
                         auto_gain: 1.0,
+                        auto_gain_db: None,
                     },
                 });
                 let path = std::path::PathBuf::from(&request.path);
@@ -482,6 +483,7 @@ fn run(argv: &[String]) -> Result<(), String> {
                                 total_frames: None,
                                 waveform: None,
                                 auto_gain: 1.0,
+                                auto_gain_db: None,
                             },
                         });
                     }

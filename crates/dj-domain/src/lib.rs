@@ -733,6 +733,10 @@ pub struct DeckSnapshot {
     /// Correction the loader measured for this file, linear. Not a knob: shown beside the clock.
     #[serde(default = "unity")]
     pub auto_gain: f32,
+    /// The same correction in decibels, as measured. Absent when the level was never measured, so a
+    /// shell can tell "no correction" from "nothing was measured".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_gain_db: Option<f32>,
     /// Current tempo ratio.
     pub tempo_ratio: f64,
     /// Channel fader in force, linear: 1.0 is unity, 0.0 is silence.

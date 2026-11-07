@@ -17,6 +17,10 @@ use dj_domain::{
 };
 use dj_dsp::ChannelEq;
 
+mod stretch;
+
+use stretch::Stretcher;
+
 /// Sample rate the equaliser's table is built for.
 ///
 /// Files in this project are required to be 48 kHz (no resampling yet), and the device runs at the
@@ -182,6 +186,9 @@ pub struct Deck {
     /// Correction from the file's own loudness, applied with the trim but never written into it: the
     /// knob belongs to the hand, and a knob that moves by itself is a knob nobody trusts.
     auto_gain: f32,
+    /// The same correction in decibels, as the loader measured it. `None` when the level could not be
+    /// measured: a deck that says "0,0 дБ" about an unmeasured file is lying about what it knows.
+    auto_gain_db: Option<f32>,
     tempo_ratio: f64,
     /// The loop the Loop button made, if any: it is the one that can be captured into memory.
     loop_region: Option<FrameRange>,
@@ -232,6 +239,21 @@ pub struct Deck {
     scratch_frames: usize,
     /// Where between two source frames the next output frame sits, 0.0 … 1.0.
     phase: f64,
+    /// Whether the tempo moves without the pitch. On by default: a DJ changing speed expects the key
+    /// of the track to stay where the producer put it, not to slide with the fader (DJP-DECK-008).
+    keylock: bool,
+    /// The WSOLA stage that does that: it reads windows of the source and hands out hops.
+    stretcher: Stretcher,
+    /// Source frames pulled for the stretcher, interleaved stereo.
+    stretch_in: Vec<f32>,
+    /// Hop the stretcher just produced, interleaved stereo.
+    hop_out: Vec<f32>,
+    /// Stretched material at the file's rate, before conversion to the device's rate.
+    stretch_out: Vec<f32>,
+    /// Frames of `stretch_out` that hold real material.
+    stretch_frames: usize,
+    /// Where between two stretched frames the next output frame sits, 0.0 … 1.0.
+    stretch_phase: f64,
 }
 
 impl std::fmt::Debug for Deck {
@@ -257,6 +279,7 @@ impl Deck {
             position: 0,
             gain: 1.0,
             auto_gain: 1.0,
+            auto_gain_db: None,
             tempo_ratio: 1.0,
             loop_region: None,
             loop_mode: false,
@@ -279,6 +302,13 @@ impl Deck {
             scratch: vec![0.0; MAX_TEMPO_BLOCK_FRAMES * 2],
             scratch_frames: 0,
             phase: 0.0,
+            keylock: true,
+            stretcher: Stretcher::new(),
+            stretch_in: vec![0.0; MAX_TEMPO_BLOCK_FRAMES * 2],
+            hop_out: vec![0.0; stretch::HOP * 2],
+            stretch_out: vec![0.0; MAX_TEMPO_BLOCK_FRAMES * 2],
+            stretch_frames: 0,
+            stretch_phase: 0.0,
         }
     }
 
@@ -302,12 +332,16 @@ impl Deck {
     }
 
     /// The correction the loader measured for this file; 1.0 when it could not measure one.
-    pub fn set_auto_gain(&mut self, gain: f32) {
+    ///
+    /// `db` is the measured correction as a number a person can read. It is kept apart from the factor
+    /// so the shell can say what was done without recomputing a logarithm in QML.
+    pub fn set_auto_gain(&mut self, gain: f32, db: Option<f32>) {
         self.auto_gain = if gain.is_finite() && gain > 0.0 {
             gain
         } else {
             1.0
         };
+        self.auto_gain_db = db.filter(|value| value.is_finite());
     }
 
     /// The correction in force, linear.
@@ -315,10 +349,15 @@ impl Deck {
         self.auto_gain
     }
 
+    /// The measured correction in decibels, `None` when the level of the file was never measured.
+    pub fn auto_gain_db(&self) -> Option<f32> {
+        self.auto_gain_db
+    }
+
     /// Set the playback rate: 1.0 is the file's own speed.
     ///
-    /// The pitch moves with the rate, as on a turntable: changing one without the other is key lock, and
-    /// that is a different task (DJP-DECK-008).
+    /// The pitch stays where the file put it: key lock is on by default, and `set_keylock(false)` gives
+    /// the turntable behaviour back — the rate and the pitch move together.
     pub fn set_tempo(&mut self, ratio: f64) {
         if !ratio.is_finite() {
             return;
@@ -332,10 +371,29 @@ impl Deck {
         // dropping them would drop a fraction of a frame the ear cannot hear but a test can.
     }
 
+    /// Whether the tempo moves without the pitch. On by default (DJP-DECK-008).
+    pub fn set_keylock(&mut self, enabled: bool) {
+        if self.keylock == enabled {
+            return;
+        }
+        self.keylock = enabled;
+        self.drop_pending();
+    }
+
+    /// Whether the pitch is held while the tempo moves.
+    pub fn keylock(&self) -> bool {
+        self.keylock
+    }
+
     /// Drop the frames carried for the tempo stage: the playhead is about to move or stop.
     fn drop_pending(&mut self) {
         self.scratch_frames = 0;
         self.phase = 0.0;
+        // The stretcher's windows belong to the old playhead as well: keeping them would repeat the
+        // material that was already heard.
+        self.stretcher.reset();
+        self.stretch_frames = 0;
+        self.stretch_phase = 0.0;
     }
 
     /// Which deck this is.
@@ -398,6 +456,7 @@ impl Deck {
         self.armed.clear();
         self.loop_mode = false;
         self.auto_gain = 1.0;
+        self.auto_gain_db = None;
         self.cue_labels = std::array::from_fn(|_| None);
         self.cue_colors = std::array::from_fn(|_| None);
         // A new track starts with an empty filter history: the tail of the last one is not part of
@@ -915,6 +974,10 @@ impl Deck {
             // At the file's own speed the deck is unchanged: same bytes as before the tempo stage existed,
             // which is what the golden render compares against.
             self.pull(out);
+        } else if self.keylock && (self.tempo_ratio - 1.0).abs() > 1e-9 {
+            // The tempo moves and the pitch does not: stretch first, then convert the file's rate to the
+            // device's. Two stages, because they answer two different questions.
+            self.render_keylocked(out);
         } else {
             self.render_at_tempo(out, step);
         }
@@ -989,6 +1052,76 @@ impl Deck {
         self.scratch_frames = rest;
         self.phase = position - consumed as f64;
         self.scratch = scratch;
+    }
+
+    /// Key lock: the tempo moves and the pitch does not (DJP-DECK-008).
+    ///
+    /// Two stages, because they answer two questions. First WSOLA, which changes how long the material
+    /// lasts without resampling it, so the pitch stays where the file put it. Then the file's rate is
+    /// converted to the device's, exactly as the plain rate stage does. The stretcher's cost is one
+    /// correlation search per 512 frames, so this stays inside the block budget.
+    fn render_keylocked(&mut self, out: &mut [f32]) {
+        let frames = out.len() / 2;
+        if frames == 0 {
+            return;
+        }
+        let wanted = ((frames as f64) * self.rate_ratio).ceil() as usize + 2;
+        let capacity = self.stretch_out.len() / 2;
+        if wanted > capacity {
+            // Not a block the engine renders, but the fallback must still play at the right tempo: an
+            // unreachable branch that silently plays at another speed is worse than a lost pitch.
+            self.render_at_tempo(out, self.tempo_ratio * self.rate_ratio);
+            return;
+        }
+
+        let ratio = self.tempo_ratio;
+        let mut stretcher = std::mem::take(&mut self.stretcher);
+        let mut hop = std::mem::take(&mut self.hop_out);
+        let mut have = self.stretch_frames.min(capacity);
+        while have < wanted {
+            let need = stretcher.needs(ratio);
+            if need > 0 {
+                let take = need.min(self.stretch_in.len() / 2);
+                let mut staging = std::mem::take(&mut self.stretch_in);
+                self.pull(&mut staging[..take * 2]);
+                self.stretch_in = staging;
+                stretcher.push(&self.stretch_in[..take * 2]);
+            }
+            let produced = stretcher.hop(&mut hop, ratio);
+            if produced == 0 {
+                // The source has nothing left: what `out` already holds is silence, which is the truth.
+                break;
+            }
+            let copy = produced.min(capacity - have);
+            self.stretch_out[have * 2..(have + copy) * 2].copy_from_slice(&hop[..copy * 2]);
+            have += copy;
+        }
+        self.stretcher = stretcher;
+        self.hop_out = hop;
+
+        // The file's rate against the device's, on the stretched material.
+        let step = self.rate_ratio;
+        let mut position = self.stretch_phase;
+        for index in 0..frames {
+            let frame = position as usize;
+            if frame + 1 >= have {
+                break;
+            }
+            let fraction = (position - frame as f64) as f32;
+            let left = frame * 2;
+            let right = left + 2;
+            out[index * 2] =
+                self.stretch_out[left] * (1.0 - fraction) + self.stretch_out[right] * fraction;
+            out[index * 2 + 1] = self.stretch_out[left + 1] * (1.0 - fraction)
+                + self.stretch_out[right + 1] * fraction;
+            position += step;
+        }
+
+        let consumed = (position as usize).min(have);
+        let rest = have - consumed;
+        self.stretch_out.copy_within(consumed * 2..have * 2, 0);
+        self.stretch_frames = rest;
+        self.stretch_phase = position - consumed as f64;
     }
 
     /// Fill `out` from the source, honouring the loop and the end of the file. No gain, no EQ, no
@@ -1192,6 +1325,7 @@ impl Deck {
             levels: self.levels,
             linear_gain: self.gain,
             auto_gain: self.auto_gain,
+            auto_gain_db: self.auto_gain_db,
             tempo_ratio: self.tempo_ratio,
             // The channel fader belongs to the mixer strip, not to the deck: a deck on its own is at
             // unity, and the engine's snapshot fills the fader in from the strip.

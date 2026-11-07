@@ -968,7 +968,9 @@ fn a_deck_at_its_own_speed_renders_the_same_bytes_as_before_the_tempo_stage() {
 
 #[test]
 fn a_faster_tempo_plays_the_material_faster_and_says_so() {
+    // Without key lock the tempo stage is a plain resampling, and its timing is exact to the frame.
     let mut deck = deck_with_ramp(48_000);
+    deck.set_keylock(false);
     deck.set_tempo(1.08);
     assert_eq!(deck.tempo_ratio(), 1.08);
     deck.play();
@@ -994,6 +996,7 @@ fn a_faster_tempo_plays_the_material_faster_and_says_so() {
 #[test]
 fn a_slower_tempo_stretches_the_material() {
     let mut deck = deck_with_ramp(48_000);
+    deck.set_keylock(false);
     deck.set_tempo(0.92);
     deck.play();
     let mut block = vec![0.0f32; 2000];
@@ -1012,10 +1015,9 @@ fn a_slower_tempo_stretches_the_material() {
 }
 
 #[test]
-fn the_pitch_follows_the_rate_as_on_a_turntable() {
-    // Key lock is a separate task (DJP-DECK-008); this is the vinyl behaviour R0 asks for, and it is
-    // measured rather than assumed: the same tone, eight per cent faster, crosses zero eight per cent
-    // more often.
+fn the_pitch_stays_where_the_file_put_it_when_the_tempo_moves() {
+    // Key lock is the default (DJP-DECK-008): the deck plays faster, the note stays the note. Measured
+    // rather than assumed — the same tone, eight per cent faster, must cross zero as often as before.
     let mut plain = tone_deck(480_000);
     plain.play();
     let mut reference = vec![0.0f32; 9600];
@@ -1023,16 +1025,47 @@ fn the_pitch_follows_the_rate_as_on_a_turntable() {
     let baseline = crossings(&reference);
 
     let mut fast = tone_deck(480_000);
+    assert!(fast.keylock(), "a fresh deck locks the key");
     fast.set_tempo(1.08);
     fast.play();
     let mut moved = vec![0.0f32; 9600];
     fast.render(&mut moved);
-    let higher = crossings(&moved);
+    let held = crossings(&moved);
 
-    let ratio = higher as f64 / baseline as f64;
+    let ratio = held as f64 / baseline as f64;
+    assert!(
+        (ratio - 1.0).abs() < 0.05,
+        "key lock kept the pitch at {ratio:.3} times the original ({baseline} -> {held})"
+    );
+    // And the material still moves: 4800 frames of output cover about 5184 frames of source. The
+    // stretcher reads a window ahead, so the read position leads the sound by up to one window.
+    let played = fast.position() as f64;
+    assert!(
+        played > 5184.0 - 300.0 && played < 5184.0 + 2500.0,
+        "4800 frames at 1.08 moved the playhead to {played}"
+    );
+}
+
+#[test]
+fn without_key_lock_the_pitch_follows_the_rate_as_on_a_turntable() {
+    // The vinyl behaviour stays available, and stays measurable: it is what a DJ wants when scratching
+    // or when matching a track by ear.
+    let mut plain = tone_deck(480_000);
+    plain.play();
+    let mut reference = vec![0.0f32; 9600];
+    plain.render(&mut reference);
+    let baseline = crossings(&reference);
+
+    let mut fast = tone_deck(480_000);
+    fast.set_keylock(false);
+    fast.set_tempo(1.08);
+    fast.play();
+    let mut moved = vec![0.0f32; 9600];
+    fast.render(&mut moved);
+    let ratio = crossings(&moved) as f64 / baseline as f64;
     assert!(
         (ratio - 1.08).abs() < 0.04,
-        "eight per cent faster gave {ratio:.3} times the crossings ({baseline} -> {higher})"
+        "without key lock eight per cent faster gave {ratio:.3} times the crossings"
     );
 }
 
