@@ -1004,7 +1004,13 @@ impl Deck {
         // A block larger than the scratch is played in pieces. The alternative — falling back to the
         // file's own speed for a block that does not fit — is a silent tempo error, and a tempo error is
         // exactly what a listener hears as "it plays a little fast".
-        let chunk = (self.scratch.len() / 2).saturating_sub(2).max(1);
+        //
+        // The piece size is measured in *source* frames: at 1.08 a block of 8190 output frames asks for
+        // 8848 source frames and walks off the end of the scratch. Divide by the step.
+        let capacity = (self.scratch.len() / 2).saturating_sub(4).max(1);
+        // `need` is `phase + step * frames + 2`, and `phase` can be almost a whole frame: keep two
+        // frames of slack for it, or the last piece walks off the scratch by exactly those two.
+        let chunk = (((capacity as f64) - 2.0) / step.max(1.0)).floor().max(1.0) as usize;
         let mut done = 0usize;
         while done < frames {
             let take = (frames - done).min(chunk);

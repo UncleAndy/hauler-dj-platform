@@ -1014,6 +1014,53 @@ fn a_slower_tempo_stretches_the_material() {
     );
 }
 
+/// Share of the block's energy that sits exactly at `hertz`.
+///
+/// A stretched sine that keeps its pitch still sounds rough if the windows are placed badly: the damage
+/// is not a wrong frequency but a spread of energy away from the one the file has. Zero crossings cannot
+/// see that; this can.
+fn purity(block: &[f32], hertz: f64) -> f64 {
+    let frames = block.len() / 2;
+    let mut re = 0.0f64;
+    let mut im = 0.0f64;
+    let mut energy = 0.0f64;
+    for index in 0..frames {
+        let value = f64::from(block[index * 2]);
+        let phase = std::f64::consts::TAU * hertz * index as f64 / 48_000.0;
+        re += value * phase.cos();
+        im += value * phase.sin();
+        energy += value * value;
+    }
+    if energy <= 0.0 {
+        return 0.0;
+    }
+    2.0 * (re * re + im * im) / frames as f64 / energy
+}
+
+#[test]
+fn a_stretched_tone_stays_clean() {
+    // The report from the booth: "жужжание" at any speed other than 1.0. The pitch was right and the
+    // window search was centred on the read pointer, which drifts away from the natural continuation by
+    // HOP*(ratio-1) per hop — after a second the search never found the seam, and the seams buzzed.
+    for ratio in [1.08, 1.01, 0.92] {
+        let mut deck = tone_deck(480_000);
+        deck.set_tempo(ratio);
+        deck.play();
+        let mut block = vec![0.0f32; 256 * 2];
+        let mut all = Vec::new();
+        for _ in 0..188 {
+            deck.render(&mut block);
+            all.extend_from_slice(&block);
+        }
+        // Skip the priming hop, which plays the material as it is.
+        let measured = purity(&all[2400 * 2..], 440.0);
+        assert!(
+            measured > 0.99,
+            "at {ratio} only {measured:.3} of the energy stayed at the tone"
+        );
+    }
+}
+
 #[test]
 fn the_pitch_stays_where_the_file_put_it_when_the_tempo_moves() {
     // Key lock is the default (DJP-DECK-008): the deck plays faster, the note stays the note. Measured
@@ -1043,6 +1090,31 @@ fn the_pitch_stays_where_the_file_put_it_when_the_tempo_moves() {
     assert!(
         played > 5184.0 - 300.0 && played < 5184.0 + 2500.0,
         "4800 frames at 1.08 moved the playhead to {played}"
+    );
+}
+
+#[test]
+fn a_block_larger_than_the_scratch_still_plays_at_the_tempo() {
+    // The engine renders 256 frames, so a larger block only arrives from a caller of the library — and
+    // there the size maths has to hold: at 1.08 a full scratch of output frames asks for more source
+    // frames than the scratch holds.
+    let mut deck = deck_with_ramp(480_000);
+    deck.set_keylock(false);
+    deck.set_tempo(1.08);
+    deck.play();
+    let mut block = vec![0.0f32; 40_000 * 2];
+    deck.render(&mut block);
+    let played = deck.position() as f64;
+    assert!(
+        (played - 40_000.0 * 1.08).abs() < 4.0,
+        "a 40000-frame block at 1.08 advanced the source to {played}"
+    );
+    // And the material really is the file's, only faster: the last frame is the ramp at that position.
+    let last = f64::from(block[block.len() - 2]);
+    let expected = f64::from(ramp(43_199));
+    assert!(
+        (last - expected).abs() < 1e-4,
+        "the last frame played {last} instead of {expected}"
     );
 }
 
