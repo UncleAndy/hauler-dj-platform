@@ -358,6 +358,7 @@ dependencies = [
  "dj-codec",
  "dj-deck",
  "dj-domain",
+ "dj-dsp",
  "dj-mixer",
  "serde",
  "serde_json",

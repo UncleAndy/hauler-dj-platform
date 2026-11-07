@@ -8,6 +8,7 @@
 //! Status: **A01**. Decoding, decks and effects arrive in A02+; this runner keeps working
 //! against whatever the engine implements.
 
+mod eq;
 mod mix;
 mod scenario;
 
@@ -32,6 +33,7 @@ Usage:
   dj-headless scenario --file S.json [--out FILE] [--block N]
   dj-headless mix --file MIX.json [--out FILE] [--cache-dir DIR]
   dj-headless waveform --in AUDIO --out FILE.wave [--frames-per-bucket N]
+  dj-headless eq [--low DB] [--mid DB] [--high DB] [--rate HZ] [--out FILE.json]
   dj-headless --help | --version
 
 Options:
@@ -44,18 +46,23 @@ Options:
   --measure        also time every callback and report p50/p99/max
   --cache-dir DIR  use a PCM cache for lossy files (ADR-0008)
   --cue-out FILE   mix mode: also write the cue (headphone) bus
+  --low/--mid/--high DB  eq mode: the three band gains, default 0 (flat)
+  --out FILE       eq mode: write the sweep as JSON
 
 Exit codes: 0 ok, 2 bad usage, 3 I/O or parse error.
 ";
 
 const EXIT_USAGE: u8 = 2;
 const EXIT_IO: u8 = 3;
+/// A measurement that came back outside its criteria: not a usage error and not an I/O failure.
+const EXIT_OUT_OF_SPEC: u8 = 1;
 
 /// How many applied-command lines the report carries (the engine holds 64 acks).
 const MAX_REPORTED_ACKS: usize = 64;
 
 enum Action {
     Waveform(WaveformRun),
+    Eq(eq::EqRun),
     Help,
     Version,
     Render(Render),
@@ -106,6 +113,21 @@ fn main() -> ExitCode {
             }
         },
         Ok(Action::Waveform(waveform)) => run_waveform(&waveform),
+        Ok(Action::Eq(run)) => match eq::run(&run) {
+            Ok((report, true)) => {
+                println!("{report}");
+                ExitCode::SUCCESS
+            }
+            Ok((report, false)) => {
+                println!("{report}");
+                eprintln!("dj-headless: the EQ measured outside its criteria");
+                ExitCode::from(EXIT_OUT_OF_SPEC)
+            }
+            Err(message) => {
+                eprintln!("dj-headless: {message}");
+                ExitCode::from(EXIT_IO)
+            }
+        },
         Ok(Action::Render(render)) => match run(render) {
             Ok(report) => {
                 println!("{report}");
@@ -137,6 +159,10 @@ fn parse(argv: &[String]) -> Result<Action, CliError> {
         "--help" | "-h" | "help" => return Ok(Action::Help),
         "--version" | "-V" => return Ok(Action::Version),
         "waveform" => return parse_waveform(&argv[1..]),
+        "eq" => {
+            let run = eq::parse(&argv[1..]).map_err(CliError::Usage)?;
+            return Ok(Action::Eq(run));
+        }
         "sine" | "scenario" | "mix" => {}
         other => return Err(CliError::Usage(format!("unknown command {other:?}"))),
     }

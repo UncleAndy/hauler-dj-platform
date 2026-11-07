@@ -205,6 +205,7 @@ tasks:
       - 'Cue and loop operations persist across reload'
       - 'Headless reproducibility and RT benchmark evidence attached'
   - id: A14
+    status: done
     title: 'Channel three-band EQ: low, mid and high on every channel'
     role: dsp-audio
     priority: P1

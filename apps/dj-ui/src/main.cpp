@@ -891,6 +891,10 @@ int main(int argc, char *argv[])
         QStringLiteral("window-check"),
         QStringLiteral("With --session-file: restore the remembered window shape, toggle it with F11 "
                        "and require the file to follow."));
+    const QCommandLineOption eqCheckOption(
+        QStringLiteral("eq-check"),
+        QStringLiteral("With --connect: send three band gains to one deck and require the snapshot "
+                       "to apply them and the strip's knobs to show those numbers."));
     const QCommandLineOption wheelCheckOption(
         QStringLiteral("wheel-check"),
         QStringLiteral("With --connect: scroll over a channel knob and require the deck's gain to "
@@ -1030,6 +1034,7 @@ int main(int argc, char *argv[])
     parser.addOption(connectOption);
     parser.addOption(selfCheckOption);
     parser.addOption(gainCheckOption);
+    parser.addOption(eqCheckOption);
     parser.addOption(busyCheckOption);
     parser.addOption(refusalCheckOption);
     parser.addOption(spaceCheckOption);
@@ -2610,6 +2615,135 @@ int main(int argc, char *argv[])
         }
         bridge->setChannelGain(QStringLiteral("A"), 1.0);
         std::fprintf(stdout, "dj-ui: the wheel trims a channel through the engine\n");
+        return 0;
+    }
+
+    if (parser.isSet(eqCheckOption)) {
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        bridge->connectToEngine(parser.value(connectOption));
+        QElapsedTimer linking;
+        linking.start();
+        while (!bridge->isConnected() && linking.elapsed() < 3000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QThread::msleep(10);
+        }
+        if (!bridge->isConnected()) {
+            std::fprintf(stderr, "dj-ui: no engine\n");
+            return 1;
+        }
+        QEventLoop settle;
+        QTimer::singleShot(600, &settle, &QEventLoop::quit);
+        settle.exec();
+
+        // The knobs have to exist in the loaded scene: a strip without them is a strip with no way
+        // to reach the band, whatever the engine supports.
+        QQuickItem *content = window->contentItem();
+        const QString decks[2] = {QStringLiteral("A"), QStringLiteral("B")};
+        const QString bands[3] = {QStringLiteral("low"), QStringLiteral("mid"),
+                                  QStringLiteral("high")};
+        QQuickItem *knobs[2][3] = {{nullptr, nullptr, nullptr}, {nullptr, nullptr, nullptr}};
+        for (int deck = 0; deck < 2; ++deck) {
+            for (int band = 0; band < 3; ++band) {
+                const QString name = QStringLiteral("eq_%1_%2").arg(bands[band], decks[deck]);
+                knobs[deck][band] = findItem(content, name);
+                if (knobs[deck][band] == nullptr) {
+                    std::fprintf(stderr, "dj-ui: no knob %s in the mixer\n", qPrintable(name));
+                    return 1;
+                }
+            }
+        }
+
+        // The knobs sit above the meter, not on top of it: a strip has one column, and a knob drawn
+        // over the level is a knob nobody can read. The strip's own height test is what keeps the
+        // arrangement honest when someone adds another row of controls.
+        auto *meterA = findItem(content, QStringLiteral("meter_A"));
+        if (meterA == nullptr) {
+            std::fprintf(stderr, "dj-ui: no meter for deck A\n");
+            return 1;
+        }
+        const double stackBottom =
+            knobs[0][2]->mapToItem(content, QPointF(0, knobs[0][2]->height())).y();
+        const double meterTop = meterA->mapToItem(content, QPointF(0, 0)).y();
+        std::fprintf(stdout, "dj-ui: the EQ knobs end at %.0f px, meter A starts at %.0f px\n",
+                     stackBottom, meterTop);
+        if (stackBottom > meterTop) {
+            std::fprintf(stderr, "dj-ui: the EQ knobs overlap the meter\n");
+            return 1;
+        }
+
+        // What the engine says about one band, straight from the published snapshot.
+        const auto bandOf = [&](int deck, int band) {
+            const QVariantList published =
+                bridge->snapshot().value(QStringLiteral("decks")).toList();
+            for (const QVariant &entry : published) {
+                const QVariantMap map = entry.toMap();
+                if (map.value(QStringLiteral("deck")).toString() != decks[deck]) {
+                    continue;
+                }
+                const QVariantMap eq = map.value(QStringLiteral("eq")).toMap();
+                return eq.value(bands[band] + QStringLiteral("_db")).toDouble();
+            }
+            return 0.0;
+        };
+
+        // Three different values on one deck: if the bands shared a queue slot or a filter, the
+        // snapshot would come back with one number three times.
+        const double wanted[3] = {6.0, -6.0, 3.0};
+        for (int band = 0; band < 3; ++band) {
+            bridge->setChannelEq(decks[1], bands[band], wanted[band]);
+        }
+
+        QElapsedTimer waiting;
+        waiting.start();
+        bool applied = false;
+        while (waiting.elapsed() < 3000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            applied = true;
+            for (int band = 0; band < 3; ++band) {
+                applied = applied && std::abs(bandOf(1, band) - wanted[band]) < 0.01;
+            }
+            if (applied) {
+                break;
+            }
+            QThread::msleep(20);
+        }
+        // The knobs are painted from the snapshot: let the bindings run before reading them.
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+
+        bool agreed = true;
+        for (int deck = 0; deck < 2; ++deck) {
+            for (int band = 0; band < 3; ++band) {
+                const double engine = bandOf(deck, band);
+                const double shown = knobs[deck][band]->property("db").toDouble();
+                std::fprintf(stdout,
+                             "dj-ui: knob %s %s shows %+.1f dB, the engine says %+.1f dB\n",
+                             qPrintable(decks[deck]), qPrintable(bands[band]), shown, engine);
+                if (std::abs(shown - engine) > 0.01) {
+                    agreed = false;
+                }
+            }
+        }
+        if (!applied) {
+            std::fprintf(stderr, "dj-ui: the EQ knobs did not reach the engine\n");
+            return 1;
+        }
+        if (!agreed) {
+            std::fprintf(stderr, "dj-ui: a knob shows a number the engine did not apply\n");
+            return 1;
+        }
+        if (std::abs(bandOf(0, 0)) > 0.01 || std::abs(bandOf(0, 1)) > 0.01
+            || std::abs(bandOf(0, 2)) > 0.01) {
+            std::fprintf(stderr, "dj-ui: the knobs on B moved deck A\n");
+            return 1;
+        }
+        std::fprintf(stdout,
+                     "dj-ui: eq B low %+.1f mid %+.1f high %+.1f applied, A still flat, the knobs "
+                     "show the engine's numbers\n",
+                     bandOf(1, 0), bandOf(1, 1), bandOf(1, 2));
         return 0;
     }
 

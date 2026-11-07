@@ -13,8 +13,8 @@
 | `dj-audio-core` | audio-core | A01 | R0 | DJP-ARCH-001, -003, -005; DJP-NFR-001 — **реализовано в A01**: очередь, scheduler, рендер, замер блока |
 | `dj-audio-io` | architect (audio-platform) | A05 | R0 | DJP-NFR-002, -003; DJP-ARCH-007 — CPAL 0.18, на Linux PipeWire-бэкенд (ADR-002) |
 | `dj-codec` | media | A02 | R0 | DJP-MEDIA-001, -002 — **реализовано в A02**: декодирование, seek, bounded prefetch, PCM-кэш по формату (ADR-0008) |
-| `dj-deck` | audio-core | A03 | R0 | DJP-DECK-001…004 — **реализовано в A03**: transport, loop на точном сэмпле, 8 hotcue, снимок для дисплеев |
-| `dj-dsp` | dsp | A04 | R0 | DJP-ARCH-006, -009; DJP-NFR-008 |
+| `dj-deck` | audio-core | A03 | R0 | DJP-DECK-001…004 — **реализовано в A03**: transport, loop на точном сэмпле, 8 hotcue, снимок для дисплеев; **A14**: EQ канала сразу после трима, значения уходят в снапшот |
+| `dj-dsp` | dsp | A14 | R0.5 | DJP-MIX-002; DJP-NFR-008 — **реализовано в A14**: трёхполосный EQ (low shelf / mid peak / high shelf), таблица коэффициентов по 0,125 дБ, построенная вне аудиоколбэка; свип `dj-headless eq` |
 | `dj-mixer` | dsp | A04 | R0 | DJP-MIX-001; DJP-ARCH-006, -007 — **реализовано в A04**: канальные стрипы, кроссфейдер, лимитер, метры, шина cue |
 | `dj-analysis` | media | A07 | R0 | DJP-MEDIA-003 |
 | `dj-library` | media | A08 | R0 | DJP-DATA-001…006 — переносимые метаданные трека (`.djmeta`), индекс SQLite только для поиска и сортировки |

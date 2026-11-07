@@ -408,6 +408,17 @@ int BridgeClient::setChannelGain(const QString &deck, double gain)
     return sendCommand(deck, command);
 }
 
+int BridgeClient::setChannelEq(const QString &deck, const QString &band, double gainDb)
+{
+    QJsonObject options;
+    options.insert(QStringLiteral("deck"), deck);
+    options.insert(QStringLiteral("band"), band);
+    options.insert(QStringLiteral("gain_db"), gainDb);
+    QJsonObject command;
+    command.insert(QStringLiteral("SetChannelEq"), options);
+    return sendCommand(deck, command);
+}
+
 BridgeClient::~BridgeClient()
 {
     // Before the members go: a socket that is still open emits disconnected() from its own destructor,

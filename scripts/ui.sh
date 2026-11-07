@@ -174,6 +174,9 @@ case "${1:-}" in
     # The channel gain, end to end: the UI's command must reach the deck it names and come back
     # in the snapshot. A knob that turns but changes nothing is the failure this catches.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --gain-check
+    # The channel EQ, end to end: three knobs per channel must reach the deck they name, come back in
+    # the snapshot already applied, and show the engine's number rather than a local model.
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --eq-check
     # A13: a cue and a loop are decisions about a file, so they must outlive the engine process. One
     # run stores them, a second engine reads them with no cue command of its own.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \

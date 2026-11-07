@@ -34,7 +34,11 @@ Pane {
     // is a loop that settles stale.
     readonly property real bandHeight: Math.max(56, mixer.height - 86)
     readonly property real masterKnobSide: Math.max(14, Math.min(30, bandHeight * 0.32))
-    readonly property real meterHeight: Math.max(18, bandHeight - masterKnobSide - 17)
+    // The three EQ knobs of a channel sit above its meter, so the meter gives up that room. The
+    // height is shared by every meter — master included — because channel meters and the master end
+    // on one line at the bottom, and that line is what makes the strip readable at a glance.
+    readonly property real eqStackHeight: 3 * 25 + 2
+    readonly property real meterHeight: Math.max(18, bandHeight - masterKnobSide - 17 - eqStackHeight)
 
     function deckOf(id) {
         for (let index = 0; index < mixer.decks.length; ++index) {
@@ -191,6 +195,16 @@ Pane {
             readonly property real gain: strip.deck !== null
                                          && strip.deck.linear_gain !== undefined
                                          ? strip.deck.linear_gain : 1.0
+            // A band's gain as the engine published it, in decibels.
+            function bandValue(band) {
+                const eq = strip.deck !== null && strip.deck.eq !== undefined ? strip.deck.eq : null;
+                if (eq === null) {
+                    return 0.0;
+                }
+                const key = band + "_db";
+                return eq[key] !== undefined ? eq[key] : 0.0;
+            }
+
             // What the last wheel step sent, so a check can see the wheel working.
             property real lastWheelGain: -1
             // One notch is one decibel: fine enough to trim by ear, coarse enough to move.
@@ -227,6 +241,34 @@ Pane {
                 text: strip.modelData
                 color: UiSettings.themeTextDim
                 font.pixelSize: 10
+            }
+
+            // The channel's EQ: three knobs above the meter, high at the top — the order a strip in
+            // the reference draws, and the order a hand learns. Every value comes from the snapshot:
+            // the knobs show what the engine applied, not what the last click asked for.
+            Column {
+                id: eqStack
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.top: deckLabel.bottom
+                anchors.topMargin: 2
+                spacing: 1
+
+                Repeater {
+                    model: [
+                        { band: "high", letter: "H" },
+                        { band: "mid", letter: "M" },
+                        { band: "low", letter: "L" }
+                    ]
+
+                    delegate: EqKnob {
+                        required property var modelData
+                        width: strip.width
+                        deckId: strip.modelData
+                        band: modelData.band
+                        letter: modelData.letter
+                        value: strip.bandValue(modelData.band)
+                    }
+                }
             }
 
             // The meter carries the gain pointer: one column does both jobs, and the strip keeps its

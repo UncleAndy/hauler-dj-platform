@@ -97,6 +97,10 @@ public:
     Q_INVOKABLE int setCrossfader(double position);
     Q_INVOKABLE int setChannelGain(const QString &deck, double gain);
 
+    // One band of a channel's three-band EQ (A14): "low", "mid" or "high", in decibels. Sent as one
+    // command per band, because each knob has its own slot in the engine's queue.
+    Q_INVOKABLE int setChannelEq(const QString &deck, const QString &band, double gain_db);
+
     // Master output gain, linear (1.0 = unity).
     Q_INVOKABLE int setMasterGain(double gain);
 
