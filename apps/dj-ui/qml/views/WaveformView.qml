@@ -41,6 +41,26 @@ Item {
                                    ? deckState.hotcues : []
     readonly property var loopRegion: deckState !== undefined && deckState.loop_region !== undefined
                                       ? deckState.loop_region : null
+    /// The track's length in frames, straight from the deck: a marker placed by frame over this is
+    /// right before the envelope has arrived, and an envelope that changes resolution cannot move it.
+    readonly property real totalFrames: {
+        if (deckState === undefined || deckState.source_frame === undefined) {
+            return 0;
+        }
+        const left = deckState.remaining_frames !== undefined ? deckState.remaining_frames : -1;
+        return left >= 0 ? deckState.source_frame + left : 0;
+    }
+
+    /// Where a source frame lands along the whole track, as a fraction.
+    function ratioOfFrame(frame) {
+        if (frame === null || frame === undefined) {
+            return -1;
+        }
+        // No total, no marker: an envelope that is still being built reports a growing length, and a
+        // mark drawn against it lands somewhere the sound will not be. Nothing is better than wrong.
+        return view.totalFrames > 0 ? frame / view.totalFrames : -1;
+    }
+
     readonly property string deckId: deckState !== undefined && deckState.deck !== undefined
                                      ? String(deckState.deck) : ""
     /// The loop to paint: the one in force, or the one the deck remembers while it is switched off.
@@ -75,8 +95,7 @@ Item {
     // belongs to the deck, the fraction to the strip — the conversion happens once, here.
     readonly property var cueMarks: {
         const marks = [];
-        const total = view.columns * view.framesPerBucket;
-        if (total <= 0) {
+        if (view.totalFrames <= 0 && (view.columns * view.framesPerBucket) <= 0) {
             return marks;
         }
         const colors = deckState !== undefined && deckState.cue_colors !== undefined
@@ -88,8 +107,12 @@ Item {
             if (frame === null || frame === undefined) {
                 continue;
             }
+            const ratio = view.ratioOfFrame(frame);
+            if (ratio < 0) {
+                continue;
+            }
             marks.push({
-                ratio: Math.max(0.0, Math.min(1.0, frame / total)),
+                ratio: Math.max(0.0, Math.min(1.0, ratio)),
                 color: slot < colors.length && colors[slot] ? String(colors[slot]) : "",
                 label: slot < labels.length && labels[slot] ? String(labels[slot]) : ""
             });
@@ -149,31 +172,45 @@ Item {
 
     // The loop as fractions of the track: the strip paints in fractions, so the conversion happens
     // once here instead of per frame inside the painter.
+    /// Every loop stored on a pad, as fractions of the whole track: drawn before anything is pressed,
+    /// so the loops a DJ saved yesterday are on the track today.
+    readonly property var padLoopMarks: {
+        const marks = [];
+        const loops = deckState !== undefined && deckState.pad_loops !== undefined
+                      ? deckState.pad_loops : [];
+        for (let slot = 0; slot < loops.length; ++slot) {
+            const region = loops[slot];
+            if (region === null || region === undefined || region.start === undefined) {
+                continue;
+            }
+            const from = view.ratioOfFrame(region.start);
+            const to = view.ratioOfFrame(region.end);
+            if (from >= 0 && to >= 0) {
+                marks.push({ "from": from, "to": to });
+            }
+        }
+        return marks;
+    }
+
     /// The region the strip paints: an active loop wins, otherwise the remembered one.
     readonly property var paintedLoop: view.loopRegion !== null && view.loopRegion !== undefined
                                        ? view.loopRegion : view.shownLoop
     readonly property bool loopActive: view.loopRegion !== null && view.loopRegion !== undefined
-    readonly property real pendingRatio: {
-        if (view.pendingLoopStart < 0 || view.framesPerBucket <= 0 || view.columns <= 0) {
-            return -1;
-        }
-        return (view.pendingLoopStart / view.framesPerBucket) / view.columns;
-    }
+    readonly property real pendingRatio: view.pendingLoopStart < 0
+                                         ? -1 : view.ratioOfFrame(view.pendingLoopStart)
     readonly property real loopRatioFrom: {
         const region = view.paintedLoop;
-        if (region === null || region.start === undefined || view.framesPerBucket <= 0
-                || view.columns <= 0) {
+        if (region === null || region === undefined || region.start === undefined) {
             return -1;
         }
-        return (region.start / view.framesPerBucket) / view.columns;
+        return view.ratioOfFrame(region.start);
     }
     readonly property real loopRatioTo: {
         const region = view.paintedLoop;
-        if (region === null || region.end === undefined || view.framesPerBucket <= 0
-                || view.columns <= 0) {
+        if (region === null || region === undefined || region.end === undefined) {
             return -1;
         }
-        return (region.end / view.framesPerBucket) / view.columns;
+        return view.ratioOfFrame(region.end);
     }
 
     // Where a source frame lands on screen, in pixels; negative ratio means "not a frame".
@@ -223,6 +260,7 @@ Item {
             loopTo: Math.max(0.0, view.loopRatioTo)
             loopActive: view.loopActive
             pendingFrom: view.pendingRatio
+            padLoops: view.padLoopMarks
 
             coloured: UiSettings.waveformStyle === "coloured"
             barWidth: UiSettings.waveformBarWidth

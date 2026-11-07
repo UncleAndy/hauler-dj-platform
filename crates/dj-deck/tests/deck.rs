@@ -117,6 +117,35 @@ fn a_loop_wraps_at_the_exact_sample() {
 }
 
 #[test]
+fn a_loop_pad_takes_the_sound_with_it() {
+    // The marker and the sound have to move together: a pad that arms a loop must move the decoder too,
+    // otherwise the strip shows the loop start while the ears still hear the old position.
+    let mut deck = deck_with_ramp(44_100);
+    let region = FrameRange::new(10_000, 14_000).unwrap_or_else(|| panic!("region"));
+    assert!(deck.set_pad_loop(4, Some(region)));
+    deck.seek(30_000);
+
+    let landed = deck
+        .jump_pad(4)
+        .unwrap_or_else(|| panic!("pad 4 holds a loop"));
+    assert_eq!(
+        landed, 10_000,
+        "the pad took the playhead to the loop start"
+    );
+    assert_eq!(deck.position(), 10_000);
+
+    deck.play();
+    let mut block = vec![0.0f32; 64 * 2];
+    deck.render(&mut block);
+    assert!(
+        (block[0] - ramp(10_000)).abs() < 1e-6,
+        "the first sample after the press must come from the loop start, got {}",
+        block[0]
+    );
+    assert!((block[63 * 2] - ramp(10_063)).abs() < 1e-6);
+}
+
+#[test]
 fn a_hotcue_jumps_to_the_stored_frame() {
     let mut deck = deck_with_ramp(44_100);
     deck.seek(5_000);

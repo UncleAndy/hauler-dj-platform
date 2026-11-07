@@ -137,31 +137,47 @@ Pane {
         Bridge.seek(panel.deckId, region.start);
     }
 
+    function loopContains(region, frame) {
+        if (region === null || region === undefined || region.start === undefined) {
+            return false;
+        }
+        return frame >= region.start && frame < region.end;
+    }
+
+    /// The Loop button. Two presses make a loop; with a loop already known it is a mode switch, and a
+    /// mode switch never moves the playhead — only entering a loop from outside it does.
     function pressLoop(cancel) {
         const frame = panel.deck !== null && panel.deck.source_frame !== undefined
                       ? panel.deck.source_frame : 0;
+        const active = panel.loop !== null && panel.loop !== undefined;
+        const known = active ? panel.loop : panel.savedLoop;
 
-        // Shift with a marked start cancels the pair; with no pair it switches the loop on or off.
+        // Shift switches the loop mode and nothing else: no seek, ever.
         if (cancel) {
             if (panel.loopPending) {
                 panel.loopPending = false;
                 return;
             }
-            if (panel.loop !== null && panel.loop !== undefined) {
+            if (active) {
                 panel.savedLoop = panel.loop;
                 Bridge.setLoop(panel.deckId, false, 0, 0);
                 return;
             }
-            if (panel.savedLoop !== null && panel.savedLoop !== undefined) {
-                Bridge.setLoop(panel.deckId, true, panel.savedLoop.start, panel.savedLoop.end);
-                panel.seekInto(panel.savedLoop);
+            if (known !== null && known !== undefined) {
+                Bridge.setLoop(panel.deckId, true, known.start, known.end);
             }
             return;
         }
 
-        // A loop is in force: the press enters it at its beginning, as a pad loop does.
-        if (panel.loop !== null && panel.loop !== undefined) {
-            panel.seekInto(panel.loop);
+        // A known loop: inside it the press only switches the mode on where the playhead stands; from
+        // outside it enters at the beginning, which is what a hand expects of a loop button.
+        if (known !== null && known !== undefined) {
+            if (!panel.loopContains(known, frame)) {
+                panel.seekInto(known);
+            }
+            if (!active) {
+                Bridge.setLoop(panel.deckId, true, known.start, known.end);
+            }
             return;
         }
 

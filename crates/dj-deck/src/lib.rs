@@ -607,10 +607,12 @@ impl Deck {
             return None;
         }
         if let Some(region) = self.pad_loops[slot] {
-            self.loop_region = Some(region);
-            self.position = region.start.0;
-            self.drop_pending();
-            return Some(self.position);
+            // Arming the loop and moving the playhead are one gesture, so the decoder has to move with
+            // it: setting `position` alone leaves the sound where it was while the marker jumps ahead,
+            // and the two only meet again at the loop's end.
+            self.set_loop(Some(region));
+            let landed = self.seek(region.start.0);
+            return Some(landed);
         }
         self.jump_hotcue(slot)
     }

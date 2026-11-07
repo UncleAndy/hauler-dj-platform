@@ -22,6 +22,14 @@ struct CueMark
     QString label;
 };
 
+/// A loop stored on a pad: drawn as a pair of edge marks along the bottom of the strip, so a loop that
+/// nobody has pressed yet is still visible on the track.
+struct LoopMark
+{
+    double from = -1.0;
+    double to = -1.0;
+};
+
 struct WaveformStyle
 {
     bool coloured = true;
@@ -52,5 +60,5 @@ inline int frameStep(const WaveformStyle &style)
 // and the loop are fractions too, so nothing is drawn twice with two different timebases.
 void paintWaveform(QPainter &painter, const Waveform &waveform, const WaveformStyle &style,
                    const QRect &area, double windowStart, double span, double playheadRatio,
-                   const QList<CueMark> &cues, bool hasLoop, double loopFrom, double loopTo,
-                   bool loopActive, double pendingFrom);
+                   const QList<CueMark> &cues, const QList<LoopMark> &padLoops, bool hasLoop,
+                   double loopFrom, double loopTo, bool loopActive, double pendingFrom);

@@ -9,8 +9,8 @@
 
 void paintWaveform(QPainter &painter, const Waveform &waveform, const WaveformStyle &style,
                    const QRect &area, double windowStart, double span, double playheadRatio,
-                   const QList<CueMark> &cues, bool hasLoop, double loopFrom, double loopTo,
-                   bool loopActive, double pendingFrom)
+                   const QList<CueMark> &cues, const QList<LoopMark> &padLoops, bool hasLoop,
+                   double loopFrom, double loopTo, bool loopActive, double pendingFrom)
 {
     if (area.width() <= 0 || area.height() <= 0) {
         return;
@@ -99,6 +99,31 @@ void paintWaveform(QPainter &painter, const Waveform &waveform, const WaveformSt
             painter.fillRect(QRect(from - 1, area.bottom() - 4, 5, 5), edge);
             painter.fillRect(QRect(to - 3, area.bottom() - 4, 5, 5), edge);
         }
+    }
+
+    // Loops stored on pads: drawn before anything is pressed, because a loop you cannot find is a loop
+    // you will not use. They live on the bottom edge, where the cue lines never go.
+    for (const LoopMark &mark : padLoops) {
+        if (mark.to <= mark.from) {
+            continue;
+        }
+        const int from = xOfRatio(mark.from);
+        const int to = xOfRatio(mark.to);
+        if (to <= from) {
+            continue;
+        }
+        const int left = std::max(area.left(), from);
+        const int right = std::min(area.right() + 1, to);
+        if (right <= left) {
+            continue;
+        }
+        QColor tint = style.accent;
+        tint.setAlpha(28);
+        painter.fillRect(QRect(left, area.bottom() - 3, right - left, 4), tint);
+        QColor edge = style.accent;
+        edge.setAlpha(170);
+        painter.fillRect(QRect(from, area.bottom() - 4, 2, 5), edge);
+        painter.fillRect(QRect(to - 2, area.bottom() - 4, 2, 5), edge);
     }
 
     // The start of a loop that has been marked but not yet closed: a dashed line with a flag, because

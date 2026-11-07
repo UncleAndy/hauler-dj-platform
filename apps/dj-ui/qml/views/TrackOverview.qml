@@ -28,7 +28,42 @@ Item {
     readonly property real ratio: overview.columns > 0 && overview.framesPerBucket > 0
                                   ? Math.min(1.0, (overview.sourceFrame / overview.framesPerBucket)
                                                   / overview.columns) : 0.0
+    /// The track's length in frames, from the deck: markers stay put while the envelope loads.
+    readonly property real totalFrames: {
+        if (overview.deckState === undefined || overview.deckState.source_frame === undefined) {
+            return 0;
+        }
+        const left = overview.deckState.remaining_frames !== undefined
+                     ? overview.deckState.remaining_frames : -1;
+        return left >= 0 ? overview.deckState.source_frame + left : 0;
+    }
+    function ratioOfFrame(frame) {
+        if (frame === null || frame === undefined) {
+            return -1.0;
+        }
+        return overview.totalFrames > 0 ? frame / overview.totalFrames : -1.0;
+    }
+
     // The loop, if one is set: the same region the strip above draws, in miniature.
+    /// Loops stored on pads, as fractions of the whole track, drawn whether or not they are in force.
+    readonly property var padLoopMarks: {
+        const marks = [];
+        const loops = overview.deckState !== undefined && overview.deckState.pad_loops !== undefined
+                      ? overview.deckState.pad_loops : [];
+        for (let slot = 0; slot < loops.length; ++slot) {
+            const region = loops[slot];
+            if (region === null || region === undefined || region.start === undefined) {
+                continue;
+            }
+            const from = overview.ratioOfFrame(region.start);
+            const to = overview.ratioOfFrame(region.end);
+            if (from >= 0.0 && to >= 0.0) {
+                marks.push({ "from": from, "to": to });
+            }
+        }
+        return marks;
+    }
+
     /// An active loop wins over a remembered one.
     readonly property var paintedLoop: overview.deckState !== undefined
                                        && overview.deckState.loop_region !== undefined
@@ -38,26 +73,19 @@ Item {
                                        && overview.deckState.loop_region !== undefined
                                        && overview.deckState.loop_region !== null
     readonly property real pendingRatio: overview.pendingLoopStart < 0
-                                         || overview.framesPerBucket <= 0 || overview.columns <= 0
-                                         ? -1.0
-                                         : (overview.pendingLoopStart / overview.framesPerBucket)
-                                           / overview.columns
+                                         ? -1.0 : overview.ratioOfFrame(overview.pendingLoopStart)
     readonly property real loopFrom: overview.deckState !== undefined
                                      && overview.deckState.loop_region !== undefined
                                      && overview.paintedLoop !== null
                                      && overview.paintedLoop !== undefined
                                      && overview.paintedLoop.start !== undefined
-                                     && overview.framesPerBucket > 0 && overview.columns > 0
-                                     ? (overview.paintedLoop.start / overview.framesPerBucket)
-                                       / overview.columns : -1.0
+                                     ? overview.ratioOfFrame(overview.paintedLoop.start) : -1.0
     readonly property real loopTo: overview.deckState !== undefined
                                    && overview.deckState.loop_region !== undefined
                                    && overview.paintedLoop !== null
                                    && overview.paintedLoop !== undefined
                                    && overview.paintedLoop.end !== undefined
-                                   && overview.framesPerBucket > 0 && overview.columns > 0
-                                   ? (overview.paintedLoop.end / overview.framesPerBucket)
-                                     / overview.columns : -1.0
+                                   ? overview.ratioOfFrame(overview.paintedLoop.end) : -1.0
 
     // The pads of the whole track, at the same fractions the strip above uses.
     readonly property var cueMarks: {
@@ -99,6 +127,7 @@ Item {
         loopTo: Math.max(0.0, overview.loopTo)
         loopActive: overview.loopActive
         pendingFrom: overview.pendingRatio
+        padLoops: overview.padLoopMarks
 
         coloured: UiSettings.waveformStyle === "coloured"
         barWidth: 1

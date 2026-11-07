@@ -8,6 +8,8 @@
 #include <QColor>
 #include <QPointer>
 #include <QQuickPaintedItem>
+#include "WaveformPainter.h"
+
 #include <QVariantList>
 
 class Waveform;
@@ -25,6 +27,7 @@ class WaveformItem : public QQuickPaintedItem
     Q_PROPERTY(double loopTo READ loopTo WRITE setLoopTo NOTIFY appearanceChanged)
     Q_PROPERTY(bool loopActive READ loopActive WRITE setLoopActive NOTIFY appearanceChanged)
     Q_PROPERTY(double pendingFrom READ pendingFrom WRITE setPendingFrom NOTIFY appearanceChanged)
+    Q_PROPERTY(QVariantList padLoops READ padLoops WRITE setPadLoops NOTIFY appearanceChanged)
     Q_PROPERTY(bool coloured READ coloured WRITE setColoured NOTIFY appearanceChanged)
     Q_PROPERTY(int barWidth READ barWidth WRITE setBarWidth NOTIFY appearanceChanged)
     Q_PROPERTY(int barGap READ barGap WRITE setBarGap NOTIFY appearanceChanged)
@@ -62,6 +65,8 @@ public:
     double pendingFrom() const { return m_pendingFrom; }
     void setLoopActive(bool value);
     void setPendingFrom(double value);
+    QVariantList padLoops() const { return m_padLoopsRaw; }
+    void setPadLoops(const QVariantList &value);
     void setLoopTo(double value);
     bool coloured() const { return m_coloured; }
     void setColoured(bool value);
@@ -102,6 +107,8 @@ private:
     double m_loopTo = 0.0;
     bool m_loopActive = true;
     double m_pendingFrom = -1.0;
+    QVariantList m_padLoopsRaw;
+    QList<LoopMark> m_padLoops;
     bool m_coloured = true;
     int m_barWidth = 2;
     int m_barGap = 0;

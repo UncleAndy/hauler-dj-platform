@@ -2214,8 +2214,8 @@ int main(int argc, char *argv[])
             QElapsedTimer timer;
             timer.start();
             QPainter painter(&image);
-            paintWaveform(painter, envelope, style, image.rect(), start, 0.1, start + 0.05, {}, false,
-                          0.0, 0.0, false, -1.0);
+            paintWaveform(painter, envelope, style, image.rect(), start, 0.1, start + 0.05, {}, {},
+                          false, 0.0, 0.0, false, -1.0);
             painter.end();
             costs.push_back(double(timer.nsecsElapsed()) / 1.0e6);
         }
@@ -3164,6 +3164,16 @@ int main(int argc, char *argv[])
         // Press one: a marked start. Nothing is in force yet, but the marker has to be visible — a
         // press that leaves no trace reads as a press that did nothing.
         bridge->play(QStringLiteral("A"), false);
+        // The strip places markers by the deck's own frame count, so wait for the deck to know it.
+        bool known = false;
+        for (int step = 0; step < 60 && !known; ++step) {
+            pump(2);
+            known = deckOf().value(QStringLiteral("remaining_frames")).isValid();
+        }
+        if (!known) {
+            std::fprintf(stderr, "dj-ui: the deck never reported the track's length\n");
+            return 1;
+        }
         bridge->seek(QStringLiteral("A"), 48000);
         pump(30);
         click(Qt::NoModifier);
@@ -3197,7 +3207,9 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: the loop does not start where the first press was\n");
             return 1;
         }
-        if (std::abs(end - pressed) > 2000.0) {
+        // A playing deck runs on between the read and the click, so the end is compared loosely: what
+        // the check rules out is a loop that ends anywhere but at the press.
+        if (std::abs(end - pressed) > 8000.0) {
             std::fprintf(stderr, "dj-ui: the loop does not end where the second press was (%.0f)\n", pressed);
             return 1;
         }
@@ -3225,12 +3237,28 @@ int main(int argc, char *argv[])
             return 1;
         }
 
-        // Shift with no marked start switches the loop off, and its edges stay visible.
+        // Save it on a pad: the marks must be on the track without anyone pressing that pad, so a loop
+        // saved last week is found today.
+        bridge->setPadLoop(QStringLiteral("A"), 5);
+        pump(30);
+        const int padMarks = strip == nullptr ? 0 : strip->property("padLoops").toList().size();
+        std::fprintf(stdout, "dj-ui: the strip paints %d stored loop(s)%s\n", padMarks,
+                     padMarks > 0 ? "" : " — none");
+        if (padMarks < 1) {
+            std::fprintf(stderr, "dj-ui: a loop stored on a pad is not painted on the track\n");
+            return 1;
+        }
+
+        // Shift is a mode switch, not a jump: stop the deck first so the frame can be compared exactly.
+        bridge->play(QStringLiteral("A"), false);
+        pump(30);
+        const double beforeShift = frames();
         click(Qt::ShiftModifier);
+        const double afterOff = frames();
         const bool painted = stripProp("hasLoop") > 0.5;
         const bool stillActive = stripProp("loopActive") > 0.5;
-        std::fprintf(stdout, "dj-ui: shift switched the loop %s, edges still painted %s\n",
-                     loopRegion().isEmpty() ? "off" : "on", painted ? "yes" : "no");
+        std::fprintf(stdout, "dj-ui: shift switched the loop %s, edges still painted %s, playhead %.0f -> %.0f\n",
+                     loopRegion().isEmpty() ? "off" : "on", painted ? "yes" : "no", beforeShift, afterOff);
         if (!loopRegion().isEmpty()) {
             std::fprintf(stderr, "dj-ui: shift did not switch the loop off\n");
             return 1;
@@ -3239,15 +3267,44 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: a switched-off loop must keep its edges and lose its fill\n");
             return 1;
         }
+        if (std::abs(afterOff - beforeShift) > 64.0) {
+            std::fprintf(stderr, "dj-ui: shift moved the playhead; switching the mode must not jump\n");
+            return 1;
+        }
 
-        // Shift again puts it back.
+        // Shift again: back on, still without moving.
         click(Qt::ShiftModifier);
-        std::fprintf(stdout, "dj-ui: the next shift brought the loop %s\n",
-                     loopRegion().isEmpty() ? "not back" : "back");
+        const double afterOn = frames();
+        std::fprintf(stdout, "dj-ui: the next shift brought the loop %s, playhead %.0f\n",
+                     loopRegion().isEmpty() ? "not back" : "back", afterOn);
         if (loopRegion().isEmpty()) {
             std::fprintf(stderr, "dj-ui: shift did not switch the loop back on\n");
             return 1;
         }
+        if (std::abs(afterOn - beforeShift) > 64.0) {
+            std::fprintf(stderr, "dj-ui: switching the loop back on jumped the playhead\n");
+            return 1;
+        }
+
+        // A plain press with the playhead inside the loop switches the mode on where it stands.
+        bridge->seek(QStringLiteral("A"), start + 2000.0);
+        pump(20);
+        click(Qt::ShiftModifier);
+        pump(20);
+        const double insideBefore = frames();
+        click(Qt::NoModifier);
+        const double insideAfter = frames();
+        std::fprintf(stdout, "dj-ui: a press inside the loop switched it %s, playhead %.0f -> %.0f\n",
+                     loopRegion().isEmpty() ? "off" : "on", insideBefore, insideAfter);
+        if (loopRegion().isEmpty()) {
+            std::fprintf(stderr, "dj-ui: a press inside the loop did not switch the mode on\n");
+            return 1;
+        }
+        if (std::abs(insideAfter - insideBefore) > 64.0) {
+            std::fprintf(stderr, "dj-ui: a press inside the loop jumped the playhead\n");
+            return 1;
+        }
+
         bridge->play(QStringLiteral("A"), false);
         return 0;
     }

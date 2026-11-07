@@ -52,8 +52,8 @@ void WaveformItem::paint(QPainter *painter)
     }
 
     paintWaveform(*painter, *m_waveform, style, QRect(0, 0, int(width()), int(height())),
-                  m_windowStart, m_span, m_playheadRatio, cues, m_hasLoop, m_loopFrom, m_loopTo,
-                  m_loopActive, m_pendingFrom);
+                  m_windowStart, m_span, m_playheadRatio, cues, m_padLoops, m_hasLoop, m_loopFrom,
+                  m_loopTo, m_loopActive, m_pendingFrom);
 }
 
 void WaveformItem::setWaveform(Waveform *waveform)
@@ -137,6 +137,25 @@ void WaveformItem::setLoopActive(bool value)
         return;
     }
     m_loopActive = value;
+    QQuickPaintedItem::update();
+    emit appearanceChanged();
+}
+
+void WaveformItem::setPadLoops(const QVariantList &value)
+{
+    if (m_padLoopsRaw == value) {
+        return;
+    }
+    m_padLoopsRaw = value;
+    m_padLoops.clear();
+    m_padLoops.reserve(value.size());
+    for (const QVariant &entry : value) {
+        const QVariantMap map = entry.toMap();
+        LoopMark mark;
+        mark.from = map.value(QStringLiteral("from"), -1.0).toDouble();
+        mark.to = map.value(QStringLiteral("to"), -1.0).toDouble();
+        m_padLoops.append(mark);
+    }
     QQuickPaintedItem::update();
     emit appearanceChanged();
 }
