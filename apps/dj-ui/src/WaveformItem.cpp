@@ -52,7 +52,8 @@ void WaveformItem::paint(QPainter *painter)
     }
 
     paintWaveform(*painter, *m_waveform, style, QRect(0, 0, int(width()), int(height())),
-                  m_windowStart, m_span, m_playheadRatio, cues, m_hasLoop, m_loopFrom, m_loopTo);
+                  m_windowStart, m_span, m_playheadRatio, cues, m_hasLoop, m_loopFrom, m_loopTo,
+                  m_loopActive, m_pendingFrom);
 }
 
 void WaveformItem::setWaveform(Waveform *waveform)
@@ -127,6 +128,26 @@ void WaveformItem::setLoopFrom(double value)
     }
     m_loopFrom = value;
     update();
+    emit appearanceChanged();
+}
+
+void WaveformItem::setLoopActive(bool value)
+{
+    if (m_loopActive == value) {
+        return;
+    }
+    m_loopActive = value;
+    QQuickPaintedItem::update();
+    emit appearanceChanged();
+}
+
+void WaveformItem::setPendingFrom(double value)
+{
+    if (qFuzzyCompare(m_pendingFrom, value)) {
+        return;
+    }
+    m_pendingFrom = value;
+    QQuickPaintedItem::update();
     emit appearanceChanged();
 }
 

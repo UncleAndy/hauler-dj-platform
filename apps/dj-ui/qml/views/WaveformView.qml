@@ -43,6 +43,11 @@ Item {
                                       ? deckState.loop_region : null
     readonly property string deckId: deckState !== undefined && deckState.deck !== undefined
                                      ? String(deckState.deck) : ""
+    /// The loop to paint: the one in force, or the one the deck remembers while it is switched off.
+    property var shownLoop: null
+    /// Where a loop start has been marked but not yet closed, in source frames; negative means none.
+    property real pendingLoopStart: -1
+
     /// Whether a hand on the strip is heard (a scratch) or only moves the playhead.
     property bool scrubAudio: false
 
@@ -144,8 +149,18 @@ Item {
 
     // The loop as fractions of the track: the strip paints in fractions, so the conversion happens
     // once here instead of per frame inside the painter.
+    /// The region the strip paints: an active loop wins, otherwise the remembered one.
+    readonly property var paintedLoop: view.loopRegion !== null && view.loopRegion !== undefined
+                                       ? view.loopRegion : view.shownLoop
+    readonly property bool loopActive: view.loopRegion !== null && view.loopRegion !== undefined
+    readonly property real pendingRatio: {
+        if (view.pendingLoopStart < 0 || view.framesPerBucket <= 0 || view.columns <= 0) {
+            return -1;
+        }
+        return (view.pendingLoopStart / view.framesPerBucket) / view.columns;
+    }
     readonly property real loopRatioFrom: {
-        const region = view.loopRegion;
+        const region = view.paintedLoop;
         if (region === null || region.start === undefined || view.framesPerBucket <= 0
                 || view.columns <= 0) {
             return -1;
@@ -153,7 +168,7 @@ Item {
         return (region.start / view.framesPerBucket) / view.columns;
     }
     readonly property real loopRatioTo: {
-        const region = view.loopRegion;
+        const region = view.paintedLoop;
         if (region === null || region.end === undefined || view.framesPerBucket <= 0
                 || view.columns <= 0) {
             return -1;
@@ -206,6 +221,8 @@ Item {
             hasLoop: view.loopRatioFrom >= 0
             loopFrom: Math.max(0.0, view.loopRatioFrom)
             loopTo: Math.max(0.0, view.loopRatioTo)
+            loopActive: view.loopActive
+            pendingFrom: view.pendingRatio
 
             coloured: UiSettings.waveformStyle === "coloured"
             barWidth: UiSettings.waveformBarWidth

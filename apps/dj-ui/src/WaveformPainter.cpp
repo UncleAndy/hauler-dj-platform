@@ -9,7 +9,8 @@
 
 void paintWaveform(QPainter &painter, const Waveform &waveform, const WaveformStyle &style,
                    const QRect &area, double windowStart, double span, double playheadRatio,
-                   const QList<CueMark> &cues, bool hasLoop, double loopFrom, double loopTo)
+                   const QList<CueMark> &cues, bool hasLoop, double loopFrom, double loopTo,
+                   bool loopActive, double pendingFrom)
 {
     if (area.width() <= 0 || area.height() <= 0) {
         return;
@@ -71,6 +72,13 @@ void paintWaveform(QPainter &painter, const Waveform &waveform, const WaveformSt
         }
     }
 
+    // A loop's edges are drawn whether it is running or not: a region whose boundary cannot be seen
+    // is a region that cannot be switched on, and a switched-off loop that disappears leaves the DJ
+    // wondering whether it was ever there. The tint follows the state, the edges never do.
+    QColor edge = style.accent;
+    if (!loopActive) {
+        edge.setAlpha(150);
+    }
     if (hasLoop && loopTo > loopFrom) {
         const int from = xOfRatio(loopFrom);
         const int to = xOfRatio(loopTo);
@@ -79,12 +87,32 @@ void paintWaveform(QPainter &painter, const Waveform &waveform, const WaveformSt
             const int right = std::min(area.right() + 1, to);
             if (right > left) {
                 QColor tint = style.accent;
-                tint.setAlpha(36);
+                tint.setAlpha(loopActive ? 36 : 12);
                 painter.fillRect(QRect(left, area.top(), right - left, height), tint);
             }
-            painter.setPen(style.accent);
-            painter.drawLine(from, area.top(), from, area.bottom());
-            painter.drawLine(to, area.top(), to, area.bottom());
+            painter.fillRect(QRect(from, area.top(), 3, height), edge);
+            painter.fillRect(QRect(to - 2, area.top(), 3, height), edge);
+            // Handles at the top and the bottom edge, so the two boundaries read as the ends of a
+            // region rather than as two stray lines.
+            painter.fillRect(QRect(from - 1, area.top(), 5, 5), edge);
+            painter.fillRect(QRect(to - 3, area.top(), 5, 5), edge);
+            painter.fillRect(QRect(from - 1, area.bottom() - 4, 5, 5), edge);
+            painter.fillRect(QRect(to - 3, area.bottom() - 4, 5, 5), edge);
+        }
+    }
+
+    // The start of a loop that has been marked but not yet closed: a dashed line with a flag, because
+    // a marked start nobody can see is a press that looks like it did nothing.
+    if (pendingFrom >= 0.0) {
+        const int x = xOfRatio(pendingFrom);
+        if (x >= area.left() - 1 && x <= area.right() + 1) {
+            QPen dashed(style.marker);
+            dashed.setStyle(Qt::DashLine);
+            dashed.setWidth(1);
+            painter.setPen(dashed);
+            painter.drawLine(x, area.top(), x, area.bottom());
+            painter.fillRect(QRect(x, area.top(), 7, 6), style.marker);
+            painter.fillRect(QRect(x, area.top() + 6, 3, 4), style.marker);
         }
     }
 

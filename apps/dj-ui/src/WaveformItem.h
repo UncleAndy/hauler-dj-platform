@@ -23,6 +23,8 @@ class WaveformItem : public QQuickPaintedItem
     Q_PROPERTY(bool hasLoop READ hasLoop WRITE setHasLoop NOTIFY appearanceChanged)
     Q_PROPERTY(double loopFrom READ loopFrom WRITE setLoopFrom NOTIFY appearanceChanged)
     Q_PROPERTY(double loopTo READ loopTo WRITE setLoopTo NOTIFY appearanceChanged)
+    Q_PROPERTY(bool loopActive READ loopActive WRITE setLoopActive NOTIFY appearanceChanged)
+    Q_PROPERTY(double pendingFrom READ pendingFrom WRITE setPendingFrom NOTIFY appearanceChanged)
     Q_PROPERTY(bool coloured READ coloured WRITE setColoured NOTIFY appearanceChanged)
     Q_PROPERTY(int barWidth READ barWidth WRITE setBarWidth NOTIFY appearanceChanged)
     Q_PROPERTY(int barGap READ barGap WRITE setBarGap NOTIFY appearanceChanged)
@@ -56,6 +58,10 @@ public:
     double loopFrom() const { return m_loopFrom; }
     void setLoopFrom(double value);
     double loopTo() const { return m_loopTo; }
+    bool loopActive() const { return m_loopActive; }
+    double pendingFrom() const { return m_pendingFrom; }
+    void setLoopActive(bool value);
+    void setPendingFrom(double value);
     void setLoopTo(double value);
     bool coloured() const { return m_coloured; }
     void setColoured(bool value);
@@ -94,6 +100,8 @@ private:
     bool m_hasLoop = false;
     double m_loopFrom = 0.0;
     double m_loopTo = 0.0;
+    bool m_loopActive = true;
+    double m_pendingFrom = -1.0;
     bool m_coloured = true;
     int m_barWidth = 2;
     int m_barGap = 0;

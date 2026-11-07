@@ -11,6 +11,10 @@ Item {
 
     required property var deckState
     property WaveformEnvelope envelope
+    /// The loop to paint: the one in force, or the one remembered while it is switched off.
+    property var shownLoop: null
+    /// Where a loop start has been marked but not yet closed, in source frames; negative means none.
+    property real pendingLoopStart: -1
 
     readonly property real framesPerBucket: deckState !== undefined
                                            && deckState.waveform !== undefined
@@ -25,19 +29,34 @@ Item {
                                   ? Math.min(1.0, (overview.sourceFrame / overview.framesPerBucket)
                                                   / overview.columns) : 0.0
     // The loop, if one is set: the same region the strip above draws, in miniature.
+    /// An active loop wins over a remembered one.
+    readonly property var paintedLoop: overview.deckState !== undefined
+                                       && overview.deckState.loop_region !== undefined
+                                       && overview.deckState.loop_region !== null
+                                       ? overview.deckState.loop_region : overview.shownLoop
+    readonly property bool loopActive: overview.deckState !== undefined
+                                       && overview.deckState.loop_region !== undefined
+                                       && overview.deckState.loop_region !== null
+    readonly property real pendingRatio: overview.pendingLoopStart < 0
+                                         || overview.framesPerBucket <= 0 || overview.columns <= 0
+                                         ? -1.0
+                                         : (overview.pendingLoopStart / overview.framesPerBucket)
+                                           / overview.columns
     readonly property real loopFrom: overview.deckState !== undefined
                                      && overview.deckState.loop_region !== undefined
-                                     && overview.deckState.loop_region !== null
-                                     && overview.deckState.loop_region.start !== undefined
+                                     && overview.paintedLoop !== null
+                                     && overview.paintedLoop !== undefined
+                                     && overview.paintedLoop.start !== undefined
                                      && overview.framesPerBucket > 0 && overview.columns > 0
-                                     ? (overview.deckState.loop_region.start / overview.framesPerBucket)
+                                     ? (overview.paintedLoop.start / overview.framesPerBucket)
                                        / overview.columns : -1.0
     readonly property real loopTo: overview.deckState !== undefined
                                    && overview.deckState.loop_region !== undefined
-                                   && overview.deckState.loop_region !== null
-                                   && overview.deckState.loop_region.end !== undefined
+                                   && overview.paintedLoop !== null
+                                   && overview.paintedLoop !== undefined
+                                   && overview.paintedLoop.end !== undefined
                                    && overview.framesPerBucket > 0 && overview.columns > 0
-                                   ? (overview.deckState.loop_region.end / overview.framesPerBucket)
+                                   ? (overview.paintedLoop.end / overview.framesPerBucket)
                                      / overview.columns : -1.0
 
     // The pads of the whole track, at the same fractions the strip above uses.
@@ -78,6 +97,8 @@ Item {
         hasLoop: overview.loopFrom >= 0.0
         loopFrom: Math.max(0.0, overview.loopFrom)
         loopTo: Math.max(0.0, overview.loopTo)
+        loopActive: overview.loopActive
+        pendingFrom: overview.pendingRatio
 
         coloured: UiSettings.waveformStyle === "coloured"
         barWidth: 1

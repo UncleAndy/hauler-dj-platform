@@ -2215,7 +2215,7 @@ int main(int argc, char *argv[])
             timer.start();
             QPainter painter(&image);
             paintWaveform(painter, envelope, style, image.rect(), start, 0.1, start + 0.05, {}, false,
-                          0.0, 0.0);
+                          0.0, 0.0, false, -1.0);
             painter.end();
             costs.push_back(double(timer.nsecsElapsed()) / 1.0e6);
         }
@@ -3151,47 +3151,104 @@ int main(int argc, char *argv[])
             return value.isNull() || !value.isValid() ? QVariantMap() : value.toMap();
         };
 
-        // Park, press Loop (soft start), move the playhead, press Loop again: the loop closes.
+        auto *strip = findItem(window->contentItem(), QStringLiteral("waveStrip_A"));
+        const auto stripProp = [&](const char *name) {
+            return strip == nullptr ? 0.0 : strip->property(name).toDouble();
+        };
+
+        // A deck left with a loop by an earlier run would take the press as "enter the loop", so start
+        // from a deck with nothing in force.
+        bridge->setLoop(QStringLiteral("A"), false, 0, 0);
+        pump(20);
+
+        // Press one: a marked start. Nothing is in force yet, but the marker has to be visible — a
+        // press that leaves no trace reads as a press that did nothing.
+        bridge->play(QStringLiteral("A"), false);
         bridge->seek(QStringLiteral("A"), 48000);
         pump(30);
         click(Qt::NoModifier);
-        const bool pending = loopButton->property("pending").toBool();
-        std::fprintf(stdout, "dj-ui: the first press leaves the button %s\n",
-                     pending ? "showing a pending start" : "unchanged");
-        if (!pending) {
-            std::fprintf(stderr, "dj-ui: the first press did not start a loop on the button\n");
+        const double pending = stripProp("pendingFrom");
+        std::fprintf(stdout, "dj-ui: the first press marks a start at %.4f of the track, loop %s\n",
+                     pending, loopRegion().isEmpty() ? "not in force" : "already in force");
+        if (pending < 0.0) {
+            std::fprintf(stderr, "dj-ui: the first press left no marker on the strip\n");
             return 1;
         }
         if (!loopRegion().isEmpty()) {
             std::fprintf(stderr, "dj-ui: the first press activated a loop; it must only mark the start\n");
             return 1;
         }
+
+        // Press two: the loop closes, switches on and carries the playhead to its beginning.
         bridge->seek(QStringLiteral("A"), 96000);
-        pump(30);
+        bridge->play(QStringLiteral("A"), true);
+        pump(40);
+        // The loop ends where the playhead is at the press, so that is what the check compares with.
+        const double pressed = deckOf().value(QStringLiteral("source_frame")).toDouble();
         click(Qt::NoModifier);
         const QVariantMap region = loopRegion();
         const double start = region.value(QStringLiteral("start")).toDouble();
         const double end = region.value(QStringLiteral("end")).toDouble();
-        std::fprintf(stdout, "dj-ui: the second press closed a loop %.0f…%.0f\n", start, end);
-        if (std::abs(start - 48000.0) > 2000.0 || std::abs(end - 96000.0) > 2000.0) {
-            std::fprintf(stderr, "dj-ui: the loop does not span the two presses\n");
+        const double parked = deckOf().value(QStringLiteral("source_frame")).toDouble();
+        const bool active = stripProp("loopActive") > 0.5;
+        std::fprintf(stdout, "dj-ui: the second press closed %.0f…%.0f, active %s, playhead at %.0f\n",
+                     start, end, active ? "yes" : "no", parked);
+        if (std::abs(start - 48000.0) > 2000.0) {
+            std::fprintf(stderr, "dj-ui: the loop does not start where the first press was\n");
+            return 1;
+        }
+        if (std::abs(end - pressed) > 2000.0) {
+            std::fprintf(stderr, "dj-ui: the loop does not end where the second press was (%.0f)\n", pressed);
+            return 1;
+        }
+        if (!active) {
+            std::fprintf(stderr, "dj-ui: the loop was drawn but not switched on\n");
+            return 1;
+        }
+        // Tolerance covers a deck already playing: a quarter of a second of drift after the jump back.
+        if (std::abs(parked - start) > 12000.0) {
+            std::fprintf(stderr, "dj-ui: the playhead was not carried to the loop's beginning\n");
             return 1;
         }
 
-        // Press once more (clears), then start a pair and cancel it with shift.
-        click(Qt::NoModifier);
-        if (!loopRegion().isEmpty()) {
-            std::fprintf(stderr, "dj-ui: the active loop was not cleared by the next press\n");
+        // Playing: the material must stay inside the loop instead of running past its end.
+        const auto frames = [&]() { return deckOf().value(QStringLiteral("source_frame")).toDouble(); };
+        double peak = frames();
+        for (int step = 0; step < 12; ++step) {
+            pump(6);
+            peak = std::max(peak, frames());
+        }
+        std::fprintf(stdout, "dj-ui: after 12 steps of playing the playhead reached %.0f (loop ends %.0f)\n",
+                     peak, end);
+        if (peak > end + 4000.0) {
+            std::fprintf(stderr, "dj-ui: the playhead ran past the end of the loop\n");
             return 1;
         }
-        click(Qt::NoModifier);
+
+        // Shift with no marked start switches the loop off, and its edges stay visible.
         click(Qt::ShiftModifier);
-        std::fprintf(stdout, "dj-ui: shift on the second press left %s loop\n",
-                     loopRegion().isEmpty() ? "no" : "a");
+        const bool painted = stripProp("hasLoop") > 0.5;
+        const bool stillActive = stripProp("loopActive") > 0.5;
+        std::fprintf(stdout, "dj-ui: shift switched the loop %s, edges still painted %s\n",
+                     loopRegion().isEmpty() ? "off" : "on", painted ? "yes" : "no");
         if (!loopRegion().isEmpty()) {
-            std::fprintf(stderr, "dj-ui: shift did not cancel the pair\n");
+            std::fprintf(stderr, "dj-ui: shift did not switch the loop off\n");
             return 1;
         }
+        if (!painted || stillActive) {
+            std::fprintf(stderr, "dj-ui: a switched-off loop must keep its edges and lose its fill\n");
+            return 1;
+        }
+
+        // Shift again puts it back.
+        click(Qt::ShiftModifier);
+        std::fprintf(stdout, "dj-ui: the next shift brought the loop %s\n",
+                     loopRegion().isEmpty() ? "not back" : "back");
+        if (loopRegion().isEmpty()) {
+            std::fprintf(stderr, "dj-ui: shift did not switch the loop back on\n");
+            return 1;
+        }
+        bridge->play(QStringLiteral("A"), false);
         return 0;
     }
 

@@ -52,4 +52,5 @@ inline int frameStep(const WaveformStyle &style)
 // and the loop are fractions too, so nothing is drawn twice with two different timebases.
 void paintWaveform(QPainter &painter, const Waveform &waveform, const WaveformStyle &style,
                    const QRect &area, double windowStart, double span, double playheadRatio,
-                   const QList<CueMark> &cues, bool hasLoop, double loopFrom, double loopTo);
+                   const QList<CueMark> &cues, bool hasLoop, double loopFrom, double loopTo,
+                   bool loopActive, double pendingFrom);

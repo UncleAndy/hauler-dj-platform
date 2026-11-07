@@ -492,8 +492,9 @@ impl Deck {
     /// Activate or clear a loop. The region is in source frames.
     ///
     /// An active loop engages when the playhead reaches its end and then repeats `start..end`. A
-    /// region entirely behind the playhead is ignored until a seek brings the playhead back into
-    /// it — activating a loop must never move the playhead by itself.
+    /// region entirely behind the playhead is ignored until a seek brings the playhead back into it:
+    /// activating a loop never moves the playhead by itself. Entering a loop at its beginning is the
+    /// caller's job — the Loop button and a pad both seek to `start` after arming it.
     pub fn set_loop(&mut self, region: Option<FrameRange>) {
         self.loop_region = region;
         self.reading_loop_buffer = false;

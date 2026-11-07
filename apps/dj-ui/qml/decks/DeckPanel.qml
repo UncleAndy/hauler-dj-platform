@@ -118,34 +118,68 @@ Pane {
         return region === null || region === undefined ? null : region;
     }
 
-    /// Setting a loop takes two presses: the first marks the start, the second closes and activates it.
+    /// Setting a loop takes two presses: the first marks the start, the second closes it, switches it
+    /// on and puts the playhead at its beginning, because a loop that is only drawn is not a loop.
     property bool loopPending: false
     property real loopStartFrame: 0
+    /// The region stays here while the loop is switched off, so its edges keep their markers and the
+    /// next shift can put it back (DJP-DECK-004).
+    property var savedLoop: null
+
+    /// What the strips paint: the loop in force, or the one remembered while it is off.
+    readonly property var shownLoop: panel.loop !== null && panel.loop !== undefined
+                                     ? panel.loop : panel.savedLoop
+
+    function seekInto(region) {
+        if (region === null || region === undefined || region.start === undefined) {
+            return;
+        }
+        Bridge.seek(panel.deckId, region.start);
+    }
 
     function pressLoop(cancel) {
         const frame = panel.deck !== null && panel.deck.source_frame !== undefined
                       ? panel.deck.source_frame : 0;
+
+        // Shift with a marked start cancels the pair; with no pair it switches the loop on or off.
         if (cancel) {
-            panel.loopPending = false;
+            if (panel.loopPending) {
+                panel.loopPending = false;
+                return;
+            }
+            if (panel.loop !== null && panel.loop !== undefined) {
+                panel.savedLoop = panel.loop;
+                Bridge.setLoop(panel.deckId, false, 0, 0);
+                return;
+            }
+            if (panel.savedLoop !== null && panel.savedLoop !== undefined) {
+                Bridge.setLoop(panel.deckId, true, panel.savedLoop.start, panel.savedLoop.end);
+                panel.seekInto(panel.savedLoop);
+            }
             return;
         }
+
+        // A loop is in force: the press enters it at its beginning, as a pad loop does.
         if (panel.loop !== null && panel.loop !== undefined) {
-            Bridge.setLoop(panel.deckId, false, 0, 0);
-            panel.loopPending = false;
+            panel.seekInto(panel.loop);
             return;
         }
+
         if (!panel.loopPending) {
             panel.loopPending = true;
             panel.loopStartFrame = frame;
             return;
         }
+
         const from = Math.min(panel.loopStartFrame, frame);
         const to = Math.max(panel.loopStartFrame, frame);
         panel.loopPending = false;
         if (to - from < 480) {
             return;
         }
+        panel.savedLoop = { "start": from, "end": to };
         Bridge.setLoop(panel.deckId, true, from, to);
+        panel.seekInto(panel.savedLoop);
     }
 
     function hotcueColor(slot, fallback) {
@@ -279,6 +313,8 @@ Pane {
                     deckState: panel.deck
                     envelope: envelope
                     scrubAudio: panel.scrubAudio
+                    shownLoop: panel.shownLoop
+                    pendingLoopStart: panel.loopPending ? panel.loopStartFrame : -1
                 }
 
                 // The whole track, with a marker that slides along it; a click here seeks.
@@ -291,6 +327,8 @@ Pane {
                     Layout.minimumHeight: 28
                     deckState: panel.deck
                     envelope: envelope
+                    shownLoop: panel.shownLoop
+                    pendingLoopStart: panel.loopPending ? panel.loopStartFrame : -1
                 }
             }
         }
