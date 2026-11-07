@@ -3595,7 +3595,7 @@ int main(int argc, char *argv[])
             return 1;
         }
         bridge->load(QStringLiteral("A"), path);
-        return djui::runScenarios(*bridge, *window);
+        return djui::runScenarios(*bridge, *window, QStringLiteral("A"), path);
     }
 
     if (parser.isSet(padsOption)) {

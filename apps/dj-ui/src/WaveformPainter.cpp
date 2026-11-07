@@ -117,11 +117,13 @@ void paintWaveform(QPainter &painter, const Waveform &waveform, const WaveformSt
         if (right <= left) {
             continue;
         }
+        // A loop the DJ stored is a fact about the track, so it has to be seen before anything is
+        // pressed: a very dim mark on a dark strip is a mark nobody finds.
         QColor tint = style.accent;
-        tint.setAlpha(mark.active ? 40 : 16);
+        tint.setAlpha(mark.active ? 56 : 30);
         painter.fillRect(QRect(left, area.bottom() - 3, right - left, 4), tint);
         QColor edge = style.accent;
-        edge.setAlpha(mark.active ? 200 : 90);
+        edge.setAlpha(mark.active ? 235 : 165);
         painter.fillRect(QRect(from, area.bottom() - 4, 2, 5), edge);
         painter.fillRect(QRect(to - 2, area.bottom() - 4, 2, 5), edge);
     }

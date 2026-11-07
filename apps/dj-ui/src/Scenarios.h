@@ -16,6 +16,8 @@ namespace djui {
 /// Run every scenario case against a live engine and a shown window.
 ///
 /// Returns 0 when all cases passed, 1 otherwise. Prints one line per case.
-int runScenarios(BridgeClient &bridge, QQuickWindow &window, const QString &deck = QStringLiteral("A"));
+/// `fixture` is the file the deck was loaded with: some stories reload it to see what a track remembers.
+int runScenarios(BridgeClient &bridge, QQuickWindow &window, const QString &deck,
+                 const QString &fixture);
 
 } // namespace djui

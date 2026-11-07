@@ -1225,6 +1225,17 @@ impl EngineGraph {
                     .map(|region| (region.start.0, region.end.0));
                 self.cells.set_pad_loop(index, usize::from(*slot), region);
             }
+            // An emptied deck advertises nothing: pads, names and loops all belong to the track that
+            // just left, and a strip that keeps painting them is lying about what is loaded.
+            if let DjCommand::Eject { deck } = &submission.command.command
+                && let Some(index) = self
+                    .decks
+                    .iter()
+                    .position(|candidate| candidate.id() == *deck)
+            {
+                self.cells.clear_pad_loops(index);
+                self.cells.clear_cue_meta(index);
+            }
             // The armed set moves with the mode, with a pad, and with the button's own loop, and it is
             // the whole set that the strip paints — not one region.
             if let Some(deck) = match &submission.command.command {

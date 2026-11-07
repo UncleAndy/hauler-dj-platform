@@ -72,11 +72,28 @@ using Reason = QString;
 class Runner
 {
 public:
-    Runner(BridgeClient &bridge, QQuickWindow &window, QString deck)
+    Runner(BridgeClient &bridge, QQuickWindow &window, QString deck, QString fixture)
         : m_bridge(bridge)
         , m_window(window)
         , m_deck(std::move(deck))
+        , m_fixture(std::move(fixture))
     {
+    }
+
+    /// Load the same file again, as a DJ would after closing and reopening the deck.
+    void reload()
+    {
+        m_bridge.play(m_deck, false);
+        m_bridge.load(m_deck, m_fixture);
+    }
+
+    /// Empty the deck: what the strips paint has to come from the file, not from what was on screen.
+    void eject()
+    {
+        m_bridge.play(m_deck, false);
+        m_bridge.eject(m_deck);
+        pump(40);
+        waitFor([this] { return total() <= 0.0; }, 3000);
     }
 
     // ---- facts from the engine ---------------------------------------------------------------
@@ -170,6 +187,18 @@ public:
     QString stripName() const { return QStringLiteral("waveStrip_") + m_deck; }
     QString padName(int slot) const { return QStringLiteral("cuepad_%1_%2").arg(m_deck).arg(slot); }
     QString loopButtonName() const { return QStringLiteral("loop_") + m_deck; }
+
+    int storedLoops() const
+    {
+        int count = 0;
+        for (int slot = 0; slot < 8; ++slot) {
+            const QVariant loop = padLoop(slot);
+            if (loop.isValid() && !loop.isNull()) {
+                ++count;
+            }
+        }
+        return count;
+    }
 
     int armedMarks() const
     {
@@ -293,6 +322,7 @@ private:
     BridgeClient &m_bridge;
     QQuickWindow &m_window;
     QString m_deck;
+    QString m_fixture;
 };
 
 struct Case
@@ -303,12 +333,28 @@ struct Case
 
 } // namespace
 
-int runScenarios(BridgeClient &bridge, QQuickWindow &window, const QString &deck)
+int runScenarios(BridgeClient &bridge, QQuickWindow &window, const QString &deck,
+                 const QString &fixture)
 {
-    Runner runner(bridge, window, deck);
+    Runner runner(bridge, window, deck, fixture);
     if (!waitFor([&]() { return runner.total() > 0.0; }, 5000)) {
         std::fprintf(stderr, "dj-ui: the deck never reported a track\n");
         return 1;
+    }
+
+    // A cold start, which is what a DJ meets when opening a track from yesterday: a file that remembers
+    // loops must show them before anything is clicked.
+    const int remembered = runner.storedLoops();
+    if (remembered > 0) {
+        const bool painted = waitFor([&] { return int(runner.stripLoops().size()) >= remembered; }, 4000);
+        std::fprintf(stdout, "scenario ok: a cold start paints %d remembered loop(s): %s\n", remembered,
+                     painted ? "yes" : "no");
+        if (!painted) {
+            std::fprintf(stderr,
+                         "scenario FAILED: the track remembers %d loop(s) but the strip paints %d\n",
+                         remembered, int(runner.stripLoops().size()));
+            return 1;
+        }
     }
 
     std::vector<Case> cases;
@@ -1172,6 +1218,46 @@ int runScenarios(BridgeClient &bridge, QQuickWindow &window, const QString &deck
                          run.pressLoop();
                          if (run.loopPending()) {
                              why = QStringLiteral("the pair is still waiting after the second press");
+                             return false;
+                         }
+                         return true;
+                     }});
+
+    cases.push_back({"a saved loop is a mark again after the track is reloaded",
+                     [](Runner &run, Reason &why) {
+                         double a = 0.0;
+                         double b = 0.0;
+                         double c = 0.0;
+                         double d = 0.0;
+                         run.span(a, b, c, d);
+                         if (!run.makeLoop(a, b, why)) {
+                             return false;
+                         }
+                         run.save(1);
+                         pump(80);
+                         const QVariant loop = run.padLoop(1);
+                         if (!loop.isValid() || loop.isNull()) {
+                             why = QStringLiteral("the pad did not take the loop before the reload");
+                             return false;
+                         }
+                         // Empty the deck, so a mark left on screen cannot pass for a restored one.
+                         run.eject();
+                         if (run.padLoop(1).isValid() && !run.padLoop(1).isNull()) {
+                             why = QStringLiteral("the ejected deck still holds the loop");
+                             return false;
+                         }
+                         if (int(run.stripLoops().size()) > 0) {
+                             why = QStringLiteral("the strip still paints a mark after the eject");
+                             return false;
+                         }
+                         run.reload();
+                         if (!waitFor([&] { return run.padLoop(1).isValid() && !run.padLoop(1).isNull(); },
+                                      6000)) {
+                             why = QStringLiteral("the reloaded deck lost the loop on pad 1");
+                             return false;
+                         }
+                         if (!waitFor([&] { return int(run.stripLoops().size()) > 0; }, 3000)) {
+                             why = QStringLiteral("the reloaded track shows no loop mark on the strip");
                              return false;
                          }
                          return true;
