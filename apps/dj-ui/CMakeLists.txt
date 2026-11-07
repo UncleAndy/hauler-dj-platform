@@ -14,6 +14,8 @@ qt_add_executable(dj-ui
     src/WaveformItem.h
     src/WaveformPainter.cpp
     src/WaveformPainter.h
+    src/Scenarios.cpp
+    src/Scenarios.h
     src/UiSettings.cpp
     src/UiSettings.h
     src/LayoutSettings.cpp

@@ -11,8 +11,6 @@ Item {
 
     required property var deckState
     property WaveformEnvelope envelope
-    /// The loop to paint: the one in force, or the one remembered while it is switched off.
-    property var shownLoop: null
     /// Where a loop start has been marked but not yet closed, in source frames; negative means none.
     property real pendingLoopStart: -1
 
@@ -81,7 +79,7 @@ Item {
     readonly property var paintedLoop: overview.deckState !== undefined
                                        && overview.deckState.loop_region !== undefined
                                        && overview.deckState.loop_region !== null
-                                       ? overview.deckState.loop_region : overview.shownLoop
+                                       ? overview.deckState.loop_region : null
     readonly property bool loopActive: overview.deckState !== undefined
                                        && overview.deckState.loop_region !== undefined
                                        && overview.deckState.loop_region !== null

@@ -77,8 +77,6 @@ Item {
 
     readonly property string deckId: deckState !== undefined && deckState.deck !== undefined
                                      ? String(deckState.deck) : ""
-    /// The loop to paint: the one in force, or the one the deck remembers while it is switched off.
-    property var shownLoop: null
     /// Where a loop start has been marked but not yet closed, in source frames; negative means none.
     property real pendingLoopStart: -1
 
@@ -207,9 +205,9 @@ Item {
         return marks;
     }
 
-    /// The region the strip paints: an active loop wins, otherwise the remembered one.
-    readonly property var paintedLoop: view.loopRegion !== null && view.loopRegion !== undefined
-                                       ? view.loopRegion : view.shownLoop
+    /// The button's own loop, if the deck holds one. Saved loops are painted from the pads instead,
+    /// so a deleted loop cannot live on as a ghost the UI draws.
+    readonly property var paintedLoop: view.loopRegion
     /// A loop is "active" only while loop mode is watching it: its edges are drawn either way, the fill
     /// is what says whether it will repeat.
     readonly property bool loopActive: view.loopRegion !== null && view.loopRegion !== undefined

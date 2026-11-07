@@ -537,6 +537,30 @@ impl StateCells {
             .unwrap_or_else(|| std::array::from_fn(|_| None))
     }
 
+    /// Write one pad's name and colour as the deck holds it now, including "nothing at all".
+    ///
+    /// `set_cue_meta` cannot do this: there `None` means "leave this half alone", which is what a rename
+    /// needs. Clearing a pad needs the opposite — the client must stop showing a name that is gone.
+    pub fn write_cue_meta(
+        &self,
+        deck: usize,
+        slot: usize,
+        label: Option<String>,
+        color: Option<String>,
+    ) {
+        if slot >= HOTCUE_SLOTS {
+            return;
+        }
+        let mut guard = self
+            .cue_meta
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        while guard.len() <= deck {
+            guard.push(std::array::from_fn(|_| (None, None)));
+        }
+        guard[deck][slot] = (label, color);
+    }
+
     /// Forget a deck's names and colours: a new track brings its own.
     pub fn clear_cue_meta(&self, deck: usize) {
         let mut guard = self
@@ -1181,6 +1205,11 @@ impl EngineGraph {
                     .flatten()
                     .map(|region| (region.start.0, region.end.0));
                 self.cells.set_pad_loop(index, usize::from(*slot), region);
+                // A deleted pad loses its name and colour too, and the snapshot has to say so.
+                let label = self.decks[index].cue_labels()[usize::from(*slot)].clone();
+                let color = self.decks[index].cue_colors()[usize::from(*slot)].clone();
+                self.cells
+                    .write_cue_meta(index, usize::from(*slot), label, color);
             }
             if let DjCommand::SetPadLoop { deck, slot } = &submission.command.command
                 && let Some(index) = self

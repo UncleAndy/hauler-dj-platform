@@ -182,6 +182,10 @@ case "${1:-}" in
     # clears it, and shift on the second press cancelling the pair (DJP-DECK-004).
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --loop-check --load "$pads_copy"
+    # The user stories: loops, cue points, mode switching, saving and deleting, each one driven through
+    # the widgets and compared with the engine's own state.
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
+        --scenario-check --load "$pads_copy"
     # A playing deck must refuse a load, and say so: cutting the track is the one mistake a DJ
     # never forgives.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \

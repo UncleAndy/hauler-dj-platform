@@ -122,14 +122,6 @@ Pane {
     /// on and puts the playhead at its beginning, because a loop that is only drawn is not a loop.
     property bool loopPending: false
     property real loopStartFrame: 0
-    /// The region stays here while the loop is switched off, so its edges keep their markers and the
-    /// next shift can put it back (DJP-DECK-004).
-    property var savedLoop: null
-
-    /// What the strips paint: the loop in force, or the one remembered while it is off.
-    readonly property var shownLoop: panel.loop !== null && panel.loop !== undefined
-                                     ? panel.loop : panel.savedLoop
-
     function seekInto(region) {
         if (region === null || region === undefined || region.start === undefined) {
             return;
@@ -154,17 +146,23 @@ Pane {
     /// The region the playhead stands in, out of everything the deck knows: armed loops first, then
     /// the last loop the button made.
     function loopAt(frame) {
-        const armed = panel.activeLoops;
-        for (let index = 0; index < armed.length; ++index) {
-            const region = armed[index];
+        // Every loop the deck holds counts, in force or not: one of its pads, or the button's own.
+        const known = panel.activeLoops.slice();
+        const saved = panel.deck !== null && panel.deck.pad_loops !== undefined
+                      ? panel.deck.pad_loops : [];
+        for (let slot = 0; slot < saved.length; ++slot) {
+            if (saved[slot] !== null && saved[slot] !== undefined) {
+                known.push(saved[slot]);
+            }
+        }
+        if (panel.loop !== null && panel.loop !== undefined) {
+            known.push(panel.loop);
+        }
+        for (let index = 0; index < known.length; ++index) {
+            const region = known[index];
             if (region.start !== undefined && frame >= region.start && frame < region.end) {
                 return region;
             }
-        }
-        const remembered = panel.savedLoop;
-        if (remembered !== null && remembered !== undefined && frame >= remembered.start
-                && frame < remembered.end) {
-            return remembered;
         }
         return null;
     }
@@ -213,6 +211,27 @@ Pane {
             return;
         }
 
+        // A pair that is waiting for its second press is always closed by the next press, wherever the
+        // playhead stands: leaving it hanging because the playhead happened to be inside another loop is
+        // how a press ends up doing nothing at all.
+        if (panel.loopPending) {
+            const from = Math.min(panel.loopStartFrame, frame);
+            const to = Math.max(panel.loopStartFrame, frame);
+            panel.loopPending = false;
+            if (to - from < 480) {
+                panel.loopNotice = qsTr("too short to loop");
+                return;
+            }
+            if (panel.loopClashes(from, to)) {
+                panel.loopNotice = qsTr("it would cross another loop");
+                return;
+            }
+            panel.loopNotice = "";
+            Bridge.setLoop(panel.deckId, true, from, to);
+            panel.seekInto({ "start": from, "end": to });
+            return;
+        }
+
         // Inside any loop the deck knows, a press only makes sure the mode is on.
         if (panel.loopAt(frame) !== null) {
             if (!panel.loopModeOn) {
@@ -223,30 +242,11 @@ Pane {
 
         // Outside them: this press marks the start of another loop, so the mode steps aside while the
         // pair is being made — otherwise an old loop would wrap the playhead mid-gesture.
-        if (!panel.loopPending) {
-            if (panel.loopModeOn) {
-                Bridge.setLoopMode(panel.deckId, false);
-            }
-            panel.loopPending = true;
-            panel.loopStartFrame = frame;
-            return;
+        if (panel.loopModeOn) {
+            Bridge.setLoopMode(panel.deckId, false);
         }
-
-        const from = Math.min(panel.loopStartFrame, frame);
-        const to = Math.max(panel.loopStartFrame, frame);
-        panel.loopPending = false;
-        if (to - from < 480) {
-            panel.loopNotice = qsTr("too short to loop");
-            return;
-        }
-        if (panel.loopClashes(from, to)) {
-            panel.loopNotice = qsTr("it would cross another loop");
-            return;
-        }
-        panel.loopNotice = "";
-        panel.savedLoop = { "start": from, "end": to };
-        Bridge.setLoop(panel.deckId, true, from, to);
-        panel.seekInto(panel.savedLoop);
+        panel.loopPending = true;
+        panel.loopStartFrame = frame;
     }
 
     function hotcueColor(slot, fallback) {
@@ -380,7 +380,6 @@ Pane {
                     deckState: panel.deck
                     envelope: envelope
                     scrubAudio: panel.scrubAudio
-                    shownLoop: panel.shownLoop
                     pendingLoopStart: panel.loopPending ? panel.loopStartFrame : -1
                 }
 
@@ -394,7 +393,6 @@ Pane {
                     Layout.minimumHeight: 28
                     deckState: panel.deck
                     envelope: envelope
-                    shownLoop: panel.shownLoop
                     pendingLoopStart: panel.loopPending ? panel.loopStartFrame : -1
                 }
             }
@@ -655,7 +653,6 @@ Pane {
                         // of the set, which is what a DJ does between two mixes. The loop lives on the
                         // pad from now on, so the deck's own copy — and its remembered outline — go away.
                         Bridge.setPadLoop(panel.deckId, pad.index);
-                        panel.savedLoop = null;
                     } else {
                         Bridge.cue(panel.deckId, "Set", pad.index);
                     }

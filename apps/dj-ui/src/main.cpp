@@ -12,6 +12,7 @@
 //                         publish `playing`, then exit 0. This is the A06 acceptance, headless.
 
 #include "BridgeClient.h"
+#include "Scenarios.h"
 #include "UiSettings.h"
 #include "LayoutSettings.h"
 #include "SessionState.h"
@@ -943,6 +944,10 @@ int main(int argc, char *argv[])
         QStringLiteral("With --connect and --load: press Loop twice and require the engine to hold a "
                        "loop between the two playhead positions, then require shift on the second "
                        "press to cancel the pair."));
+    const QCommandLineOption scenarioOption(
+        QStringLiteral("scenario-check"),
+        QStringLiteral("With --connect and --load: drive the loops and cue points through the widgets "
+                       "and require every user story to hold. Prints one line per case."));
     const QCommandLineOption padsOption(
         QStringLiteral("pads-check"),
         QStringLiteral("With --connect and --load: click an empty pad to set it, name and colour it, "
@@ -1106,6 +1111,7 @@ int main(int argc, char *argv[])
     parser.addOption(neutralOption);
     parser.addOption(pitchOption);
     parser.addOption(transportOption);
+    parser.addOption(scenarioOption);
     parser.addOption(padsOption);
     parser.addOption(loopOption);
     parser.addOption(busyCheckOption);
@@ -3260,8 +3266,16 @@ int main(int argc, char *argv[])
         const double beforeShift = frames();
         click(Qt::ShiftModifier);
         const double afterOff = frames();
-        const bool painted = stripProp("hasLoop") > 0.5;
-        const bool stillActive = stripProp("loopActive") > 0.5;
+        const int savedMarks = strip == nullptr ? 0 : strip->property("padLoops").toList().size();
+        bool anyActiveMark = false;
+        for (const QVariant &entry : strip == nullptr ? QVariantList()
+                                                      : strip->property("padLoops").toList()) {
+            if (entry.toMap().value(QStringLiteral("active")).toBool()) {
+                anyActiveMark = true;
+            }
+        }
+        const bool painted = savedMarks > 0;
+        const bool stillActive = anyActiveMark;
         std::fprintf(stdout, "dj-ui: shift switched the loop %s, edges still painted %s, playhead %.0f -> %.0f\n",
                      loopRegion().isEmpty() ? "off" : "on", painted ? "yes" : "no", beforeShift, afterOff);
         if (armedCount() != 0) {
@@ -3554,6 +3568,34 @@ int main(int argc, char *argv[])
         bridge->setLoopMode(QStringLiteral("A"), false);
         bridge->play(QStringLiteral("A"), false);
         return 0;
+    }
+
+    if (parser.isSet(scenarioOption)) {
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        bridge->connectToEngine(parser.value(connectOption));
+        QElapsedTimer linking;
+        linking.start();
+        while (!bridge->isConnected() && linking.elapsed() < 3000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QThread::msleep(10);
+        }
+        if (!bridge->isConnected()) {
+            std::fprintf(stderr, "dj-ui: no engine\n");
+            return 1;
+        }
+        window->resize(1366, 768);
+        window->show();
+        const QString path = parser.value(loadOption);
+        if (path.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: --scenario-check needs --load\n");
+            return 1;
+        }
+        bridge->load(QStringLiteral("A"), path);
+        return djui::runScenarios(*bridge, *window);
     }
 
     if (parser.isSet(padsOption)) {
