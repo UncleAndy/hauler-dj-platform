@@ -497,12 +497,20 @@ impl Deck {
     /// activating a loop never moves the playhead by itself. Entering a loop at its beginning is the
     /// caller's job — the Loop button and a pad both seek to `start` after arming it.
     pub fn set_loop(&mut self, region: Option<FrameRange>) {
+        // While the loop plays from memory the decoder is left where the loop ended, and its prefetch
+        // ring still holds that material. Taking the loop away without putting the decoder back on the
+        // playhead would replay the tail the hand has already heard — a stumble backwards at the very
+        // moment the DJ asked for nothing to happen.
+        let was_reading_buffer = self.reading_loop_buffer;
         self.loop_region = region;
         self.reading_loop_buffer = false;
         self.loop_buffer = match region {
             Some(region) => self.buffer_for(region),
             None => None,
         };
+        if was_reading_buffer {
+            self.seek(self.position);
+        }
     }
 
     /// Capture policy in force.

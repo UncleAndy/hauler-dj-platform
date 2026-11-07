@@ -143,6 +143,45 @@ fn a_loop_armed_while_playing_inside_it_has_no_silent_head() {
 }
 
 #[test]
+fn clearing_a_loop_does_not_replay_what_was_already_heard() {
+    // While the loop plays from memory the decoder is left where the loop ended, and a real decoder
+    // still holds that material in its prefetch ring. Clearing the loop has to carry on from the
+    // playhead, not resume the decoder at that stale spot and play its tail again.
+    let mut deck = deck_with_ramp(44_100);
+    let region = FrameRange::new(1_000, 3_000).unwrap_or_else(|| panic!("region"));
+    deck.seek(1_000);
+    deck.set_loop(Some(region));
+    deck.play();
+
+    // One pass through the loop fills the capture, so the next wrap is served from memory.
+    let mut pass = vec![0.0f32; 2_000 * 2];
+    deck.render(&mut pass);
+    assert!(deck.loop_is_buffered(), "one pass must fill the capture");
+    assert_eq!(deck.position(), 1_000, "the wrap returns to the loop start");
+
+    let mut inside = vec![0.0f32; 500 * 2];
+    deck.render(&mut inside);
+    assert_eq!(deck.position(), 1_500);
+
+    deck.set_loop(None);
+    assert_eq!(
+        deck.position(),
+        1_500,
+        "clearing a loop must not move the playhead"
+    );
+
+    let mut next = vec![0.0f32; 256 * 2];
+    deck.render(&mut next);
+    assert!(
+        (next[0] - ramp(1_500)).abs() < 1e-6,
+        "the sound must continue from the playhead: expected {}, got {}",
+        ramp(1_500),
+        next[0]
+    );
+    assert!((next[255 * 2] - ramp(1_755)).abs() < 1e-6);
+}
+
+#[test]
 fn a_loop_pad_takes_the_sound_with_it() {
     // The marker and the sound have to move together: a pad that arms a loop must move the decoder too,
     // otherwise the strip shows the loop start while the ears still hear the old position.
