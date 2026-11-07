@@ -131,9 +131,9 @@ Item {
             }
         }
         onReleased: knob.dragging = false
-        // A double click stands the master at three quarters of its throw: high enough to play, low enough
-        // that a forgotten master does not leave the room at full scale.
-        onDoubleClicked: knob.ask(knob.floorDb + 0.75 * (0.0 - knob.floorDb))
+        // A double click stands the master at three quarters of its level — 0.75 of full gain, minus two and
+        // a half decibels — which is a master left a little short of the top rather than at it.
+        onDoubleClicked: knob.ask(20.0 * Math.log(0.75) / Math.LN10)
         onCanceled: knob.dragging = false
         onWheel: function (wheel) {
             const notches = Math.max(-3, Math.min(3, Math.round(wheel.angleDelta.y / 120)));

@@ -178,8 +178,8 @@ case "${1:-}" in
     # the snapshot already applied, and show the engine's number rather than a local model.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --eq-check
     # A double click is the way back to neutral on every mouse-driven control, and each control has its
-    # own neutral: a gain or a band goes flat, a fader opens, the master stands three quarters up and the
-    # crossfader centres.
+    # own neutral: a gain or a band goes flat, a fader opens, the master stands at three quarters of its
+    # level and the crossfader centres.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --neutral-check
     # A13: a cue and a loop are decisions about a file, so they must outlive the engine process. One
     # run stores them, a second engine reads them with no cue command of its own.

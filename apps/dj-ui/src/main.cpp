@@ -448,7 +448,11 @@ int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socket
             const QString state = loadValue.typeId() == QMetaType::QString
                 ? loadValue.toString()
                 : (loadState.isEmpty() ? QString() : loadState.firstKey());
-            if (state.isEmpty() || state == QStringLiteral("Loading")) {
+            // Empty is not an answer either: the load was sent, and a deck that has not taken it yet
+            // reports Empty for a snapshot or two. Waiting while it is Empty is the difference between
+            // catching a slow loader and blaming the deck for a picture it never had a track for.
+            if (state.isEmpty() || state == QStringLiteral("Loading")
+                || state == QStringLiteral("Empty")) {
                 return; // still working; the loader is off the audio path by design
             }
             if (state == QStringLiteral("Failed")) {
@@ -3140,9 +3144,8 @@ int main(int argc, char *argv[])
         const double faderA = fieldOf("A", "fader");
         const double faderB = fieldOf("B", "fader");
         const double crossfader = bridge->snapshot().value(QStringLiteral("crossfader")).toDouble();
-        // Three quarters of the throw, on a scale that runs from -60 dB to unity: a quarter of the range
-        // below unity, which is -15 dB.
-        const double threeQuarters = std::pow(10.0, (0.25 * -60.0) / 20.0);
+        // Three quarters of the level: 0.75 of full gain, which is -2.5 dB.
+        const double threeQuarters = 0.75;
         std::fprintf(stdout,
                      "dj-ui: double clicks put the gains at %.3f / %.3f, the bands at %+.1f / %+.1f dB, "
                      "the master at %.3f (%.1f dB), the faders at %.3f / %.3f and the crossfader at "
@@ -3158,7 +3161,8 @@ int main(int argc, char *argv[])
             return 1;
         }
         if (std::abs(master - threeQuarters) > 0.01) {
-            std::fprintf(stderr, "dj-ui: a double click did not stand the master at three quarters\n");
+            std::fprintf(stderr, "dj-ui: a double click did not stand the master at three quarters of "
+                                 "its level\n");
             return 1;
         }
         if (std::abs(faderA - 1.0) > 0.01 || std::abs(faderB - 1.0) > 0.01) {
