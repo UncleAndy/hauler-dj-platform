@@ -169,6 +169,35 @@ Pane {
         return null;
     }
 
+    /// A line in the deck's status when a gesture was refused, so a press that does nothing says why.
+    property string loopNotice: ""
+
+    /// Whether a region would sit on a loop that already exists. Loops never overlap: a nested loop
+    /// would never play, because the outer one wraps first.
+    function loopClashes(from, to) {
+        const loops = panel.deck !== null && panel.deck.pad_loops !== undefined
+                      ? panel.deck.pad_loops : [];
+        const candidates = [];
+        for (let slot = 0; slot < loops.length; ++slot) {
+            if (loops[slot] !== null && loops[slot] !== undefined) {
+                candidates.push(loops[slot]);
+            }
+        }
+        if (panel.loop !== null && panel.loop !== undefined) {
+            candidates.push(panel.loop);
+        }
+        for (let index = 0; index < candidates.length; ++index) {
+            const region = candidates[index];
+            if (region.start === from && region.end === to) {
+                continue;
+            }
+            if (from < region.end && region.start < to) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /// The Loop button: inside a loop it switches the mode on where the playhead stands; outside it
     /// starts marking another loop. Shift only switches the mode, and never moves anything.
     function pressLoop(cancel) {
@@ -207,8 +236,14 @@ Pane {
         const to = Math.max(panel.loopStartFrame, frame);
         panel.loopPending = false;
         if (to - from < 480) {
+            panel.loopNotice = qsTr("too short to loop");
             return;
         }
+        if (panel.loopClashes(from, to)) {
+            panel.loopNotice = qsTr("it would cross another loop");
+            return;
+        }
+        panel.loopNotice = "";
         panel.savedLoop = { "start": from, "end": to };
         Bridge.setLoop(panel.deckId, true, from, to);
         panel.seekInto(panel.savedLoop);
@@ -630,6 +665,9 @@ Pane {
     }
 
     function statusText() {
+        if (panel.loopNotice.length > 0) {
+            return panel.loopNotice;
+        }
         const load = panel.deck.load;
         if (load === undefined) {
             return qsTr("empty");

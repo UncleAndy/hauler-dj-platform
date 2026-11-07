@@ -552,6 +552,33 @@ impl Deck {
         }
     }
 
+    /// Two regions clash when they share any frame. Identical regions do not: the same four bars stored
+    /// on two pads are one loop in two places, not a loop inside another.
+    fn clash(first: FrameRange, second: FrameRange) -> bool {
+        first != second && first.start.0 < second.end.0 && second.start.0 < first.end.0
+    }
+
+    /// The loop that already sits where `region` would go, if any. Loops never overlap, because a
+    /// playhead cannot be in two at once and a nested loop would silently never play.
+    pub fn loop_clash(&self, region: FrameRange, ignore_pad: Option<usize>) -> Option<FrameRange> {
+        if let Some(manual) = self.loop_region
+            && Self::clash(manual, region)
+        {
+            return Some(manual);
+        }
+        for (slot, pad) in self.pad_loops.iter().enumerate() {
+            if Some(slot) == ignore_pad {
+                continue;
+            }
+            if let Some(pad) = pad
+                && Self::clash(*pad, region)
+            {
+                return Some(*pad);
+            }
+        }
+        None
+    }
+
     /// The armed region whose end is next: the one the playhead is inside, or the first one ahead of it.
     /// A loop caps the read at its end whether the playhead is inside it or still before it — that is
     /// what makes a seek to just before any saved loop play that loop.
@@ -569,7 +596,12 @@ impl Deck {
     /// region entirely behind the playhead is ignored until a seek brings the playhead back into it:
     /// activating a loop never moves the playhead by itself. Entering a loop at its beginning is the
     /// caller's job — the Loop button and a pad both seek to `start` after arming it.
-    pub fn set_loop(&mut self, region: Option<FrameRange>) {
+    pub fn set_loop(&mut self, region: Option<FrameRange>) -> bool {
+        if let Some(region) = region
+            && self.loop_clash(region, None).is_some()
+        {
+            return false;
+        }
         // Switching a loop off in the middle of it must not touch the sound at all. The playhead is
         // inside the captured copy while the decoder waits at the loop's end, so a seek back would be a
         // click and resuming the decoder would replay a tail already heard. Instead the copy is played
@@ -580,7 +612,7 @@ impl Deck {
                 .loop_buffer
                 .as_ref()
                 .map(|buffer| buffer.start.saturating_add(buffer.frames()));
-            return;
+            return true;
         }
         self.loop_region = region;
         // Switching a loop on is also switching loop mode on: the point of the button.
@@ -594,6 +626,7 @@ impl Deck {
             Some(region) => self.buffer_for(region),
             None => None,
         };
+        true
     }
 
     /// Capture policy in force.
@@ -687,6 +720,11 @@ impl Deck {
     /// Store a loop on a pad, or clear it. A pad holds one thing: a loop replaces the point in it.
     pub fn set_pad_loop(&mut self, slot: usize, region: Option<FrameRange>) -> bool {
         if slot >= HOTCUE_SLOTS {
+            return false;
+        }
+        if let Some(region) = region
+            && self.loop_clash(region, Some(slot)).is_some()
+        {
             return false;
         }
         self.pad_loops[slot] = region;

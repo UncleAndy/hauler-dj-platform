@@ -452,9 +452,11 @@ fn apply(
                 .ok_or_else(|| "LoopOn needs an end".to_string())?;
             let region = FrameRange::new(start, end)
                 .ok_or_else(|| format!("loop {start}..{end} is empty or inverted"))?;
-            deck.set_loop(Some(region));
+            let _ = deck.set_loop(Some(region));
         }
-        MixAction::LoopOff => deck.set_loop(None),
+        MixAction::LoopOff => {
+            deck.set_loop(None);
+        }
         MixAction::HotcueStore => {
             let slot = command.slot.unwrap_or(0);
             if !deck.store_hotcue(slot) {

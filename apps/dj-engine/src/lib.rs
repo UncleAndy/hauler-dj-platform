@@ -124,8 +124,16 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
                 Ack::applied(id, at)
             }
             DjCommand::SetLoop { region, .. } => {
-                target.set_loop(*region);
-                Ack::applied(id, at)
+                // A loop that would sit on another one is refused here, not drawn and then ignored:
+                // loops never overlap, so the request has no meaning and the DJ has to know.
+                if target.set_loop(*region) {
+                    Ack::applied(id, at)
+                } else {
+                    Ack {
+                        command_id: id,
+                        status: AckStatus::Rejected(RejectReason::InvalidValue),
+                    }
+                }
             }
             // A load never runs in the callback; if it arrives here the routing broke, and a
             // rejection is better than an ack that claims work which did not happen.
@@ -1118,7 +1126,7 @@ impl EngineGraph {
                                 color.clone(),
                             );
                         }
-                        self.decks[index].set_loop(prepared.loop_region);
+                        let _ = self.decks[index].set_loop(prepared.loop_region);
                         // The track opens at its own level: a hot master and a quiet one then start
                         // from the same place, and a +6 dB EQ boost has room instead of the limiter.
                         // The measured correction is applied on top of the trim, not written into it.

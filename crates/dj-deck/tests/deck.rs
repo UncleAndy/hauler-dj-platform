@@ -159,6 +159,56 @@ fn switching_loop_mode_off_stops_the_copy_repeating() {
 }
 
 #[test]
+fn a_loop_never_lands_inside_another() {
+    // A nested loop would never play: the outer one wraps before the playhead ever reaches the inner one.
+    // So the deck refuses any region that shares a frame with a loop it already has.
+    let mut deck = deck_with_ramp(44_100);
+    let outer = FrameRange::new(1_000, 4_000).unwrap_or_else(|| panic!("outer"));
+    let inner = FrameRange::new(2_000, 3_000).unwrap_or_else(|| panic!("inner"));
+    let crossing = FrameRange::new(3_000, 5_000).unwrap_or_else(|| panic!("crossing"));
+    assert!(deck.set_loop(Some(outer)), "the first loop is taken");
+
+    assert!(
+        !deck.set_loop(Some(inner)),
+        "a loop inside another must be refused"
+    );
+    assert!(
+        !deck.set_loop(Some(crossing)),
+        "a loop crossing another must be refused"
+    );
+    assert_eq!(
+        deck.loop_region(),
+        Some(outer),
+        "the refused loop changed nothing"
+    );
+    assert_eq!(deck.loop_clash(inner, None), Some(outer));
+
+    // A pad refuses the same way, and the same regions may live on two pads.
+    assert!(
+        !deck.set_pad_loop(1, Some(inner)),
+        "a pad refuses a loop inside another"
+    );
+    assert!(
+        deck.set_pad_loop(1, Some(outer)),
+        "the same loop on a second pad is not a clash"
+    );
+    assert!(deck.set_pad_loop(
+        2,
+        Some(FrameRange::new(6_000, 7_000).unwrap_or_else(|| panic!("free")))
+    ));
+    assert_eq!(
+        deck.loop_clash(inner, Some(2)),
+        Some(outer),
+        "pad 1 still holds the outer loop"
+    );
+    assert_eq!(
+        deck.loop_clash(inner, Some(1)),
+        None,
+        "writing over pad 1 is allowed: it is the pad being replaced"
+    );
+}
+
+#[test]
 fn deleting_a_pad_takes_its_loop_with_it() {
     // A pad that holds a loop is deleted the same way a pad that holds a point is: everything on it goes,
     // including the loop and the mark on the strip.

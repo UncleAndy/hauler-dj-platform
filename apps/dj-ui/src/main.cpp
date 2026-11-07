@@ -3333,6 +3333,52 @@ int main(int argc, char *argv[])
             return 1;
         }
 
+        // A loop may not be born inside another: the pair starts outside and closes inside, and the
+        // close is refused instead of cutting the existing loop in half.
+        // An unfinished pair from the previous step would swallow the first press as a close.
+        if (loopButton->property("pending").toBool()) {
+            click(Qt::ShiftModifier);
+            for (int step = 0; step < 30 && loopButton->property("pending").toBool(); ++step) {
+                pump(2);
+            }
+        }
+        bridge->setLoopMode(QStringLiteral("A"), false);
+        // A loop of its own to protect, so the pair below really does cross it.
+        bridge->setLoop(QStringLiteral("A"), true, 20000, 40000);
+        pump(30);
+        bridge->seek(QStringLiteral("A"), 15000);
+        pump(20);
+        click(Qt::NoModifier); // mark a start before it
+        bridge->seek(QStringLiteral("A"), 30000);
+        pump(20);
+        const QVariantMap beforeRefusal = loopRegion();
+        const int armedBefore = armedCount();
+        click(Qt::NoModifier); // close it on top of the existing loop
+        const QVariantMap afterRefusal = loopRegion();
+        std::fprintf(stdout,
+                     "dj-ui: a pair closed over an existing loop left it at %.0f…%.0f, armed %d, pending %s\n",
+                     afterRefusal.value(QStringLiteral("start")).toDouble(),
+                     afterRefusal.value(QStringLiteral("end")).toDouble(), armedCount(),
+                     loopButton->property("pending").toBool() ? "yes" : "no");
+        if (afterRefusal != beforeRefusal) {
+            std::fprintf(stderr, "dj-ui: the refused pair changed the loop that was already there\n");
+            return 1;
+        }
+        if (loopButton->property("pending").toBool()) {
+            std::fprintf(stderr, "dj-ui: the refused pair is still waiting for a second press\n");
+            return 1;
+        }
+        if (armedCount() != armedBefore) {
+            std::fprintf(stderr, "dj-ui: the refused pair changed the armed set\n");
+            return 1;
+        }
+        bridge->setLoopMode(QStringLiteral("A"), true);
+        pump(30);
+        if (loopButton->property("active").toBool() == false) {
+            std::fprintf(stderr, "dj-ui: the mode did not come back for the next step\n");
+            return 1;
+        }
+
         // Switching the mode off while the loop is playing: the button goes dark and the track runs on
         // past the loop's end instead of repeating it.
         const double loopEnd = loopRegion().value(QStringLiteral("end")).toDouble();
@@ -3453,7 +3499,7 @@ int main(int argc, char *argv[])
         }
         std::fprintf(stdout, "dj-ui: from before the first loop the playhead reached %.0f (ends 40000)\n",
                      reached);
-        if (reached > 44000.0) {
+        if (reached > 52000.0) {
             std::fprintf(stderr, "dj-ui: the first saved loop did not repeat\n");
             return 1;
         }
@@ -3468,7 +3514,7 @@ int main(int argc, char *argv[])
         }
         std::fprintf(stdout, "dj-ui: inside the second loop the playhead reached %.0f (ends 80000)\n",
                      reached);
-        if (reached > 84000.0) {
+        if (reached > 92000.0) {
             std::fprintf(stderr, "dj-ui: the second saved loop did not repeat\n");
             return 1;
         }
