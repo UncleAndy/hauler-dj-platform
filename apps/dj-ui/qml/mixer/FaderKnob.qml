@@ -46,6 +46,13 @@ Item {
         Bridge.setChannelFader(knob.deckId, share);
     }
 
+    // A double click puts the fader back at the top, where a channel stands when it is open.
+    function reset() {
+        knob.lastPosition = 1.0;
+        knob.dragged = 1.0;
+        Bridge.setChannelFader(knob.deckId, 1.0);
+    }
+
     // The top of the scale: unity, where a fader stands when the channel is open.
     Rectangle {
         anchors.left: parent.left
@@ -92,6 +99,7 @@ Item {
         onCanceled: knob.dragging = false
         // The wheel is taken here, where the pointer actually is: a handler on the strip never saw a
         // wheel that this area had already claimed.
+        onDoubleClicked: knob.reset()
         onWheel: function (wheel) {
             const notches = Math.max(-3, Math.min(3, Math.round(wheel.angleDelta.y / 120)));
             if (notches !== 0) {

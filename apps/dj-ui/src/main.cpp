@@ -934,6 +934,11 @@ int main(int argc, char *argv[])
         QStringLiteral("eq-check"),
         QStringLiteral("With --connect: send three band gains to one deck and require the snapshot "
                        "to apply them and the strip's knobs to show those numbers."));
+    const QCommandLineOption neutralOption(
+        QStringLiteral("neutral-check"),
+        QStringLiteral("With --connect: seat every mouse-driven control away from its neutral "
+                       "position, double click it, and require the engine to report the neutral "
+                       "value."));
     const QCommandLineOption wheelCheckOption(
         QStringLiteral("wheel-check"),
         QStringLiteral("With --connect: scroll over a channel knob and require the deck's gain to "
@@ -1074,6 +1079,7 @@ int main(int argc, char *argv[])
     parser.addOption(selfCheckOption);
     parser.addOption(gainCheckOption);
     parser.addOption(eqCheckOption);
+    parser.addOption(neutralOption);
     parser.addOption(busyCheckOption);
     parser.addOption(refusalCheckOption);
     parser.addOption(spaceCheckOption);
@@ -2667,6 +2673,39 @@ int main(int argc, char *argv[])
             return 1;
         }
         bridge->setChannelGain(QStringLiteral("A"), 1.0);
+
+        // A notch is a fixed turn, not a fixed number of decibels: scroll one notch up and one back down
+        // and the pointer must land where it started. The decibels need not come back — the two halves of
+        // the law are asymmetric on purpose — which is why the angle is what is measured here.
+        const auto pump = [&]() {
+            for (int step = 0; step < 40; ++step) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+                QThread::msleep(5);
+            }
+        };
+        const auto wheelAngle = [&](int notches) {
+            QWheelEvent event(centre, window->mapToGlobal(centre.toPoint()), QPoint(),
+                              QPoint(0, 120 * notches), Qt::NoButton, Qt::NoModifier,
+                              Qt::NoScrollPhase, false);
+            QCoreApplication::sendEvent(window, &event);
+            pump();
+            return trimA->property("angle").toDouble();
+        };
+        pump();
+        const double angleAtRest = trimA->property("angle").toDouble();
+        const double angleUp = wheelAngle(1);
+        const double angleDown = wheelAngle(-1);
+        const double angleBack = wheelAngle(-1);
+        const double angleUpAgain = wheelAngle(1);
+        std::fprintf(stdout,
+                     "dj-ui: one notch turns the gain knob %+.1f deg up and %+.1f deg down (back at "
+                     "%.1f and %.1f deg)\n",
+                     angleUp - angleAtRest, angleBack - angleDown, angleDown, angleUpAgain);
+        if (std::abs((angleUp - angleAtRest) - 13.5) > 1.0
+            || std::abs((angleBack - angleDown) + 13.5) > 1.0) {
+            std::fprintf(stderr, "dj-ui: the wheel turns the gain knob by different steps each way\n");
+            return 1;
+        }
         std::fprintf(stdout, "dj-ui: the wheel trims the gain and leaves the fader where it was\n");
         return 0;
     }
@@ -2997,6 +3036,139 @@ int main(int argc, char *argv[])
         // Back to unity: the drag above moved deck A's gain, and the checks after this one should not
         // inherit a doubled channel.
         bridge->setChannelGain(QStringLiteral("A"), 1.0);
+        return 0;
+    }
+
+
+    if (parser.isSet(neutralOption)) {
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        bridge->connectToEngine(parser.value(connectOption));
+        QElapsedTimer linking;
+        linking.start();
+        while (!bridge->isConnected() && linking.elapsed() < 3000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QThread::msleep(10);
+        }
+        if (!bridge->isConnected()) {
+            std::fprintf(stderr, "dj-ui: no engine\n");
+            return 1;
+        }
+
+        const auto pump = [&](int rounds) {
+            for (int step = 0; step < rounds; ++step) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+                QThread::msleep(5);
+            }
+        };
+        // A real double click arrives as press, release, double click, release: Qt synthesises the
+        // double click in the platform layer, so a check that only presses twice never sees one.
+        const auto doubleClick = [&](QQuickItem *target, const char *name) {
+            if (target == nullptr) {
+                std::fprintf(stderr, "dj-ui: nothing to double click for %s\n", name);
+                return false;
+            }
+            const QPointF at =
+                target->mapToScene(QPointF(target->width() / 2.0, target->height() / 2.0));
+            const auto send = [&](QEvent::Type type) {
+                QMouseEvent event(type, at, window->mapToGlobal(at.toPoint()), Qt::LeftButton,
+                                  Qt::LeftButton, Qt::NoModifier);
+                QCoreApplication::sendEvent(window, &event);
+                QCoreApplication::processEvents();
+            };
+            send(QEvent::MouseButtonPress);
+            send(QEvent::MouseButtonRelease);
+            send(QEvent::MouseButtonDblClick);
+            send(QEvent::MouseButtonRelease);
+            pump(30);
+            return true;
+        };
+        const auto fieldOf = [&](const char *deck, const char *field) {
+            for (const QVariant &entry : bridge->snapshot().value(QStringLiteral("decks")).toList()) {
+                const QVariantMap map = entry.toMap();
+                if (map.value(QStringLiteral("deck")).toString() != QString::fromLatin1(deck)) {
+                    continue;
+                }
+                return map.value(QString::fromLatin1(field)).toDouble();
+            }
+            return -1.0;
+        };
+        const auto bandOf = [&](const char *deck, const char *band) {
+            for (const QVariant &entry : bridge->snapshot().value(QStringLiteral("decks")).toList()) {
+                const QVariantMap map = entry.toMap();
+                if (map.value(QStringLiteral("deck")).toString() != QString::fromLatin1(deck)) {
+                    continue;
+                }
+                const QVariantMap eq = map.value(QStringLiteral("eq")).toMap();
+                return eq.value(QString::fromLatin1(band) + QStringLiteral("_db")).toDouble();
+            }
+            return 999.0;
+        };
+
+        // Every control away from where it should land: a double click that is not wired would then leave
+        // the old number in place and the check would say which one.
+        bridge->setChannelGain(QStringLiteral("A"), 0.5);
+        bridge->setChannelGain(QStringLiteral("B"), 2.0);
+        bridge->setChannelEq(QStringLiteral("A"), QStringLiteral("low"), 9.0);
+        bridge->setChannelEq(QStringLiteral("B"), QStringLiteral("high"), -12.0);
+        bridge->setMasterGain(0.25);
+        bridge->setChannelFader(QStringLiteral("A"), 0.4);
+        bridge->setChannelFader(QStringLiteral("B"), 0.7);
+        bridge->setCrossfader(0.15);
+        pump(60);
+
+        if (!doubleClick(findItem(window->contentItem(), QStringLiteral("trim_A")), "the gain of A")
+            || !doubleClick(findItem(window->contentItem(), QStringLiteral("trim_B")), "the gain of B")
+            || !doubleClick(findItem(window->contentItem(), QStringLiteral("eq_low_A")), "the low band")
+            || !doubleClick(findItem(window->contentItem(), QStringLiteral("eq_high_B")), "the high band")
+            || !doubleClick(findItem(window->contentItem(), QStringLiteral("masterKnob")), "the master")
+            || !doubleClick(findItem(window->contentItem(), QStringLiteral("fader_A")), "the fader of A")
+            || !doubleClick(findItem(window->contentItem(), QStringLiteral("fader_B")), "the fader of B")
+            || !doubleClick(findItem(window->contentItem(), QStringLiteral("crossfaderHandle")),
+                            "the crossfader")) {
+            return 1;
+        }
+
+        const double gainA = fieldOf("A", "linear_gain");
+        const double gainB = fieldOf("B", "linear_gain");
+        const double lowA = bandOf("A", "low");
+        const double highB = bandOf("B", "high");
+        const double master = bridge->snapshot().value(QStringLiteral("master_gain")).toDouble();
+        const double faderA = fieldOf("A", "fader");
+        const double faderB = fieldOf("B", "fader");
+        const double crossfader = bridge->snapshot().value(QStringLiteral("crossfader")).toDouble();
+        // Three quarters of the throw, on a scale that runs from -60 dB to unity: a quarter of the range
+        // below unity, which is -15 dB.
+        const double threeQuarters = std::pow(10.0, (0.25 * -60.0) / 20.0);
+        std::fprintf(stdout,
+                     "dj-ui: double clicks put the gains at %.3f / %.3f, the bands at %+.1f / %+.1f dB, "
+                     "the master at %.3f (%.1f dB), the faders at %.3f / %.3f and the crossfader at "
+                     "%.2f\n",
+                     gainA, gainB, lowA, highB, master, 20.0 * std::log10(master), faderA, faderB,
+                     crossfader);
+        if (std::abs(gainA - 1.0) > 0.01 || std::abs(gainB - 1.0) > 0.01) {
+            std::fprintf(stderr, "dj-ui: a double click did not trim the gain back to unity\n");
+            return 1;
+        }
+        if (std::abs(lowA) > 0.01 || std::abs(highB) > 0.01) {
+            std::fprintf(stderr, "dj-ui: a double click did not flatten the band\n");
+            return 1;
+        }
+        if (std::abs(master - threeQuarters) > 0.01) {
+            std::fprintf(stderr, "dj-ui: a double click did not stand the master at three quarters\n");
+            return 1;
+        }
+        if (std::abs(faderA - 1.0) > 0.01 || std::abs(faderB - 1.0) > 0.01) {
+            std::fprintf(stderr, "dj-ui: a double click did not open a fader\n");
+            return 1;
+        }
+        if (std::abs(crossfader - 0.5) > 0.01) {
+            std::fprintf(stderr, "dj-ui: a double click did not centre the crossfader\n");
+            return 1;
+        }
         return 0;
     }
 

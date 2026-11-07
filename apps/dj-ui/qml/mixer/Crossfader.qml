@@ -71,6 +71,14 @@ Item {
                 enabled: crossfader.live
                 onPositionChanged: function (mouse) { crossfader.apply(mouse.x) }
                 onPressed: function (mouse) { crossfader.apply(mouse.x) }
+                // A double click centres the crossfader; a notch moves it five percent of the throw.
+                onDoubleClicked: crossfader.ask(0.5)
+                onWheel: function (wheel) {
+                    const notches = Math.max(-3, Math.min(3, Math.round(wheel.angleDelta.y / 120)));
+                    if (notches !== 0) {
+                        crossfader.ask(crossfader.value + notches * 0.05);
+                    }
+                }
             }
         }
 
@@ -92,6 +100,10 @@ Item {
 
     function apply(x) {
         const travel = Math.max(1, width - handleWidth);
-        Bridge.setCrossfader(Math.max(0.0, Math.min(1.0, (x - handleWidth / 2) / travel)));
+        crossfader.ask((x - handleWidth / 2) / travel);
+    }
+
+    function ask(share) {
+        Bridge.setCrossfader(Math.max(0.0, Math.min(1.0, share)));
     }
 }

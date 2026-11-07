@@ -51,6 +51,10 @@ Item {
     // directions — a knob, not a volume slider. The decibels then follow the angle, so the turn is even
     // while the two halves stay asymmetric (−26 against +6), exactly as on a channel strip.
     readonly property real degPerPixel: 270.0 / knob.capSide
+    // One wheel notch is a twentieth of the throw: the wheel moves the pointer too, so it
+    // cannot be a constant number of decibels — that is what made a notch up jump and a notch down
+    // crawl.
+    readonly property real degPerNotch: 13.5
 
     /// The angle the pointer stands at for a band gain.
     function angleOf(decibels) {
@@ -168,11 +172,13 @@ Item {
             knob.ask(knob.dbOf(knob.pressAngle + (knob.pressY - mouse.y) * knob.degPerPixel));
         }
         onReleased: knob.dragging = false
+        // A double click is the way back to flat: the band stands where it sounds.
+        onDoubleClicked: knob.ask(0.0)
         onCanceled: knob.dragging = false
         onWheel: function (wheel) {
             const notches = Math.max(-3, Math.min(3, Math.round(wheel.angleDelta.y / 120)));
             if (notches !== 0) {
-                knob.ask(knob.db + notches * 0.5);
+                knob.ask(knob.dbOf(knob.angleOf(knob.db) + notches * knob.degPerNotch));
             }
         }
     }

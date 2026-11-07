@@ -43,6 +43,9 @@ Item {
     // Two hundred and seventy degrees over the cap, the same in both directions: a trim is a knob, so the
     // hand turns the pointer at one rate and the decibels follow the angle.
     readonly property real degPerPixel: 270.0 / knob.capSide
+    // One wheel notch is a fixed turn, not a fixed number of decibels: the wheel moves the pointer, and a
+    // pointer cannot step evenly in angle and unevenly in decibels at the same time.
+    readonly property real degPerNotch: 13.5
 
     /// The angle the pointer stands at for a gain.
     function angleOf(decibels) {
@@ -158,11 +161,13 @@ Item {
             knob.ask(knob.dbOf(knob.pressAngle + (knob.pressY - mouse.y) * knob.degPerPixel));
         }
         onReleased: knob.dragging = false
+        // A double click trims back to unity.
+        onDoubleClicked: knob.ask(0.0)
         onCanceled: knob.dragging = false
         onWheel: function (wheel) {
             const notches = Math.max(-3, Math.min(3, Math.round(wheel.angleDelta.y / 120)));
             if (notches !== 0) {
-                knob.ask(knob.db + notches);
+                knob.ask(knob.dbOf(knob.angleOf(knob.db) + notches * knob.degPerNotch));
             }
         }
     }
