@@ -48,13 +48,18 @@ Pane {
     readonly property real eqKnobSide: masterKnobSide
     readonly property real eqLabelHeight: 11
     readonly property real eqStackHeight: 3 * (eqKnobSide + eqLabelHeight) + 2
+    // The gain knob takes one more row of the same size, right under the deck's letter: it belongs
+    // above the EQ, because gain is what the EQ sees.
+    readonly property real trimKnobHeight: eqKnobSide + eqLabelHeight
     // The deck letter above the knobs (10 px of text, 2 px of margin, 2 px of gap) and the decibel
     // label under the meter with its own margin. Measured on the built scene: the number has to come
     // out even, or the meter grows into the LO label by exactly the difference.
     readonly property real stripHeaderHeight: 14
     readonly property real stripFooterHeight: 14
+    // Everything a strip puts above its meter: the letter, the gain knob and the EQ stack, with gaps.
+    readonly property real stripKnobsHeight: stripHeaderHeight + trimKnobHeight + 2 + eqStackHeight + 2
     readonly property real meterHeight: Math.max(
-        18, bandHeight - stripHeaderHeight - eqStackHeight - stripFooterHeight)
+        18, bandHeight - stripKnobsHeight - stripFooterHeight)
 
     function deckOf(id) {
         for (let index = 0; index < mixer.decks.length; ++index) {
@@ -107,7 +112,9 @@ Pane {
                 MasterKnob {
                     anchors.horizontalCenter: parent.horizontalCenter
                     anchors.top: parent.top
-                    anchors.topMargin: 2
+                    // Level with the channels' gain knobs: the master is the gain of the whole mix,
+                    // and one line across the mixer is how a person reads four trims and a master.
+                    anchors.topMargin: mixer.stripHeaderHeight
                     width: mixer.masterKnobSide
                     height: mixer.masterKnobSide
                     gain: mixer.masterGain
@@ -224,28 +231,25 @@ Pane {
                 return eq[key] !== undefined ? eq[key] : 0.0;
             }
 
+            // The channel fader as the engine published it: 1.0 is unity, 0.0 is silence.
+            readonly property real fader: strip.deck !== null && strip.deck.fader !== undefined
+                                          ? strip.deck.fader : 1.0
             // What the last wheel step sent, so a check can see the wheel working.
-            property real lastWheelGain: -1
-            // One notch is one decibel: fine enough to trim by ear, coarse enough to move.
-            readonly property real wheelStepDb: 1.0
-
+            property real lastWheelFader: -1
+            // One notch is five percent of the throw: fine enough to ride, coarse enough to move.
+            readonly property real wheelStepFader: 0.05
             // The value the wheel has already asked for. A fast spin sends several events before the
-            // engine answers; without this, each one would start from the same number and the gain
-            // would not move.
-            property real pendingGain: -1
+            // engine answers; without this, each one would start from the same number.
+            property real pendingFader: -1
 
-            function stepGain(notches) {
-                const from = strip.pendingGain > 0.0
-                             ? strip.pendingGain
-                             : (strip.deck !== null && strip.deck.linear_gain !== undefined
-                                ? strip.deck.linear_gain : 1.0);
-                const decibels = from > 0.0 ? 20.0 * Math.log(from) / Math.LN10 : -40.0;
-                const wanted = Math.max(-40.0, Math.min(6.0, decibels + notches * strip.wheelStepDb));
-                const gain = Math.pow(10.0, wanted / 20.0);
-                strip.lastWheelGain = gain;
-                strip.pendingGain = gain;
-                Bridge.setChannelGain(strip.modelData, gain);
-                return gain;
+            function stepFader(notches) {
+                const from = strip.pendingFader >= 0.0 ? strip.pendingFader : strip.fader;
+                const wanted = Math.max(0.0, Math.min(1.0,
+                                                     from + notches * strip.wheelStepFader));
+                strip.pendingFader = wanted;
+                strip.lastWheelFader = wanted;
+                Bridge.setChannelFader(strip.modelData, wanted);
+                return wanted;
             }
 
             Layout.fillWidth: true
@@ -262,13 +266,27 @@ Pane {
                 font.pixelSize: 10
             }
 
-            // The channel's EQ: three knobs above the meter, high at the top — the order a strip in
+            // The gain: a knob, set once per track to line its level up before the EQ. It is not the
+            // fader — that is the line on the meter — and keeping the two apart is the whole point of
+            // the two controls.
+            TrimKnob {
+                id: trimKnob
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.top: deckLabel.bottom
+                anchors.topMargin: 2
+                width: strip.width
+                deckId: strip.modelData
+                diameter: mixer.eqKnobSide
+                gain: strip.gain
+            }
+
+            // The channel's EQ: three knobs under the gain, high at the top — the order a strip in
             // the reference draws, and the order a hand learns. Every value comes from the snapshot:
             // the knobs show what the engine applied, not what the last click asked for.
             Column {
                 id: eqStack
                 anchors.horizontalCenter: parent.horizontalCenter
-                anchors.top: deckLabel.bottom
+                anchors.top: trimKnob.bottom
                 anchors.topMargin: 2
                 spacing: 1
 
@@ -291,8 +309,8 @@ Pane {
                 }
             }
 
-            // The meter carries the gain pointer: one column does both jobs, and the strip keeps its
-            // width for the meter itself. The pointer is a line across the meter at the gain's height.
+            // The meter carries the fader: one column does both jobs, and the strip keeps its width
+            // for the meter itself. The line sits across the meter at the fader's height.
             Item {
                 id: meterBand
                 anchors.left: parent.left
@@ -305,23 +323,24 @@ Pane {
                     anchors.fill: parent
                     deckId: strip.modelData
                     peak: strip.peak
-                    onScrolled: function (notches) { strip.stepGain(notches) }
+                    onScrolled: function (notches) { strip.stepFader(notches) }
                 }
-                GainKnob {
+                FaderKnob {
                     anchors.fill: parent
                     deckId: strip.modelData
-                    gain: strip.gain
-                    onScrolled: function (notches) { strip.stepGain(notches) }
+                    position: strip.fader
+                    onScrolled: function (notches) { strip.stepFader(notches) }
                 }
             }
 
+            // The fader's number, under its own meter: the gain already prints itself under its knob.
             Label {
                 id: gainLabel
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: parent.bottom
-                text: strip.gain > 0.0
-                      ? (mixer.toDb(strip.gain) >= 0 ? "+" : "")
-                        + mixer.toDb(strip.gain).toFixed(1)
+                text: strip.fader > 0.0
+                      ? (mixer.toDb(strip.fader) >= 0 ? "+" : "")
+                        + mixer.toDb(strip.fader).toFixed(1)
                       : "-∞"
                 color: UiSettings.themeTextDim
                 font.pixelSize: 9
@@ -330,7 +349,7 @@ Pane {
             // The engine has answered: from here the snapshot is the truth again.
             Connections {
                 target: Bridge
-                function onSnapshotChanged() { strip.pendingGain = -1 }
+                function onSnapshotChanged() { strip.pendingFader = -1 }
             }
         }
     }

@@ -264,41 +264,63 @@ static int runGainCheck(BridgeClient &bridge, const QString &socketPath, int tim
     QObject::connect(&watchdog, &QTimer::timeout, &loop, &QEventLoop::quit);
     watchdog.start(timeoutMs);
 
-    bool sent = false;
-    bool done = false;
-    bool seen = false;
-    double gainC = 0.0;
-    double gainB = 0.0;
+    // The two level controls of a channel, end to end and apart: the gain (trim) is the knob before
+    // the EQ, the fader is the line on the meter after it. Each is sent in turn, and the other one has
+    // to stay where it was — one number shared by both controls is the defect this check exists for.
+    enum Phase { AwaitSnapshot, GainSent, FaderSent, Finished } phase = AwaitSnapshot;
+    double gainC = 1.0;
+    double faderC = 1.0;
+    double gainB = 1.0;
+    double faderB = 1.0;
+    const char *failure = nullptr;
 
-    QObject::connect(&bridge, &BridgeClient::snapshotChanged, &loop, [&]() {
-        if (!sent) {
-            sent = true;
-            bridge.setChannelGain(QStringLiteral("C"), 0.25);
-            std::fprintf(stdout, "dj-ui: sent gain 0.25 to deck C\n");
-            return;
-        }
-        const QVariantList decks =
-            bridge.snapshot().value(QStringLiteral("decks")).toList();
-        if (!seen) {
-            seen = true;
-            QStringList names;
-            for (const QVariant &entry : decks) {
-                names.append(entry.toMap().value(QStringLiteral("deck")).toString());
-            }
-            std::fprintf(stdout, "dj-ui: snapshot with %d decks: %s\n", int(decks.size()),
-                         qPrintable(names.join(QStringLiteral(", "))));
-        }
+    const auto read = [&]() {
+        const QVariantList decks = bridge.snapshot().value(QStringLiteral("decks")).toList();
         for (const QVariant &entry : decks) {
             const QVariantMap deck = entry.toMap();
-            if (deck.value(QStringLiteral("deck")).toString() == QStringLiteral("C")) {
+            const QString name = deck.value(QStringLiteral("deck")).toString();
+            if (name == QStringLiteral("C")) {
                 gainC = deck.value(QStringLiteral("linear_gain")).toDouble();
-            } else if (deck.value(QStringLiteral("deck")).toString() == QStringLiteral("B")) {
+                faderC = deck.value(QStringLiteral("fader")).toDouble();
+            } else if (name == QStringLiteral("B")) {
                 gainB = deck.value(QStringLiteral("linear_gain")).toDouble();
+                faderB = deck.value(QStringLiteral("fader")).toDouble();
             }
         }
-        if (std::abs(gainC - 0.25) < 0.01) {
-            done = true;
-            loop.quit();
+    };
+
+    QObject::connect(&bridge, &BridgeClient::snapshotChanged, &loop, [&]() {
+        read();
+        switch (phase) {
+        case AwaitSnapshot:
+            std::fprintf(stdout, "dj-ui: sent gain 0.25 to deck C\n");
+            phase = GainSent;
+            bridge.setChannelGain(QStringLiteral("C"), 0.25);
+            break;
+        case GainSent:
+            if (std::abs(gainC - 0.25) < 0.01) {
+                if (std::abs(faderC - 1.0) > 0.01) {
+                    failure = "the gain command moved the channel fader";
+                    phase = Finished;
+                    loop.quit();
+                    return;
+                }
+                std::fprintf(stdout, "dj-ui: sent fader 0.5 to deck C\n");
+                phase = FaderSent;
+                bridge.setChannelFader(QStringLiteral("C"), 0.5);
+            }
+            break;
+        case FaderSent:
+            if (std::abs(faderC - 0.5) < 0.01) {
+                if (std::abs(gainC - 0.25) > 0.01) {
+                    failure = "the fader command moved the gain";
+                }
+                phase = Finished;
+                loop.quit();
+            }
+            break;
+        case Finished:
+            break;
         }
     });
 
@@ -307,23 +329,31 @@ static int runGainCheck(BridgeClient &bridge, const QString &socketPath, int tim
             return;
         }
         std::fprintf(stdout, "dj-ui: connected to %s for the gain check\n", qPrintable(socketPath));
-        bridge.setChannelGain(QStringLiteral("C"), 0.25);
-        sent = true;
     });
 
     bridge.connectToEngine(socketPath);
     loop.exec();
+    read();
 
-    if (!done) {
-        std::fprintf(stderr, "dj-ui: deck C did not reach gain 0.25 (it is %.3f)\n", gainC);
+    if (failure != nullptr) {
+        std::fprintf(stderr, "dj-ui: %s (gain %.3f, fader %.3f)\n", failure, gainC, faderC);
         return 1;
     }
-    if (std::abs(gainB - 1.0) > 0.01) {
-        std::fprintf(stderr, "dj-ui: deck B moved too (%.3f); the command must touch only C\n", gainB);
+    if (phase != Finished || std::abs(gainC - 0.25) > 0.01 || std::abs(faderC - 0.5) > 0.01) {
+        std::fprintf(stderr, "dj-ui: deck C did not take both controls (gain %.3f, fader %.3f)\n",
+                     gainC, faderC);
         return 1;
     }
-    std::fprintf(stdout, "dj-ui: gain 0.25 landed on deck C, deck B still at %.2f\n", gainB);
+    if (std::abs(gainB - 1.0) > 0.01 || std::abs(faderB - 1.0) > 0.01) {
+        std::fprintf(stderr, "dj-ui: deck B moved too (gain %.3f, fader %.3f); the command must "
+                             "touch only C\n", gainB, faderB);
+        return 1;
+    }
+    std::fprintf(stdout,
+                 "dj-ui: gain 0.25 and fader 0.5 reached deck C and stayed apart; deck B untouched "
+                 "(gain %.2f, fader %.2f)\n", gainB, faderB);
     bridge.setChannelGain(QStringLiteral("C"), 1.0);
+    bridge.setChannelFader(QStringLiteral("C"), 1.0);
     return 0;
 }
 
@@ -2299,8 +2329,8 @@ int main(int argc, char *argv[])
             }
         }
 
-        // The pointer and the meter are one rectangle, so they must agree on their size.
-        auto *knob = findItem(content, QStringLiteral("knob_A"));
+        // The fader and the meter are one rectangle, so they must agree on their size.
+        auto *knob = findItem(content, QStringLiteral("fader_A"));
         auto *meter = findItem(content, QStringLiteral("meter_A"));
         if (knob != nullptr && meter != nullptr) {
             std::fprintf(stdout, "dj-ui: knob %.0f px, meter %.0f px, difference %.0f px\n",
@@ -2333,7 +2363,7 @@ int main(int argc, char *argv[])
         // The gain pointer rides on the meter: same rectangle, so the strip gives none of its width
         // away to a separate column.
         for (const char *id : {"A", "B", "C", "D"}) {
-            auto *stripKnob = findItem(content, QStringLiteral("knob_%1").arg(QString::fromLatin1(id)));
+            auto *stripKnob = findItem(content, QStringLiteral("fader_%1").arg(QString::fromLatin1(id)));
             auto *stripMeter = findItem(content, QStringLiteral("meter_%1").arg(QString::fromLatin1(id)));
             if (stripKnob == nullptr || stripMeter == nullptr) {
                 std::fprintf(stderr, "dj-ui: deck %s has no knob or meter\n", id);
@@ -2352,16 +2382,19 @@ int main(int argc, char *argv[])
             }
         }
 
-        // And the pointer has to be painted, not merely placed: at rest the gain is unity, so a bright
-        // line must cross the meter at the unity mark over a dark scale.
-        if (auto *pointer = findItem(content, QStringLiteral("knob_A"));
+        // And the fader has to be painted, not merely placed: at rest it stands at unity, which for a
+        // channel fader is the top of the scale, so a bright line must cross the meter there over a
+        // dark background.
+        if (auto *pointer = findItem(content, QStringLiteral("fader_A"));
             pointer != nullptr) {
             const QImage frame = window->grabWindow();
             if (!frame.isNull()) {
                 const QPointF origin = pointer->mapToScene(QPointF(0, 0));
                 const double ratio = content->width() > 0
                     ? static_cast<double>(frame.width()) / content->width() : 1.0;
-                const double unityY = origin.y() + pointer->height() * (1.0 - 40.0 / 46.0);
+                // The fader at unity sits on the first line of the scale, three pixels in from the top
+                // edge — the same inset the knob draws its travel with.
+                const double unityY = origin.y() + 3.0;
                 // Away from the middle: the grip sits there, and this is a check about the line.
                 const double sampleX = origin.x() + 4.0;
                 const QColor onLine = frame.pixelColor(static_cast<int>(sampleX * ratio),
@@ -2504,26 +2537,28 @@ int main(int argc, char *argv[])
                                   Qt::NoScrollPhase, false);
                 QCoreApplication::sendEvent(window, &event);
                 QCoreApplication::processEvents();
-                return stripA->property("lastWheelGain").toDouble();
+                return stripA->property("lastWheelFader").toDouble();
             };
-            auto *knobA = findItem(content, QStringLiteral("knob_A"));
+            auto *knobA = findItem(content, QStringLiteral("fader_A"));
             auto *meterA = findItem(content, QStringLiteral("meter_A"));
             if (knobA == nullptr || meterA == nullptr) {
-                std::fprintf(stderr, "dj-ui: strip A has no knob or meter\n");
+                std::fprintf(stderr, "dj-ui: strip A has no fader or meter\n");
                 return 1;
             }
-            // The pointer rides on the meter, so the wheel has one surface: up must add a decibel and
-            // down must take one away, wherever on the band the pointer happens to be.
-            const double overMeter = wheelAt(meterA, 1);
-            const double downAgain = wheelAt(meterA, -1);
-            std::fprintf(stdout, "dj-ui: wheel over the meter %.3f up, %.3f down\n", overMeter,
-                         downAgain);
-            if (!(overMeter > 1.0)) {
+
+            // The pointer rides on the meter, so the wheel has one surface. A channel fader stands at
+            // unity when it is open, and unity is the top of its scale — so the test goes down first
+            // and comes back up, otherwise "up" has nowhere to go and a working wheel reads as dead.
+            const double downOnce = wheelAt(meterA, -1);
+            const double upAgain = wheelAt(meterA, 1);
+            std::fprintf(stdout, "dj-ui: wheel over the meter %.3f down, %.3f back up\n", downOnce,
+                         upAgain);
+            if (!(downOnce < 1.0)) {
                 std::fprintf(stderr, "dj-ui: the wheel does nothing over the meter\n");
                 return 1;
             }
-            if (!(downAgain < overMeter)) {
-                std::fprintf(stderr, "dj-ui: the wheel down does not take the gain back\n");
+            if (!(upAgain > downOnce)) {
+                std::fprintf(stderr, "dj-ui: the wheel up does not take the fader back\n");
                 return 1;
             }
             Q_UNUSED(knobA);
@@ -2540,9 +2575,8 @@ int main(int argc, char *argv[])
             }
             QCoreApplication::processEvents();
             const double lastY = knob->property("lastY").toDouble();
-            const double lastGain = knob->property("lastGain").toDouble();
-            std::fprintf(stdout, "dj-ui: knob A press at %.0f px -> y %.1f, gain %.3f\n",
-                         point.y(), lastY, lastGain);
+            std::fprintf(stdout, "dj-ui: fader A press at %.0f px -> y %.1f, position %.3f\n",
+                         point.y(), lastY, knob->property("lastPosition").toDouble());
             if (lastY < 0.0) {
                 std::fprintf(stderr, "dj-ui: the knob did not receive the mouse\n");
                 return 1;
@@ -2573,23 +2607,27 @@ int main(int argc, char *argv[])
         QTimer::singleShot(600, &settle, &QEventLoop::quit);
         settle.exec();
 
-        auto *knobA = findItem(window->contentItem(), QStringLiteral("knob_A"));
-        if (knobA == nullptr) {
-            std::fprintf(stderr, "dj-ui: no knob for deck A\n");
+        // Two controls, two numbers: the wheel over the gain knob moves the trim and must leave the
+        // fader alone. A single number shared by both was the defect this check exists for.
+        auto *trimA = findItem(window->contentItem(), QStringLiteral("trim_A"));
+        if (trimA == nullptr) {
+            std::fprintf(stderr, "dj-ui: no gain knob for deck A\n");
             return 1;
         }
-        const auto gainOfA = [&]() {
+        const auto fieldOfA = [&](const QString &field) {
             const QVariantList decks = bridge->snapshot().value(QStringLiteral("decks")).toList();
             for (const QVariant &entry : decks) {
                 const QVariantMap deck = entry.toMap();
                 if (deck.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
-                    return deck.value(QStringLiteral("linear_gain")).toDouble();
+                    return deck.value(field).toDouble();
                 }
             }
             return 0.0;
         };
-        const double before = gainOfA();
-        const QPointF centre = knobA->mapToScene(QPointF(knobA->width() / 2.0, knobA->height() / 2.0));
+        const double gainBefore = fieldOfA(QStringLiteral("linear_gain"));
+        const double faderBefore = fieldOfA(QStringLiteral("fader"));
+        const QPointF centre = trimA->mapToScene(QPointF(trimA->width() / 2.0,
+                                                          trimA->height() / 2.0));
         for (int notch = 0; notch < 3; ++notch) {
             QWheelEvent event(centre, window->mapToGlobal(centre.toPoint()), QPoint(),
                               QPoint(0, 120), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
@@ -2599,22 +2637,28 @@ int main(int argc, char *argv[])
         }
         QElapsedTimer waiting;
         waiting.start();
-        double after = before;
+        double gainAfter = gainBefore;
         while (waiting.elapsed() < 3000) {
             QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-            after = gainOfA();
-            if (std::abs(after - before) > 0.05) {
+            gainAfter = fieldOfA(QStringLiteral("linear_gain"));
+            if (std::abs(gainAfter - gainBefore) > 0.01) {
                 break;
             }
             QThread::msleep(20);
         }
-        std::fprintf(stdout, "dj-ui: wheel over knob A: gain %.3f -> %.3f\n", before, after);
-        if (std::abs(after - before) <= 0.05) {
+        const double faderAfter = fieldOfA(QStringLiteral("fader"));
+        std::fprintf(stdout, "dj-ui: wheel over the gain knob: gain %.3f -> %.3f, fader %.3f\n",
+                     gainBefore, gainAfter, faderAfter);
+        if (std::abs(gainAfter - gainBefore) <= 0.01) {
             std::fprintf(stderr, "dj-ui: the wheel did not reach the engine\n");
             return 1;
         }
+        if (std::abs(faderAfter - faderBefore) > 0.01) {
+            std::fprintf(stderr, "dj-ui: the gain wheel moved the fader\n");
+            return 1;
+        }
         bridge->setChannelGain(QStringLiteral("A"), 1.0);
-        std::fprintf(stdout, "dj-ui: the wheel trims a channel through the engine\n");
+        std::fprintf(stdout, "dj-ui: the wheel trims the gain and leaves the fader where it was\n");
         return 0;
     }
 
@@ -2691,6 +2735,15 @@ int main(int argc, char *argv[])
             return 1;
         }
 
+        // Every channel has its own gain knob, and it sits on the master knob's line: the master is the
+        // gain of the whole mix, and one line across the mixer is how a strip is read.
+        auto *trimA = findItem(content, QStringLiteral("trim_A"));
+        auto *trimB = findItem(content, QStringLiteral("trim_B"));
+        if (trimA == nullptr || trimB == nullptr) {
+            std::fprintf(stderr, "dj-ui: a channel has no gain knob\n");
+            return 1;
+        }
+
         // The owner asked for the same cap as the master knob: a band control is the same class of
         // control as the master gain, and a smaller cap reads as a lesser one. Measured, not assumed.
         auto *masterKnob = findItem(content, QStringLiteral("masterKnob"));
@@ -2713,6 +2766,17 @@ int main(int argc, char *argv[])
         std::fprintf(stdout,
                      "dj-ui: every EQ knob is %.0f px across, the same cap as the master knob\n",
                      masterSide);
+
+        const double masterTop = masterKnob->mapToItem(content, QPointF(0, 0)).y();
+        for (QQuickItem *trim : {trimA, trimB}) {
+            const double trimTop = trim->mapToItem(content, QPointF(0, 0)).y();
+            std::fprintf(stdout, "dj-ui: gain knob %s at %.0f px, master knob at %.0f px\n",
+                         qPrintable(trim->property("deckId").toString()), trimTop, masterTop);
+            if (std::abs(trimTop - masterTop) > 2.0) {
+                std::fprintf(stderr, "dj-ui: a gain knob is not on the master knob's line\n");
+                return 1;
+            }
+        }
         for (int band = 0; band < 3; ++band) {
             const QString letter = knobs[0][band]->property("letter").toString();
             std::fprintf(stdout, "dj-ui: the %s knob is labelled %s\n",

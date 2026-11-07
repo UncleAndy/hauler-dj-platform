@@ -718,6 +718,9 @@ impl Deck {
             levels: self.levels,
             linear_gain: self.gain,
             tempo_ratio: self.tempo_ratio,
+            // The channel fader belongs to the mixer strip, not to the deck: a deck on its own is at
+            // unity, and the engine's snapshot fills the fader in from the strip.
+            fader: 1.0,
             eq: self.eq.gains(),
         }
     }

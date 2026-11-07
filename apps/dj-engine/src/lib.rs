@@ -133,6 +133,37 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
                 },
             }
         }
+        DjCommand::SetChannelFader { deck, position } => {
+            // The fader belongs to the mixer's strip; the gain belongs to the deck. Writing a fader
+            // into the deck's gain was the old mistake: the slider sprang back and a knob moved the
+            // wrong channel.
+            let Some(index) = decks.iter().position(|candidate| candidate.id() == *deck) else {
+                return Ack {
+                    command_id: id,
+                    status: AckStatus::Rejected(RejectReason::InvalidValue),
+                };
+            };
+            let Some(current) = mixer.channel(index).copied() else {
+                return Ack {
+                    command_id: id,
+                    status: AckStatus::Rejected(RejectReason::InvalidValue),
+                };
+            };
+            if !position.is_finite() {
+                return Ack {
+                    command_id: id,
+                    status: AckStatus::Rejected(RejectReason::InvalidValue),
+                };
+            }
+            mixer.set_channel(
+                index,
+                ChannelSettings {
+                    fader: *position,
+                    ..current
+                },
+            );
+            Ack::applied(id, at)
+        }
         DjCommand::SetChannelEq {
             deck,
             band,
@@ -180,7 +211,16 @@ pub fn snapshot(
             peak_right: mixer.meters().master.peak,
         },
         master_gain: mixer.master_gain(),
-        decks: decks.iter().map(|deck| deck.snapshot()).collect(),
+        decks: decks
+            .iter()
+            .enumerate()
+            .map(|(index, deck)| {
+                let mut published = deck.snapshot();
+                // The fader is the mixer's, keyed by the strip the deck feeds.
+                published.fader = mixer.channel(index).map_or(1.0, |settings| settings.fader);
+                published
+            })
+            .collect(),
     }
 }
 
@@ -271,6 +311,8 @@ struct DeckCells {
     eq_low: AtomicU32,
     eq_mid: AtomicU32,
     eq_high: AtomicU32,
+    // The channel fader as applied by the mixer strip.
+    fader: AtomicU32,
 }
 
 impl DeckCells {
@@ -289,6 +331,7 @@ impl DeckCells {
             eq_low: AtomicU32::new(0),
             eq_mid: AtomicU32::new(0),
             eq_high: AtomicU32::new(0),
+            fader: AtomicU32::new(1.0f32.to_bits()),
         }
     }
 }
@@ -391,6 +434,13 @@ impl StateCells {
             for (slot, cue) in deck.hotcues().iter().enumerate() {
                 cells.hotcues[slot].store(cue.unwrap_or(EMPTY), Ordering::Relaxed);
             }
+            cells.fader.store(
+                mixer
+                    .channel(index)
+                    .map_or(1.0, |settings| settings.fader)
+                    .to_bits(),
+                Ordering::Relaxed,
+            );
             let eq = deck.eq_gains();
             cells.eq_low.store(eq.low_db.to_bits(), Ordering::Relaxed);
             cells.eq_mid.store(eq.mid_db.to_bits(), Ordering::Relaxed);
@@ -456,6 +506,7 @@ impl StateCells {
                 },
                 linear_gain: f32::from_bits(cells.gain.load(Ordering::Relaxed)),
                 tempo_ratio: f64::from_bits(cells.tempo.load(Ordering::Relaxed)),
+                fader: f32::from_bits(cells.fader.load(Ordering::Relaxed)),
                 eq: EqGains {
                     low_db: f32::from_bits(cells.eq_low.load(Ordering::Relaxed)),
                     mid_db: f32::from_bits(cells.eq_mid.load(Ordering::Relaxed)),

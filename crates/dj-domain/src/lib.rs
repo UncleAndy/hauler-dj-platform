@@ -360,6 +360,18 @@ pub enum DjCommand {
         /// Linear gain.
         linear_gain: f32,
     },
+    /// The channel fader of a channel: the level control a hand rides during a mix.
+    ///
+    /// A fader is not a gain. Gain (trim) is set once per track to line up levels and sits before the
+    /// EQ; the fader moves continuously after it, and the two must not share one number: a knob that
+    /// is re-trimmed mid-set and a fader that is thrown at the same moment would fight each other.
+    /// 0.0 is silence, 1.0 is unity — a channel fader does not boost.
+    SetChannelFader {
+        /// Target deck / channel.
+        deck: DeckId,
+        /// Fader position, 0.0 … 1.0.
+        position: f32,
+    },
     /// Activate, move or clear a loop.
     SetLoop {
         /// Target deck.
@@ -384,6 +396,7 @@ impl DjCommand {
             | DjCommand::Eject { .. } => true,
             DjCommand::SetTempoRatio { .. }
             | DjCommand::SetChannelGain { .. }
+            | DjCommand::SetChannelFader { .. }
             | DjCommand::SetChannelEq { .. }
             | DjCommand::SetCrossfader { .. }
             | DjCommand::SetCrossfaderCurve { .. }
@@ -400,6 +413,7 @@ impl DjCommand {
         let deck = match self {
             DjCommand::SetTempoRatio { deck, .. }
             | DjCommand::SetChannelGain { deck, .. }
+            | DjCommand::SetChannelFader { deck, .. }
             | DjCommand::SetChannelEq { deck, .. } => deck.index(),
             _ => 0,
         };
@@ -420,6 +434,7 @@ impl DjCommand {
         match self {
             DjCommand::SetTempoRatio { .. } => Some(CoalesceKey::Tempo),
             DjCommand::SetChannelGain { .. } => Some(CoalesceKey::ChannelGain),
+            DjCommand::SetChannelFader { .. } => Some(CoalesceKey::ChannelFader),
             DjCommand::SetChannelEq { .. } => Some(CoalesceKey::ChannelEq),
             DjCommand::SetCrossfader { .. } => Some(CoalesceKey::Crossfader),
             DjCommand::SetCrossfaderCurve { .. } => Some(CoalesceKey::CrossfaderCurve),
@@ -442,6 +457,8 @@ pub enum CoalesceKey {
     CrossfaderCurve,
     /// Master gain: only the last value matters.
     MasterGain,
+    /// Channel fader of a deck: the last position wins.
+    ChannelFader,
     /// One band of a deck's equaliser: the last value of that band wins.
     ChannelEq,
 }
@@ -451,7 +468,7 @@ impl CoalesceKey {
     ///
     /// This has to name every variant: it sizes the queue, and it used to say three while five keys
     /// existed, so the master gain landed past the end of the array.
-    pub const COUNT: usize = 6;
+    pub const COUNT: usize = 7;
 
     /// First slot of the EQ block: the deck-wide controls come first, one block of `DeckId::COUNT`
     /// slots each.
@@ -465,7 +482,10 @@ impl CoalesceKey {
             CoalesceKey::Crossfader => 2,
             CoalesceKey::CrossfaderCurve => 3,
             CoalesceKey::MasterGain => 4,
-            CoalesceKey::ChannelEq => 5,
+            CoalesceKey::ChannelFader => 5,
+            // The EQ keeps the last index on purpose: its slots are a block of three per deck, and the
+            // block sits after every deck-wide control.
+            CoalesceKey::ChannelEq => 6,
         }
     }
 }
@@ -649,6 +669,9 @@ pub struct DeckSnapshot {
     pub linear_gain: f32,
     /// Current tempo ratio.
     pub tempo_ratio: f64,
+    /// Channel fader in force, linear: 1.0 is unity, 0.0 is silence.
+    #[serde(default = "unity")]
+    pub fader: f32,
     /// The three band gains in force on this channel (A14), already on the knob's grid.
     ///
     /// Defaulted so a snapshot from a build without the EQ still parses here.
@@ -798,6 +821,7 @@ mod tests {
             CoalesceKey::Crossfader,
             CoalesceKey::CrossfaderCurve,
             CoalesceKey::MasterGain,
+            CoalesceKey::ChannelFader,
             CoalesceKey::ChannelEq,
         ];
         for key in keys {
@@ -810,6 +834,16 @@ mod tests {
         }
         let mut seen = std::collections::BTreeSet::new();
         for deck in [DeckId::A, DeckId::B, DeckId::C, DeckId::D] {
+            let fader = DjCommand::SetChannelFader {
+                deck,
+                position: 0.5,
+            };
+            let slot = fader.coalesce_slot().unwrap_or(usize::MAX);
+            assert!(
+                slot < COALESCE_SLOTS,
+                "{deck:?} fader lands outside the queue"
+            );
+            assert!(seen.insert(slot), "{deck:?} fader shares a slot");
             for band in EqBand::ALL {
                 let command = DjCommand::SetChannelEq {
                     deck,

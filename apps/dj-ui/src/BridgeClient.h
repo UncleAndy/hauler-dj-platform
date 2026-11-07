@@ -97,6 +97,10 @@ public:
     Q_INVOKABLE int setCrossfader(double position);
     Q_INVOKABLE int setChannelGain(const QString &deck, double gain);
 
+    // The channel fader of a deck, 0 … 1 (1.0 is unity). A different control from the gain: the gain
+    // lines a track up before the EQ, the fader is ridden after it.
+    Q_INVOKABLE int setChannelFader(const QString &deck, double position);
+
     // One band of a channel's three-band EQ (A14): "low", "mid" or "high", in decibels. Sent as one
     // command per band, because each knob has its own slot in the engine's queue.
     Q_INVOKABLE int setChannelEq(const QString &deck, const QString &band, double gain_db);

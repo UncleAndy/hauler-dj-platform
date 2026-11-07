@@ -38,7 +38,8 @@ qt_add_qml_module(dj-ui
         qml/mixer/MasterKnob.qml
         qml/mixer/MasterMeter.qml
         qml/mixer/MixerPanel.qml
-        qml/mixer/GainKnob.qml
+        qml/mixer/TrimKnob.qml
+        qml/mixer/FaderKnob.qml
         qml/mixer/EqKnob.qml
         qml/mixer/LevelMeter.qml
         qml/mixer/RefusalButton.qml

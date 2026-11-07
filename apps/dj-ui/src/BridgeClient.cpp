@@ -408,6 +408,16 @@ int BridgeClient::setChannelGain(const QString &deck, double gain)
     return sendCommand(deck, command);
 }
 
+int BridgeClient::setChannelFader(const QString &deck, double position)
+{
+    QJsonObject options;
+    options.insert(QStringLiteral("deck"), deck);
+    options.insert(QStringLiteral("position"), position);
+    QJsonObject command;
+    command.insert(QStringLiteral("SetChannelFader"), options);
+    return sendCommand(deck, command);
+}
+
 int BridgeClient::setChannelEq(const QString &deck, const QString &band, double gainDb)
 {
     QJsonObject options;

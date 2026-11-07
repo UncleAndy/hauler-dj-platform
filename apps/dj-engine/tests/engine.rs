@@ -1143,3 +1143,93 @@ fn moving_an_eq_knob_does_not_allocate_in_the_render_path() {
         "an EQ knob allocated inside the render path"
     );
 }
+
+#[test]
+fn a_fader_moves_the_channel_and_leaves_the_gain_alone() {
+    // Gain is set once per track, the fader is ridden all set: if one command wrote both fields, a
+    // trim correction would throw the fader and a fader move would undo the trim.
+    let mut decks = vec![deck_with_tone(DeckId::A, 48_000)];
+    let mut mixer = mixer_for(48_000);
+    let fader = ScheduledCommand {
+        id: 21,
+        effective_sample: 0,
+        command: DjCommand::SetChannelFader {
+            deck: DeckId::A,
+            position: 0.4,
+        },
+    };
+    assert_eq!(
+        apply(&mut decks, &mut mixer, &fader, 0).status,
+        AckStatus::Applied { at_sample: 0 }
+    );
+    assert_eq!(decks[0].gain(), 1.0, "the fader moved the deck's gain");
+    assert_eq!(mixer.channel(0).map(|settings| settings.fader), Some(0.4));
+
+    let gain = ScheduledCommand {
+        id: 22,
+        effective_sample: 0,
+        command: DjCommand::SetChannelGain {
+            deck: DeckId::A,
+            linear_gain: 2.0,
+        },
+    };
+    assert_eq!(
+        apply(&mut decks, &mut mixer, &gain, 0).status,
+        AckStatus::Applied { at_sample: 0 }
+    );
+    assert_eq!(decks[0].gain(), 2.0);
+    assert_eq!(
+        mixer.channel(0).map(|settings| settings.fader),
+        Some(0.4),
+        "the trim undid the fader"
+    );
+
+    // And the fader is in the audio path, not just a published number: half a fader is half a peak.
+    let _ = decks[0].play();
+    let quiet = |decks: &mut Vec<Deck>, mixer: &mut Mixer| {
+        let mut block = [0.0f32; 512];
+        decks[0].render(&mut block);
+        mixer.begin_block(256);
+        mixer.mix_channel(0, &block);
+        mixer.finish_block();
+        mixer
+            .master()
+            .iter()
+            .fold(0.0f32, |peak, sample| peak.max(sample.abs()))
+    };
+    let with_fader = quiet(&mut decks, &mut mixer);
+    let full = ScheduledCommand {
+        id: 23,
+        effective_sample: 0,
+        command: DjCommand::SetChannelFader {
+            deck: DeckId::A,
+            position: 1.0,
+        },
+    };
+    let _ = apply(&mut decks, &mut mixer, &full, 0);
+    let without_fader = quiet(&mut decks, &mut mixer);
+    assert!(without_fader > 0.0, "the channel is silent at full fader");
+    assert!(
+        (with_fader / without_fader - 0.4).abs() < 0.02,
+        "fader 0.4 gave {with_fader} against {without_fader} at unity"
+    );
+}
+
+#[test]
+fn a_fader_that_is_not_a_number_is_refused() {
+    let mut decks = vec![deck_with_tone(DeckId::A, 48_000)];
+    let mut mixer = mixer_for(48_000);
+    let command = ScheduledCommand {
+        id: 31,
+        effective_sample: 0,
+        command: DjCommand::SetChannelFader {
+            deck: DeckId::A,
+            position: f32::NAN,
+        },
+    };
+    assert_eq!(
+        apply(&mut decks, &mut mixer, &command, 0).status,
+        AckStatus::Rejected(RejectReason::InvalidValue)
+    );
+    assert_eq!(mixer.channel(0).map(|settings| settings.fader), Some(1.0));
+}
