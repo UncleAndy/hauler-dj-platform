@@ -117,6 +117,56 @@ fn a_loop_wraps_at_the_exact_sample() {
 }
 
 #[test]
+fn loop_mode_repeats_every_saved_loop() {
+    // A track can hold many loops. Loop mode is one switch for all of them: a playhead that comes to any
+    // saved loop repeats that loop, wherever it was dropped.
+    let mut deck = deck_with_ramp(44_100);
+    let first = FrameRange::new(1_000, 2_000).unwrap_or_else(|| panic!("first"));
+    let second = FrameRange::new(5_000, 6_000).unwrap_or_else(|| panic!("second"));
+    assert!(deck.set_pad_loop(1, Some(first)));
+    assert!(deck.set_pad_loop(2, Some(second)));
+    deck.set_loop_mode(true);
+    assert_eq!(deck.active_loops().len(), 2, "both saved loops are armed");
+
+    // Dropped inside the second loop: it wraps at its own end into its own start.
+    deck.seek(5_500);
+    deck.play();
+    let mut block = vec![0.0f32; 1_000 * 2];
+    deck.render(&mut block);
+    assert!((block[0] - ramp(5_500)).abs() < 1e-6);
+    assert!(
+        (block[500 * 2] - ramp(5_000)).abs() < 1e-6,
+        "the second loop must repeat: expected {}, got {}",
+        ramp(5_000),
+        block[500 * 2]
+    );
+    assert!((block[999 * 2] - ramp(5_499)).abs() < 1e-6);
+
+    // Dropped before the first loop: it plays up to that loop and repeats it, not the whole file.
+    deck.seek(500);
+    let mut early = vec![0.0f32; 2_000 * 2];
+    deck.render(&mut early);
+    assert!((early[1_499 * 2] - ramp(1_999)).abs() < 1e-6);
+    assert!(
+        (early[1_500 * 2] - ramp(1_000)).abs() < 1e-6,
+        "the first loop must repeat too: expected {}, got {}",
+        ramp(1_000),
+        early[1_500 * 2]
+    );
+
+    // Switched off, nothing repeats.
+    deck.set_loop_mode(false);
+    assert!(deck.active_loops().is_empty());
+    deck.seek(500);
+    let mut free = vec![0.0f32; 2_000 * 2];
+    deck.render(&mut free);
+    assert!(
+        (free[1_999 * 2] - ramp(2_499)).abs() < 1e-6,
+        "with loop mode off the track runs on"
+    );
+}
+
+#[test]
 fn a_loop_armed_while_playing_inside_it_has_no_silent_head() {
     // Arming a loop from inside it starts the capture mid-region. If that partial capture counts as
     // progress, the wrap plays the uncaptured head of the buffer — silence — until it reaches the point

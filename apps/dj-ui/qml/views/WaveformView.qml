@@ -51,6 +51,20 @@ Item {
         return left >= 0 ? deckState.source_frame + left : 0;
     }
 
+    /// Whether loop mode is watching this region: every saved loop is armed at once, so the strip has
+    /// to show which ones repeat right now.
+    function loopIsArmed(start, end) {
+        const armed = deckState !== undefined && deckState.active_loops !== undefined
+                      ? deckState.active_loops : [];
+        for (let index = 0; index < armed.length; ++index) {
+            const region = armed[index];
+            if (region.start === start && region.end === end) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /// Where a source frame lands along the whole track, as a fraction.
     function ratioOfFrame(frame) {
         if (frame === null || frame === undefined) {
@@ -186,7 +200,8 @@ Item {
             const from = view.ratioOfFrame(region.start);
             const to = view.ratioOfFrame(region.end);
             if (from >= 0 && to >= 0) {
-                marks.push({ "from": from, "to": to });
+                marks.push({ "from": from, "to": to,
+                             "active": view.loopIsArmed(region.start, region.end) });
             }
         }
         return marks;
@@ -195,7 +210,10 @@ Item {
     /// The region the strip paints: an active loop wins, otherwise the remembered one.
     readonly property var paintedLoop: view.loopRegion !== null && view.loopRegion !== undefined
                                        ? view.loopRegion : view.shownLoop
+    /// A loop is "active" only while loop mode is watching it: its edges are drawn either way, the fill
+    /// is what says whether it will repeat.
     readonly property bool loopActive: view.loopRegion !== null && view.loopRegion !== undefined
+                                       && view.loopIsArmed(view.loopRegion.start, view.loopRegion.end)
     readonly property real pendingRatio: view.pendingLoopStart < 0
                                          ? -1 : view.ratioOfFrame(view.pendingLoopStart)
     readonly property real loopRatioFrom: {

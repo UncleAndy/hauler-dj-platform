@@ -78,6 +78,7 @@ impl Engine {
             DjCommand::Cue { .. }
             | DjCommand::SetCueMeta { .. }
             | DjCommand::SetPadLoop { .. }
+            | DjCommand::SetLoopMode { .. }
             | DjCommand::SeekFrames { .. }
             | DjCommand::SetLoop { .. } => Ack::rejected(scheduled.id, RejectReason::NotSupported),
             _ => self.queue.push(scheduled),
@@ -210,6 +211,7 @@ impl Engine {
             DjCommand::Cue { .. }
             | DjCommand::SetCueMeta { .. }
             | DjCommand::SetPadLoop { .. }
+            | DjCommand::SetLoopMode { .. }
             | DjCommand::SeekFrames { .. }
             | DjCommand::SetLoop { .. }
             | DjCommand::Load { .. }
@@ -259,6 +261,7 @@ impl Engine {
                 position_ratio: None,
                 track: None,
                 loop_region: None,
+                active_loops: Vec::new(),
                 hotcues: vec![None; dj_domain::HOTCUE_SLOTS],
                 pad_loops: Vec::new(),
                 cue_labels: Vec::new(),

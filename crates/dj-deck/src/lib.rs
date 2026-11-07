@@ -183,7 +183,14 @@ pub struct Deck {
     /// knob belongs to the hand, and a knob that moves by itself is a knob nobody trusts.
     auto_gain: f32,
     tempo_ratio: f64,
+    /// The loop the Loop button made, if any: it is the one that can be captured into memory.
     loop_region: Option<FrameRange>,
+    /// Whether loop mode is on. In loop mode **every** saved loop plays: a track can have many, and a
+    /// playhead that crosses any of them repeats that one.
+    loop_mode: bool,
+    /// The regions loop mode is watching right now; rebuilt on the command path, only scanned in the
+    /// render, which must not allocate.
+    armed: Vec<FrameRange>,
     hotcues: [Option<u64>; HOTCUE_SLOTS],
     /// Loops stored on pads: a pad holds either a point or a loop (DJP-DECK-003/004).
     pad_loops: [Option<FrameRange>; HOTCUE_SLOTS],
@@ -252,6 +259,8 @@ impl Deck {
             auto_gain: 1.0,
             tempo_ratio: 1.0,
             loop_region: None,
+            loop_mode: false,
+            armed: Vec::new(),
             hotcues: [None; HOTCUE_SLOTS],
             pad_loops: [None; HOTCUE_SLOTS],
             cue_labels: std::array::from_fn(|_| None),
@@ -386,6 +395,8 @@ impl Deck {
         // jumped into a position the new track never had.
         self.hotcues = [None; HOTCUE_SLOTS];
         self.pad_loops = [None; HOTCUE_SLOTS];
+        self.armed.clear();
+        self.loop_mode = false;
         self.auto_gain = 1.0;
         self.cue_labels = std::array::from_fn(|_| None);
         self.cue_colors = std::array::from_fn(|_| None);
@@ -410,6 +421,8 @@ impl Deck {
         self.playing = false;
         self.position = 0;
         self.loop_region = None;
+        self.armed.clear();
+        self.loop_mode = false;
         self.loop_buffer = None;
         self.reading_loop_buffer = false;
         self.drain_until = None;
@@ -501,6 +514,47 @@ impl Deck {
         }
     }
 
+    /// Turn loop mode on or off. With it off no region repeats; with it on every saved loop repeats.
+    pub fn set_loop_mode(&mut self, enabled: bool) {
+        self.loop_mode = enabled;
+        self.rebuild_armed();
+    }
+
+    /// Whether loop mode is on.
+    pub fn loop_mode(&self) -> bool {
+        self.loop_mode
+    }
+
+    /// Every region loop mode is watching, in track order.
+    pub fn active_loops(&self) -> &[FrameRange] {
+        &self.armed
+    }
+
+    /// Rebuild the armed set: all saved loops, plus the one the Loop button made.
+    fn rebuild_armed(&mut self) {
+        self.armed.clear();
+        if !self.loop_mode {
+            return;
+        }
+        for region in self.pad_loops.iter().flatten() {
+            self.armed.push(*region);
+        }
+        if let Some(region) = self.loop_region {
+            self.armed.push(region);
+        }
+    }
+
+    /// The armed region whose end is next: the one the playhead is inside, or the first one ahead of it.
+    /// A loop caps the read at its end whether the playhead is inside it or still before it — that is
+    /// what makes a seek to just before any saved loop play that loop.
+    fn armed_loop_at(&self, position: u64) -> Option<FrameRange> {
+        self.armed
+            .iter()
+            .copied()
+            .filter(|region| position < region.end.0)
+            .min_by_key(|region| region.end.0)
+    }
+
     /// Activate or clear a loop. The region is in source frames.
     ///
     /// An active loop engages when the playhead reaches its end and then repeats `start..end`. A
@@ -521,6 +575,11 @@ impl Deck {
             return;
         }
         self.loop_region = region;
+        // Switching a loop on is also switching loop mode on: the point of the button.
+        if region.is_some() {
+            self.loop_mode = true;
+        }
+        self.rebuild_armed();
         self.reading_loop_buffer = false;
         self.drain_until = None;
         self.loop_buffer = match region {
@@ -623,6 +682,7 @@ impl Deck {
             return false;
         }
         self.pad_loops[slot] = region;
+        self.rebuild_armed();
         true
     }
 
@@ -896,11 +956,10 @@ impl Deck {
                 .unwrap_or(u64::MAX);
             // A loop caps the read at its end whether the playhead is inside the region or still
             // before it: the wrap happens when the end is reached, not when it is entered.
-            let until_loop = match self.loop_region {
-                Some(region) if self.position < region.end.0 => {
-                    region.end.0.saturating_sub(self.position)
-                }
-                _ => u64::MAX,
+            let active_region = self.armed_loop_at(self.position);
+            let until_loop = match active_region {
+                Some(region) => region.end.0.saturating_sub(self.position),
+                None => u64::MAX,
             };
             // Only a read that was cut by the loop end wraps; a playhead that merely sits past an
             // active region (after a seek beyond it) plays on.
@@ -952,13 +1011,16 @@ impl Deck {
             }
 
             if clamped_by_loop
-                && let Some(region) = self.loop_region
+                && let Some(region) = active_region
                 && self.position >= region.end.0
             {
-                let buffered = self
-                    .loop_buffer
-                    .as_ref()
-                    .is_some_and(LoopBuffer::is_complete);
+                // Only the button's own loop is captured in memory; a saved loop wrapping from the
+                // pads asks the decoder for its start.
+                let buffered = self.loop_region == Some(region)
+                    && self
+                        .loop_buffer
+                        .as_ref()
+                        .is_some_and(LoopBuffer::is_complete);
                 if buffered {
                     // Nothing to ask the decoder: the loop is in memory from here on.
                     self.reading_loop_buffer = true;
@@ -1040,6 +1102,7 @@ impl Deck {
             position_ratio: ratio,
             track: self.track.clone(),
             loop_region: self.loop_region,
+            active_loops: self.armed.clone(),
             hotcues: self
                 .hotcues
                 .iter()

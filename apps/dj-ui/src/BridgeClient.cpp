@@ -418,6 +418,16 @@ int BridgeClient::setTempo(const QString &deck, double ratio)
     return sendCommand(deck, command);
 }
 
+int BridgeClient::setLoopMode(const QString &deck, bool enabled)
+{
+    QJsonObject options;
+    options.insert(QStringLiteral("deck"), deck);
+    options.insert(QStringLiteral("enabled"), enabled);
+    QJsonObject command;
+    command.insert(QStringLiteral("SetLoopMode"), options);
+    return sendCommand(deck, command);
+}
+
 int BridgeClient::setPadLoop(const QString &deck, int slot)
 {
     QJsonObject options;

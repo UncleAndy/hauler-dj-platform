@@ -3151,6 +3151,10 @@ int main(int argc, char *argv[])
             return value.isNull() || !value.isValid() ? QVariantMap() : value.toMap();
         };
 
+        // Loop mode is the armed set now: the saved loops plus the button's own, not one region.
+        const auto armedCount = [&]() {
+            return deckOf().value(QStringLiteral("active_loops")).toList().size();
+        };
         auto *strip = findItem(window->contentItem(), QStringLiteral("waveStrip_A"));
         const auto stripProp = [&](const char *name) {
             return strip == nullptr ? 0.0 : strip->property(name).toDouble();
@@ -3201,8 +3205,8 @@ int main(int argc, char *argv[])
         const double end = region.value(QStringLiteral("end")).toDouble();
         const double parked = deckOf().value(QStringLiteral("source_frame")).toDouble();
         const bool active = stripProp("loopActive") > 0.5;
-        std::fprintf(stdout, "dj-ui: the second press closed %.0f…%.0f, active %s, playhead at %.0f\n",
-                     start, end, active ? "yes" : "no", parked);
+        std::fprintf(stdout, "dj-ui: the second press closed %.0f…%.0f, active %s, armed %d, playhead at %.0f\n",
+                     start, end, active ? "yes" : "no", armedCount(), parked);
         if (std::abs(start - 48000.0) > 2000.0) {
             std::fprintf(stderr, "dj-ui: the loop does not start where the first press was\n");
             return 1;
@@ -3259,7 +3263,7 @@ int main(int argc, char *argv[])
         const bool stillActive = stripProp("loopActive") > 0.5;
         std::fprintf(stdout, "dj-ui: shift switched the loop %s, edges still painted %s, playhead %.0f -> %.0f\n",
                      loopRegion().isEmpty() ? "off" : "on", painted ? "yes" : "no", beforeShift, afterOff);
-        if (!loopRegion().isEmpty()) {
+        if (armedCount() != 0) {
             std::fprintf(stderr, "dj-ui: shift did not switch the loop off\n");
             return 1;
         }
@@ -3276,8 +3280,8 @@ int main(int argc, char *argv[])
         click(Qt::ShiftModifier);
         const double afterOn = frames();
         std::fprintf(stdout, "dj-ui: the next shift brought the loop %s, playhead %.0f\n",
-                     loopRegion().isEmpty() ? "not back" : "back", afterOn);
-        if (loopRegion().isEmpty()) {
+                     armedCount() > 0 ? "back" : "not back", afterOn);
+        if (armedCount() == 0) {
             std::fprintf(stderr, "dj-ui: shift did not switch the loop back on\n");
             return 1;
         }
@@ -3295,8 +3299,8 @@ int main(int argc, char *argv[])
         click(Qt::NoModifier);
         const double insideAfter = frames();
         std::fprintf(stdout, "dj-ui: a press inside the loop switched it %s, playhead %.0f -> %.0f\n",
-                     loopRegion().isEmpty() ? "off" : "on", insideBefore, insideAfter);
-        if (loopRegion().isEmpty()) {
+                     armedCount() > 0 ? "on" : "off", insideBefore, insideAfter);
+        if (armedCount() == 0) {
             std::fprintf(stderr, "dj-ui: a press inside the loop did not switch the mode on\n");
             return 1;
         }
@@ -3323,11 +3327,65 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: a press outside the loop jumped the playhead\n");
             return 1;
         }
-        if (!loopRegion().isEmpty()) {
+        if (armedCount() != 0) {
             std::fprintf(stderr, "dj-ui: the old loop is still in force while a new one is being marked\n");
             return 1;
         }
 
+        // Two saved loops and one switch: loop mode must repeat whichever one the playhead meets.
+        click(Qt::ShiftModifier); // clear the pair that was just marked
+        bridge->setLoopMode(QStringLiteral("A"), false);
+        bridge->seek(QStringLiteral("A"), 20000);
+        bridge->setLoop(QStringLiteral("A"), true, 20000, 40000);
+        bridge->setPadLoop(QStringLiteral("A"), 1);
+        bridge->seek(QStringLiteral("A"), 60000);
+        bridge->setLoop(QStringLiteral("A"), true, 60000, 80000);
+        bridge->setPadLoop(QStringLiteral("A"), 2);
+        bridge->setLoopMode(QStringLiteral("A"), false);
+        pump(40);
+        const int disarmed = deckOf().value(QStringLiteral("active_loops")).toList().size();
+        bridge->setLoopMode(QStringLiteral("A"), true);
+        pump(40);
+        const int armedNow = deckOf().value(QStringLiteral("active_loops")).toList().size();
+        std::fprintf(stdout, "dj-ui: loop mode watches %d loop(s), off state had %d\n", armedNow,
+                     disarmed);
+        if (armedNow < 2 || disarmed != 0) {
+            std::fprintf(stderr, "dj-ui: loop mode did not take in every saved loop\n");
+            return 1;
+        }
+
+        // Dropped before the first saved loop: it must wrap at that loop's end, not run on.
+        bridge->seek(QStringLiteral("A"), 5000);
+        bridge->play(QStringLiteral("A"), true);
+        pump(40);
+        double reached = frames();
+        for (int step = 0; step < 12; ++step) {
+            pump(6);
+            reached = std::max(reached, frames());
+        }
+        std::fprintf(stdout, "dj-ui: from before the first loop the playhead reached %.0f (ends 40000)\n",
+                     reached);
+        if (reached > 44000.0) {
+            std::fprintf(stderr, "dj-ui: the first saved loop did not repeat\n");
+            return 1;
+        }
+
+        // Dropped inside the second saved loop: that one repeats.
+        bridge->seek(QStringLiteral("A"), 62000);
+        pump(30);
+        reached = frames();
+        for (int step = 0; step < 12; ++step) {
+            pump(6);
+            reached = std::max(reached, frames());
+        }
+        std::fprintf(stdout, "dj-ui: inside the second loop the playhead reached %.0f (ends 80000)\n",
+                     reached);
+        if (reached > 84000.0) {
+            std::fprintf(stderr, "dj-ui: the second saved loop did not repeat\n");
+            return 1;
+        }
+
+        bridge->setLoopMode(QStringLiteral("A"), false);
         bridge->play(QStringLiteral("A"), false);
         return 0;
     }

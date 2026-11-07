@@ -100,6 +100,8 @@ public:
     Q_INVOKABLE int setTempo(const QString &deck, double ratio);
     /// Store the deck's active loop on a pad (DJP-DECK-004).
     Q_INVOKABLE int setPadLoop(const QString &deck, int slot);
+    /// Switch loop mode: on repeats every saved loop, off repeats none.
+    Q_INVOKABLE int setLoopMode(const QString &deck, bool enabled);
 
     /// A hotcue's name and colour; an empty string leaves that half alone (DJP-DECK-003).
     Q_INVOKABLE int setCueMeta(const QString &deck, int slot, const QString &label,

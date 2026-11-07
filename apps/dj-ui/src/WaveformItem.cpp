@@ -154,6 +154,7 @@ void WaveformItem::setPadLoops(const QVariantList &value)
         LoopMark mark;
         mark.from = map.value(QStringLiteral("from"), -1.0).toDouble();
         mark.to = map.value(QStringLiteral("to"), -1.0).toDouble();
+        mark.active = map.value(QStringLiteral("active"), false).toBool();
         m_padLoops.append(mark);
     }
     QQuickPaintedItem::update();

@@ -141,6 +141,7 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
                 key: Some("8A".to_string()),
             }),
             loop_region: None,
+            active_loops: Vec::new(),
             hotcues: vec![
                 Some(SourceFrame(1_000)),
                 None,
@@ -213,6 +214,7 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
             r#""duration_frames":124800,"bpm":128.0,"key":"8A"},"loop_region":null,"#,
             r#""hotcues":[1000,null,null,null,null,null,null,null],"#,
             r##""pad_loops":[null,{"start":4800,"end":9600},null,null,null,null,null,null],"##,
+            r#""active_loops":[],"#,
             r#""cue_labels":["drop",null,null,null,null,null,null,null],"#,
             r##""cue_colors":["#5fb85f",null,null,null,null,null,null,null],"##,
             r#""levels":{"peak_left":0.5,"peak_right":0.25},"#,

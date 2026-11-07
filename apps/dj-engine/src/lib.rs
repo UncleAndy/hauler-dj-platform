@@ -44,6 +44,7 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
         | DjCommand::Cue { deck, .. }
         | DjCommand::SetCueMeta { deck, .. }
         | DjCommand::SetPadLoop { deck, .. }
+        | DjCommand::SetLoopMode { deck, .. }
         | DjCommand::SeekFrames { deck, .. }
         | DjCommand::SetLoop { deck, .. }
         | DjCommand::SetTempoRatio { deck, .. }
@@ -71,6 +72,10 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
                 } else {
                     target.pause();
                 }
+                Ack::applied(id, at)
+            }
+            DjCommand::SetLoopMode { enabled, .. } => {
+                target.set_loop_mode(*enabled);
                 Ack::applied(id, at)
             }
             DjCommand::SetPadLoop { slot, .. } => {
@@ -428,6 +433,8 @@ pub struct StateCells {
     cue_meta: std::sync::Mutex<Vec<DeckPads>>,
     /// Loops on pads, per deck: a range is not an atomic word either.
     pad_loops: std::sync::Mutex<Vec<DeckLoops>>,
+    /// Loops loop mode is watching, per deck: as many as the track has, not one.
+    active_loops: std::sync::Mutex<Vec<Vec<(u64, u64)>>>,
 }
 
 impl Default for StateCells {
@@ -476,6 +483,27 @@ impl StateCells {
             guard.push(std::array::from_fn(|_| None));
         }
         guard[deck][slot] = region;
+    }
+
+    /// Put the armed loops where the publisher will find them.
+    pub fn set_active_loops(&self, deck: usize, regions: Vec<(u64, u64)>) {
+        let mut guard = self
+            .active_loops
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        while guard.len() <= deck {
+            guard.push(Vec::new());
+        }
+        guard[deck] = regions;
+    }
+
+    /// What the publisher reads for one deck.
+    fn active_loops_of(&self, deck: usize) -> Vec<(u64, u64)> {
+        let guard = self
+            .active_loops
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        guard.get(deck).cloned().unwrap_or_default()
     }
 
     /// Forget a deck's loops: a new track brings its own.
@@ -536,6 +564,7 @@ impl StateCells {
             decks: std::array::from_fn(|_| DeckCells::new()),
             cue_meta: std::sync::Mutex::new(Vec::new()),
             pad_loops: std::sync::Mutex::new(Vec::new()),
+            active_loops: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -639,6 +668,14 @@ impl StateCells {
                     start: SourceFrame(loop_start),
                     end: SourceFrame(loop_end),
                 }),
+                active_loops: self
+                    .active_loops_of(index)
+                    .into_iter()
+                    .map(|(start, end)| FrameRange {
+                        start: SourceFrame(start),
+                        end: SourceFrame(end),
+                    })
+                    .collect(),
                 pad_loops: {
                     let loops = self.pad_loops_of(index);
                     loops
@@ -1132,6 +1169,27 @@ impl EngineGraph {
                     .flatten()
                     .map(|region| (region.start.0, region.end.0));
                 self.cells.set_pad_loop(index, usize::from(*slot), region);
+            }
+            // The armed set moves with the mode, with a pad, and with the button's own loop, and it is
+            // the whole set that the strip paints — not one region.
+            if let Some(deck) = match &submission.command.command {
+                DjCommand::SetLoopMode { deck, .. }
+                | DjCommand::SetPadLoop { deck, .. }
+                | DjCommand::SetLoop { deck, .. }
+                | DjCommand::Load { deck, .. }
+                | DjCommand::Eject { deck } => Some(*deck),
+                _ => None,
+            } && let Some(index) = self
+                .decks
+                .iter()
+                .position(|candidate| candidate.id() == deck)
+            {
+                let armed = self.decks[index]
+                    .active_loops()
+                    .iter()
+                    .map(|region| (region.start.0, region.end.0))
+                    .collect();
+                self.cells.set_active_loops(index, armed);
             }
             if let DjCommand::SetCueMeta {
                 deck,

@@ -320,6 +320,13 @@ pub enum DjCommand {
         /// Target deck.
         deck: DeckId,
     },
+    /// Switch loop mode for a deck: on repeats every saved loop, off repeats none.
+    SetLoopMode {
+        /// Target deck.
+        deck: DeckId,
+        /// Whether loop mode is on.
+        enabled: bool,
+    },
     /// Store the deck's active loop on a pad, so the same four bars come back with one press
     /// (DJP-DECK-003, DJP-DECK-004).
     SetPadLoop {
@@ -427,6 +434,7 @@ impl DjCommand {
         match self {
             DjCommand::Play { .. }
             | DjCommand::SetPadLoop { .. }
+            | DjCommand::SetLoopMode { .. }
             | DjCommand::SetCueMeta { .. }
             | DjCommand::Cue { .. }
             | DjCommand::SeekFrames { .. }
@@ -699,6 +707,10 @@ pub struct DeckSnapshot {
     /// Loops stored on pads; a pad holds a point or a loop, never both.
     #[serde(default)]
     pub pad_loops: Vec<Option<FrameRange>>,
+    /// Every loop loop mode is watching: the saved ones plus the one the Loop button made. A track
+    /// holds many loops, and loop mode repeats all of them.
+    #[serde(default)]
+    pub active_loops: Vec<FrameRange>,
     /// Names of the hotcues, slot for slot; `None` where a cue has no name or no cue exists.
     ///
     /// Defaulted, so a state document written before pads had names still reads: a client that knows

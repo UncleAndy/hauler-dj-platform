@@ -144,45 +144,59 @@ Pane {
         return frame >= region.start && frame < region.end;
     }
 
-    /// The Loop button. A press inside a known loop switches that loop on where the playhead stands; a
-    /// press outside it starts a new loop instead of dragging the DJ back into the old one. Shift is a
-    /// plain mode switch and never moves anything.
+    /// Every loop the deck is watching in loop mode: the saved ones plus the button's own. A track
+    /// holds many loops and one switch arms them all.
+    readonly property var activeLoops: panel.deck !== null && panel.deck.active_loops !== undefined
+                                       ? panel.deck.active_loops : []
+
+    readonly property bool loopModeOn: panel.activeLoops.length > 0
+
+    /// The region the playhead stands in, out of everything the deck knows: armed loops first, then
+    /// the last loop the button made.
+    function loopAt(frame) {
+        const armed = panel.activeLoops;
+        for (let index = 0; index < armed.length; ++index) {
+            const region = armed[index];
+            if (region.start !== undefined && frame >= region.start && frame < region.end) {
+                return region;
+            }
+        }
+        const remembered = panel.savedLoop;
+        if (remembered !== null && remembered !== undefined && frame >= remembered.start
+                && frame < remembered.end) {
+            return remembered;
+        }
+        return null;
+    }
+
+    /// The Loop button: inside a loop it switches the mode on where the playhead stands; outside it
+    /// starts marking another loop. Shift only switches the mode, and never moves anything.
     function pressLoop(cancel) {
         const frame = panel.deck !== null && panel.deck.source_frame !== undefined
                       ? panel.deck.source_frame : 0;
-        const active = panel.loop !== null && panel.loop !== undefined;
-        const known = active ? panel.loop : panel.savedLoop;
 
         if (cancel) {
             if (panel.loopPending) {
                 panel.loopPending = false;
                 return;
             }
-            if (active) {
-                panel.savedLoop = panel.loop;
-                Bridge.setLoop(panel.deckId, false, 0, 0);
-                return;
-            }
-            if (known !== null && known !== undefined) {
-                Bridge.setLoop(panel.deckId, true, known.start, known.end);
+            Bridge.setLoopMode(panel.deckId, !panel.loopModeOn);
+            return;
+        }
+
+        // Inside any loop the deck knows, a press only makes sure the mode is on.
+        if (panel.loopAt(frame) !== null) {
+            if (!panel.loopModeOn) {
+                Bridge.setLoopMode(panel.deckId, true);
             }
             return;
         }
 
-        // Inside the loop that is already known: switch it on where it stands, no jump.
-        if (known !== null && known !== undefined && panel.loopContains(known, frame)) {
-            if (!active) {
-                Bridge.setLoop(panel.deckId, true, known.start, known.end);
-            }
-            return;
-        }
-
-        // Outside it: this press marks the start of another loop. The old one is switched off so it
-        // cannot wrap while the pair is being made, but its edges stay on the strip.
+        // Outside them: this press marks the start of another loop, so the mode steps aside while the
+        // pair is being made — otherwise an old loop would wrap the playhead mid-gesture.
         if (!panel.loopPending) {
-            if (active) {
-                panel.savedLoop = panel.loop;
-                Bridge.setLoop(panel.deckId, false, 0, 0);
+            if (panel.loopModeOn) {
+                Bridge.setLoopMode(panel.deckId, false);
             }
             panel.loopPending = true;
             panel.loopStartFrame = frame;

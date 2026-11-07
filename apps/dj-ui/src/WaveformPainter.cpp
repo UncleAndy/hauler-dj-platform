@@ -118,10 +118,10 @@ void paintWaveform(QPainter &painter, const Waveform &waveform, const WaveformSt
             continue;
         }
         QColor tint = style.accent;
-        tint.setAlpha(28);
+        tint.setAlpha(mark.active ? 40 : 16);
         painter.fillRect(QRect(left, area.bottom() - 3, right - left, 4), tint);
         QColor edge = style.accent;
-        edge.setAlpha(170);
+        edge.setAlpha(mark.active ? 200 : 90);
         painter.fillRect(QRect(from, area.bottom() - 4, 2, 5), edge);
         painter.fillRect(QRect(to - 2, area.bottom() - 4, 2, 5), edge);
     }

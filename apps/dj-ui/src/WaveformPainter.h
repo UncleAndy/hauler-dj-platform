@@ -28,6 +28,9 @@ struct LoopMark
 {
     double from = -1.0;
     double to = -1.0;
+    /// Armed loops are drawn as the loops they are; a saved loop that loop mode is not watching is a
+    /// reminder of where the loop is, not a promise that it will repeat.
+    bool active = false;
 };
 
 struct WaveformStyle

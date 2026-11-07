@@ -37,6 +37,18 @@ Item {
                      ? overview.deckState.remaining_frames : -1;
         return left >= 0 ? overview.deckState.source_frame + left : 0;
     }
+    function loopIsArmed(start, end) {
+        const armed = overview.deckState !== undefined && overview.deckState.active_loops !== undefined
+                      ? overview.deckState.active_loops : [];
+        for (let index = 0; index < armed.length; ++index) {
+            const region = armed[index];
+            if (region.start === start && region.end === end) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     function ratioOfFrame(frame) {
         if (frame === null || frame === undefined) {
             return -1.0;
@@ -58,7 +70,8 @@ Item {
             const from = overview.ratioOfFrame(region.start);
             const to = overview.ratioOfFrame(region.end);
             if (from >= 0.0 && to >= 0.0) {
-                marks.push({ "from": from, "to": to });
+                marks.push({ "from": from, "to": to,
+                             "active": overview.loopIsArmed(region.start, region.end) });
             }
         }
         return marks;
@@ -72,6 +85,8 @@ Item {
     readonly property bool loopActive: overview.deckState !== undefined
                                        && overview.deckState.loop_region !== undefined
                                        && overview.deckState.loop_region !== null
+                                       && overview.loopIsArmed(overview.deckState.loop_region.start,
+                                                               overview.deckState.loop_region.end)
     readonly property real pendingRatio: overview.pendingLoopStart < 0
                                          ? -1.0 : overview.ratioOfFrame(overview.pendingLoopStart)
     readonly property real loopFrom: overview.deckState !== undefined
