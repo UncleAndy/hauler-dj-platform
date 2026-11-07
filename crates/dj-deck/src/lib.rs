@@ -784,11 +784,20 @@ impl Deck {
     }
 
     /// Delete a hotcue.
+    /// Clear a pad. A pad holds a point, a loop, a name and a colour, and deleting it clears all of
+    /// them: a pad that keeps its loop after the DJ deleted it is a pad that will not go away.
     pub fn delete_hotcue(&mut self, slot: usize) -> bool {
-        match self.hotcues.get_mut(slot) {
-            Some(entry) => entry.take().is_some(),
-            None => false,
+        if slot >= HOTCUE_SLOTS {
+            return false;
         }
+        let had_point = self.hotcues[slot].take().is_some();
+        let had_loop = self.pad_loops[slot].take().is_some();
+        let had_label = self.cue_labels[slot].take().is_some();
+        let had_color = self.cue_colors[slot].take().is_some();
+        if had_loop {
+            self.rebuild_armed();
+        }
+        had_point || had_loop || had_label || had_color
     }
 
     /// Jump to a stored hotcue. Returns the new position, or `None` when the slot is empty.

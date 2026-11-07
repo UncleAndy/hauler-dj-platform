@@ -1156,6 +1156,24 @@ impl EngineGraph {
             self.note_edit(&submission.command);
             // A pad's name and colour are strings, so they cannot ride in a cell: the publisher gets
             // them from the cells' own map, written here on the command path.
+            // A delete clears the pad's loop as well, so the published copy has to follow that too.
+            if let DjCommand::Cue {
+                deck,
+                action: CueAction::Delete(slot),
+            } = &submission.command.command
+                && let Some(index) = self
+                    .decks
+                    .iter()
+                    .position(|candidate| candidate.id() == *deck)
+            {
+                let region = self.decks[index]
+                    .pad_loops()
+                    .get(usize::from(*slot))
+                    .copied()
+                    .flatten()
+                    .map(|region| (region.start.0, region.end.0));
+                self.cells.set_pad_loop(index, usize::from(*slot), region);
+            }
             if let DjCommand::SetPadLoop { deck, slot } = &submission.command.command
                 && let Some(index) = self
                     .decks
@@ -1176,6 +1194,7 @@ impl EngineGraph {
                 DjCommand::SetLoopMode { deck, .. }
                 | DjCommand::SetPadLoop { deck, .. }
                 | DjCommand::SetLoop { deck, .. }
+                | DjCommand::Cue { deck, .. }
                 | DjCommand::Load { deck, .. }
                 | DjCommand::Eject { deck } => Some(*deck),
                 _ => None,

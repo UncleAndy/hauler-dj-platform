@@ -3680,6 +3680,35 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: shift-click did not clear the pad\n");
             return 1;
         }
+
+        // A pad that holds a loop is deleted the same way: the loop goes with the rest of the pad.
+        bridge->setLoop(QStringLiteral("A"), true, 96000, 144000);
+        pump(30);
+        bridge->setPadLoop(QStringLiteral("A"), 4);
+        pump(40);
+        const QVariantList loopsSet = deckOf().value(QStringLiteral("pad_loops")).toList();
+        const bool heldLoop = loopsSet.size() > 4 && loopsSet[4].isValid() && !loopsSet[4].isNull();
+        std::fprintf(stdout, "dj-ui: pad 4 %s a loop\n", heldLoop ? "holds" : "does not hold");
+        if (!heldLoop) {
+            std::fprintf(stderr, "dj-ui: the loop did not reach pad 4\n");
+            return 1;
+        }
+        auto *padFour = findItem(window->contentItem(), QStringLiteral("cuepad_A_4"));
+        if (padFour == nullptr) {
+            std::fprintf(stderr, "dj-ui: deck A has no pad 4\n");
+            return 1;
+        }
+        click(padFour, Qt::ShiftModifier);
+        pump(30);
+        const QVariantList loopsAfter = deckOf().value(QStringLiteral("pad_loops")).toList();
+        const bool loopLeft = loopsAfter.size() > 4 && loopsAfter[4].isValid() && !loopsAfter[4].isNull();
+        const int armedLeft = int(deckOf().value(QStringLiteral("active_loops")).toList().size());
+        std::fprintf(stdout, "dj-ui: shift-click left pad 4 %s loop, %d loop(s) armed\n",
+                     loopLeft ? "holding a" : "without a", armedLeft);
+        if (loopLeft) {
+            std::fprintf(stderr, "dj-ui: shift-click did not clear the loop on the pad\n");
+            return 1;
+        }
         return 0;
     }
 

@@ -159,6 +159,35 @@ fn switching_loop_mode_off_stops_the_copy_repeating() {
 }
 
 #[test]
+fn deleting_a_pad_takes_its_loop_with_it() {
+    // A pad that holds a loop is deleted the same way a pad that holds a point is: everything on it goes,
+    // including the loop and the mark on the strip.
+    let mut deck = deck_with_ramp(44_100);
+    let region = FrameRange::new(1_000, 2_000).unwrap_or_else(|| panic!("region"));
+    assert!(deck.set_pad_loop(3, Some(region)));
+    assert!(deck.set_cue_meta(3, Some("Drop".to_string()), Some("#ff4d4d".to_string())));
+    deck.set_loop_mode(true);
+    assert_eq!(deck.active_loops(), &[region]);
+    assert_eq!(deck.pad_loops()[3], Some(region));
+
+    assert!(deck.delete_hotcue(3), "the pad was not empty");
+    assert!(deck.pad_loops()[3].is_none(), "the loop stayed on the pad");
+    assert!(deck.cue_labels()[3].is_none(), "the name stayed on the pad");
+    assert!(
+        deck.cue_colors()[3].is_none(),
+        "the colour stayed on the pad"
+    );
+    assert!(
+        deck.active_loops().is_empty(),
+        "a deleted loop must not stay armed"
+    );
+    assert!(
+        !deck.delete_hotcue(3),
+        "deleting an empty pad changes nothing"
+    );
+}
+
+#[test]
 fn a_loop_is_armed_once_however_it_was_made() {
     // One loop is one region on the strip. The button's loop, once saved on a pad, belongs to the pad;
     // pressing that pad arms the mode without adding a second copy of the same region.
