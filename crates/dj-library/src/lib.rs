@@ -1,10 +1,22 @@
-//! SQLite collection, migrations and queries.
+//! Portable per-track metadata and the index over it.
 //!
-//! Status: **scaffold**. No behaviour is implemented yet; the crate exists so that
-//! the module boundary, ownership and dependency direction are fixed before code
-//! lands (`docs/architecture/crate-map.md`).
+//! Two stores, one meaning. `.djmeta/<file name>.json` beside the music is the source of truth for
+//! cue points, grids, loops and the rest of what the user decided (DJP-DATA-006), so copying a folder
+//! carries the work with it. The SQLite index holds only what a library is searched and sorted by and
+//! is rebuilt by scanning, which is why losing it loses nothing.
 //!
 //! - Backlog task: A08
-//! - Requirements: DJP-DATA-001, DJP-DATA-003, DJP-DATA-004, DJP-DATA-005
-//! - WAL, one serialized writer, never on the audio thread.
+//! - Requirements: DJP-DATA-001…006
+//! - Nothing here touches the audio thread: reads and writes happen on the loader side.
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
+
+pub mod fingerprint;
+pub mod index;
+pub mod meta;
+pub mod sidecar;
+pub mod store;
+
+pub use index::{Index, IndexError, TrackRow};
+pub use meta::{Anchor, BeatGrid, Cue, Fingerprint, Loop, SCHEMA, TrackMeta};
+pub use sidecar::MetaError;
+pub use store::{Loaded, Saved, Source, Store};

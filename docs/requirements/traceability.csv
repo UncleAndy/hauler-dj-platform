@@ -19,12 +19,12 @@ DJP-CTRL-007,hardware,P2,R2,DJP-SRS-001 §5,planned: crates/dj-display; crates/d
 DJP-CTRL-008,hardware,P2,R3,DJP-SRS-001 §5,planned: crates/dj-hid; crates/dj-midi,,unverified,docs/adr/0006-controllers.md,,2026-11-05
 DJP-CTRL-009,hardware,P2,R3,DJP-SRS-001 §5,,,unverified,,,
 DJP-CTRL-010,hardware,P3,R3,DJP-SRS-001 §5,,,unverified,,,
-DJP-DATA-001,media,,,DJP-SRS-001 §6,,,unverified,,,
-DJP-DATA-002,media,,,DJP-SRS-001 §6,,,unverified,,,
-DJP-DATA-003,media,,,DJP-SRS-001 §6,,,unverified,,,
-DJP-DATA-004,media,,,DJP-SRS-001 §6,,,unverified,,,
-DJP-DATA-005,media,,,DJP-SRS-001 §6,,,unverified,,,
-DJP-DATA-006,media,,,DJP-SRS-001 §6,,,unverified,,,
+DJP-DATA-001,media,,,DJP-SRS-001 §6,схема файла и API не раскрывают pointer-адреса и backend-типы,schemas/djmeta-v1.json; crates/dj-library::meta — только кадры и числа,review,docs/qa/evidence/A08/summary.md,,2026-11-06
+DJP-DATA-002,media,,,DJP-SRS-001 §6,времена в кадрах источника: cue.frame; loop.start/end; first_beat_frame,crates/dj-library::meta; sidecar::a_round_trip_keeps_fields_this_build_does_not_know,review,docs/qa/evidence/A08/summary.md,,2026-11-06
+DJP-DATA-003,media,,,DJP-SRS-001 §6,кэш версионирован и имеет fingerprint; сбой кэша не трогает метаданные,crates/dj-library::fingerprint; a_broken_sidecar_is_reported_and_the_mirror_still_answers,review,docs/qa/evidence/A08/summary.md,,2026-11-06
+DJP-DATA-004,media,,,DJP-SRS-001 §6,fingerprint переживает переименование; relink остаётся за пользователем,crates/dj-library::store::adopt; a_renamed_file_keeps_its_metadata,review,docs/qa/evidence/A08/summary.md,,2026-11-06
+DJP-DATA-005,media,,,DJP-SRS-001 §6,WAL; writer вне аудиопотока; схема индекса версионирована,crates/dj-library::index (PRAGMA journal_mode=WAL; user_version=1); deleting_the_index_restores_it_by_scanning,review,docs/qa/evidence/A08/summary.md,,2026-11-06
+DJP-DATA-006,media,,,DJP-SRS-001 §6,переносимые метаданные: .djmeta рядом с музыкой; зеркало; теги по команде,crates/dj-library; schemas/djmeta-v1.json; tests/metadata.rs (7 тестов),review,docs/qa/evidence/A08/summary.md,,2026-11-06
 DJP-DECK-001,audio-core,P0,R0,DJP-SRS-001 §5,crates/dj-deck/src/lib.rs,mix::two_decks_render_together_with_commands_on_their_samples; deck::a_deck_is_silent_until_the_transport_runs,passing,docs/qa/evidence/A03/summary.md,,2026-11-05
 DJP-DECK-002,audio-core,P0,R0,DJP-SRS-001 §5,partial: crates/dj-deck (play/pause/seek/gain; cue / scrub / tempo не реализованы),deck::a_deck_is_silent_until_the_transport_runs,unverified,docs/qa/evidence/A03/summary.md,,2026-11-05
 DJP-DECK-003,audio-core,P0,R0,DJP-SRS-001 §5,partial: crates/dj-deck (установка/удаление/переход; цвета / имена / хранение — A08),deck::eight_hotcues_are_independent; deck::a_hotcue_jumps_to_the_stored_frame,unverified,docs/qa/evidence/A03/summary.md,,2026-11-05

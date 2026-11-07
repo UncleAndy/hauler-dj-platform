@@ -8,6 +8,11 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+serde.workspace = true
+serde_json.workspace = true
+# The index is a cache over portable metadata (DJP-DATA-006): SQLite for queries, bundled so the
+# build does not depend on a system libsqlite3.
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [lints]
 workspace = true

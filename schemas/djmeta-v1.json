@@ -1,0 +1,190 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hauler-dj.local/schemas/djmeta-v1.json",
+  "title": "Track metadata v1 (DJP-DATA-006)",
+  "description": "One track's own record: what travelled with the file. Written to .djmeta/<file name>.json beside the music and mirrored under the user's data directory.",
+  "type": "object",
+  "required": [
+    "schema",
+    "revision",
+    "updated_at_ms",
+    "fingerprint"
+  ],
+  "properties": {
+    "schema": {
+      "const": "djp-track-v1"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Counts writes. A copy that travelled is compared by this first."
+    },
+    "updated_at_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Wall clock of the last write, milliseconds since the epoch."
+    },
+    "fingerprint": {
+      "$ref": "#/$defs/fingerprint"
+    },
+    "cues": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/cue"
+      }
+    },
+    "beatgrid": {
+      "$ref": "#/$defs/beatgrid"
+    },
+    "loops": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/loop"
+      }
+    },
+    "gain": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Channel gain multiplier; 1.0 is unity."
+    },
+    "key": {
+      "type": "string"
+    },
+    "rating": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 5
+    },
+    "notes": {
+      "type": "string"
+    },
+    "analysis_lock": {
+      "type": "boolean",
+      "description": "Analysis must not overwrite the grid this record carries."
+    }
+  },
+  "additionalProperties": true,
+  "$comment": "Unknown properties are kept when a file is rewritten: a newer build may add fields, and an older one must not erase them.",
+  "$defs": {
+    "fingerprint": {
+      "type": "object",
+      "required": [
+        "size",
+        "head",
+        "tail"
+      ],
+      "properties": {
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "head": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        },
+        "tail": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        },
+        "duration_frames": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sample_rate": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "cue": {
+      "type": "object",
+      "required": [
+        "slot",
+        "frame"
+      ],
+      "properties": {
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "frame": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Position in frames of the source file (DJP-DATA-002)."
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "anchor": {
+      "type": "object",
+      "required": [
+        "frame",
+        "beat"
+      ],
+      "properties": {
+        "frame": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "beat": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "beatgrid": {
+      "type": "object",
+      "required": [
+        "bpm",
+        "first_beat_frame"
+      ],
+      "properties": {
+        "bpm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "first_beat_frame": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "anchors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/anchor"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "loop": {
+      "type": "object",
+      "required": [
+        "slot",
+        "start",
+        "end"
+      ],
+      "properties": {
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
