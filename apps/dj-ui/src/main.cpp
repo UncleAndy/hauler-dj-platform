@@ -3478,6 +3478,73 @@ int main(int argc, char *argv[])
             }
         }
 
+        // A silent deck with the sound switched on: the noise must come from the hand, not from a deck
+        // that quietly started playing. Moving makes sound; stopping must be silent again.
+        {
+            auto *mode = findItem(window->contentItem(), QStringLiteral("scrubMode_A"));
+            auto *strip = findItem(window->contentItem(), QStringLiteral("waveStrip_A"));
+            if (mode == nullptr || strip == nullptr) {
+                std::fprintf(stderr, "dj-ui: deck A has no scrub mode or no strip\n");
+                return 1;
+            }
+            // Button click: press and release at its centre.
+            const QPointF at = mode->mapToScene(QPointF(mode->width() / 2.0, mode->height() / 2.0));
+            for (const QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+                QMouseEvent event(type, at, window->mapToGlobal(at.toPoint()), Qt::LeftButton,
+                                  Qt::LeftButton, Qt::NoModifier);
+                QCoreApplication::sendEvent(window, &event);
+                QCoreApplication::processEvents();
+            }
+            pump(20);
+            if (playing()) {
+                std::fprintf(stderr, "dj-ui: the deck was playing before the audio scrub began\n");
+                return 1;
+            }
+
+            const QPointF grab =
+                strip->mapToScene(QPointF(strip->width() * 0.5, strip->height() * 0.5));
+            QMouseEvent down(QEvent::MouseButtonPress, grab, window->mapToGlobal(grab.toPoint()),
+                             Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(window, &down);
+            QCoreApplication::processEvents();
+            // A hand that has not moved yet makes no sound.
+            pump(20);
+            if (playing()) {
+                std::fprintf(stderr, "dj-ui: holding the strip started the deck\n");
+                return 1;
+            }
+            const QPointF along = grab + QPointF(40, 0);
+            QMouseEvent move(QEvent::MouseMove, along, window->mapToGlobal(along.toPoint()),
+                             Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(window, &move);
+            QCoreApplication::processEvents();
+            pump(10);
+            const bool sounded = playing();
+            // The hand stops, the button is still down: the deck must fall silent on its own. The wait
+            // has to run the event loop — a sleeping thread never fires the timer that stops the sound.
+            QElapsedTimer quiet;
+            quiet.start();
+            while (quiet.elapsed() < 300) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+                QThread::msleep(10);
+            }
+            const bool quietWhileHeld = !playing();
+            QMouseEvent up(QEvent::MouseButtonRelease, along, window->mapToGlobal(along.toPoint()),
+                           Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(window, &up);
+            pump(20);
+            const bool quietAfter = !playing();
+            std::fprintf(stdout,
+                         "dj-ui: audio scrub — moving makes sound %s, stopping while held is silent "
+                         "%s, releasing is silent %s\n",
+                         sounded ? "yes" : "no", quietWhileHeld ? "yes" : "no",
+                         quietAfter ? "yes" : "no");
+            if (!sounded || !quietWhileHeld || !quietAfter) {
+                std::fprintf(stderr, "dj-ui: an audio scrub on a paused deck did not behave\n");
+                return 1;
+            }
+        }
+
         // The clock counts down, so it must show the time left, not the length.
         const QString shown = clock->property("text").toString();
         std::fprintf(stdout, "dj-ui: the deck's clock reads %s\n", qPrintable(shown));

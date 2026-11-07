@@ -95,8 +95,10 @@ Pane {
     // ---- the eight pads (DJP-DECK-003) ----------------------------------------------------
     // Eight colours, readable on a dark panel and told apart from each other in a booth. Not called
     // `palette`: that name belongs to the control's own theme palette, and shadowing it is a warning.
-    readonly property var cuePalette: ["#c8503c", "#c8783c", "#b8b23c", "#5fb85f",
-                                    "#3fb0a8", "#4a86c8", "#8f5fc8", "#c85f9e"]
+    readonly property var cuePalette: ["#ff4d4d", "#ff9f1a", "#7cf03d", "#00e0c6",
+                                    "#3d9bff", "#b07bff", "#ff5cc8", "#ffffff"]
+    /// Loops wear yellow and points never do, so a glance tells a loop from a cue point.
+    readonly property string loopColor: "#ffd400"
 
     function hotcueFrame(slot) {
         const cues = panel.deck !== null && panel.deck.hotcues !== undefined ? panel.deck.hotcues : [];

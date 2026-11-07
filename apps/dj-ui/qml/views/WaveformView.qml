@@ -46,6 +46,25 @@ Item {
     /// Whether a hand on the strip is heard (a scratch) or only moves the playhead.
     property bool scrubAudio: false
 
+    /// True while the button is down on the strip: the sound of a silent deck comes from the movement
+    /// alone, so when the hand stops the deck has to be quiet again.
+    property bool scrubHeld: false
+    /// The deck was playing before the hand touched the strip.
+    property bool scrubWasPlaying: false
+
+    // A hand that stops moving stops making sound. Eighty milliseconds is between two moves of a
+    // deliberate drag and longer than the gap between the moves of a fast one.
+    Timer {
+        id: scrubIdle
+        interval: 80
+        repeat: false
+        onTriggered: {
+            if (view.scrubHeld && !view.scrubWasPlaying && view.deckId.length > 0) {
+                Bridge.play(view.deckId, false);
+            }
+        }
+    }
+
     // The pads as the strip paints them: a fraction of the track, a colour and a name. The frame
     // belongs to the deck, the fraction to the strip — the conversion happens once, here.
     readonly property var cueMarks: {
@@ -220,8 +239,12 @@ Item {
                     hand.scrubbing = true;
                     hand.lastX = mouse.x;
                     hand.wasPlaying = view.playing;
+                    view.scrubHeld = true;
+                    view.scrubWasPlaying = view.playing;
                     if (view.scrubAudio && !view.playing) {
-                        Bridge.play(view.deckId, true);
+                        // A held hand on a silent deck makes no sound until it moves; the move below
+                        // starts the deck for as long as the movement lasts.
+                        scrubIdle.restart();
                     }
                 }
                 onPositionChanged: function (mouse) {
@@ -240,22 +263,29 @@ Item {
                     view.anchorFrame = target;
                     view.anchorMilliseconds = Date.now();
                     Bridge.seek(view.deckId, Math.floor(target));
+                    if (view.scrubAudio && !view.scrubWasPlaying) {
+                        // Sound from the hand: the deck plays while it moves, and falls silent when it
+                        // stops. Without this a paused deck simply started playing on the first move and
+                        // kept running after the hand let go mid-way.
+                        if (!view.playing) {
+                            Bridge.play(view.deckId, true);
+                        }
+                        scrubIdle.restart();
+                    }
                 }
-                onReleased: {
+                function endScrub() {
                     if (!hand.scrubbing) {
                         return;
                     }
                     hand.scrubbing = false;
+                    view.scrubHeld = false;
+                    scrubIdle.stop();
                     if (view.scrubAudio && !hand.wasPlaying) {
                         Bridge.play(view.deckId, false);
                     }
                 }
-                onCanceled: {
-                    hand.scrubbing = false;
-                    if (view.scrubAudio && !hand.wasPlaying) {
-                        Bridge.play(view.deckId, false);
-                    }
-                }
+                onReleased: endScrub()
+                onCanceled: endScrub()
             }
         }
 
