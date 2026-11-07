@@ -39,9 +39,23 @@ Item {
     property real draggedDb: 0.0
     property real pressDb: 0.0
     property real pressY: 0.0
-    // Decibels per pixel of drag, the same in both directions: the travel is asymmetric (−40…+6), and a
-    // constant rate is what makes a trim feel like a trim instead of a knob that sprints upwards.
-    readonly property real dbPerPixel: 0.5
+    property real pressAngle: 0.0
+    // Two hundred and seventy degrees over the cap, the same in both directions: a trim is a knob, so the
+    // hand turns the pointer at one rate and the decibels follow the angle.
+    readonly property real degPerPixel: 270.0 / knob.capSide
+
+    /// The angle the pointer stands at for a gain.
+    function angleOf(decibels) {
+        return decibels >= 0.0 ? 135.0 * decibels / knob.maximumDb
+                               : 135.0 * decibels / (-knob.minimumDb);
+    }
+
+    /// The gain the pointer's angle means, clamped to the ends of the travel.
+    function dbOf(angle) {
+        const clamped = Math.max(-135.0, Math.min(135.0, angle));
+        return clamped >= 0.0 ? clamped / 135.0 * knob.maximumDb
+                              : clamped / 135.0 * (-knob.minimumDb);
+    }
     // What the last gesture asked for, so a check can tell a dead knob from a refused command.
     property real lastDb: -1.0
 
@@ -133,15 +147,15 @@ Item {
             knob.dragging = true;
             knob.pressDb = knob.db;
             knob.pressY = mouse.y;
+            knob.pressAngle = knob.angleOf(knob.pressDb);
             knob.draggedDb = knob.pressDb;
         }
         onPositionChanged: function (mouse) {
             if (!knob.dragging) {
                 return;
             }
-            // The hand moves the value: ten pixels up and ten down change the trim by the same number of
-            // decibels, and the pointer follows the law (zero straight up) on its own.
-            knob.ask(knob.pressDb + (knob.pressY - mouse.y) * knob.dbPerPixel);
+            // The hand turns the pointer at one rate; the trim comes from the angle it lands on.
+            knob.ask(knob.dbOf(knob.pressAngle + (knob.pressY - mouse.y) * knob.degPerPixel));
         }
         onReleased: knob.dragging = false
         onCanceled: knob.dragging = false

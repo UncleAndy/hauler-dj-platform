@@ -46,10 +46,22 @@ Item {
     property real dragged: 0.0
     property real pressDb: 0.0
     property real pressY: 0.0
-    // How fast the hand changes the value, in decibels per pixel — the same in both directions. The
-    // ranges are asymmetric (−26…+6), so a constant rate is the only way dragging up and dragging down
-    // feel alike; the pointer then follows the law above, which keeps zero on top.
-    readonly property real dbPerPixel: 0.5
+    property real pressAngle: 0.0
+    // The hand turns the pointer: two hundred and seventy degrees over the cap, the same in both
+    // directions — a knob, not a volume slider. The decibels then follow the angle, so the turn is even
+    // while the two halves stay asymmetric (−26 against +6), exactly as on a channel strip.
+    readonly property real degPerPixel: 270.0 / knob.capSide
+
+    /// The angle the pointer stands at for a band gain.
+    function angleOf(decibels) {
+        return decibels >= 0.0 ? 135.0 * decibels / knob.boostDb : 135.0 * decibels / knob.cutDb;
+    }
+
+    /// The band gain the pointer's angle means, clamped to the ends of the travel.
+    function dbOf(angle) {
+        const clamped = Math.max(-135.0, Math.min(135.0, angle));
+        return clamped >= 0.0 ? clamped / 135.0 * knob.boostDb : clamped / 135.0 * knob.cutDb;
+    }
     // What the last gesture asked for, so a check can tell a dead knob from a refused command.
     property real lastDb: -1.0
 
@@ -144,15 +156,16 @@ Item {
             knob.dragging = true;
             knob.pressDb = knob.db;
             knob.pressY = mouse.y;
+            knob.pressAngle = knob.angleOf(knob.pressDb);
             knob.dragged = knob.pressDb;
         }
         onPositionChanged: function (mouse) {
             if (!knob.dragging) {
                 return;
             }
-            // The hand moves the value, not the pointer: ten pixels up and ten pixels down change the
-            // band by the same number of decibels, however asymmetric the two ends of the law are.
-            knob.ask(knob.pressDb + (knob.pressY - mouse.y) * knob.dbPerPixel);
+            // The hand turns the pointer: the same number of degrees per pixel either way, and the band
+            // gain comes from where the pointer ends up.
+            knob.ask(knob.dbOf(knob.pressAngle + (knob.pressY - mouse.y) * knob.degPerPixel));
         }
         onReleased: knob.dragging = false
         onCanceled: knob.dragging = false

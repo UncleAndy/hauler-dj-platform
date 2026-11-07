@@ -2839,36 +2839,74 @@ int main(int argc, char *argv[])
             return 1;
         }
 
-        // The hand's rate must be the same both ways: the ranges are asymmetric (−40…+6 on the gain,
-        // −26…+6 on a band), so a constant decibels-per-pixel is what makes up and down feel alike.
-        // Measured through real mouse events: this is a property of the MouseArea, not of a number.
-        const QPointF grab = trimA->mapToScene(QPointF(trimA->width() / 2.0,
-                                                       trimA->height() / 2.0));
-        const auto send = [&](QEvent::Type type, const QPointF &at) {
-            QMouseEvent event(type, at, window->mapToGlobal(at.toPoint()), Qt::LeftButton,
-                              Qt::LeftButton, Qt::NoModifier);
-            QCoreApplication::sendEvent(window, &event);
-            QCoreApplication::processEvents();
+        // The hand turns the pointer at one rate: ten pixels up and ten pixels down are ninety degrees
+        // each way, whatever the decibels do — the two halves stay asymmetric, like a channel strip.
+        const auto pump = [&]() {
+            for (int step = 0; step < 40; ++step) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+                QThread::msleep(5);
+            }
         };
-        // Two equal travels, one up and one down, measured by the value the knob asked the engine for.
-        // `lastDb` starts empty, so the comparison is between the two moves and not against a baseline
-        // the press never set.
-        send(QEvent::MouseButtonPress, grab);
-        send(QEvent::MouseMove, grab - QPointF(0, 10));
-        const double up = trimA->property("lastDb").toDouble();
-        send(QEvent::MouseMove, grab + QPointF(0, 20));
-        const double down = trimA->property("lastDb").toDouble();
-        send(QEvent::MouseButtonRelease, grab);
-        std::fprintf(stdout, "dj-ui: ten pixels up asks %+.1f dB, twenty down asks %+.1f dB\n",
-                     up, down);
-        if (up < -100.0 || down < -100.0) {
-            std::fprintf(stderr, "dj-ui: the gain knob did not take the drag\n");
+        const auto turnTwice = [&](QQuickItem *knob, const char *name, double &up, double &down,
+                                   double &dbUp, double &dbDown) {
+            if (knob == nullptr) {
+                return false;
+            }
+            const QPointF grab =
+                knob->mapToScene(QPointF(knob->width() / 2.0, knob->height() / 2.0));
+            const auto send = [&](QEvent::Type type, const QPointF &at) {
+                QMouseEvent event(type, at, window->mapToGlobal(at.toPoint()), Qt::LeftButton,
+                                  Qt::LeftButton, Qt::NoModifier);
+                QCoreApplication::sendEvent(window, &event);
+                QCoreApplication::processEvents();
+            };
+            send(QEvent::MouseButtonPress, grab);
+            pump();
+            const double rest = knob->property("angle").toDouble();
+            const double restDb = knob->property("db").toDouble();
+            send(QEvent::MouseMove, grab - QPointF(0, 10));
+            pump();
+            up = knob->property("angle").toDouble() - rest;
+            dbUp = knob->property("db").toDouble() - restDb;
+            send(QEvent::MouseMove, grab + QPointF(0, 10));
+            pump();
+            down = knob->property("angle").toDouble() - rest;
+            dbDown = knob->property("db").toDouble() - restDb;
+            send(QEvent::MouseButtonRelease, grab);
+            std::fprintf(stdout,
+                         "dj-ui: ten pixels turn %s %+.0f and %+.0f degrees (%+.1f / %+.1f dB)\n",
+                         name, up, down, dbUp, dbDown);
+            return true;
+        };
+        double gainUp = 0.0;
+        double gainDown = 0.0;
+        double gainDbUp = 0.0;
+        double gainDbDown = 0.0;
+        if (!turnTwice(trimA, "the gain knob", gainUp, gainDown, gainDbUp, gainDbDown)) {
+            std::fprintf(stderr, "dj-ui: no trim knob on deck A\n");
             return 1;
         }
-        // Thirty pixels of travel lie between the two readings, at half a decibel each.
-        if (std::abs((up - down) - 15.0) > 0.6) {
+        if (std::abs(gainUp - 90.0) > 2.0 || std::abs(gainDown + 90.0) > 2.0) {
             std::fprintf(stderr, "dj-ui: the gain knob turns at different rates up and down\n");
             return 1;
+        }
+        QQuickItem *eqLowA = findItem(window->contentItem(), QStringLiteral("eq_low_A"));
+        double bandUp = 0.0;
+        double bandDown = 0.0;
+        double bandDbUp = 0.0;
+        double bandDbDown = 0.0;
+        if (turnTwice(eqLowA, "the low band", bandUp, bandDown, bandDbUp, bandDbDown)
+            && (std::abs(bandUp - 90.0) > 2.0 || std::abs(bandDown + 90.0) > 2.0)) {
+            std::fprintf(stderr, "dj-ui: the band knob turns at different rates up and down\n");
+            return 1;
+        }
+        // The gesture above left deck A's low band where the hand dropped it; the checks below want a flat
+        // channel, so put the knob and the deck back before measuring anything else.
+        bridge->setChannelGain(QStringLiteral("A"), 1.0);
+        bridge->setChannelEq(QStringLiteral("A"), QStringLiteral("low"), 0.0);
+        for (int step = 0; step < 40; ++step) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+            QThread::msleep(5);
         }
 
         const double masterTop = masterKnob->mapToItem(content, QPointF(0, 0)).y();
