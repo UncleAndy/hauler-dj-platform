@@ -3152,8 +3152,9 @@ int main(int argc, char *argv[])
         };
 
         // Loop mode is the armed set now: the saved loops plus the button's own, not one region.
+        // QVariantList::size() is a qsizetype; the counters below are printed with %d.
         const auto armedCount = [&]() {
-            return deckOf().value(QStringLiteral("active_loops")).toList().size();
+            return int(deckOf().value(QStringLiteral("active_loops")).toList().size());
         };
         auto *strip = findItem(window->contentItem(), QStringLiteral("waveStrip_A"));
         const auto stripProp = [&](const char *name) {
