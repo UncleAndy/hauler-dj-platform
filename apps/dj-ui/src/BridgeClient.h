@@ -98,6 +98,9 @@ public:
     Q_INVOKABLE int setChannelGain(const QString &deck, double gain);
     /// Playback rate of a deck: 1.0 is the file's own speed, and the pitch moves with it.
     Q_INVOKABLE int setTempo(const QString &deck, double ratio);
+    /// A hotcue's name and colour; an empty string leaves that half alone (DJP-DECK-003).
+    Q_INVOKABLE int setCueMeta(const QString &deck, int slot, const QString &label,
+                               const QString &color);
 
     // The channel fader of a deck, 0 … 1 (1.0 is unity). A different control from the gain: the gain
     // lines a track up before the EQ, the fader is ridden after it.

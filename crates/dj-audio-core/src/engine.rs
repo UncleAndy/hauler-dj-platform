@@ -75,9 +75,10 @@ impl Engine {
     /// the queue only ever carries work that will actually happen (`NotSupported`).
     pub fn submit(&mut self, scheduled: ScheduledCommand) -> Ack {
         let ack = match &scheduled.command {
-            DjCommand::Cue { .. } | DjCommand::SeekFrames { .. } | DjCommand::SetLoop { .. } => {
-                Ack::rejected(scheduled.id, RejectReason::NotSupported)
-            }
+            DjCommand::Cue { .. }
+            | DjCommand::SetCueMeta { .. }
+            | DjCommand::SeekFrames { .. }
+            | DjCommand::SetLoop { .. } => Ack::rejected(scheduled.id, RejectReason::NotSupported),
             _ => self.queue.push(scheduled),
         };
         self.push_ack(ack.clone());
@@ -206,6 +207,7 @@ impl Engine {
                 }
             }
             DjCommand::Cue { .. }
+            | DjCommand::SetCueMeta { .. }
             | DjCommand::SeekFrames { .. }
             | DjCommand::SetLoop { .. }
             | DjCommand::Load { .. }
@@ -256,6 +258,8 @@ impl Engine {
                 track: None,
                 loop_region: None,
                 hotcues: vec![None; dj_domain::HOTCUE_SLOTS],
+                cue_labels: Vec::new(),
+                cue_colors: Vec::new(),
                 levels: dj_domain::Levels::SILENT,
                 linear_gain: self.gain,
                 tempo_ratio: self.tempo_ratio,

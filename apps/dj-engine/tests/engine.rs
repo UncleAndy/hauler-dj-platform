@@ -965,6 +965,8 @@ fn prepared_with(
         },
         path: Some(std::path::PathBuf::from("/tmp/dj-engine-cue-test.wav")),
         cues,
+        // Built by hand: the pads carry no names or colours of their own here.
+        cue_meta: Vec::new(),
         loop_region: loop_region.map(|(start, end)| dj_domain::FrameRange {
             start: SourceFrame(start),
             end: SourceFrame(end),
@@ -1004,6 +1006,65 @@ fn a_load_puts_the_saved_cues_back_on_the_deck() {
     assert_eq!(cues[1], None);
     let region = deck.loop_region().expect("the loop came back");
     assert_eq!((region.start.0, region.end.0), (10, 20));
+}
+
+#[test]
+fn a_pad_name_and_colour_reach_the_state_and_the_writer() {
+    let decks = vec![Deck::new(DeckId::A)];
+    let (submissions, submission_rx) = std::sync::mpsc::channel();
+    let (loads, load_rx) = std::sync::mpsc::channel();
+    let (edits, edit_rx) = std::sync::mpsc::channel();
+    let mut graph = EngineGraph::new(
+        decks,
+        mixer_for(48_000),
+        submission_rx,
+        Arc::new(StateCells::new()),
+        256,
+        load_rx,
+    )
+    .with_meta_sink(edits);
+    loads
+        .send(GraphLoad::Attach(Box::new(prepared_with(
+            DeckId::A,
+            vec![(2, 4800)],
+            None,
+        ))))
+        .expect("send");
+    let mut master = vec![0.0f32; 512];
+    let mut cue = vec![0.0f32; 512];
+    graph.render_pair(&mut master, &mut cue, 256);
+    while edit_rx.try_recv().is_ok() {}
+
+    let (reply, _answer) = std::sync::mpsc::channel();
+    submissions
+        .send(Submission {
+            command: command(
+                1,
+                DjCommand::SetCueMeta {
+                    deck: DeckId::A,
+                    slot: 2,
+                    label: Some("Drop".to_string()),
+                    color: Some("#5fb85f".to_string()),
+                },
+            ),
+            reply,
+        })
+        .expect("send");
+    graph.render_pair(&mut master, &mut cue, 256);
+
+    let deck = &graph.decks()[0];
+    assert_eq!(deck.cue_labels()[2].as_deref(), Some("Drop"));
+    assert_eq!(deck.cue_colors()[2].as_deref(), Some("#5fb85f"));
+
+    // And the file hears about it: a name is part of what a track remembers.
+    let edit = edit_rx.try_recv().expect("an edit for the writer");
+    let asked = edit
+        .cue_meta
+        .iter()
+        .find(|(slot, _, _)| *slot == 2)
+        .expect("the pad in the edit");
+    assert_eq!(asked.1.as_deref(), Some("Drop"));
+    assert_eq!(asked.2.as_deref(), Some("#5fb85f"));
 }
 
 #[test]
@@ -1067,6 +1128,7 @@ fn an_edit_survives_a_restart() {
     let edit = dj_engine::MetaEdit {
         path: track.clone(),
         cues: vec![(0, 4_800), (5, 96_000)],
+        cue_meta: vec![(0, Some("Intro".to_string()), Some("#4a86c8".to_string()))],
         loop_region: Some((12_000, 24_000)),
     };
     dj_engine::meta::write_edit(&store, "vol", &dir, &edit).expect("write");
@@ -1077,6 +1139,14 @@ fn an_edit_survives_a_restart() {
     let problem = dj_engine::meta::restore(&mut prepared, &store, "vol", &dir);
     assert!(problem.is_none(), "unexpected problem: {problem:?}");
     assert_eq!(prepared.cues, vec![(0, 4_800), (5, 96_000)]);
+    assert_eq!(
+        prepared.cue_meta,
+        vec![
+            (0, Some("Intro".to_string()), Some("#4a86c8".to_string())),
+            (5, None, None)
+        ],
+        "a pad's name and colour travel with the file"
+    );
     let region = prepared.loop_region.expect("the loop came back");
     assert_eq!((region.start.0, region.end.0), (12_000, 24_000));
 
@@ -1084,6 +1154,8 @@ fn an_edit_survives_a_restart() {
     let second = dj_engine::MetaEdit {
         path: track.clone(),
         cues: vec![(0, 4_800)],
+        // No name asked for this time: the one on disk must survive the rewrite.
+        cue_meta: Vec::new(),
         loop_region: None,
     };
     dj_engine::meta::write_edit(&store, "vol", &dir, &second).expect("second write");
@@ -1307,5 +1379,58 @@ fn a_track_opens_at_the_level_the_loader_measured() {
         graph.decks()[0].gain(),
         measured,
         "the deck did not open at the measured level"
+    );
+}
+
+#[test]
+fn a_forty_four_one_file_plays_for_its_recorded_length() {
+    // The report from the booth: mp3 files played a little faster than they should. A 44.1 kHz file read
+    // as if it were 48 kHz lasts 0.919 of its length, and every track sounds hurried. One second of
+    // device time must consume one second of the file.
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../crates/dj-codec/tests/fixtures/audio/tone-1s-44100-cbr.mp3");
+    let mut prepared = match prepare_track(&path, 48_000, 2.0) {
+        Ok(track) => track,
+        Err(message) => panic!("the fixture did not prepare: {message}"),
+    };
+    prepared.deck = DeckId::A;
+    let decks = vec![Deck::new(DeckId::A), Deck::new(DeckId::B)];
+    let mixer = mixer_for(48_000);
+    let cells = Arc::new(StateCells::new());
+    let (submissions, submission_rx) = std::sync::mpsc::channel::<Submission>();
+    let (loads, load_rx) = std::sync::mpsc::channel::<GraphLoad>();
+    let mut graph = EngineGraph::new(decks, mixer, submission_rx, cells, 256, load_rx);
+    loads
+        .send(GraphLoad::Attach(Box::new(prepared)))
+        .unwrap_or_else(|err| panic!("{err}"));
+    let mut master = vec![0.0f32; 512];
+    let mut cue = vec![0.0f32; 512];
+    graph.render_pair(&mut master, &mut cue, 256);
+    // Transport through the command path, the way the shell does it.
+    let (reply, _answer) = std::sync::mpsc::channel();
+    submissions
+        .send(Submission {
+            command: command(
+                1,
+                DjCommand::Play {
+                    deck: DeckId::A,
+                    enabled: true,
+                },
+            ),
+            reply,
+        })
+        .expect("send");
+
+    // One second of device time, in blocks of 256 frames.
+    for _ in 0..188 {
+        graph.render_pair(&mut master, &mut cue, 256);
+    }
+    let consumed = graph.decks()[0].position();
+    // One second of the file is 44100 frames; playing it at the file's own speed means the device's second
+    // eats 44100 of them. Reading the file as if it were 48 kHz would have eaten all 44100 in 0.919 of a
+    // second and the deck would sit at the end of a one-second file before the second was over.
+    assert!(
+        (43_500..=44_500).contains(&consumed),
+        "a second of device time consumed {consumed} source frames of a 44.1 kHz file"
     );
 }

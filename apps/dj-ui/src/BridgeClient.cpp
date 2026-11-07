@@ -418,6 +418,24 @@ int BridgeClient::setTempo(const QString &deck, double ratio)
     return sendCommand(deck, command);
 }
 
+int BridgeClient::setCueMeta(const QString &deck, int slot, const QString &label,
+                             const QString &color)
+{
+    QJsonObject options;
+    options.insert(QStringLiteral("deck"), deck);
+    options.insert(QStringLiteral("slot"), slot);
+    // An empty string means "leave this half alone": the two halves of a pad are set independently.
+    if (!label.isEmpty()) {
+        options.insert(QStringLiteral("label"), label);
+    }
+    if (!color.isEmpty()) {
+        options.insert(QStringLiteral("color"), color);
+    }
+    QJsonObject command;
+    command.insert(QStringLiteral("SetCueMeta"), options);
+    return sendCommand(deck, command);
+}
+
 int BridgeClient::setChannelFader(const QString &deck, double position)
 {
     QJsonObject options;

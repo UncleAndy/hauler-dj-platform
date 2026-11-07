@@ -89,6 +89,30 @@ Pane {
         Bridge.seek(panel.deckId, panel.cueFrame());
     }
 
+    // ---- the eight pads (DJP-DECK-003) ----------------------------------------------------
+    // Eight colours, readable on a dark panel and told apart from each other in a booth. Not called
+    // `palette`: that name belongs to the control's own theme palette, and shadowing it is a warning.
+    readonly property var cuePalette: ["#c8503c", "#c8783c", "#b8b23c", "#5fb85f",
+                                    "#3fb0a8", "#4a86c8", "#8f5fc8", "#c85f9e"]
+
+    function hotcueFrame(slot) {
+        const cues = panel.deck !== null && panel.deck.hotcues !== undefined ? panel.deck.hotcues : [];
+        return slot < cues.length && cues[slot] !== null && cues[slot] !== undefined ? cues[slot] : null;
+    }
+
+    function hotcueLabel(slot) {
+        const list = panel.deck !== null && panel.deck.cue_labels !== undefined
+                     ? panel.deck.cue_labels : [];
+        return slot < list.length && list[slot] !== null && list[slot] !== undefined ? list[slot] : "";
+    }
+
+    function hotcueColor(slot, fallback) {
+        const list = panel.deck !== null && panel.deck.cue_colors !== undefined
+                     ? panel.deck.cue_colors : [];
+        const hex = slot < list.length ? list[slot] : null;
+        return hex !== null && hex !== undefined && String(hex).length > 0 ? String(hex) : fallback;
+    }
+
     function remainingLabel() {
         return panel.timeLabel(panel.deck.remaining_frames);
     }
@@ -270,12 +294,162 @@ Pane {
             }
             Item { Layout.fillWidth: true }
             Label {
+                objectName: "status_" + panel.deckId
                 text: panel.statusText()
                 color: panel.deck.load !== undefined && panel.deck.load.Failed !== undefined
                        ? UiSettings.themeDanger : UiSettings.themeTextDim
                 font.pixelSize: 10
                 elide: Text.ElideRight
                 Layout.maximumWidth: 140
+            }
+        }
+
+        // The pads, right under the transport where the hand already is.
+        RowLayout {
+            objectName: "cuepads_" + panel.deckId
+            Layout.fillWidth: true
+            spacing: 3
+
+            Repeater {
+                model: 8
+                delegate: padDelegate
+            }
+        }
+    }
+
+    // What a right click offers: the eight colours, a name and a way to clear the pad.
+    Menu {
+        id: cueMenu
+        property int slot: 0
+
+        MenuItem {
+            text: qsTr("Name…")
+            onTriggered: {
+                rename.slot = cueMenu.slot;
+                rename.field.text = panel.hotcueLabel(cueMenu.slot);
+                rename.open();
+            }
+        }
+        MenuSeparator {}
+        Repeater {
+            model: 8
+            delegate: MenuItem {
+                required property int index
+                text: qsTr("Colour %1").arg(index + 1)
+                icon.color: panel.cuePalette[index % panel.cuePalette.length]
+                onTriggered: Bridge.setCueMeta(panel.deckId, cueMenu.slot, "",
+                                               panel.cuePalette[index % panel.cuePalette.length])
+            }
+        }
+        MenuSeparator {}
+        MenuItem {
+            text: qsTr("Clear")
+            onTriggered: Bridge.cue(panel.deckId, "Delete", cueMenu.slot)
+        }
+    }
+
+    // A pad's name, typed once and then carried with the file.
+    Popup {
+        id: rename
+        property int slot: 0
+        anchors.centerIn: Overlay.overlay
+        modal: true
+        focus: true
+        padding: 8
+        width: Math.min(320, Overlay.overlay !== null ? Overlay.overlay.width * 0.6 : 320)
+
+        ColumnLayout {
+            spacing: 6
+            Label {
+                text: qsTr("Name for pad %1").arg(rename.slot + 1)
+                color: UiSettings.themeText
+                font.pixelSize: 11
+            }
+            TextField {
+                id: field
+                Layout.fillWidth: true
+                font.pixelSize: 11
+                selectByMouse: true
+                onAccepted: {
+                    Bridge.setCueMeta(panel.deckId, rename.slot, field.text, "");
+                    rename.close();
+                }
+            }
+            RowLayout {
+                spacing: 6
+                Item { Layout.fillWidth: true }
+                Button {
+                    text: qsTr("Cancel")
+                    font.pixelSize: 11
+                    focusPolicy: Qt.NoFocus
+                    onClicked: rename.close()
+                }
+                Button {
+                    text: qsTr("Save")
+                    font.pixelSize: 11
+                    focusPolicy: Qt.NoFocus
+                    onClicked: {
+                        Bridge.setCueMeta(panel.deckId, rename.slot, field.text, "");
+                        rename.close();
+                    }
+                }
+            }
+        }
+    }
+
+    // Eight pads, one row: click sets an empty pad or jumps to a set one, shift-click or the menu
+    // clears it, and the menu names and colours it. A pad's colour and name travel with the file, so
+    // the same cue looks the same tomorrow.
+    Component {
+        id: padDelegate
+        Rectangle {
+            id: pad
+            required property int index
+            objectName: "cuepad_" + panel.deckId + "_" + pad.index
+            readonly property var frame: panel.hotcueFrame(pad.index)
+            readonly property string label: panel.hotcueLabel(pad.index)
+            Layout.fillWidth: true
+            Layout.preferredHeight: 20
+            Layout.minimumWidth: 14
+            radius: 2
+            color: pad.frame !== null
+                   ? panel.hotcueColor(pad.index, panel.cuePalette[pad.index % panel.cuePalette.length])
+                   : UiSettings.themeRaised
+            border.width: 1
+            border.color: UiSettings.themeBorder
+            opacity: pad.frame !== null ? 1.0 : 0.7
+
+            Text {
+                anchors.fill: parent
+                anchors.margins: 1
+                text: pad.label.length > 0 ? pad.label : String(pad.index + 1)
+                font.pixelSize: 8
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+                elide: Text.ElideRight
+                color: UiSettings.themeText
+            }
+
+            MouseArea {
+                anchors.fill: parent
+                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                onClicked: function (mouse) {
+                    if (!panel.live) {
+                        return;
+                    }
+                    if (mouse.button === Qt.RightButton) {
+                        cueMenu.slot = pad.index;
+                        cueMenu.popup();
+                        return;
+                    }
+                    if (mouse.modifiers & Qt.ShiftModifier) {
+                        Bridge.cue(panel.deckId, "Delete", pad.index);
+                    } else if (pad.frame === null) {
+                        Bridge.cue(panel.deckId, "Set", pad.index);
+                    } else {
+                        Bridge.cue(panel.deckId, "Jump", pad.index);
+                    }
+                }
             }
         }
     }

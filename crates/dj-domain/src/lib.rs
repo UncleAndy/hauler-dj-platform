@@ -320,6 +320,20 @@ pub enum DjCommand {
         /// Target deck.
         deck: DeckId,
     },
+    /// The name and the colour of a hotcue: what makes a pad recognisable in a dark booth.
+    ///
+    /// A cue's position is a `Cue` command; this one only writes what a hand sees, and it is critical
+    /// because a lost rename is a lost piece of the DJ's own library.
+    SetCueMeta {
+        /// Target deck.
+        deck: DeckId,
+        /// Hotcue slot `0..8`.
+        slot: u8,
+        /// New name, or `None` to leave it alone.
+        label: Option<String>,
+        /// New colour as `#rrggbb`, or `None` to leave it alone.
+        color: Option<String>,
+    },
     /// Hotcue operation.
     Cue {
         /// Target deck.
@@ -404,6 +418,7 @@ impl DjCommand {
     pub fn is_critical(&self) -> bool {
         match self {
             DjCommand::Play { .. }
+            | DjCommand::SetCueMeta { .. }
             | DjCommand::Cue { .. }
             | DjCommand::SeekFrames { .. }
             | DjCommand::SetLoop { .. }
@@ -672,6 +687,15 @@ pub struct DeckSnapshot {
     pub loop_region: Option<FrameRange>,
     /// Stored hotcues; slot order is stable across snapshots.
     pub hotcues: Vec<Option<SourceFrame>>,
+    /// Names of the hotcues, slot for slot; `None` where a cue has no name or no cue exists.
+    ///
+    /// Defaulted, so a state document written before pads had names still reads: a client that knows
+    /// nothing about labels is not a protocol error.
+    #[serde(default)]
+    pub cue_labels: Vec<Option<String>>,
+    /// Colours of the hotcues as `#rrggbb`, slot for slot.
+    #[serde(default)]
+    pub cue_colors: Vec<Option<String>>,
     /// Current output peaks.
     pub levels: Levels,
     /// Waveform envelope, once the deck has one.

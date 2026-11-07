@@ -169,8 +169,15 @@ case "${1:-}" in
         --refusal-check --load "$fixture"
     # The transport, end to end: Play moves the playhead, Stop puts it back on the cue point, and the
     # hand can scrub the overview — three gestures the deck is asked for by name (DJP-DECK-002).
+    pads_copy="$run_dir/pads-$(basename "$fixture")"
+    cp "$fixture" "$pads_copy"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --transport-check --load "$fixture"
+    # The eight pads: setting one stores the playhead, a name and a colour travel through the engine,
+    # and shift-click clears it (DJP-DECK-003). The copy matters: a pad is metadata, and a gate run
+    # must not edit the fixture the rest of the suite is measured against.
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
+        --pads-check --load "$pads_copy"
     # A playing deck must refuse a load, and say so: cutting the track is the one mistake a DJ
     # never forgives.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \

@@ -69,6 +69,9 @@ struct ToneSource {
     frames: u64,
     phase: f32,
     step: f32,
+    /// The rate the tone was generated at: a source that claims another rate is played at the wrong
+    /// speed, and the measurement tone is the one thing a headless run can compare against.
+    rate: u32,
 }
 
 impl ToneSource {
@@ -78,13 +81,14 @@ impl ToneSource {
             frames: (f64::from(sample_rate) * seconds) as u64,
             phase: 0.0,
             step: std::f32::consts::TAU * frequency / sample_rate as f32,
+            rate: sample_rate,
         }
     }
 }
 
 impl DeckSource for ToneSource {
     fn sample_rate(&self) -> u32 {
-        48_000
+        self.rate
     }
 
     fn frames(&self) -> Option<u64> {
@@ -256,6 +260,9 @@ fn run(argv: &[String]) -> Result<(), String> {
     // does not create is a panel whose controls can never do anything.
     for id in [DeckId::A, DeckId::B, DeckId::C, DeckId::D] {
         let mut deck = Deck::new(id);
+        // What rate the deck is played at: a file recorded at another rate is resampled to this one
+        // instead of being played at the wrong speed.
+        deck.set_output_rate(rate);
         // A deck starts empty: "Ready" has to mean "a file is in the deck", or a client cannot tell
         // a track from the measurement tone that used to sit here.
         if autoplay {

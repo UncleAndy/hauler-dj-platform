@@ -178,6 +178,9 @@ pub struct Deck {
     tempo_ratio: f64,
     loop_region: Option<FrameRange>,
     hotcues: [Option<u64>; HOTCUE_SLOTS],
+    /// Names and colours of the hotcues: what a pad shows besides its position (DJP-DECK-003).
+    cue_labels: [Option<String>; HOTCUE_SLOTS],
+    cue_colors: [Option<String>; HOTCUE_SLOTS],
     track: Option<TrackMeta>,
     levels: Levels,
     stats: DeckStats,
@@ -191,6 +194,14 @@ pub struct Deck {
     reading_loop_buffer: bool,
     /// The channel's three-band EQ, applied after the trim and before the mixer (A14).
     eq: ChannelEq,
+    /// Rate the deck is played at, in Hz: the device's rate, so a file recorded at another rate is
+    /// resampled instead of being played at the wrong speed.
+    output_rate: u32,
+    /// Source frames per output frame from the file's own rate, before the tempo is applied.
+    ///
+    /// A 44.1 kHz file on a 48 kHz device is 0.91875 — playing it at 1.0 is eight per cent too fast,
+    /// which the ear hears as "a little faster" on every track, not as a broken file.
+    rate_ratio: f64,
     /// Source frames pulled for the tempo stage but not yet played, stereo.
     ///
     /// A tempo change is a resampling: the deck asks the source for slightly more (or fewer) frames than
@@ -228,6 +239,8 @@ impl Deck {
             tempo_ratio: 1.0,
             loop_region: None,
             hotcues: [None; HOTCUE_SLOTS],
+            cue_labels: std::array::from_fn(|_| None),
+            cue_colors: std::array::from_fn(|_| None),
             track: None,
             levels: Levels::SILENT,
             stats: DeckStats::default(),
@@ -236,10 +249,31 @@ impl Deck {
             loop_buffer: None,
             reading_loop_buffer: false,
             eq: ChannelEq::new(EQ_SAMPLE_RATE),
+            output_rate: EQ_SAMPLE_RATE as u32,
+            rate_ratio: 1.0,
             scratch: vec![0.0; MAX_TEMPO_BLOCK_FRAMES * 2],
             scratch_frames: 0,
             phase: 0.0,
         }
+    }
+
+    /// Tell the deck what rate it is being played at, so a file recorded at another rate is resampled
+    /// rather than played eight per cent fast.
+    pub fn set_output_rate(&mut self, rate: u32) {
+        if rate == 0 || rate == self.output_rate {
+            return;
+        }
+        self.output_rate = rate;
+        self.rate_ratio = self.source_rate_of_current() / f64::from(rate);
+    }
+
+    /// The current source's rate, or the deck's own rate when nothing is attached.
+    fn source_rate_of_current(&self) -> f64 {
+        self.source
+            .as_ref()
+            .map_or(f64::from(self.output_rate), |source| {
+                f64::from(source.sample_rate())
+            })
     }
 
     /// Set the playback rate: 1.0 is the file's own speed.
@@ -314,6 +348,15 @@ impl Deck {
         self.loop_region = None;
         self.levels = Levels::SILENT;
         self.drop_pending();
+        // The file's own rate against the device's: a 44.1 kHz file on a 48 kHz device must come out
+        // at its recorded speed, which means reading 0.91875 source frames per output frame.
+        self.rate_ratio = self.source_rate_of_current() / f64::from(self.output_rate);
+        // A new track carries its own pads, names and colours; the last track's are not part of it.
+        // Leaving them behind put the previous file's cue on an empty pad, and a click on that pad
+        // jumped into a position the new track never had.
+        self.hotcues = [None; HOTCUE_SLOTS];
+        self.cue_labels = std::array::from_fn(|_| None);
+        self.cue_colors = std::array::from_fn(|_| None);
         // A new track starts with an empty filter history: the tail of the last one is not part of
         // this one, and a stale state produces a click on the first block.
         self.eq.reset();
@@ -519,6 +562,44 @@ impl Deck {
         true
     }
 
+    /// Name and colour of a hotcue: what a pad shows besides its position.
+    ///
+    /// Either half may be absent, and `None` means "leave this half alone": renaming a pad must not
+    /// wipe the colour the DJ chose for it.
+    pub fn set_cue_meta(
+        &mut self,
+        slot: usize,
+        label: Option<String>,
+        color: Option<String>,
+    ) -> bool {
+        if slot >= HOTCUE_SLOTS {
+            return false;
+        }
+        if let Some(name) = label {
+            self.cue_labels[slot] = Some(name);
+        }
+        if let Some(hex) = color {
+            self.cue_colors[slot] = Some(hex);
+        }
+        true
+    }
+
+    /// Source frames per output frame that come from the rate conversion alone (1.0 when the file's
+    /// rate matches the device's).
+    pub fn rate_ratio(&self) -> f64 {
+        self.rate_ratio
+    }
+
+    /// Names of the hotcues, slot for slot.
+    pub fn cue_labels(&self) -> &[Option<String>; HOTCUE_SLOTS] {
+        &self.cue_labels
+    }
+
+    /// Colours of the hotcues, slot for slot.
+    pub fn cue_colors(&self) -> &[Option<String>; HOTCUE_SLOTS] {
+        &self.cue_colors
+    }
+
     /// Put `slot` at an explicit frame, which is how a stored cue comes back after a reload.
     pub fn set_hotcue(&mut self, slot: usize, frame: u64) -> bool {
         if slot >= HOTCUE_SLOTS {
@@ -611,12 +692,13 @@ impl Deck {
             return;
         }
 
-        if (self.tempo_ratio - 1.0).abs() < 1e-9 {
+        let step = self.tempo_ratio * self.rate_ratio;
+        if (step - 1.0).abs() < 1e-9 {
             // At the file's own speed the deck is unchanged: same bytes as before the tempo stage existed,
             // which is what the golden render compares against.
             self.pull(out);
         } else {
-            self.render_at_tempo(out);
+            self.render_at_tempo(out, step);
         }
 
         for sample in out.iter_mut() {
@@ -630,22 +712,32 @@ impl Deck {
 
     /// Play `out` at the deck's tempo: pull more or less source material than the block holds and
     /// interpolate between the frames the playhead falls between.
-    fn render_at_tempo(&mut self, out: &mut [f32]) {
+    fn render_at_tempo(&mut self, out: &mut [f32], step: f64) {
         let frames = out.len() / 2;
         if frames == 0 {
             return;
         }
-        let step = self.tempo_ratio;
-        // One frame beyond what the block consumes: the last output frame interpolates between two source
-        // frames, and the second of them may belong to the next block.
-        let need = (self.phase + step * frames as f64).ceil() as usize + 1;
-        let capacity = self.scratch.len() / 2;
-        if need > capacity {
-            // The engine's block is fixed and far below this; a block this large is not a case to allocate
-            // for inside a callback, so it plays at the file's own speed.
-            self.pull(out);
+        // A block larger than the scratch is played in pieces. The alternative — falling back to the
+        // file's own speed for a block that does not fit — is a silent tempo error, and a tempo error is
+        // exactly what a listener hears as "it plays a little fast".
+        let chunk = (self.scratch.len() / 2).saturating_sub(2).max(1);
+        let mut done = 0usize;
+        while done < frames {
+            let take = (frames - done).min(chunk);
+            self.render_at_tempo_chunk(&mut out[done * 2..(done + take) * 2], step);
+            done += take;
+        }
+    }
+
+    /// One piece that fits the scratch: pull, interpolate, keep the tail.
+    fn render_at_tempo_chunk(&mut self, out: &mut [f32], step: f64) {
+        let frames = out.len() / 2;
+        if frames == 0 {
             return;
         }
+        // One frame beyond what the block consumes: the last output frame interpolates between two source
+        // frames, and the second of them may belong to the next block.
+        let need = (self.phase + step * frames as f64).ceil() as usize + 2;
 
         let mut scratch = std::mem::take(&mut self.scratch);
         let tail = self.scratch_frames;
@@ -843,6 +935,8 @@ impl Deck {
                 .iter()
                 .map(|slot| slot.map(SourceFrame))
                 .collect(),
+            cue_labels: self.cue_labels.to_vec(),
+            cue_colors: self.cue_colors.to_vec(),
             levels: self.levels,
             linear_gain: self.gain,
             tempo_ratio: self.tempo_ratio,

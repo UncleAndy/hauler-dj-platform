@@ -46,6 +46,9 @@ pub struct Cue {
     pub frame: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// `#rrggbb` of the pad, as the DJ chose it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
 }
 
 /// One point where the grid was pinned by hand, for files whose tempo drifts.

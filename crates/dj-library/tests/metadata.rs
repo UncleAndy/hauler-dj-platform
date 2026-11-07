@@ -42,6 +42,9 @@ fn record(path: &Path, revision: u64, cue: u64) -> TrackMeta {
         slot: 0,
         frame: cue,
         label: Some("drop".to_owned()),
+        // A pad's colour is part of the record; this one is written without it on purpose — an
+        // optional field must not become a required one for older files.
+        color: None,
     });
     meta
 }

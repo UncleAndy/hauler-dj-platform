@@ -938,6 +938,11 @@ int main(int argc, char *argv[])
         QStringLiteral("eq-check"),
         QStringLiteral("With --connect: send three band gains to one deck and require the snapshot "
                        "to apply them and the strip's knobs to show those numbers."));
+    const QCommandLineOption padsOption(
+        QStringLiteral("pads-check"),
+        QStringLiteral("With --connect and --load: click an empty pad to set it, name and colour it, "
+                       "jump to it by clicking again and clear it with shift, requiring the engine to "
+                       "report each step."));
     const QCommandLineOption transportOption(
         QStringLiteral("transport-check"),
         QStringLiteral("With --connect and --load: play the deck, stop it and require the playhead to "
@@ -1096,6 +1101,7 @@ int main(int argc, char *argv[])
     parser.addOption(neutralOption);
     parser.addOption(pitchOption);
     parser.addOption(transportOption);
+    parser.addOption(padsOption);
     parser.addOption(busyCheckOption);
     parser.addOption(refusalCheckOption);
     parser.addOption(spaceCheckOption);
@@ -3057,6 +3063,189 @@ int main(int argc, char *argv[])
 
 
 
+
+
+    if (parser.isSet(padsOption)) {
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        bridge->connectToEngine(parser.value(connectOption));
+        QElapsedTimer linking;
+        linking.start();
+        while (!bridge->isConnected() && linking.elapsed() < 3000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QThread::msleep(10);
+        }
+        if (!bridge->isConnected()) {
+            std::fprintf(stderr, "dj-ui: no engine\n");
+            return 1;
+        }
+        window->resize(1366, 768);
+        window->show();
+        const auto pump = [&](int rounds) {
+            for (int step = 0; step < rounds; ++step) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+                QThread::msleep(5);
+            }
+        };
+        pump(60);
+        const QString path = parser.value(loadOption);
+        if (path.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: --pads-check needs --load\n");
+            return 1;
+        }
+        bridge->load(QStringLiteral("A"), path);
+        // The loader decodes the file and measures its loudness before the graph attaches it, and an
+        // attach puts the playhead at the start: a seek sent into that window is undone a moment later.
+        pump(120);
+        QElapsedTimer ready;
+        ready.start();
+        while (ready.elapsed() < 15000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QThread::msleep(20);
+            bool loaded = false;
+            for (const QVariant &entry :
+                 bridge->snapshot().value(QStringLiteral("decks")).toList()) {
+                const QVariantMap map = entry.toMap();
+                if (map.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                    loaded = map.value(QStringLiteral("remaining_frames")).toDouble() > 0.0;
+                }
+            }
+            if (loaded) {
+                break;
+            }
+        }
+
+        const auto deckOf = [&]() {
+            for (const QVariant &entry : bridge->snapshot().value(QStringLiteral("decks")).toList()) {
+                const QVariantMap map = entry.toMap();
+                if (map.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                    return map;
+                }
+            }
+            return QVariantMap();
+        };
+        const auto click = [&](QQuickItem *item, Qt::KeyboardModifiers modifiers) {
+            if (item == nullptr) {
+                return false;
+            }
+            const QPointF at = item->mapToScene(QPointF(item->width() / 2.0, item->height() / 2.0));
+            for (const QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+                QMouseEvent event(type, at, window->mapToGlobal(at.toPoint()), Qt::LeftButton,
+                                  Qt::LeftButton, modifiers);
+                QCoreApplication::sendEvent(window, &event);
+                QCoreApplication::processEvents();
+            }
+            pump(30);
+            return true;
+        };
+
+        // Park the playhead somewhere recognisable, then set pad 3 on it. The seek is repeated until it
+        // sticks: a load still landing resets the playhead to the start of the track, and a check that
+        // raced it would store the cue at zero and blame the pad.
+        double parked = 0.0;
+        for (int attempt = 0; attempt < 20; ++attempt) {
+            bridge->seek(QStringLiteral("A"), 96000);
+            pump(20);
+            parked = deckOf().value(QStringLiteral("source_frame")).toDouble();
+            if (std::abs(parked - 96000.0) < 512.0) {
+                break;
+            }
+        }
+        std::fprintf(stdout, "dj-ui: the playhead stands at %.0f before the pad is clicked\n", parked);
+        if (std::abs(parked - 96000.0) > 512.0) {
+            std::fprintf(stderr, "dj-ui: the playhead could not be parked for the check\n");
+            return 1;
+        }
+        auto *pad = findItem(window->contentItem(), QStringLiteral("cuepad_A_3"));
+        if (pad == nullptr) {
+            std::fprintf(stderr, "dj-ui: deck A has no pad 3\n");
+            return 1;
+        }
+        {
+            // Control hand: the same command without the mouse. If this one also lands at zero, the
+            // pad is not the suspect.
+            bridge->cue(QStringLiteral("A"), QStringLiteral("Set"), 5);
+            pump(30);
+            const QVariantMap controlled = deckOf();
+            const QVariantList cuesNow = controlled.value(QStringLiteral("hotcues")).toList();
+            std::fprintf(stdout,
+                         "dj-ui: the same command without the mouse put pad 5 at %.0f with the "
+                         "playhead at %.0f\n",
+                         cuesNow.size() > 5 && !cuesNow[5].isNull() ? cuesNow[5].toDouble() : -1.0,
+                         controlled.value(QStringLiteral("source_frame")).toDouble());
+        }
+        std::fprintf(stdout, "dj-ui: pad 3 sits at %.0f,%.0f %.0fx%.0f in a %dx%d window\n",
+                     pad->mapToScene(QPointF(0, 0)).x(), pad->mapToScene(QPointF(0, 0)).y(),
+                     pad->width(), pad->height(), window->width(), window->height());
+        click(pad, Qt::NoModifier);
+        {
+            const QVariantMap after = deckOf();
+            const QVariantList cuesNow = after.value(QStringLiteral("hotcues")).toList();
+            QStringList parts;
+            for (const QVariant &cue : cuesNow) {
+                parts << (cue.isNull() ? QStringLiteral("—") : QString::number(cue.toDouble()));
+            }
+            std::fprintf(stdout, "dj-ui: after the click the deck's load state is %s\n",
+                         qPrintable(QJsonDocument::fromVariant(
+                                        after.value(QStringLiteral("load")))
+                                        .toJson(QJsonDocument::Compact)));
+            std::fprintf(stdout, "dj-ui: after the click the pads read [%s] at playhead %.0f\n",
+                         qPrintable(parts.join(QStringLiteral(", "))),
+                         after.value(QStringLiteral("source_frame")).toDouble());
+        }
+        const QVariantMap set = deckOf();
+        const QVariantList cues = set.value(QStringLiteral("hotcues")).toList();
+        const double stored = cues.size() > 3 && cues[3].isValid() && !cues[3].isNull()
+                                  ? cues[3].toDouble() : -1.0;
+        std::fprintf(stdout, "dj-ui: clicking an empty pad 3 stored a cue at %.0f\n", stored);
+        if (std::abs(stored - 96000.0) > 2000.0) {
+            std::fprintf(stderr, "dj-ui: the pad did not store the playhead\n");
+            return 1;
+        }
+
+        // A name and a colour travel through the engine and come back in the snapshot.
+        bridge->setCueMeta(QStringLiteral("A"), 3, QStringLiteral("Drop"),
+                           QStringLiteral("#5fb85f"));
+        pump(40);
+        const QVariantMap named = deckOf();
+        const QVariantList labels = named.value(QStringLiteral("cue_labels")).toList();
+        const QVariantList colors = named.value(QStringLiteral("cue_colors")).toList();
+        const QString label = labels.size() > 3 ? labels[3].toString() : QString();
+        const QString color = colors.size() > 3 ? colors[3].toString() : QString();
+        std::fprintf(stdout, "dj-ui: the pad is called %s and coloured %s\n", qPrintable(label),
+                     qPrintable(color));
+        if (label != QStringLiteral("Drop") || color != QStringLiteral("#5fb85f")) {
+            std::fprintf(stderr, "dj-ui: the pad's name or colour did not survive the round trip\n");
+            return 1;
+        }
+
+        // Clicking a set pad jumps to it.
+        bridge->seek(QStringLiteral("A"), 10000);
+        pump(30);
+        click(pad, Qt::NoModifier);
+        const QVariantMap jumped = deckOf();
+        const double landed = jumped.value(QStringLiteral("source_frame")).toDouble();
+        std::fprintf(stdout, "dj-ui: clicking the pad again moved the playhead to %.0f\n", landed);
+        if (std::abs(landed - stored) > 2000.0) {
+            std::fprintf(stderr, "dj-ui: the pad did not jump to its cue\n");
+            return 1;
+        }
+
+        // Shift-click clears it.
+        click(pad, Qt::ShiftModifier);
+        const QVariantMap cleared = deckOf();
+        const QVariantList after = cleared.value(QStringLiteral("hotcues")).toList();
+        const bool stillThere = after.size() > 3 && after[3].isValid() && !after[3].isNull();
+        std::fprintf(stdout, "dj-ui: shift-click left pad 3 %s\n", stillThere ? "set" : "empty");
+        if (stillThere) {
+            std::fprintf(stderr, "dj-ui: shift-click did not clear the pad\n");
+            return 1;
+        }
+        return 0;
+    }
 
     if (parser.isSet(transportOption)) {
         auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());

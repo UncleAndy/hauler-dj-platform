@@ -21,6 +21,12 @@ use dj_mixer::{ChannelSettings, CrossAssign, CrossfaderCurve, Mixer};
 
 pub mod meta;
 
+/// What a pad carries besides its frame: a name and a colour, each optional.
+type CuePad = (Option<String>, Option<String>);
+
+/// One deck's eight pads.
+type DeckPads = [CuePad; HOTCUE_SLOTS];
+
 pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, clock: u64) -> Ack {
     let id = command.id;
     let at = command.effective_sample.max(clock);
@@ -30,6 +36,7 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
     let deck_id = match &command.command {
         DjCommand::Play { deck, .. }
         | DjCommand::Cue { deck, .. }
+        | DjCommand::SetCueMeta { deck, .. }
         | DjCommand::SeekFrames { deck, .. }
         | DjCommand::SetLoop { deck, .. }
         | DjCommand::SetTempoRatio { deck, .. }
@@ -58,6 +65,18 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
                     target.pause();
                 }
                 Ack::applied(id, at)
+            }
+            DjCommand::SetCueMeta {
+                slot, label, color, ..
+            } => {
+                if target.set_cue_meta(usize::from(*slot), label.clone(), color.clone()) {
+                    Ack::applied(id, at)
+                } else {
+                    Ack {
+                        command_id: id,
+                        status: AckStatus::Rejected(RejectReason::InvalidValue),
+                    }
+                }
             }
             DjCommand::Cue { action, .. } => {
                 let done = match *action {
@@ -380,6 +399,11 @@ pub struct StateCells {
     master_gain: AtomicU32,
     count: AtomicUsize,
     decks: [DeckCells; MAX_DECKS],
+    /// Hotcue names and colours, per deck and slot.
+    ///
+    /// Strings cannot live in an atomic cell, and a name changes once in a while rather than every
+    /// block: the command thread writes here, the publisher thread reads. Neither is the callback.
+    cue_meta: std::sync::Mutex<Vec<DeckPads>>,
 }
 
 impl Default for StateCells {
@@ -389,6 +413,55 @@ impl Default for StateCells {
 }
 
 impl StateCells {
+    /// Put a hotcue's name and colour where the publisher will find them.
+    pub fn set_cue_meta(
+        &self,
+        deck: usize,
+        slot: usize,
+        label: Option<String>,
+        color: Option<String>,
+    ) {
+        if slot >= HOTCUE_SLOTS {
+            return;
+        }
+        let mut guard = self
+            .cue_meta
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        while guard.len() <= deck {
+            guard.push(std::array::from_fn(|_| (None, None)));
+        }
+        if let Some(name) = label {
+            guard[deck][slot].0 = Some(name);
+        }
+        if let Some(hex) = color {
+            guard[deck][slot].1 = Some(hex);
+        }
+    }
+
+    /// Forget a deck's names and colours: a new track brings its own.
+    pub fn clear_cue_meta(&self, deck: usize) {
+        let mut guard = self
+            .cue_meta
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(slots) = guard.get_mut(deck) {
+            *slots = std::array::from_fn(|_| (None, None));
+        }
+    }
+
+    /// What the publisher reads for one deck.
+    fn cue_meta_of(&self, deck: usize) -> DeckPads {
+        let guard = self
+            .cue_meta
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        guard
+            .get(deck)
+            .cloned()
+            .unwrap_or_else(|| std::array::from_fn(|_| (None, None)))
+    }
+
     /// Empty state, room for [`MAX_DECKS`] decks.
     pub fn new() -> Self {
         Self {
@@ -399,6 +472,7 @@ impl StateCells {
             master_gain: AtomicU32::new(1.0f32.to_bits()),
             count: AtomicUsize::new(0),
             decks: std::array::from_fn(|_| DeckCells::new()),
+            cue_meta: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -502,6 +576,14 @@ impl StateCells {
                     start: SourceFrame(loop_start),
                     end: SourceFrame(loop_end),
                 }),
+                cue_labels: {
+                    let meta = self.cue_meta_of(index);
+                    meta.iter().map(|(label, _)| label.clone()).collect()
+                },
+                cue_colors: {
+                    let meta = self.cue_meta_of(index);
+                    meta.iter().map(|(_, color)| color.clone()).collect()
+                },
                 hotcues: cells
                     .hotcues
                     .iter()
@@ -587,6 +669,8 @@ pub struct PreparedTrack {
     pub path: Option<std::path::PathBuf>,
     /// Cues recorded for this file, restored at attach.
     pub cues: Vec<(u8, u64)>,
+    /// Names and colours of those cues, restored at attach (DJP-DECK-003).
+    pub cue_meta: Vec<(u8, Option<String>, Option<String>)>,
     /// Loop recorded for this file.
     pub loop_region: Option<FrameRange>,
     /// Gain the channel opens with, from the file's own loudness (DJP-MIX-001 auto-gain).
@@ -602,6 +686,8 @@ pub struct MetaEdit {
     pub path: std::path::PathBuf,
     /// Cues as frames of the source file, slot and position.
     pub cues: Vec<(u8, u64)>,
+    /// Names and colours of those cues, slot first; an absent half means "keep what is on disk".
+    pub cue_meta: Vec<(u8, Option<String>, Option<String>)>,
     /// The active loop as `(start, end)` frames.
     pub loop_region: Option<(u64, u64)>,
 }
@@ -714,6 +800,7 @@ pub fn prepare_track(
         path: Some(path.to_path_buf()),
         // What the file remembers is read by the caller: this function knows samples, not sessions.
         cues: Vec::new(),
+        cue_meta: Vec::new(),
         loop_region: None,
         auto_gain,
     })
@@ -790,7 +877,11 @@ impl EngineGraph {
             return;
         };
         let deck_id = match &command.command {
-            DjCommand::Cue { deck, .. } | DjCommand::SetLoop { deck, .. } => *deck,
+            // A name or a colour is part of what the file remembers, so it is written the same way a
+            // cue position is.
+            DjCommand::Cue { deck, .. }
+            | DjCommand::SetCueMeta { deck, .. }
+            | DjCommand::SetLoop { deck, .. } => *deck,
             _ => return,
         };
         let Some(index) = self.decks.iter().position(|deck| deck.id() == deck_id) else {
@@ -806,12 +897,26 @@ impl EngineGraph {
             .enumerate()
             .filter_map(|(slot, frame)| frame.map(|frame| (slot as u8, frame)))
             .collect();
+        let labels = deck.cue_labels();
+        let colors = deck.cue_colors();
+        let cue_meta: Vec<(u8, Option<String>, Option<String>)> = cues
+            .iter()
+            .map(|(slot, _)| {
+                let index = usize::from(*slot);
+                (
+                    *slot,
+                    labels.get(index).cloned().flatten(),
+                    colors.get(index).cloned().flatten(),
+                )
+            })
+            .collect();
         let loop_region = deck
             .loop_region()
             .map(|region| (region.start.0, region.end.0));
         let _ = sink.send(MetaEdit {
             path,
             cues,
+            cue_meta,
             loop_region,
         });
     }
@@ -855,6 +960,20 @@ impl EngineGraph {
                         for (slot, frame) in prepared.cues {
                             self.decks[index].set_hotcue(usize::from(slot), frame);
                         }
+                        self.cells.clear_cue_meta(index);
+                        for (slot, label, color) in &prepared.cue_meta {
+                            self.decks[index].set_cue_meta(
+                                usize::from(*slot),
+                                label.clone(),
+                                color.clone(),
+                            );
+                            self.cells.set_cue_meta(
+                                index,
+                                usize::from(*slot),
+                                label.clone(),
+                                color.clone(),
+                            );
+                        }
                         self.decks[index].set_loop(prepared.loop_region);
                         // The track opens at its own level: a hot master and a quiet one then start
                         // from the same place, and a +6 dB EQ boost has room instead of the limiter.
@@ -892,6 +1011,22 @@ impl EngineGraph {
             // A cue or a loop is a decision the user made about this file, so it outlives the
             // session. The callback only hands the edit over; the writing thread does the disk work.
             self.note_edit(&submission.command);
+            // A pad's name and colour are strings, so they cannot ride in a cell: the publisher gets
+            // them from the cells' own map, written here on the command path.
+            if let DjCommand::SetCueMeta {
+                deck,
+                slot,
+                label,
+                color,
+            } = &submission.command.command
+                && let Some(index) = self
+                    .decks
+                    .iter()
+                    .position(|candidate| candidate.id() == *deck)
+            {
+                self.cells
+                    .set_cue_meta(index, usize::from(*slot), label.clone(), color.clone());
+            }
             let _ = submission.reply.send(ack);
         }
 

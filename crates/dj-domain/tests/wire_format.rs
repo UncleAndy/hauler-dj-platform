@@ -151,6 +151,27 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
                 None,
                 None,
             ],
+            // A named and coloured pad: the wire format covers the whole record, not only the frame.
+            cue_labels: vec![
+                Some("drop".to_string()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ],
+            cue_colors: vec![
+                Some("#5fb85f".to_string()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ],
             levels: Levels {
                 peak_left: 0.5,
                 peak_right: 0.25,
@@ -176,6 +197,8 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
             r#""position_ratio":0.0384,"track":{"title":"Track","artist":"Artist","#,
             r#""duration_frames":124800,"bpm":128.0,"key":"8A"},"loop_region":null,"#,
             r#""hotcues":[1000,null,null,null,null,null,null,null],"#,
+            r#""cue_labels":["drop",null,null,null,null,null,null,null],"#,
+            r##""cue_colors":["#5fb85f",null,null,null,null,null,null,null],"##,
             r#""levels":{"peak_left":0.5,"peak_right":0.25},"#,
             r#""linear_gain":1.0,"tempo_ratio":1.0,"fader":0.85,"#,
             r#""eq":{"low_db":3.0,"mid_db":-4.5,"high_db":0.0}}]}"#

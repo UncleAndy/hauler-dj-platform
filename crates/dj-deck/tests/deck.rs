@@ -53,7 +53,26 @@ impl DeckSource for RampSource {
 
 fn deck_with_ramp(frames: u64) -> Deck {
     let mut deck = Deck::new(DeckId::A);
+    // The ramp is 44.1 kHz material on a deck that plays 44.1 kHz: these tests are about transport and
+    // loops, not about rate conversion, and a conversion nobody asked for would move every position.
+    deck.set_output_rate(44_100);
     deck.attach(Box::new(RampSource::new(frames)), None);
+    deck
+}
+
+/// A deck that plays a 48 kHz device's rate, holding whatever source the test attaches.
+fn deck_at_48k(frames: u64, source_rate: u32) -> Deck {
+    let mut deck = Deck::new(DeckId::A);
+    deck.set_output_rate(48_000);
+    deck.attach(
+        Box::new(ToneAtRate {
+            frames,
+            position: 0,
+            rate: source_rate,
+            hertz: 1_000.0,
+        }),
+        None,
+    );
     deck
 }
 
@@ -513,6 +532,7 @@ impl DeckSource for ToneSource {
 
 fn tone_deck(frames: u64) -> Deck {
     let mut deck = Deck::new(DeckId::A);
+    deck.set_output_rate(48_000);
     deck.attach(
         Box::new(ToneSource {
             frames,
@@ -521,6 +541,45 @@ fn tone_deck(frames: u64) -> Deck {
         None,
     );
     deck
+}
+
+/// A tone at the rate the file was recorded at, so a test can ask what pitch comes out of the device.
+struct ToneAtRate {
+    frames: u64,
+    position: u64,
+    rate: u32,
+    hertz: f64,
+}
+
+impl DeckSource for ToneAtRate {
+    fn sample_rate(&self) -> u32 {
+        self.rate
+    }
+
+    fn frames(&self) -> Option<u64> {
+        Some(self.frames)
+    }
+
+    fn read(&mut self, out: &mut [f32]) -> Result<usize, String> {
+        let want = out.len() / 2;
+        let available = usize::try_from(self.frames.saturating_sub(self.position)).unwrap_or(0);
+        let take = want.min(available);
+        for index in 0..take {
+            let frame = self.position + index as u64;
+            let value = (std::f64::consts::TAU * self.hertz * frame as f64 / f64::from(self.rate))
+                .sin() as f32
+                * 0.5;
+            out[index * 2] = value;
+            out[index * 2 + 1] = value;
+        }
+        self.position += take as u64;
+        Ok(take)
+    }
+
+    fn seek(&mut self, frame: u64) -> Result<u64, String> {
+        self.position = frame.min(self.frames.saturating_sub(1));
+        Ok(self.position)
+    }
 }
 
 /// Zero crossings on the left channel: two per cycle, so the pitch is countable.
@@ -666,5 +725,103 @@ fn a_loop_still_wraps_at_tempo() {
     assert!(
         deck.stats().loop_wraps > 0,
         "twenty blocks at 1.05 did not wrap a 1000-frame loop"
+    );
+}
+
+#[test]
+fn a_pad_keeps_its_name_and_its_colour_separately() {
+    // Renaming a pad must not wipe the colour the DJ chose for it, and the other way round: the two
+    // halves are set independently and an absent half means "leave it alone" (DJP-DECK-003).
+    let mut deck = deck_with_ramp(48_000);
+    deck.play();
+    let mut block = vec![0.0f32; 512];
+    deck.render(&mut block);
+    deck.store_hotcue(4);
+
+    assert!(deck.set_cue_meta(4, Some("Drop".to_string()), None));
+    assert_eq!(deck.cue_labels()[4].as_deref(), Some("Drop"));
+    assert_eq!(deck.cue_colors()[4], None);
+
+    assert!(deck.set_cue_meta(4, None, Some("#5fb85f".to_string())));
+    assert_eq!(
+        deck.cue_labels()[4].as_deref(),
+        Some("Drop"),
+        "the name survived"
+    );
+    assert_eq!(deck.cue_colors()[4].as_deref(), Some("#5fb85f"));
+
+    let state = deck.snapshot();
+    assert_eq!(state.cue_labels[4].as_deref(), Some("Drop"));
+    assert_eq!(state.cue_colors[4].as_deref(), Some("#5fb85f"));
+    assert!(state.hotcues[4].is_some());
+
+    // A new track carries its own pads.
+    deck.attach(Box::new(RampSource::new(48_000)), None);
+    assert_eq!(deck.cue_labels()[4], None);
+    assert_eq!(deck.cue_colors()[4], None);
+}
+
+#[test]
+fn a_new_track_does_not_inherit_the_old_pads() {
+    // Loading B over A must not leave A's cues on B's pads: an inherited cue jumps into a position the
+    // new track never had, and an inherited name labels a pad that holds nothing.
+    let mut deck = deck_with_ramp(48_000);
+    deck.play();
+    let mut block = vec![0.0f32; 512];
+    deck.render(&mut block);
+    deck.store_hotcue(3);
+    deck.set_cue_meta(3, Some("Drop".to_string()), Some("#5fb85f".to_string()));
+    assert!(deck.hotcues()[3].is_some());
+
+    deck.attach(Box::new(RampSource::new(48_000)), None);
+    assert_eq!(deck.hotcues()[3], None, "the pad outlived its track");
+    assert_eq!(deck.cue_labels()[3], None);
+    assert_eq!(deck.cue_colors()[3], None);
+}
+
+#[test]
+fn a_forty_four_one_file_plays_at_its_own_speed_on_a_forty_eight_device() {
+    // The defect this guards: 44.1 kHz material read as if it were 48 kHz plays 8.8 % fast, which the
+    // ear reports as "a little faster than it should be" on every file, not as a broken one.
+    let mut deck = deck_at_48k(480_000, 44_100);
+    deck.play();
+    // Two blocks of 4800 frames: a tenth of a second of device time each.
+    let mut block = vec![0.0f32; 9_600];
+    for _ in 0..2 {
+        deck.render(&mut block);
+    }
+    let consumed = deck.position() as f64;
+    let expected = 9_600.0 * 44_100.0 / 48_000.0;
+    assert!(
+        (consumed - expected).abs() < 3.0,
+        "a fifth of a second of 44.1 kHz material consumed {consumed} source frames, expected {expected}"
+    );
+}
+
+#[test]
+fn a_forty_four_one_tone_keeps_its_pitch_on_a_forty_eight_device() {
+    // Same tone, same half second, two rates: the device must hear the same number of cycles. Reading
+    // 44.1 kHz as 48 kHz would multiply the pitch by 1.088.
+    let mut native = deck_at_48k(480_000, 48_000);
+    native.play();
+    let mut reference = vec![0.0f32; 19_200];
+    native.render(&mut reference);
+
+    let mut foreign = deck_at_48k(480_000, 44_100);
+    assert!(
+        (foreign.rate_ratio() - 44_100.0 / 48_000.0).abs() < 1e-9,
+        "the deck did not notice the file's rate: {}",
+        foreign.rate_ratio()
+    );
+    foreign.play();
+    let mut converted = vec![0.0f32; 19_200];
+    foreign.render(&mut converted);
+
+    let baseline = crossings(&reference);
+    let measured = crossings(&converted);
+    let ratio = measured as f64 / baseline as f64;
+    assert!(
+        (ratio - 1.0).abs() < 0.02,
+        "a 1 kHz tone recorded at 44.1 kHz came out at {ratio:.3} times the pitch ({baseline} -> {measured})"
     );
 }

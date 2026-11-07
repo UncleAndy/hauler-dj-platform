@@ -30,6 +30,12 @@ pub fn restore(
                 .iter()
                 .map(|cue| (cue.slot, cue.frame))
                 .collect();
+            prepared.cue_meta = loaded
+                .meta
+                .cues
+                .iter()
+                .map(|cue| (cue.slot, cue.label.clone(), cue.color.clone()))
+                .collect();
             prepared.loop_region = loaded
                 .meta
                 .loops
@@ -71,14 +77,20 @@ pub fn write_edit(store: &Store, volume: &str, root: &Path, edit: &MetaEdit) -> 
     meta.cues = edit
         .cues
         .iter()
-        .map(|(slot, frame)| Cue {
-            slot: *slot,
-            frame: *frame,
-            label: meta
-                .cues
-                .iter()
-                .find(|cue| cue.slot == *slot)
-                .and_then(|cue| cue.label.clone()),
+        .map(|(slot, frame)| {
+            let existing = meta.cues.iter().find(|cue| cue.slot == *slot);
+            let asked = edit.cue_meta.iter().find(|(wanted, _, _)| wanted == slot);
+            Cue {
+                slot: *slot,
+                frame: *frame,
+                // What the deck asked for wins; otherwise the file's own record survives the rewrite.
+                label: asked
+                    .and_then(|(_, label, _)| label.clone())
+                    .or_else(|| existing.and_then(|cue| cue.label.clone())),
+                color: asked
+                    .and_then(|(_, _, color)| color.clone())
+                    .or_else(|| existing.and_then(|cue| cue.color.clone())),
+            }
         })
         .collect();
     meta.loops = edit
