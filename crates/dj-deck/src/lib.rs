@@ -608,6 +608,8 @@ impl Deck {
         // to its end and the decoder takes over there, sample for sample.
         if self.reading_loop_buffer && region.is_none() {
             self.loop_region = None;
+            // The region is gone, so the copy must stop repeating: the drain below runs it out once.
+            self.rebuild_armed();
             self.drain_until = self
                 .loop_buffer
                 .as_ref()
@@ -733,10 +735,9 @@ impl Deck {
         if let (Some(saved), Some(pad)) = (region, self.loop_region)
             && saved == pad
         {
+            // The loop lives on the pad from now on; the copy in memory keeps playing exactly where it
+            // is, because its region is still armed.
             self.loop_region = None;
-            self.loop_buffer = None;
-            self.reading_loop_buffer = false;
-            self.drain_until = None;
         }
         self.rebuild_armed();
         true
@@ -1122,8 +1123,14 @@ impl Deck {
         }
         let start = buffer.start;
         let end = start.saturating_add(buffer.frames());
-        // Wrapping belongs to loop mode; a copy being drained for a switched-off loop simply ends.
-        let wrapping = self.loop_mode && self.loop_region.is_some();
+        // Wrapping belongs to loop mode and to the region this copy holds; a copy being drained for a
+        // switched-off loop simply ends. Hanging it on the button's slot would stop the loop the moment
+        // it is saved on a pad, which is a jump in the sound at the worst possible time.
+        let wrapping = self.loop_mode
+            && self
+                .armed
+                .iter()
+                .any(|armed| armed.start.0 == start && armed.end.0 == end);
         if self.position >= end {
             if !wrapping {
                 return Some(0);

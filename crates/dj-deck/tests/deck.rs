@@ -159,6 +159,52 @@ fn switching_loop_mode_off_stops_the_copy_repeating() {
 }
 
 #[test]
+fn saving_a_playing_loop_on_a_pad_keeps_the_sound_where_it_is() {
+    // Saving a loop is a bookkeeping act. Halfway through a loop played from memory, it must not move
+    // the sound: the copy keeps playing, and the loop keeps repeating because it is armed as a pad.
+    let mut deck = deck_with_ramp(44_100);
+    let region = FrameRange::new(1_000, 2_000).unwrap_or_else(|| panic!("region"));
+    deck.set_loop(Some(region));
+    deck.seek(1_000);
+    deck.play();
+
+    let mut pass = vec![0.0f32; 1_000 * 2];
+    deck.render(&mut pass);
+    assert!(deck.loop_is_buffered(), "the loop is playing from memory");
+    assert_eq!(deck.position(), 1_000);
+
+    let mut half = vec![0.0f32; 400 * 2];
+    deck.render(&mut half);
+    assert_eq!(deck.position(), 1_400);
+
+    let seeks_before = deck.stats().seeks;
+    assert!(deck.set_pad_loop(3, Some(region)), "the pad takes the loop");
+    assert!(deck.loop_region().is_none(), "the loop moved to the pad");
+
+    let mut after = vec![0.0f32; 1_000 * 2];
+    deck.render(&mut after);
+    for frame in 0..1_000usize {
+        let position = 1_400 + frame as u64;
+        let wrapped = if position < 2_000 {
+            position
+        } else {
+            1_000 + (position - 2_000)
+        };
+        let expected = ramp(wrapped);
+        assert!(
+            (after[frame * 2] - expected).abs() < 1e-6,
+            "frame {frame}: saving the loop moved the sound, expected {expected}, got {}",
+            after[frame * 2]
+        );
+    }
+    assert_eq!(
+        deck.stats().seeks,
+        seeks_before,
+        "saving a loop must not ask the decoder for a seek"
+    );
+}
+
+#[test]
 fn a_loop_never_lands_inside_another() {
     // A nested loop would never play: the outer one wraps before the playhead ever reaches the inner one.
     // So the deck refuses any region that shares a frame with a loop it already has.

@@ -3432,6 +3432,38 @@ int main(int argc, char *argv[])
             return 1;
         }
 
+        // Saving a loop while it plays is bookkeeping: the sound must not move. The playhead is watched
+        // for a rewind, which is what a stale decoder cursor looks like from outside.
+        bridge->setLoopMode(QStringLiteral("A"), true);
+        for (int step = 0; step < 60 && !loopButton->property("active").toBool(); ++step) {
+            pump(2);
+        }
+        bridge->play(QStringLiteral("A"), true);
+        pump(30);
+        const int armedBeforeSave = armedCount();
+        double previousFrame = frames();
+        double biggestRewind = 0.0;
+        bridge->setPadLoop(QStringLiteral("A"), 6);
+        for (int step = 0; step < 10; ++step) {
+            pump(6);
+            const double now = frames();
+            biggestRewind = std::max(biggestRewind, previousFrame - now);
+            previousFrame = now;
+        }
+        std::fprintf(stdout,
+                     "dj-ui: saving a playing loop went back by %.0f frames, armed %d -> %d\n",
+                     biggestRewind, armedBeforeSave, armedCount());
+        if (biggestRewind > 1024.0) {
+            std::fprintf(stderr, "dj-ui: saving a playing loop moved the sound backwards\n");
+            return 1;
+        }
+        if (armedCount() < armedBeforeSave) {
+            std::fprintf(stderr, "dj-ui: saving a playing loop disarmed it\n");
+            return 1;
+        }
+        bridge->play(QStringLiteral("A"), false);
+        pump(20);
+
         // Two saved loops and one switch: loop mode must repeat whichever one the playhead meets.
         click(Qt::ShiftModifier); // clear the pair that was just marked
         bridge->setLoopMode(QStringLiteral("A"), false);
