@@ -9,7 +9,7 @@
 
 void paintWaveform(QPainter &painter, const Waveform &waveform, const WaveformStyle &style,
                    const QRect &area, double windowStart, double span, double playheadRatio,
-                   const QList<double> &hotcues, bool hasLoop, double loopFrom, double loopTo)
+                   const QList<CueMark> &cues, bool hasLoop, double loopFrom, double loopTo)
 {
     if (area.width() <= 0 || area.height() <= 0) {
         return;
@@ -88,14 +88,20 @@ void paintWaveform(QPainter &painter, const Waveform &waveform, const WaveformSt
         }
     }
 
-    painter.setPen(style.marker);
-    for (int slot = 0; slot < hotcues.size(); ++slot) {
-        const int x = xOfRatio(hotcues.at(slot));
+    // Every pad, in its own colour: a mark you cannot tell from the next one is not a cue point, it is
+    // graffiti. The label wins over the number when the DJ gave the pad a name.
+    for (int slot = 0; slot < cues.size(); ++slot) {
+        const CueMark &cue = cues.at(slot);
+        const int x = xOfRatio(cue.ratio);
         if (x < area.left() || x > area.right()) {
             continue;
         }
-        painter.fillRect(QRect(x - 1, area.top(), 2, 6), style.marker);
-        painter.drawText(x + 3, area.top() + 9, QString::number(slot + 1));
+        const QColor colour = cue.color.isValid() ? cue.color : style.marker;
+        painter.setPen(colour);
+        painter.drawLine(x, area.top(), x, area.bottom());
+        painter.fillRect(QRect(x - 1, area.top(), 3, 4), colour);
+        painter.drawText(x + 3, area.top() + 9,
+                         cue.label.isEmpty() ? QString::number(slot + 1) : cue.label);
     }
 
     painter.setPen(style.playhead);

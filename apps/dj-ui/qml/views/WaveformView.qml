@@ -41,6 +41,36 @@ Item {
                                    ? deckState.hotcues : []
     readonly property var loopRegion: deckState !== undefined && deckState.loop_region !== undefined
                                       ? deckState.loop_region : null
+    readonly property string deckId: deckState !== undefined && deckState.deck !== undefined
+                                     ? String(deckState.deck) : ""
+    /// Whether a hand on the strip is heard (a scratch) or only moves the playhead.
+    property bool scrubAudio: false
+
+    // The pads as the strip paints them: a fraction of the track, a colour and a name. The frame
+    // belongs to the deck, the fraction to the strip — the conversion happens once, here.
+    readonly property var cueMarks: {
+        const marks = [];
+        const total = view.columns * view.framesPerBucket;
+        if (total <= 0) {
+            return marks;
+        }
+        const colors = deckState !== undefined && deckState.cue_colors !== undefined
+                       ? deckState.cue_colors : [];
+        const labels = deckState !== undefined && deckState.cue_labels !== undefined
+                       ? deckState.cue_labels : [];
+        for (let slot = 0; slot < view.hotcues.length; ++slot) {
+            const frame = view.hotcues[slot];
+            if (frame === null || frame === undefined) {
+                continue;
+            }
+            marks.push({
+                ratio: Math.max(0.0, Math.min(1.0, frame / total)),
+                color: slot < colors.length && colors[slot] ? String(colors[slot]) : "",
+                label: slot < labels.length && labels[slot] ? String(labels[slot]) : ""
+            });
+        }
+        return marks;
+    }
 
     // Fraction of the track the playhead sits at; the strip is always centred on it.
     readonly property real playheadRatio: {
@@ -142,6 +172,7 @@ Item {
         // movement feel like a slideshow.
         WaveformStrip {
             id: strip
+            objectName: "waveStrip_" + view.deckId
             anchors.fill: parent
             anchors.margins: 2
 
@@ -149,7 +180,7 @@ Item {
             windowStart: view.windowStart
             span: view.zoomSpan
             playheadRatio: view.playheadRatio
-            hotcues: view.hotcues
+            cues: view.cueMarks
             hasLoop: view.loopRatioFrom >= 0
             loopFrom: Math.max(0.0, view.loopRatioFrom)
             loopTo: Math.max(0.0, view.loopRatioTo)
@@ -167,12 +198,64 @@ Item {
             playhead: UiSettings.themePlayhead
 
             MouseArea {
+                id: hand
                 anchors.fill: parent
                 acceptedButtons: Qt.LeftButton
+
+                // Scrubbing: the strip is the record, the playhead stays in the middle, and the hand
+                // moves the material under it. On its own that is a silent seek; with `scrubAudio` the
+                // deck plays while the hand moves, so the move is heard as a scratch.
+                property bool scrubbing: false
+                property real lastX: 0.0
+                property bool wasPlaying: false
+
                 onWheel: function (wheel) {
                     view.zoomBy(wheel.angleDelta.y > 0 ? 1.25 : 0.8);
                 }
                 onDoubleClicked: view.resetZoom()
+                onPressed: function (mouse) {
+                    if (view.deckId.length === 0 || !Bridge.connected) {
+                        return;
+                    }
+                    hand.scrubbing = true;
+                    hand.lastX = mouse.x;
+                    hand.wasPlaying = view.playing;
+                    if (view.scrubAudio && !view.playing) {
+                        Bridge.play(view.deckId, true);
+                    }
+                }
+                onPositionChanged: function (mouse) {
+                    if (!hand.scrubbing) {
+                        return;
+                    }
+                    const deltaPixels = mouse.x - hand.lastX;
+                    hand.lastX = mouse.x;
+                    // A hand moving right takes the material back: the playhead does not move, the track
+                    // does. Frames per pixel comes from the zoom, so the picture and the sound agree.
+                    const deltaFrames = -deltaPixels * view.columnsPerPixel * view.framesPerBucket;
+                    const total = view.columns * view.framesPerBucket;
+                    const target = Math.max(0.0, Math.min(Math.max(0.0, total - 1),
+                                                          view.shownFrame + deltaFrames));
+                    view.shownFrame = target;
+                    view.anchorFrame = target;
+                    view.anchorMilliseconds = Date.now();
+                    Bridge.seek(view.deckId, Math.floor(target));
+                }
+                onReleased: {
+                    if (!hand.scrubbing) {
+                        return;
+                    }
+                    hand.scrubbing = false;
+                    if (view.scrubAudio && !hand.wasPlaying) {
+                        Bridge.play(view.deckId, false);
+                    }
+                }
+                onCanceled: {
+                    hand.scrubbing = false;
+                    if (view.scrubAudio && !hand.wasPlaying) {
+                        Bridge.play(view.deckId, false);
+                    }
+                }
             }
         }
 

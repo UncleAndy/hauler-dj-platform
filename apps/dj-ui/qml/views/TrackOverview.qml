@@ -40,6 +40,30 @@ Item {
                                    ? (overview.deckState.loop_region.end / overview.framesPerBucket)
                                      / overview.columns : -1.0
 
+    // The pads of the whole track, at the same fractions the strip above uses.
+    readonly property var cueMarks: {
+        const marks = [];
+        const total = overview.columns * overview.framesPerBucket;
+        if (total <= 0 || overview.deckState === undefined || overview.deckState.hotcues === undefined) {
+            return marks;
+        }
+        const frames = overview.deckState.hotcues;
+        const colors = overview.deckState.cue_colors !== undefined ? overview.deckState.cue_colors : [];
+        const labels = overview.deckState.cue_labels !== undefined ? overview.deckState.cue_labels : [];
+        for (let slot = 0; slot < frames.length; ++slot) {
+            const frame = frames[slot];
+            if (frame === null || frame === undefined) {
+                continue;
+            }
+            marks.push({
+                ratio: Math.max(0.0, Math.min(1.0, frame / total)),
+                color: slot < colors.length && colors[slot] ? String(colors[slot]) : "",
+                label: slot < labels.length && labels[slot] ? String(labels[slot]) : ""
+            });
+        }
+        return marks;
+    }
+
     WaveformStrip {
         id: strip
         anchors.fill: parent
@@ -47,7 +71,7 @@ Item {
         windowStart: 0.0
         span: 1.0
         playheadRatio: overview.ratio
-        hotcues: []
+        cues: overview.cueMarks
         hasLoop: overview.loopFrom >= 0.0
         loopFrom: Math.max(0.0, overview.loopFrom)
         loopTo: Math.max(0.0, overview.loopTo)

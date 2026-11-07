@@ -19,7 +19,7 @@ class WaveformItem : public QQuickPaintedItem
     Q_PROPERTY(double windowStart READ windowStart WRITE setWindowStart NOTIFY appearanceChanged)
     Q_PROPERTY(double span READ span WRITE setSpan NOTIFY appearanceChanged)
     Q_PROPERTY(double playheadRatio READ playheadRatio WRITE setPlayheadRatio NOTIFY appearanceChanged)
-    Q_PROPERTY(QVariantList hotcues READ hotcues WRITE setHotcues NOTIFY appearanceChanged)
+    Q_PROPERTY(QVariantList cues READ cues WRITE setCues NOTIFY appearanceChanged)
     Q_PROPERTY(bool hasLoop READ hasLoop WRITE setHasLoop NOTIFY appearanceChanged)
     Q_PROPERTY(double loopFrom READ loopFrom WRITE setLoopFrom NOTIFY appearanceChanged)
     Q_PROPERTY(double loopTo READ loopTo WRITE setLoopTo NOTIFY appearanceChanged)
@@ -48,8 +48,8 @@ public:
     void setSpan(double value);
     double playheadRatio() const { return m_playheadRatio; }
     void setPlayheadRatio(double value);
-    QVariantList hotcues() const { return m_hotcues; }
-    void setHotcues(const QVariantList &value);
+    QVariantList cues() const { return m_cues; }
+    void setCues(const QVariantList &value);
     bool hasLoop() const { return m_hasLoop; }
     void setHasLoop(bool value);
     double loopFrom() const { return m_loopFrom; }
@@ -87,7 +87,7 @@ private:
     double m_windowStart = 0.0;
     double m_span = 1.0;
     double m_playheadRatio = 0.0;
-    QVariantList m_hotcues;
+    QVariantList m_cues;
     bool m_hasLoop = false;
     double m_loopFrom = 0.0;
     double m_loopTo = 0.0;

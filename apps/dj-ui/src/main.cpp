@@ -3222,6 +3222,29 @@ int main(int argc, char *argv[])
             return 1;
         }
 
+        // The strip has to be told about the pad: drawing is the point of storing it.
+        {
+            auto *strip = findItem(window->contentItem(), QStringLiteral("waveStrip_A"));
+            const QVariantList marks = strip != nullptr ? strip->property("cues").toList()
+                                                        : QVariantList();
+            std::fprintf(stdout, "dj-ui: the waveform strip carries %d pad mark(s)\n",
+                         int(marks.size()));
+            if (marks.isEmpty()) {
+                std::fprintf(stderr, "dj-ui: the pad did not reach the waveform strip\n");
+                return 1;
+            }
+            const QVariantMap first = marks.first().toMap();
+            const QString colour = first.value(QStringLiteral("color")).toString();
+            const QString label = first.value(QStringLiteral("label")).toString();
+            std::fprintf(stdout, "dj-ui: the mark wears %s and is called %s at %.3f of the track\n",
+                         qPrintable(colour), qPrintable(label),
+                         first.value(QStringLiteral("ratio")).toDouble());
+            if (colour != QStringLiteral("#5fb85f") || label != QStringLiteral("Drop")) {
+                std::fprintf(stderr, "dj-ui: the mark lost its colour or its name on the way\n");
+                return 1;
+            }
+        }
+
         // Clicking a set pad jumps to it.
         bridge->seek(QStringLiteral("A"), 10000);
         pump(30);
@@ -3416,6 +3439,43 @@ int main(int argc, char *argv[])
         if (total <= 0.0 || scrubbed < total * 0.45 || scrubbed > total * 0.75) {
             std::fprintf(stderr, "dj-ui: the scrub did not move the playhead where the hand went\n");
             return 1;
+        }
+
+        // Scrubbing by hand on the zoomed strip: dragging to the right takes the material back, and in
+        // the default silent mode the transport is left alone.
+        {
+            auto *strip = findItem(window->contentItem(), QStringLiteral("waveStrip_A"));
+            if (strip == nullptr) {
+                std::fprintf(stderr, "dj-ui: deck A has no waveform strip\n");
+                return 1;
+            }
+            const bool wasPlaying = playing();
+            const double before = fieldOf("source_frame");
+            const QPointF grab =
+                strip->mapToScene(QPointF(strip->width() * 0.5, strip->height() * 0.5));
+            const QPointF moved = grab + QPointF(60, 0);
+            for (const auto &[type, point] :
+                 {std::pair{QEvent::MouseButtonPress, grab}, std::pair{QEvent::MouseMove, moved},
+                  std::pair{QEvent::MouseButtonRelease, moved}}) {
+                QMouseEvent event(type, point, window->mapToGlobal(point.toPoint()), Qt::LeftButton,
+                                  Qt::LeftButton, Qt::NoModifier);
+                QCoreApplication::sendEvent(window, &event);
+                QCoreApplication::processEvents();
+            }
+            pump(40);
+            const double after = fieldOf("source_frame");
+            std::fprintf(stdout,
+                         "dj-ui: dragging the strip 60 px right moved the playhead from %.0f to "
+                         "%.0f, transport %s\n",
+                         before, after, playing() == wasPlaying ? "unchanged" : "changed");
+            if (after >= before - 500.0) {
+                std::fprintf(stderr, "dj-ui: the hand on the strip did not move the material back\n");
+                return 1;
+            }
+            if (playing() != wasPlaying) {
+                std::fprintf(stderr, "dj-ui: a silent scrub changed the transport\n");
+                return 1;
+            }
         }
 
         // The clock counts down, so it must show the time left, not the length.

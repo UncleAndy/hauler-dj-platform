@@ -33,18 +33,25 @@ void WaveformItem::paint(QPainter *painter)
     style.marker = m_marker;
     style.playhead = m_playhead;
 
-    QList<double> hotcues;
-    hotcues.reserve(m_hotcues.size());
-    for (const QVariant &entry : m_hotcues) {
-        bool ok = false;
-        const double value = entry.toDouble(&ok);
-        if (ok) {
-            hotcues.append(value);
+    // Each mark arrives as {ratio, color, label}: the strip paints in fractions, and the conversion
+    // from the pad's frame belongs to whoever knows the track's length (the QML side).
+    QList<CueMark> cues;
+    cues.reserve(m_cues.size());
+    for (const QVariant &entry : m_cues) {
+        const QVariantMap map = entry.toMap();
+        const double ratio = map.value(QStringLiteral("ratio")).toDouble();
+        if (!(ratio >= 0.0) || ratio > 1.0) {
+            continue;
         }
+        CueMark mark;
+        mark.ratio = ratio;
+        mark.color = QColor(map.value(QStringLiteral("color")).toString());
+        mark.label = map.value(QStringLiteral("label")).toString();
+        cues.append(mark);
     }
 
     paintWaveform(*painter, *m_waveform, style, QRect(0, 0, int(width()), int(height())),
-                  m_windowStart, m_span, m_playheadRatio, hotcues, m_hasLoop, m_loopFrom, m_loopTo);
+                  m_windowStart, m_span, m_playheadRatio, cues, m_hasLoop, m_loopFrom, m_loopTo);
 }
 
 void WaveformItem::setWaveform(Waveform *waveform)
@@ -95,9 +102,9 @@ void WaveformItem::setPlayheadRatio(double value)
     emit appearanceChanged();
 }
 
-void WaveformItem::setHotcues(const QVariantList &value)
+void WaveformItem::setCues(const QVariantList &value)
 {
-    m_hotcues = value;
+    m_cues = value;
     update();
     emit appearanceChanged();
 }

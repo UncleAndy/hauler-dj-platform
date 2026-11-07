@@ -38,6 +38,9 @@ Pane {
     }
 
     readonly property bool live: Bridge.connected
+    /// Whether a hand on the waveform is heard: a scratch. Silent by default — a booth is not a place
+    /// to discover that dragging a strip makes noise.
+    property bool scrubAudio: false
     readonly property var deck: {
         const decks = Bridge.snapshot.decks;
         if (decks === undefined || decks === null || decks.length === undefined) {
@@ -218,6 +221,7 @@ Pane {
                     Layout.minimumHeight: 40
                     deckState: panel.deck
                     envelope: envelope
+                    scrubAudio: panel.scrubAudio
                 }
 
                 // The whole track, with a marker that slides along it; a click here seeks.
@@ -264,6 +268,16 @@ Pane {
                     Bridge.seek(panel.deckId, panel.cueFrame());
                 }
                 onReleased: Bridge.play(panel.deckId, true)
+            }
+            // The scrub mode of this deck, where the hand already is: silent, or heard as a scratch.
+            Button {
+                objectName: "scrubMode_" + panel.deckId
+                text: panel.scrubAudio ? qsTr("scrub ♪") : qsTr("scrub ␀")
+                font.pixelSize: 10
+                enabled: panel.live
+                focusPolicy: Qt.NoFocus
+                highlighted: panel.scrubAudio
+                onClicked: panel.scrubAudio = !panel.scrubAudio
             }
             Button {
                 objectName: "stop_" + panel.deckId

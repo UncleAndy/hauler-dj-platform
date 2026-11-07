@@ -14,6 +14,14 @@
 
 class Waveform;
 
+/// One pad drawn on a strip: where it is, what colour it wears, what it is called.
+struct CueMark
+{
+    double ratio = -1.0;
+    QColor color;
+    QString label;
+};
+
 struct WaveformStyle
 {
     bool coloured = true;
@@ -37,8 +45,8 @@ inline int frameStep(const WaveformStyle &style)
     return std::max(1, style.barWidth) + std::max(0, style.barGap);
 }
 
-// `windowStart` and `span` are fractions of the track; `playheadRatio` is where it is now. Hotcues
+// `windowStart` and `span` are fractions of the track; `playheadRatio` is where it is now. Cues
 // and the loop are fractions too, so nothing is drawn twice with two different timebases.
 void paintWaveform(QPainter &painter, const Waveform &waveform, const WaveformStyle &style,
                    const QRect &area, double windowStart, double span, double playheadRatio,
-                   const QList<double> &hotcues, bool hasLoop, double loopFrom, double loopTo);
+                   const QList<CueMark> &cues, bool hasLoop, double loopFrom, double loopTo);
