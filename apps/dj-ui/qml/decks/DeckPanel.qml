@@ -155,6 +155,13 @@ Pane {
         return hex !== null && hex !== undefined && String(hex).length > 0 ? String(hex) : fallback;
     }
 
+    /// The measured correction, in decibels: shown, never applied to a knob.
+    readonly property real autoGainDb: {
+        const gain = panel.deck !== null && panel.deck.auto_gain !== undefined
+                     ? panel.deck.auto_gain : 1.0;
+        return gain > 0.0 ? 20.0 * Math.log(gain) / Math.LN10 : 0.0;
+    }
+
     function remainingLabel() {
         return panel.timeLabel(panel.deck.remaining_frames);
     }
@@ -225,6 +232,17 @@ Pane {
                 // Elapsed first, then what is left: a DJ reads the time that is running out, not the
                 // time on the clock (DJP-DECK-002).
                 text: panel.positionLabel() + " / −" + panel.remainingLabel()
+                Label {
+                    objectName: "autogain_" + panel.deckId
+                    anchors.left: parent.right
+                    anchors.leftMargin: 6
+                    anchors.verticalCenter: parent.verticalCenter
+                    // Only when there is something to say: a "+0,0 дБ" on every track is noise.
+                    visible: Math.abs(panel.autoGainDb) >= 0.5
+                    text: (panel.autoGainDb > 0 ? "+" : "") + panel.autoGainDb.toFixed(1) + qsTr(" dB")
+                    color: UiSettings.themeTextDim
+                    font.pixelSize: 9
+                }
                 color: UiSettings.themeTextDim
                 font.pixelSize: 11
             }
@@ -333,16 +351,35 @@ Pane {
                 focusPolicy: Qt.NoFocus
                 onClicked: Bridge.cue(panel.deckId, "Set", 0)
             }
-            Button {
+            // A Button's clicked signal carries no mouse, so the shift modifier has to be read where
+            // the click happens: this is a flat button drawn like its neighbours.
+            Rectangle {
                 objectName: "loop_" + panel.deckId
-                text: panel.loopPending ? qsTr("Loop …") : qsTr("Loop")
-                font.pixelSize: 11
-                enabled: panel.live
-                focusPolicy: Qt.NoFocus
-                checkable: false
-                highlighted: (panel.loop !== null && panel.loop !== undefined) || panel.loopPending
-                onClicked: function (mouse) {
-                    panel.pressLoop((mouse.modifiers & Qt.ShiftModifier) !== 0);
+                readonly property bool pending: panel.loopPending
+                readonly property bool active: panel.loop != null
+                Layout.preferredWidth: loopLabel.implicitWidth + 14
+                Layout.preferredHeight: 22
+                radius: 2
+                color: panel.loopPending || active ? UiSettings.themeAccent : UiSettings.themeRaised
+                border.width: 1
+                border.color: UiSettings.themeBorder
+
+                Text {
+                    id: loopLabel
+                    anchors.centerIn: parent
+                    text: panel.loopPending ? qsTr("Loop …") : qsTr("Loop")
+                    font.pixelSize: 11
+                    color: panel.loopPending || panel.loop != null ? UiSettings.themeTextOnAccent
+                                                                  : UiSettings.themeText
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    enabled: panel.live
+                    acceptedButtons: Qt.LeftButton
+                    onClicked: function (mouse) {
+                        panel.pressLoop((mouse.modifiers & Qt.ShiftModifier) !== 0);
+                    }
                 }
             }
             Item { Layout.fillWidth: true }

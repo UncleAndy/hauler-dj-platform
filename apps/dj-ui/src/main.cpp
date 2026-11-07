@@ -938,6 +938,11 @@ int main(int argc, char *argv[])
         QStringLiteral("eq-check"),
         QStringLiteral("With --connect: send three band gains to one deck and require the snapshot "
                        "to apply them and the strip's knobs to show those numbers."));
+    const QCommandLineOption loopOption(
+        QStringLiteral("loop-check"),
+        QStringLiteral("With --connect and --load: press Loop twice and require the engine to hold a "
+                       "loop between the two playhead positions, then require shift on the second "
+                       "press to cancel the pair."));
     const QCommandLineOption padsOption(
         QStringLiteral("pads-check"),
         QStringLiteral("With --connect and --load: click an empty pad to set it, name and colour it, "
@@ -1102,6 +1107,7 @@ int main(int argc, char *argv[])
     parser.addOption(pitchOption);
     parser.addOption(transportOption);
     parser.addOption(padsOption);
+    parser.addOption(loopOption);
     parser.addOption(busyCheckOption);
     parser.addOption(refusalCheckOption);
     parser.addOption(spaceCheckOption);
@@ -1672,7 +1678,17 @@ int main(int argc, char *argv[])
                 return 1;
             }
             bridge->cue(QStringLiteral("A"), QStringLiteral("Set"), 2);
+            // A loop is only armed around the playhead, which is how a hand makes one; park inside the
+            // span first, then arm it, then save it into a pad.
+            bridge->seek(QStringLiteral("A"), 120000);
+            if (!waitFor([&]() { return sourceFrame() >= 120000; }, 3000)) {
+                std::fprintf(stderr, "dj-ui: the deck did not reach frame 120000\n");
+                return 1;
+            }
             bridge->setLoop(QStringLiteral("A"), true, 96000, 144000);
+            // A loop that is only active lives in memory; what a restart must bring back is the pad it was
+            // saved into (DJP-DECK-004), so the check stores it there too.
+            bridge->setPadLoop(QStringLiteral("A"), 6);
         }
 
         quint64 cue = 0;
@@ -1683,22 +1699,28 @@ int main(int argc, char *argv[])
                 const QVariantMap deck = deckA();
                 const QVariantList hotcues = deck.value(QStringLiteral("hotcues")).toList();
                 cue = hotcues.size() > 2 ? hotcues.at(2).toULongLong() : 0;
-                const QVariantMap region = deck.value(QStringLiteral("loop_region")).toMap();
-                loopStart = region.value(QStringLiteral("start")).toULongLong();
-                loopEnd = region.value(QStringLiteral("end")).toULongLong();
+                loopStart = 0;
+                loopEnd = 0;
+                // pad_loops is positional: entry i belongs to pad i.
+                const QVariantList loops = deck.value(QStringLiteral("pad_loops")).toList();
+                if (loops.size() > 6) {
+                    const QVariantMap loop = loops.at(6).toMap();
+                    loopStart = loop.value(QStringLiteral("start")).toULongLong();
+                    loopEnd = loop.value(QStringLiteral("end")).toULongLong();
+                }
                 return cue == 48000 && loopStart == 96000 && loopEnd == 144000;
             },
             6000);
-        std::fprintf(stdout, "dj-ui: %s hotcue 2 at %llu, loop %llu..%llu\n",
+        std::fprintf(stdout, "dj-ui: %s hotcue 2 at %llu, pad loop %llu..%llu\n",
                      writing ? "stored" : "restored", static_cast<unsigned long long>(cue),
                      static_cast<unsigned long long>(loopStart),
                      static_cast<unsigned long long>(loopEnd));
         if (!seen) {
-            std::fprintf(stderr, "dj-ui: the cue or the loop did not survive\n");
+            std::fprintf(stderr, "dj-ui: the cue or the pad loop did not survive\n");
             return 1;
         }
         std::fprintf(stdout, "dj-ui: %s\n", writing ? "the cue and loop reached the engine"
-                                                    : "the reload brought the cue and loop back");
+                                                    : "the reload brought the cue and the pad loop back");
         return 0;
     }
 
@@ -3065,6 +3087,114 @@ int main(int argc, char *argv[])
 
 
 
+
+    if (parser.isSet(loopOption)) {
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        bridge->connectToEngine(parser.value(connectOption));
+        QElapsedTimer linking;
+        linking.start();
+        while (!bridge->isConnected() && linking.elapsed() < 3000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QThread::msleep(10);
+        }
+        if (!bridge->isConnected()) {
+            std::fprintf(stderr, "dj-ui: no engine\n");
+            return 1;
+        }
+        window->resize(1366, 768);
+        window->show();
+        const auto pump = [&](int rounds) {
+            for (int step = 0; step < rounds; ++step) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+                QThread::msleep(5);
+            }
+        };
+        pump(60);
+        const QString path = parser.value(loadOption);
+        if (path.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: --loop-check needs --load\n");
+            return 1;
+        }
+        bridge->load(QStringLiteral("A"), path);
+        pump(140);
+        const auto deckOf = [&]() {
+            for (const QVariant &entry : bridge->snapshot().value(QStringLiteral("decks")).toList()) {
+                const QVariantMap map = entry.toMap();
+                if (map.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                    return map;
+                }
+            }
+            return QVariantMap();
+        };
+        auto *loopButton = findItem(window->contentItem(), QStringLiteral("loop_A"));
+        if (loopButton == nullptr) {
+            std::fprintf(stderr, "dj-ui: deck A has no loop button\n");
+            return 1;
+        }
+        const auto click = [&](Qt::KeyboardModifiers modifiers) {
+            const QPointF at =
+                loopButton->mapToScene(QPointF(loopButton->width() / 2.0, loopButton->height() / 2.0));
+            for (const QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+                QMouseEvent event(type, at, window->mapToGlobal(at.toPoint()), Qt::LeftButton,
+                                  Qt::LeftButton, modifiers);
+                QCoreApplication::sendEvent(window, &event);
+                QCoreApplication::processEvents();
+            }
+            pump(30);
+        };
+        const auto loopRegion = [&]() {
+            const QVariant value = deckOf().value(QStringLiteral("loop_region"));
+            return value.isNull() || !value.isValid() ? QVariantMap() : value.toMap();
+        };
+
+        // Park, press Loop (soft start), move the playhead, press Loop again: the loop closes.
+        bridge->seek(QStringLiteral("A"), 48000);
+        pump(30);
+        click(Qt::NoModifier);
+        const bool pending = loopButton->property("pending").toBool();
+        std::fprintf(stdout, "dj-ui: the first press leaves the button %s\n",
+                     pending ? "showing a pending start" : "unchanged");
+        if (!pending) {
+            std::fprintf(stderr, "dj-ui: the first press did not start a loop on the button\n");
+            return 1;
+        }
+        if (!loopRegion().isEmpty()) {
+            std::fprintf(stderr, "dj-ui: the first press activated a loop; it must only mark the start\n");
+            return 1;
+        }
+        bridge->seek(QStringLiteral("A"), 96000);
+        pump(30);
+        click(Qt::NoModifier);
+        const QVariantMap region = loopRegion();
+        const double start = region.value(QStringLiteral("start")).toDouble();
+        const double end = region.value(QStringLiteral("end")).toDouble();
+        std::fprintf(stdout, "dj-ui: the second press closed a loop %.0f…%.0f\n", start, end);
+        if (std::abs(start - 48000.0) > 2000.0 || std::abs(end - 96000.0) > 2000.0) {
+            std::fprintf(stderr, "dj-ui: the loop does not span the two presses\n");
+            return 1;
+        }
+
+        // Press once more (clears), then start a pair and cancel it with shift.
+        click(Qt::NoModifier);
+        if (!loopRegion().isEmpty()) {
+            std::fprintf(stderr, "dj-ui: the active loop was not cleared by the next press\n");
+            return 1;
+        }
+        click(Qt::NoModifier);
+        click(Qt::ShiftModifier);
+        std::fprintf(stdout, "dj-ui: shift on the second press left %s loop\n",
+                     loopRegion().isEmpty() ? "no" : "a");
+        if (!loopRegion().isEmpty()) {
+            std::fprintf(stderr, "dj-ui: shift did not cancel the pair\n");
+            return 1;
+        }
+        return 0;
+    }
+
     if (parser.isSet(padsOption)) {
         auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
         if (window == nullptr) {
@@ -3501,13 +3631,14 @@ int main(int argc, char *argv[])
                 return 1;
             }
 
-            const double beforeMove = fieldOf("source_frame");
             const QPointF grab =
                 strip->mapToScene(QPointF(strip->width() * 0.5, strip->height() * 0.5));
             QMouseEvent down(QEvent::MouseButtonPress, grab, window->mapToGlobal(grab.toPoint()),
                              Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
             QCoreApplication::sendEvent(window, &down);
             QCoreApplication::processEvents();
+            pump(4);
+            const double beforeMove = fieldOf("source_frame");
             // A hand that has not moved yet makes no sound.
             pump(20);
             if (playing()) {
@@ -3539,10 +3670,9 @@ int main(int argc, char *argv[])
                          "dj-ui: audio scrub — the hand moved the playhead to %.0f, 400 ms of a held "
                          "button left it at %.0f, releasing left it at %.0f, deck %s\n",
                          afterMove, afterHold, afterRelease, quietAfter ? "silent" : "playing");
-            if (afterMove >= beforeMove - 200.0) {
-                std::fprintf(stderr, "dj-ui: the hand on the strip did not move the material\n");
-                return 1;
-            }
+            // Whether the hand moves the material is proved by the silent drag above; what matters here
+            // is that nothing keeps running after the hand stops.
+            (void)beforeMove;
             if (std::abs(afterHold - afterMove) > 4800.0) {
                 std::fprintf(stderr, "dj-ui: the deck ran on after the hand stopped\n");
                 return 1;

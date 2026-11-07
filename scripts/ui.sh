@@ -178,6 +178,10 @@ case "${1:-}" in
     # must not edit the fixture the rest of the suite is measured against.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --pads-check --load "$pads_copy"
+    # The Loop button: a soft start, a second press that closes and activates the loop, a third that
+    # clears it, and shift on the second press cancelling the pair (DJP-DECK-004).
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
+        --loop-check --load "$pads_copy"
     # A playing deck must refuse a load, and say so: cutting the track is the one mistake a DJ
     # never forgives.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
