@@ -39,6 +39,9 @@ Item {
     property real draggedDb: 0.0
     property real pressDb: 0.0
     property real pressY: 0.0
+    // Decibels per pixel of drag, the same in both directions: the travel is asymmetric (−40…+6), and a
+    // constant rate is what makes a trim feel like a trim instead of a knob that sprints upwards.
+    readonly property real dbPerPixel: 0.5
     // What the last gesture asked for, so a check can tell a dead knob from a refused command.
     property real lastDb: -1.0
 
@@ -136,14 +139,9 @@ Item {
             if (!knob.dragging) {
                 return;
             }
-            // The hand moves the pointer, not the number: the pointer runs -135…+135 over the travel,
-            // and the number follows from where it stands.
-            const share = 1.0 - Math.max(0.0, Math.min(1.0, mouse.y / knob.height));
-            const angle = -135.0 + 270.0 * share;
-            const decibels = angle >= 0.0
-                             ? angle / 135.0 * knob.maximumDb
-                             : angle / 135.0 * (-knob.minimumDb);
-            knob.ask(decibels);
+            // The hand moves the value: ten pixels up and ten down change the trim by the same number of
+            // decibels, and the pointer follows the law (zero straight up) on its own.
+            knob.ask(knob.pressDb + (knob.pressY - mouse.y) * knob.dbPerPixel);
         }
         onReleased: knob.dragging = false
         onCanceled: knob.dragging = false

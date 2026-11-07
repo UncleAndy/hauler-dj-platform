@@ -2800,12 +2800,25 @@ int main(int argc, char *argv[])
         // angle read from someone else's setting is not a measurement of the knob. Ask for unity first.
         bridge->setMasterGain(1.0);
         bridge->setChannelGain(QStringLiteral("A"), 1.0);
+        // Both knobs, or the angle below measures whatever the previous check left behind: the gate runs
+        // these checks one after another on one engine.
+        const auto gainOfA = [&]() {
+            const QVariantList published =
+                bridge->snapshot().value(QStringLiteral("decks")).toList();
+            for (const QVariant &entry : published) {
+                const QVariantMap deck = entry.toMap();
+                if (deck.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                    return deck.value(QStringLiteral("linear_gain")).toDouble();
+                }
+            }
+            return 0.0;
+        };
         QElapsedTimer settling;
         settling.start();
         while (settling.elapsed() < 1500) {
             QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-            const double published = bridge->snapshot().value(QStringLiteral("master_gain")).toDouble();
-            if (std::abs(published - 1.0) < 0.01) {
+            const double master = bridge->snapshot().value(QStringLiteral("master_gain")).toDouble();
+            if (std::abs(master - 1.0) < 0.01 && std::abs(gainOfA() - 1.0) < 0.01) {
                 break;
             }
             QThread::msleep(20);
@@ -2823,6 +2836,38 @@ int main(int argc, char *argv[])
         }
         if (std::abs(masterAngle - 90.0) > 1.0) {
             std::fprintf(stderr, "dj-ui: the master knob's unity is not to the right\n");
+            return 1;
+        }
+
+        // The hand's rate must be the same both ways: the ranges are asymmetric (−40…+6 on the gain,
+        // −26…+6 on a band), so a constant decibels-per-pixel is what makes up and down feel alike.
+        // Measured through real mouse events: this is a property of the MouseArea, not of a number.
+        const QPointF grab = trimA->mapToScene(QPointF(trimA->width() / 2.0,
+                                                       trimA->height() / 2.0));
+        const auto send = [&](QEvent::Type type, const QPointF &at) {
+            QMouseEvent event(type, at, window->mapToGlobal(at.toPoint()), Qt::LeftButton,
+                              Qt::LeftButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(window, &event);
+            QCoreApplication::processEvents();
+        };
+        // Two equal travels, one up and one down, measured by the value the knob asked the engine for.
+        // `lastDb` starts empty, so the comparison is between the two moves and not against a baseline
+        // the press never set.
+        send(QEvent::MouseButtonPress, grab);
+        send(QEvent::MouseMove, grab - QPointF(0, 10));
+        const double up = trimA->property("lastDb").toDouble();
+        send(QEvent::MouseMove, grab + QPointF(0, 20));
+        const double down = trimA->property("lastDb").toDouble();
+        send(QEvent::MouseButtonRelease, grab);
+        std::fprintf(stdout, "dj-ui: ten pixels up asks %+.1f dB, twenty down asks %+.1f dB\n",
+                     up, down);
+        if (up < -100.0 || down < -100.0) {
+            std::fprintf(stderr, "dj-ui: the gain knob did not take the drag\n");
+            return 1;
+        }
+        // Thirty pixels of travel lie between the two readings, at half a decibel each.
+        if (std::abs((up - down) - 15.0) > 0.6) {
+            std::fprintf(stderr, "dj-ui: the gain knob turns at different rates up and down\n");
             return 1;
         }
 
@@ -2911,6 +2956,9 @@ int main(int argc, char *argv[])
                      "dj-ui: eq B low %+.1f mid %+.1f high %+.1f applied, A still flat, the knobs "
                      "show the engine's numbers\n",
                      bandOf(1, 0), bandOf(1, 1), bandOf(1, 2));
+        // Back to unity: the drag above moved deck A's gain, and the checks after this one should not
+        // inherit a doubled channel.
+        bridge->setChannelGain(QStringLiteral("A"), 1.0);
         return 0;
     }
 

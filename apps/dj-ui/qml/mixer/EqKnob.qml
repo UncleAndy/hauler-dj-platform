@@ -46,6 +46,10 @@ Item {
     property real dragged: 0.0
     property real pressDb: 0.0
     property real pressY: 0.0
+    // How fast the hand changes the value, in decibels per pixel — the same in both directions. The
+    // ranges are asymmetric (−26…+6), so a constant rate is the only way dragging up and dragging down
+    // feel alike; the pointer then follows the law above, which keeps zero on top.
+    readonly property real dbPerPixel: 0.5
     // What the last gesture asked for, so a check can tell a dead knob from a refused command.
     property real lastDb: -1.0
 
@@ -146,11 +150,9 @@ Item {
             if (!knob.dragging) {
                 return;
             }
-            // The hand moves the pointer: -135…+135 over the travel, and the number follows the angle,
-            // so the knob under the finger is the knob doing the work.
-            const share = 1.0 - Math.max(0.0, Math.min(1.0, mouse.y / knob.height));
-            const angle = -135.0 + 270.0 * share;
-            knob.ask(angle >= 0.0 ? angle / 135.0 * knob.boostDb : angle / 135.0 * knob.cutDb);
+            // The hand moves the value, not the pointer: ten pixels up and ten pixels down change the
+            // band by the same number of decibels, however asymmetric the two ends of the law are.
+            knob.ask(knob.pressDb + (knob.pressY - mouse.y) * knob.dbPerPixel);
         }
         onReleased: knob.dragging = false
         onCanceled: knob.dragging = false

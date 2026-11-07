@@ -31,6 +31,11 @@ Item {
 
     property bool dragging: false
     property real draggedDb: 0.0
+    property real pressDb: 0.0
+    property real pressY: 0.0
+    // Decibels per pixel of drag: the same both ways, and a press does not move the value — a level knob
+    // that jumps to wherever the pointer landed is a level jump in the room.
+    readonly property real dbPerPixel: 0.5
     // What the last gesture asked for, so a check can tell a dead knob from a refused command.
     property real lastDb: 1.0
 
@@ -47,11 +52,7 @@ Item {
         Bridge.setMasterGain(Math.pow(10.0, wanted / 20.0));
     }
 
-    function set(y) {
-        const share = 1.0 - Math.max(0.0, Math.min(1.0, y / height));
-        const decibels = knob.floorDb + share * (0.0 - knob.floorDb);
-        knob.ask(decibels);
-    }
+
 
     Rectangle {
         anchors.fill: parent
@@ -120,12 +121,13 @@ Item {
         cursorShape: Qt.SizeVerCursor
         onPressed: function (mouse) {
             knob.dragging = true;
-            knob.draggedDb = knob.shownDb;
-            knob.set(mouse.y);
+            knob.pressDb = knob.shownDb;
+            knob.pressY = mouse.y;
+            knob.draggedDb = knob.pressDb;
         }
         onPositionChanged: function (mouse) {
             if (knob.dragging) {
-                knob.set(mouse.y);
+                knob.ask(knob.pressDb + (knob.pressY - mouse.y) * knob.dbPerPixel);
             }
         }
         onReleased: knob.dragging = false
