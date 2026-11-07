@@ -117,6 +117,32 @@ fn a_loop_wraps_at_the_exact_sample() {
 }
 
 #[test]
+fn a_loop_armed_while_playing_inside_it_has_no_silent_head() {
+    // Arming a loop from inside it starts the capture mid-region. If that partial capture counts as
+    // progress, the wrap plays the uncaptured head of the buffer — silence — until it reaches the point
+    // where the loop was switched on.
+    let mut deck = deck_with_ramp(44_100);
+    let region = FrameRange::new(1_000, 3_000).unwrap_or_else(|| panic!("region"));
+    deck.seek(2_000);
+    deck.set_loop(Some(region));
+    deck.play();
+
+    let mut block = vec![0.0f32; 1_500 * 2];
+    deck.render(&mut block);
+
+    assert!(
+        (block[0] - ramp(2_000)).abs() < 1e-6,
+        "the armed loop must not move the playhead"
+    );
+    assert!(
+        (block[1_000 * 2] - ramp(1_000)).abs() < 1e-6,
+        "the wrap must play the loop start, got {} (silence here means the buffer lied about itself)",
+        block[1_000 * 2]
+    );
+    assert!((block[1_499 * 2] - ramp(1_499)).abs() < 1e-6);
+}
+
+#[test]
 fn a_loop_pad_takes_the_sound_with_it() {
     // The marker and the sound have to move together: a pad that arms a loop must move the decoder too,
     // otherwise the strip shows the loop start while the ears still hear the old position.

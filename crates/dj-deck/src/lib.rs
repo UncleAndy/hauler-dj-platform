@@ -154,7 +154,8 @@ struct LoopBuffer {
     start: u64,
     /// Interleaved stereo audio, `frames * 2` samples.
     data: Vec<f32>,
-    /// Frames captured so far, from the start of the loop.
+    /// Length of the captured **prefix**, from the start of the loop. A capture that begins past this
+    /// point leaves a hole, and a hole played back as a buffer is silence inside the loop.
     captured: u64,
 }
 
@@ -565,6 +566,12 @@ impl Deck {
         let offset = from_frame - region.start.0;
         let frames_here = (samples.len() / 2) as u64;
         if offset + frames_here > buffer.frames() {
+            return;
+        }
+        // Only a read that continues the captured prefix may extend it. Arming a loop while playing
+        // inside it starts the capture mid-region; treating that as progress would mark the buffer
+        // complete with a silent head, and the wrap would then play that silence instead of the loop.
+        if offset > buffer.captured {
             return;
         }
         let start = (offset * 2) as usize;
