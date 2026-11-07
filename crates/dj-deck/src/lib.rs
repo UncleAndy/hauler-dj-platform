@@ -518,6 +518,14 @@ impl Deck {
     pub fn set_loop_mode(&mut self, enabled: bool) {
         self.loop_mode = enabled;
         self.rebuild_armed();
+        // A playhead inside the captured copy must finish it rather than be yanked back to the source:
+        // switching a mode off is not a reason to make a sound.
+        if !enabled && self.reading_loop_buffer && self.drain_until.is_none() {
+            self.drain_until = self
+                .loop_buffer
+                .as_ref()
+                .map(|buffer| buffer.start.saturating_add(buffer.frames()));
+        }
     }
 
     /// Whether loop mode is on.
@@ -1051,8 +1059,8 @@ impl Deck {
         }
         let start = buffer.start;
         let end = start.saturating_add(buffer.frames());
-        // Wrapping belongs to an armed loop; a copy being drained for a switched-off loop simply ends.
-        let wrapping = self.loop_region.is_some();
+        // Wrapping belongs to loop mode; a copy being drained for a switched-off loop simply ends.
+        let wrapping = self.loop_mode && self.loop_region.is_some();
         if self.position >= end {
             if !wrapping {
                 return Some(0);

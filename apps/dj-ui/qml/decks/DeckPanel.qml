@@ -426,7 +426,9 @@ Pane {
             Rectangle {
                 objectName: "loop_" + panel.deckId
                 readonly property bool pending: panel.loopPending
-                readonly property bool active: panel.loop != null
+                // The button is lit while loop mode is on, and only then: a loop that is merely
+                // remembered has edges on the strip, not a lit button.
+                readonly property bool active: panel.loopModeOn
                 Layout.preferredWidth: loopLabel.implicitWidth + 14
                 Layout.preferredHeight: 22
                 radius: 2

@@ -117,6 +117,52 @@ fn a_loop_wraps_at_the_exact_sample() {
 }
 
 #[test]
+fn switching_loop_mode_off_stops_the_copy_repeating() {
+    // A loop played from a pad is captured the same way the button's loop is. Switching the mode off
+    // must stop the copy repeating: it runs to its end, the track carries on from there, and the switch
+    // costs no seek.
+    let mut deck = deck_with_ramp(44_100);
+    let region = FrameRange::new(1_000, 2_000).unwrap_or_else(|| panic!("region"));
+    assert!(deck.set_pad_loop(0, Some(region)));
+    deck.set_loop_mode(true);
+    assert_eq!(
+        deck.jump_pad(0),
+        Some(1_000),
+        "the pad takes the playhead to the loop start"
+    );
+    deck.play();
+
+    // One pass fills the capture; the next wrap is served from memory.
+    let mut pass = vec![0.0f32; 1_000 * 2];
+    deck.render(&mut pass);
+    assert!(deck.loop_is_buffered(), "the loop is playing from memory");
+    assert_eq!(deck.position(), 1_000, "it wrapped once");
+
+    let seeks_before = deck.stats().seeks;
+    deck.set_loop_mode(false);
+    let mut after = vec![0.0f32; 2_000 * 2];
+    deck.render(&mut after);
+    for frame in 0..2_000usize {
+        let expected = ramp(1_000 + frame as u64);
+        assert!(
+            (after[frame * 2] - expected).abs() < 1e-6,
+            "frame {frame}: the track must run on unbroken after the switch, expected {expected}, got {}",
+            after[frame * 2]
+        );
+    }
+    assert_eq!(
+        deck.stats().seeks,
+        seeks_before,
+        "switching the mode off is not a seek"
+    );
+    assert_eq!(
+        deck.position(),
+        3_000,
+        "the playhead ran past the loop's end"
+    );
+}
+
+#[test]
 fn loop_mode_repeats_every_saved_loop() {
     // A track can hold many loops. Loop mode is one switch for all of them: a playhead that comes to any
     // saved loop repeats that loop, wherever it was dropped.

@@ -3333,6 +3333,59 @@ int main(int argc, char *argv[])
             return 1;
         }
 
+        // Switching the mode off while the loop is playing: the button goes dark and the track runs on
+        // past the loop's end instead of repeating it.
+        const double loopEnd = loopRegion().value(QStringLiteral("end")).toDouble();
+        // An unfinished pair swallows the first shift, which is what cancelling it means; start clean.
+        if (loopButton->property("pending").toBool()) {
+            click(Qt::ShiftModifier);
+            for (int step = 0; step < 30 && loopButton->property("pending").toBool(); ++step) {
+                pump(2);
+            }
+        }
+        bridge->setLoopMode(QStringLiteral("A"), true);
+        // Shift toggles exactly what the button shows, so wait for the button itself to light up.
+        for (int step = 0; step < 60 && !loopButton->property("active").toBool(); ++step) {
+            pump(2);
+        }
+        if (!loopButton->property("active").toBool()) {
+            std::fprintf(stderr, "dj-ui: the loop button did not light up for the mode\n");
+            return 1;
+        }
+        bridge->seek(QStringLiteral("A"), qMax(0.0, loopEnd - 4000.0));
+        bridge->play(QStringLiteral("A"), true);
+        pump(24);
+        click(Qt::ShiftModifier);
+        const bool litAfterOff = loopButton->property("active").toBool();
+        // The playhead must keep moving forward: a wrap sends it back, which is exactly what switching
+        // the mode off has to stop.
+        double ranOn = frames();
+        double rewound = 0.0;
+        double previous = ranOn;
+        for (int step = 0; step < 12; ++step) {
+            pump(6);
+            const double now = frames();
+            rewound = std::max(rewound, previous - now);
+            previous = now;
+            ranOn = std::max(ranOn, now);
+        }
+        std::fprintf(stdout,
+                     "dj-ui: mode off while playing — button lit %s, armed %d, went back by %.0f, "
+                     "playhead reached %.0f (loop end %.0f)\n",
+                     litAfterOff ? "yes" : "no", armedCount(), rewound, ranOn, loopEnd);
+        if (litAfterOff) {
+            std::fprintf(stderr, "dj-ui: the loop button stayed lit after the mode was switched off\n");
+            return 1;
+        }
+        if (armedCount() != 0) {
+            std::fprintf(stderr, "dj-ui: loop mode is still armed after being switched off\n");
+            return 1;
+        }
+        if (rewound > 1024.0) {
+            std::fprintf(stderr, "dj-ui: the playhead jumped back — the loop still wrapped\n");
+            return 1;
+        }
+
         // Two saved loops and one switch: loop mode must repeat whichever one the playhead meets.
         click(Qt::ShiftModifier); // clear the pair that was just marked
         bridge->setLoopMode(QStringLiteral("A"), false);
