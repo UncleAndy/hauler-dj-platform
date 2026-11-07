@@ -4,12 +4,12 @@ An independent DJ platform for Linux/NixOS, built to reach practical functional 
 Traktor Pro 4 through our own engine, our own UI and our own effects — no Traktor, Native
 Instruments or Mixxx code, graphics, samples or firmware are used or copied.
 
-**Status: A00–A04 done.** The specification, plan and backlog are approved (v0.1). The
-repository holds the module skeleton, a pinned reproducible build environment, CI, and the first
-piece of the audio engine: typed command contracts, a bounded RT queue, a sample-accurate scheduler
-and a deterministic offline renderer. `dj-headless` renders a 440 Hz tone (and scripted command
-scenarios) to WAV with an exact frame count; the UI is still a blank two-deck shell, and nothing
-plays through a sound card yet — that is `dj-audio-io` (A05) and the engine process (A06).
+**Status: R0 demo works — A00–A08, A11 and A12 are closed.** Two decks play through the engine,
+the mixer has channel strips with a gain pointer on the meter, a crossfader with four laws and a
+master knob with its own coloured meter; waveforms zoom to 400×, and cue points and loops survive a
+restart because they are written next to the music (`.djmeta`). The engine talks to the UI over a
+unix socket; the UI is a separate process by design (ADR-003). Next: three-band EQ on every channel
+(A14).
 
 | Area | State |
 |---|---|
@@ -20,10 +20,38 @@ plays through a sound card yet — that is `dj-audio-io` (A05) and the engine pr
 | Decks (A03) | `dj-deck`: transport, sample-exact loop, eight hotcues, display state; `dj-headless mix` renders two decks to WAV |
 | Mixer (A04) | `dj-mixer`: channel strips, crossfader laws, master limiter, peak/RMS meters, cue bus; `--cue-out` writes the headphone bus |
 | Bridge (A06) | `dj-bridge`: framed `command-v1`/`state-v1` over a Unix socket; `dj-engine` applies commands at their sample and publishes state at display rate |
-| Qt 6 / QML shell | blank two-deck window with a crossfader, starts headless (`--smoke`) |
+| Audio backend (A05) | `dj-audio-io`: CPAL 0.18 with the PipeWire backend on Linux (ADR-002), ALSA fallback, measured callback timing |
+| Waveforms (A07) | `dj-analysis` + `WaveformPainter`: envelope with its own cache, zoom 1…400×, smoothing as a function of zoom |
+| Storage (A08) | `dj-library`: `.djmeta/<file>.json` next to the music, a mirror for read-only volumes, SQLite index built from it; `dj-session`: atomic session with backup and migrations |
+| Qt 6 / QML shell | decks, mixer, browser, waveform strip; meters, master section, curve buttons; runs headless (`--smoke`) |
+| QA (A11) | golden audio fixtures under a `sha256` manifest, traceability with teeth, agent contracts |
 | Build environment | `flake.nix` + `flake.lock` + `rust-toolchain.toml` (Rust 1.95.0, Qt 6.11.2) |
-| CI | fmt, clippy `-D warnings`, tests, toolchain pin, QML smoke, requirement coverage |
-| Audio backend, codecs, storage | not started — A02/A05/A08 |
+| CI | fixtures, fmt, clippy `-D warnings`, tests, toolchain pin, QML smoke, requirement coverage |
+
+## Demo (R0)
+
+```bash
+nix develop                                   # Rust 1.95.0, Qt 6.11.2, CMake
+bash scripts/check.sh                         # fixtures, fmt, clippy, tests, traceability, UI smoke
+
+# Two decks through the real engine, no sound card needed:
+bash scripts/ui.sh --engine-check             # loads a track, plays it, checks the snapshot
+
+# With your own files and a real device:
+cargo run -p dj-engine -- --device default_output &
+bash scripts/ui.sh                            # the window connects to the engine's socket
+```
+
+Load a track with the deck's Load button or its hotkey — a double click in the browser does nothing
+by design, and a playing deck refuses a track instead of cutting it. Cue points and loops are written
+to `.djmeta/<file name>.json` beside the music, so copying a folder takes the work with it; delete the
+SQLite index and a rescan brings every cue back.
+
+A headless run is byte-for-byte reproducible, which is what makes the fixtures below mean something:
+
+```bash
+cargo run -p dj-headless -- sine --frames 48000 --out take.wav
+```
 
 ## Architecture
 

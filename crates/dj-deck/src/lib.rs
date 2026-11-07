@@ -443,6 +443,19 @@ impl Deck {
         true
     }
 
+    /// Put `slot` at an explicit frame, which is how a stored cue comes back after a reload.
+    pub fn set_hotcue(&mut self, slot: usize, frame: u64) -> bool {
+        if slot >= HOTCUE_SLOTS {
+            return false;
+        }
+        let clamped = match self.source.as_ref().and_then(|source| source.frames()) {
+            Some(total) => frame.min(total.saturating_sub(1)),
+            None => frame,
+        };
+        self.hotcues[slot] = Some(clamped);
+        true
+    }
+
     /// Delete a hotcue.
     pub fn delete_hotcue(&mut self, slot: usize) -> bool {
         match self.hotcues.get_mut(slot) {

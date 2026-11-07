@@ -1,0 +1,20 @@
+{
+  "schema": "djp-track-v1",
+  "revision": 4,
+  "updated_at_ms": 1794012004424,
+  "fingerprint": {
+    "size": 1536044,
+    "head": "4552d1d6cb86790a",
+    "tail": "eb05052ea5b62325"
+  },
+  "cues": [
+    {
+      "slot": 0,
+      "frame": 2048
+    }
+  ],
+  "loops": [],
+  "gain": 1.0,
+  "rating": 0,
+  "analysis_lock": false
+}

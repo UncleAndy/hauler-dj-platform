@@ -4,6 +4,9 @@
 //! gate: a spawned server inherits the harness pipes, and a missing message has no deadline. The
 //! socket path is covered by `dj-bridge`'s own tests; what belongs here is what a command *does*.
 
+// A failing expectation in a test is a failure message; the workspace forbids them in library code.
+#![allow(clippy::expect_used)]
+
 use dj_deck::Deck;
 use dj_domain::{
     AckStatus, CueAction, DeckId, DeckLoad, DjCommand, RejectReason, ScheduledCommand, SourceFrame,
@@ -882,4 +885,170 @@ fn the_crossfader_moves_the_sides_it_is_meant_to_move() {
         left > 0.2 && right > 0.2,
         "the middle must not mute both sides"
     );
+}
+
+/// A prepared track with a tone source: what the loader would hand over, built by hand.
+fn prepared_with(
+    id: DeckId,
+    cues: Vec<(u8, u64)>,
+    loop_region: Option<(u64, u64)>,
+) -> dj_engine::PreparedTrack {
+    struct Tone;
+    impl dj_deck::DeckSource for Tone {
+        fn sample_rate(&self) -> u32 {
+            48_000
+        }
+        fn frames(&self) -> Option<u64> {
+            Some(480_000)
+        }
+        fn read(&mut self, out: &mut [f32]) -> Result<usize, String> {
+            let take = out.len() / 2;
+            out[..take * 2].fill(0.25);
+            Ok(take)
+        }
+        fn seek(&mut self, frame: u64) -> Result<u64, String> {
+            Ok(frame)
+        }
+    }
+    dj_engine::PreparedTrack {
+        deck: id,
+        source: Box::new(Tone),
+        track: None,
+        static_info: DeckStatic {
+            deck: id,
+            load: DeckLoad::Ready,
+            track: None,
+            total_frames: Some(480_000),
+            waveform: None,
+        },
+        path: Some(std::path::PathBuf::from("/tmp/dj-engine-cue-test.wav")),
+        cues,
+        loop_region: loop_region.map(|(start, end)| dj_domain::FrameRange {
+            start: SourceFrame(start),
+            end: SourceFrame(end),
+        }),
+    }
+}
+
+#[test]
+fn a_load_puts_the_saved_cues_back_on_the_deck() {
+    // Reload looks like reload: the cues and the loop the file carried come back with it.
+    let decks = vec![Deck::new(DeckId::A)];
+    let (_submissions, submission_rx) = std::sync::mpsc::channel();
+    let (loads, load_rx) = std::sync::mpsc::channel();
+    let mut graph = EngineGraph::new(
+        decks,
+        mixer_for(48_000),
+        submission_rx,
+        Arc::new(StateCells::new()),
+        256,
+        load_rx,
+    );
+    let mut prepared = prepared_with(DeckId::A, vec![(0, 1_000), (3, 44_100)], Some((10, 20)));
+    prepared.static_info.deck = DeckId::A;
+    loads
+        .send(GraphLoad::Attach(Box::new(prepared)))
+        .expect("send");
+    let mut master = vec![0.0f32; 512];
+    let mut cue = vec![0.0f32; 512];
+    graph.render_pair(&mut master, &mut cue, 256);
+
+    let deck = &graph.decks()[0];
+    let cues = deck.hotcues();
+    assert_eq!(cues[0], Some(1_000));
+    assert_eq!(cues[3], Some(44_100));
+    assert_eq!(cues[1], None);
+    let region = deck.loop_region().expect("the loop came back");
+    assert_eq!((region.start.0, region.end.0), (10, 20));
+}
+
+#[test]
+fn moving_a_cue_asks_the_writer_to_save_it() {
+    let decks = vec![Deck::new(DeckId::A)];
+    let (submissions, submission_rx) = std::sync::mpsc::channel();
+    let (loads, load_rx) = std::sync::mpsc::channel();
+    let (edits, edit_rx) = std::sync::mpsc::channel();
+    let mut graph = EngineGraph::new(
+        decks,
+        mixer_for(48_000),
+        submission_rx,
+        Arc::new(StateCells::new()),
+        256,
+        load_rx,
+    )
+    .with_meta_sink(edits);
+    loads
+        .send(GraphLoad::Attach(Box::new(prepared_with(
+            DeckId::A,
+            Vec::new(),
+            None,
+        ))))
+        .expect("send");
+
+    let mut master = vec![0.0f32; 512];
+    let mut cue = vec![0.0f32; 512];
+    graph.render_pair(&mut master, &mut cue, 256);
+    assert!(edit_rx.try_recv().is_err(), "attaching is not an edit");
+
+    let (reply, _answer) = std::sync::mpsc::channel();
+    submissions
+        .send(Submission {
+            command: command(
+                1,
+                DjCommand::Cue {
+                    deck: DeckId::A,
+                    action: CueAction::Set(2),
+                },
+            ),
+            reply,
+        })
+        .expect("send");
+    graph.render_pair(&mut master, &mut cue, 256);
+
+    let edit = edit_rx.try_recv().expect("an edit must follow the command");
+    assert_eq!(edit.cues, vec![(2, 0)], "the cue sits at the playhead");
+    assert_eq!(edit.loop_region, None);
+}
+
+#[test]
+fn an_edit_survives_a_restart() {
+    // What the writer stores is what a fresh process reads back: this is the acceptance line of A13.
+    let dir = std::env::temp_dir().join(format!("dj-engine-meta-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let track = dir.join("song.wav");
+    std::fs::write(&track, vec![7u8; 4096]).expect("write a track");
+    let store = dj_library::Store::new(dir.join("mirror"));
+
+    let edit = dj_engine::MetaEdit {
+        path: track.clone(),
+        cues: vec![(0, 4_800), (5, 96_000)],
+        loop_region: Some((12_000, 24_000)),
+    };
+    dj_engine::meta::write_edit(&store, "vol", &dir, &edit).expect("write");
+
+    // A new "process": nothing in memory, only the file.
+    let mut prepared = prepared_with(DeckId::A, Vec::new(), None);
+    prepared.path = Some(track.clone());
+    let problem = dj_engine::meta::restore(&mut prepared, &store, "vol", &dir);
+    assert!(problem.is_none(), "unexpected problem: {problem:?}");
+    assert_eq!(prepared.cues, vec![(0, 4_800), (5, 96_000)]);
+    let region = prepared.loop_region.expect("the loop came back");
+    assert_eq!((region.start.0, region.end.0), (12_000, 24_000));
+
+    // And a second edit keeps the fields it does not touch, because it starts from the file.
+    let second = dj_engine::MetaEdit {
+        path: track.clone(),
+        cues: vec![(0, 4_800)],
+        loop_region: None,
+    };
+    dj_engine::meta::write_edit(&store, "vol", &dir, &second).expect("second write");
+    let loaded = store.load("vol", &dir, &track).expect("load");
+    assert_eq!(loaded.meta.revision, 2, "each edit is a revision");
+    assert_eq!(loaded.meta.cues.len(), 1);
+    assert!(
+        loaded.meta.loops.is_empty(),
+        "the loop was cleared, not forgotten"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }

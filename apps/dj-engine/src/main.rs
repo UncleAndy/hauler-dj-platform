@@ -25,6 +25,18 @@ use dj_engine::{
 };
 use dj_mixer::{ChannelSettings, CrossAssign, Mixer};
 
+/// Which volume the mirror is filed under. One label for the machine's own files: the sidecar beside
+/// the music is the source of truth, and this only keeps the mirror path stable.
+fn volume() -> &'static str {
+    "root"
+}
+
+/// Tracks are filed in the mirror by their full path, so two files called `track.flac` in different
+/// albums do not collide.
+fn root() -> &'static std::path::Path {
+    std::path::Path::new("/")
+}
+
 const USAGE: &str = "\
 dj-engine — the audio engine process
 
@@ -244,7 +256,11 @@ fn run(argv: &[String]) -> Result<(), String> {
     // does not create is a panel whose controls can never do anything.
     for id in [DeckId::A, DeckId::B, DeckId::C, DeckId::D] {
         let mut deck = Deck::new(id);
-        deck.attach(Box::new(ToneSource::new(rate, 440.0, 600.0)), None);
+        // A deck starts empty: "Ready" has to mean "a file is in the deck", or a client cannot tell
+        // a track from the measurement tone that used to sit here.
+        if autoplay {
+            deck.attach(Box::new(ToneSource::new(rate, 440.0, 600.0)), None);
+        }
         deck.set_blocking(false);
         decks.push(deck);
     }
@@ -284,6 +300,21 @@ fn run(argv: &[String]) -> Result<(), String> {
     // Loads never enter the audio callback: clients hand them to a loader thread, which hands a
     // prepared source back to the graph and a new description to the publisher.
     let (load_requests, load_requests_rx) = std::sync::mpsc::channel::<LoadRequest>();
+    // Cue and loop edits become files here, on a thread of their own (DJP-DATA-006). The audio
+    // callback only sends; a disk call inside it is the one thing the RT contract forbids.
+    let store = dj_library::Store::with_default_mirror();
+    let (meta_edits, meta_edits_rx) = std::sync::mpsc::channel::<dj_engine::MetaEdit>();
+    {
+        let store = store.clone();
+        std::thread::spawn(move || {
+            while let Ok(edit) = meta_edits_rx.recv() {
+                if let Err(message) = dj_engine::meta::write_edit(&store, volume(), root(), &edit) {
+                    eprintln!("dj-engine: {message}");
+                }
+            }
+        });
+    }
+
     let (graph_loads, graph_loads_rx) = std::sync::mpsc::channel::<GraphLoad>();
     let (deck_updates, deck_updates_rx) = std::sync::mpsc::channel::<DeckUpdate>();
 
@@ -404,7 +435,14 @@ fn run(argv: &[String]) -> Result<(), String> {
                     },
                 });
                 let path = std::path::PathBuf::from(&request.path);
-                match prepare_track(&path, rate, 2.0) {
+                match prepare_track(&path, rate, 2.0).map(|mut prepared| {
+                    if let Some(problem) =
+                        dj_engine::meta::restore(&mut prepared, &store, volume(), root())
+                    {
+                        eprintln!("dj-engine: {problem}");
+                    }
+                    prepared
+                }) {
                     Ok(mut prepared_track) => {
                         prepared_track.deck = request.deck;
                         prepared_track.static_info.deck = request.deck;
@@ -416,11 +454,14 @@ fn run(argv: &[String]) -> Result<(), String> {
                                 eprintln!("dj-engine: no waveform for {}: {message}", request.path)
                             }
                         }
+                        // The attach goes first: whoever hears "Ready" may act on it at once, and
+                        // a cue sent before the deck holds the track would belong to nothing.
+                        let static_info = prepared_track.static_info.clone();
+                        let _ = prepared.send(GraphLoad::Attach(Box::new(prepared_track)));
                         let _ = updates.send(DeckUpdate {
                             deck: request.deck,
-                            static_info: prepared_track.static_info.clone(),
+                            static_info: static_info.clone(),
                         });
-                        let _ = prepared.send(GraphLoad::Attach(Box::new(prepared_track)));
                     }
                     Err(message) => {
                         eprintln!("dj-engine: cannot load {}: {message}", request.path);
@@ -447,7 +488,8 @@ fn run(argv: &[String]) -> Result<(), String> {
         Arc::clone(&cells),
         block,
         graph_loads_rx,
-    );
+    )
+    .with_meta_sink(meta_edits);
 
     // One bag of run parameters for both paths.
     let options = RunOptions {

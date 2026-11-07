@@ -871,6 +871,14 @@ int main(int argc, char *argv[])
         QStringLiteral("Close the window after this many milliseconds: the shutdown path, exercised "
                        "instead of described."),
         QStringLiteral("ms"));
+    const QCommandLineOption cueWriteOption(
+        QStringLiteral("cue-write-check"),
+        QStringLiteral("With --connect and --load: seek, store hotcue 2 and set a loop, then require the "
+                       "snapshot to show them. The pair of checks proves a reload brings them back."));
+    const QCommandLineOption cueReadOption(
+        QStringLiteral("cue-read-check"),
+        QStringLiteral("With --connect and --load: expect hotcue 2 at 48000 and a loop 96000..144000 "
+                       "from the file alone, sending no cue commands."));
     const QCommandLineOption masterCheckOption(
         QStringLiteral("master-check"),
         QStringLiteral("With --connect: the master knob must change the published gain, the master "
@@ -1029,6 +1037,8 @@ int main(int argc, char *argv[])
     parser.addOption(windowCheckOption);
     parser.addOption(curveCheckOption);
     parser.addOption(masterCheckOption);
+    parser.addOption(cueWriteOption);
+    parser.addOption(cueReadOption);
     parser.addOption(exitAfterOption);
     parser.addOption(stripCheckOption);
     parser.addOption(loadOption);
@@ -1508,6 +1518,116 @@ int main(int argc, char *argv[])
             }
             *settled = true;
         });
+    }
+
+    if (parser.isSet(cueWriteOption) || parser.isSet(cueReadOption)) {
+        // A13: cues and loops are decisions about a file, so they must outlive the process. The write
+        // check makes them, the read check finds them with no command of its own.
+        const bool writing = parser.isSet(cueWriteOption);
+        const QString fixture = parser.value(loadOption);
+        if (fixture.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: the cue check needs --load\n");
+            return 1;
+        }
+        bridge->connectToEngine(parser.value(connectOption));
+        QElapsedTimer linking;
+        linking.start();
+        while (!bridge->isConnected() && linking.elapsed() < 3000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QThread::msleep(10);
+        }
+        if (!bridge->isConnected()) {
+            std::fprintf(stderr, "dj-ui: no engine\n");
+            return 1;
+        }
+        const auto deckA = [&]() {
+            const QVariantList decks = bridge->snapshot().value(QStringLiteral("decks")).toList();
+            for (const QVariant &entry : decks) {
+                const QVariantMap deck = entry.toMap();
+                if (deck.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                    return deck;
+                }
+            }
+            return QVariantMap();
+        };
+        const auto sourceFrame = [&]() {
+            return deckA().value(QStringLiteral("source_frame")).toULongLong();
+        };
+        const auto waitFor = [&](const std::function<bool()> &ready, int milliseconds) {
+            QElapsedTimer timer;
+            timer.start();
+            while (timer.elapsed() < milliseconds) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                if (ready()) {
+                    return true;
+                }
+                QThread::msleep(10);
+            }
+            return ready();
+        };
+
+        // Earlier checks in the same engine leave a deck playing or loaded; start from an empty one,
+        // because this check is about metadata and not about what ran before it.
+        bridge->play(QStringLiteral("A"), false);
+        bridge->eject(QStringLiteral("A"));
+        waitFor([&]() {
+            const QVariant load = deckA().value(QStringLiteral("load"));
+            return load.typeId() == QMetaType::QString && load.toString() == QLatin1String("Empty");
+        }, 2000);
+        bridge->load(QStringLiteral("A"), fixture);
+
+        const bool loaded = waitFor([&]() {
+            const QVariant load = deckA().value(QStringLiteral("load"));
+            if (load.typeId() == QMetaType::QString) {
+                // A plain string is a state with no data: Empty, Ready.
+                return load.toString() == QLatin1String("Ready");
+            }
+            // An object is Loading { progress } or Failed { message }; only the failure is final.
+            return load.toMap().keys().value(0) == QLatin1String("Failed");
+        }, 8000);
+        if (!loaded) {
+            std::fprintf(stderr, "dj-ui: the cue check could not load the track\n");
+            return 1;
+        }
+
+        if (writing) {
+            // A deck left playing by an earlier check would run past the frame while we look at it;
+            // the cue has to land on a known frame, so stop first.
+            bridge->play(QStringLiteral("A"), false);
+            bridge->seek(QStringLiteral("A"), 48000);
+            if (!waitFor([&]() { return sourceFrame() >= 48000; }, 3000)) {
+                std::fprintf(stderr, "dj-ui: the deck did not reach frame 48000\n");
+                return 1;
+            }
+            bridge->cue(QStringLiteral("A"), QStringLiteral("Set"), 2);
+            bridge->setLoop(QStringLiteral("A"), true, 96000, 144000);
+        }
+
+        quint64 cue = 0;
+        quint64 loopStart = 0;
+        quint64 loopEnd = 0;
+        const bool seen = waitFor(
+            [&]() {
+                const QVariantMap deck = deckA();
+                const QVariantList hotcues = deck.value(QStringLiteral("hotcues")).toList();
+                cue = hotcues.size() > 2 ? hotcues.at(2).toULongLong() : 0;
+                const QVariantMap region = deck.value(QStringLiteral("loop_region")).toMap();
+                loopStart = region.value(QStringLiteral("start")).toULongLong();
+                loopEnd = region.value(QStringLiteral("end")).toULongLong();
+                return cue == 48000 && loopStart == 96000 && loopEnd == 144000;
+            },
+            6000);
+        std::fprintf(stdout, "dj-ui: %s hotcue 2 at %llu, loop %llu..%llu\n",
+                     writing ? "stored" : "restored", static_cast<unsigned long long>(cue),
+                     static_cast<unsigned long long>(loopStart),
+                     static_cast<unsigned long long>(loopEnd));
+        if (!seen) {
+            std::fprintf(stderr, "dj-ui: the cue or the loop did not survive\n");
+            return 1;
+        }
+        std::fprintf(stdout, "dj-ui: %s\n", writing ? "the cue and loop reached the engine"
+                                                    : "the reload brought the cue and loop back");
+        return 0;
     }
 
     if (parser.isSet(masterCheckOption)) {

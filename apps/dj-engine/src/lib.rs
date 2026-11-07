@@ -19,6 +19,8 @@ use dj_domain::{
 };
 use dj_mixer::{ChannelSettings, CrossAssign, CrossfaderCurve, Mixer};
 
+pub mod meta;
+
 pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, clock: u64) -> Ack {
     let id = command.id;
     let at = command.effective_sample.max(clock);
@@ -378,12 +380,15 @@ impl StateCells {
             let attached = cells.attached.load(Ordering::Relaxed);
             let frame = cells.frame.load(Ordering::Relaxed);
             let total = if attached { fixed.total_frames } else { None };
-            // The state a client waits on is the loader's, and it only means anything while a source
-            // is attached: an ejected deck is empty however the last request ended.
-            let load = if attached {
-                fixed.load.clone()
-            } else {
-                DeckLoad::Empty
+            // `Ready` means the deck holds the source, which is when a client may act on it. The
+            // loader knows the file, but the graph attaches it a block later; a cue sent into that
+            // window would belong to nothing, so the gap reads as `Loading` rather than `Ready`.
+            let load = match (attached, &fixed.load) {
+                (true, state) => state.clone(),
+                (false, DeckLoad::Loading { progress }) => DeckLoad::Loading {
+                    progress: *progress,
+                },
+                (false, _) => DeckLoad::Empty,
             };
             let loop_start = cells.loop_start.load(Ordering::Relaxed);
             let loop_end = cells.loop_end.load(Ordering::Relaxed);
@@ -481,6 +486,23 @@ pub struct PreparedTrack {
     pub track: Option<TrackMeta>,
     /// Static half of the snapshot for this deck.
     pub static_info: DeckStatic,
+    /// Where the file is, so an edit knows what to write (DJP-DATA-006).
+    pub path: Option<std::path::PathBuf>,
+    /// Cues recorded for this file, restored at attach.
+    pub cues: Vec<(u8, u64)>,
+    /// Loop recorded for this file.
+    pub loop_region: Option<FrameRange>,
+}
+
+/// A change worth writing to the track's metadata file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MetaEdit {
+    /// The file the deck holds.
+    pub path: std::path::PathBuf,
+    /// Cues as frames of the source file, slot and position.
+    pub cues: Vec<(u8, u64)>,
+    /// The active loop as `(start, end)` frames.
+    pub loop_region: Option<(u64, u64)>,
 }
 
 /// What the loader tells the publisher, so the UI can show `Loading` and `Failed`.
@@ -582,6 +604,10 @@ pub fn prepare_track(
         source: Box::new(prefetcher),
         track: Some(track),
         static_info,
+        path: Some(path.to_path_buf()),
+        // What the file remembers is read by the caller: this function knows samples, not sessions.
+        cues: Vec::new(),
+        loop_region: None,
     })
 }
 
@@ -606,6 +632,11 @@ pub struct EngineGraph {
     retired: Vec<Box<dyn DeckSource>>,
     /// Loads applied since start, so the report can say whether a load ever stalled a block.
     loads_applied: u64,
+    /// Where an edit goes. The callback only sends; the writing happens on another thread, because
+    /// a disk call in the audio path is the one thing DJP-NFR-001 forbids outright.
+    meta: Option<std::sync::mpsc::Sender<MetaEdit>>,
+    /// Path of the file on each deck, in deck order.
+    paths: Vec<Option<std::path::PathBuf>>,
 }
 
 impl EngineGraph {
@@ -619,6 +650,7 @@ impl EngineGraph {
         loads: Receiver<GraphLoad>,
     ) -> Self {
         let block = block.max(1);
+        let decks_len = decks.len();
         Self {
             decks,
             mixer,
@@ -630,7 +662,50 @@ impl EngineGraph {
             loads,
             retired: Vec::with_capacity(16),
             loads_applied: 0,
+            meta: None,
+            paths: vec![None; decks_len],
         }
+    }
+
+    /// Send cue and loop edits to `sink`. Called before the stream starts: the callback never locks.
+    pub fn with_meta_sink(mut self, sink: std::sync::mpsc::Sender<MetaEdit>) -> Self {
+        self.meta = Some(sink);
+        self
+    }
+
+    /// Hand the deck's cues and loop to the writer when a command changed them.
+    ///
+    /// Cheap on purpose: a lookup, a copy of eight slots and a send on a channel that never blocks,
+    /// because this runs inside the callback.
+    fn note_edit(&self, command: &ScheduledCommand) {
+        let Some(sink) = self.meta.as_ref() else {
+            return;
+        };
+        let deck_id = match &command.command {
+            DjCommand::Cue { deck, .. } | DjCommand::SetLoop { deck, .. } => *deck,
+            _ => return,
+        };
+        let Some(index) = self.decks.iter().position(|deck| deck.id() == deck_id) else {
+            return;
+        };
+        let Some(path) = self.paths[index].clone() else {
+            return;
+        };
+        let deck = &self.decks[index];
+        let cues: Vec<(u8, u64)> = deck
+            .hotcues()
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, frame)| frame.map(|frame| (slot as u8, frame)))
+            .collect();
+        let loop_region = deck
+            .loop_region()
+            .map(|region| (region.start.0, region.end.0));
+        let _ = sink.send(MetaEdit {
+            path,
+            cues,
+            loop_region,
+        });
     }
 
     /// Device-clock position after the last rendered block.
@@ -667,6 +742,13 @@ impl EngineGraph {
                         let old = self.decks[index].take_source();
                         self.park_old(old);
                         self.decks[index].attach(prepared.source, prepared.track);
+                        // What the file remembered goes back on the deck, so a reload looks like a
+                        // reload and not like a fresh track (DJP-DATA-006).
+                        for (slot, frame) in prepared.cues {
+                            self.decks[index].set_hotcue(usize::from(slot), frame);
+                        }
+                        self.decks[index].set_loop(prepared.loop_region);
+                        self.paths[index] = prepared.path;
                         self.loads_applied += 1;
                     }
                 }
@@ -676,6 +758,7 @@ impl EngineGraph {
                         .iter()
                         .position(|candidate| candidate.id() == deck)
                     {
+                        self.paths[index] = None;
                         let old = self.decks[index].take_source();
                         self.park_old(old);
                         self.decks[index].eject();
@@ -693,6 +776,9 @@ impl EngineGraph {
                 &submission.command,
                 self.clock,
             );
+            // A cue or a loop is a decision the user made about this file, so it outlives the
+            // session. The callback only hands the edit over; the writing thread does the disk work.
+            self.note_edit(&submission.command);
             let _ = submission.reply.send(ack);
         }
 

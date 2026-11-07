@@ -52,8 +52,8 @@ DJP-FX-006,dsp,P2,R3,DJP-SRS-001 §5,,,unverified,,,
 DJP-FX-007,dsp,P2,R2,DJP-SRS-001 §5,,,unverified,,,
 DJP-FX-008,dsp,P2,R3,DJP-SRS-001 §5,,,unverified,,,
 DJP-GOAL-001,architect,,,DJP-SRS-001 §1,,,unverified,,,
-DJP-GOAL-002,architect,,,DJP-SRS-001 §1,,,unverified,,,
-DJP-GOAL-003,architect,,,DJP-SRS-001 §1,,,unverified,,,
+DJP-GOAL-002,architect,,,DJP-SRS-001 §1,демо R0: две деки; микшер с кроссфейдером; волны; cue и loop переживают перезапуск,ui.sh --engine-check (self/wheel/curve/strip/master/cue-write+cue-read); dj-headless: два прогона совпадают побайтово,review,docs/qa/evidence/A13/summary.md,,2026-11-06
+DJP-GOAL-003,architect,,,DJP-SRS-001 §1,демо R0: две деки; микшер с кроссфейдером; волны; cue и loop переживают перезапуск,ui.sh --engine-check (self/wheel/curve/strip/master/cue-write+cue-read); dj-headless: два прогона совпадают побайтово,review,docs/qa/evidence/A13/summary.md,,2026-11-06
 DJP-GOAL-004,architect,,,DJP-SRS-001 §1,,,unverified,,,
 DJP-GOAL-005,architect,,,DJP-SRS-001 §1,,,unverified,,,
 DJP-GOAL-006,architect,,,DJP-SRS-001 §1,,,unverified,,,

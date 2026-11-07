@@ -174,6 +174,37 @@ case "${1:-}" in
     # The channel gain, end to end: the UI's command must reach the deck it names and come back
     # in the snapshot. A knob that turns but changes nothing is the failure this catches.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --gain-check
+    # A13: a cue and a loop are decisions about a file, so they must outlive the engine process. One
+    # run stores them, a second engine reads them with no cue command of its own.
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
+        --cue-write-check --load "$fixture"
+    cue_socket="$run_dir/engine-cue.sock"
+    kill "$engine_pid" 2>/dev/null || true
+    wait "$engine_pid" 2>/dev/null || true
+    "$engine_bin" --null-sink --socket "$cue_socket" --block 256 &
+    engine_pid=$!
+    for _ in $(seq 1 100); do
+      [ -S "$cue_socket" ] && break
+      sleep 0.05
+    done
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$cue_socket" \
+        --cue-read-check --load "$fixture"
+
+    # A13: the headless render is reproducible byte for byte, which is what makes a fixture a
+    # fixture rather than "whatever the current build produced".
+    headless_bin="${DJ_HEADLESS_BIN:-${CARGO_TARGET_DIR:-$HOME/.cache/dj-platform-target}/debug/dj-headless}"
+    if [ -x "$headless_bin" ]; then
+      "$headless_bin" sine --frames 48000 --rate 48000 --out "$run_dir/take-one.wav" >/dev/null
+      "$headless_bin" sine --frames 48000 --rate 48000 --out "$run_dir/take-two.wav" >/dev/null
+      first="$(sha256sum "$run_dir/take-one.wav" | cut -d' ' -f1)"
+      second_hash="$(sha256sum "$run_dir/take-two.wav" | cut -d' ' -f1)"
+      echo "dj-headless: two runs hash ${first:0:16} and ${second_hash:0:16}"
+      if [ "$first" != "$second_hash" ]; then
+        echo "ui.sh: the same headless run produced different bytes" >&2
+        exit 1
+      fi
+    fi
+
     # Drum-like material must not paint one colour: a tone has no balance to show, a kick and a hat
     # do. The engine reuses its cache, so this is a second UI pass over the same runtime.
     drums="crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav"
