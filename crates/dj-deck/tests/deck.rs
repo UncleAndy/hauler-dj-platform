@@ -143,10 +143,9 @@ fn a_loop_armed_while_playing_inside_it_has_no_silent_head() {
 }
 
 #[test]
-fn clearing_a_loop_does_not_replay_what_was_already_heard() {
-    // While the loop plays from memory the decoder is left where the loop ended, and a real decoder
-    // still holds that material in its prefetch ring. Clearing the loop has to carry on from the
-    // playhead, not resume the decoder at that stale spot and play its tail again.
+fn clearing_a_loop_is_inaudible() {
+    // Switching a loop off inside it must be inaudible: no repeat of the tail already heard, no jump,
+    // no click. The playhead finishes the copy it is inside and the decoder takes over where it stood.
     let mut deck = deck_with_ramp(44_100);
     let region = FrameRange::new(1_000, 3_000).unwrap_or_else(|| panic!("region"));
     deck.seek(1_000);
@@ -163,22 +162,30 @@ fn clearing_a_loop_does_not_replay_what_was_already_heard() {
     deck.render(&mut inside);
     assert_eq!(deck.position(), 1_500);
 
+    let seeks_before = deck.stats().seeks;
     deck.set_loop(None);
     assert_eq!(
         deck.position(),
         1_500,
         "clearing a loop must not move the playhead"
     );
-
-    let mut next = vec![0.0f32; 256 * 2];
-    deck.render(&mut next);
-    assert!(
-        (next[0] - ramp(1_500)).abs() < 1e-6,
-        "the sound must continue from the playhead: expected {}, got {}",
-        ramp(1_500),
-        next[0]
+    assert_eq!(
+        deck.stats().seeks,
+        seeks_before,
+        "clearing a loop must not ask the decoder to seek: that request is the click the DJ hears"
     );
-    assert!((next[255 * 2] - ramp(1_755)).abs() < 1e-6);
+
+    // The next block crosses the loop's end: the copy runs out at 3_000 and the source carries on.
+    let mut next = vec![0.0f32; 2_000 * 2];
+    deck.render(&mut next);
+    for frame in 0..2_000usize {
+        let expected = ramp(1_500 + frame as u64);
+        assert!(
+            (next[frame * 2] - expected).abs() < 1e-6,
+            "frame {frame}: the sound must run on unbroken, expected {expected}, got {}",
+            next[frame * 2]
+        );
+    }
 }
 
 #[test]

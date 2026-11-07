@@ -109,6 +109,9 @@ pub struct DeckStats {
     pub underruns: u64,
     /// Times the loop wrapped.
     pub loop_wraps: u64,
+    /// Seeks asked of the decoder. A seek inside an audio callback is a click, so the count is how the
+    /// deck is held to "switching a loop off must not touch the sound".
+    pub seeks: u64,
     /// Hotcue jumps.
     pub hotcue_jumps: u64,
 }
@@ -198,6 +201,10 @@ pub struct Deck {
     loop_buffer: Option<LoopBuffer>,
     /// True while the playhead reads the captured loop instead of the source.
     reading_loop_buffer: bool,
+    /// Where the captured buffer stops being used after the loop was switched off: the playhead keeps
+    /// reading the copy it is in the middle of until it reaches this frame, and the decoder — which sits
+    /// exactly there — takes over. That is the only way to leave a loop without a click.
+    drain_until: Option<u64>,
     /// The channel's three-band EQ, applied after the trim and before the mixer (A14).
     eq: ChannelEq,
     /// Rate the deck is played at, in Hz: the device's rate, so a file recorded at another rate is
@@ -256,6 +263,7 @@ impl Deck {
             loop_config: LoopConfig::default(),
             loop_buffer: None,
             reading_loop_buffer: false,
+            drain_until: None,
             eq: ChannelEq::new(EQ_SAMPLE_RATE),
             output_rate: EQ_SAMPLE_RATE as u32,
             rate_ratio: 1.0,
@@ -404,6 +412,7 @@ impl Deck {
         self.loop_region = None;
         self.loop_buffer = None;
         self.reading_loop_buffer = false;
+        self.drain_until = None;
         self.levels = Levels::SILENT;
         self.load = DeckLoad::Empty;
         self.eq.reset();
@@ -460,6 +469,7 @@ impl Deck {
         // A command seeks now; the audio thread only asks, so a decoder outside the prefetch
         // window cannot stall the callback for however long the file needs to be re-read.
         self.reading_loop_buffer = false;
+        self.drain_until = None;
         let result = if self.blocking {
             source.seek(clamped)
         } else {
@@ -467,6 +477,7 @@ impl Deck {
         };
         match result {
             Ok(landed) => {
+                self.stats.seeks += 1;
                 self.position = landed;
                 landed
             }
@@ -497,20 +508,25 @@ impl Deck {
     /// activating a loop never moves the playhead by itself. Entering a loop at its beginning is the
     /// caller's job — the Loop button and a pad both seek to `start` after arming it.
     pub fn set_loop(&mut self, region: Option<FrameRange>) {
-        // While the loop plays from memory the decoder is left where the loop ended, and its prefetch
-        // ring still holds that material. Taking the loop away without putting the decoder back on the
-        // playhead would replay the tail the hand has already heard — a stumble backwards at the very
-        // moment the DJ asked for nothing to happen.
-        let was_reading_buffer = self.reading_loop_buffer;
+        // Switching a loop off in the middle of it must not touch the sound at all. The playhead is
+        // inside the captured copy while the decoder waits at the loop's end, so a seek back would be a
+        // click and resuming the decoder would replay a tail already heard. Instead the copy is played
+        // to its end and the decoder takes over there, sample for sample.
+        if self.reading_loop_buffer && region.is_none() {
+            self.loop_region = None;
+            self.drain_until = self
+                .loop_buffer
+                .as_ref()
+                .map(|buffer| buffer.start.saturating_add(buffer.frames()));
+            return;
+        }
         self.loop_region = region;
         self.reading_loop_buffer = false;
+        self.drain_until = None;
         self.loop_buffer = match region {
             Some(region) => self.buffer_for(region),
             None => None,
         };
-        if was_reading_buffer {
-            self.seek(self.position);
-        }
     }
 
     /// Capture policy in force.
@@ -856,6 +872,15 @@ impl Deck {
         while written < frames {
             // Once the loop has been captured, the seam is a copy: no seek, no gap (ADR-0009).
             if self.reading_loop_buffer
+                && let Some(until) = self.drain_until
+                && self.position >= until
+            {
+                // The copy is played out; the decoder is exactly here, so nothing is repeated or lost.
+                self.reading_loop_buffer = false;
+                self.drain_until = None;
+                self.loop_buffer = None;
+            }
+            if self.reading_loop_buffer
                 && let Some(filled) = self.read_loop_buffer(&mut out[written * 2..])
             {
                 written += filled;
@@ -954,7 +979,6 @@ impl Deck {
 
     /// Fill `out` from the captured loop, wrapping at its end. `None` when there is nothing to read.
     fn read_loop_buffer(&mut self, out: &mut [f32]) -> Option<usize> {
-        let region = self.loop_region?;
         let buffer = self.loop_buffer.as_ref()?;
         if !buffer.is_complete() {
             return None;
@@ -963,20 +987,33 @@ impl Deck {
         if want == 0 {
             return Some(0);
         }
-        if self.position < region.start.0 || self.position >= region.end.0 {
-            self.position = region.start.0;
+        let start = buffer.start;
+        let end = start.saturating_add(buffer.frames());
+        // Wrapping belongs to an armed loop; a copy being drained for a switched-off loop simply ends.
+        let wrapping = self.loop_region.is_some();
+        if self.position >= end {
+            if !wrapping {
+                return Some(0);
+            }
+            self.position = start;
         }
-        let offset = usize::try_from(self.position.saturating_sub(buffer.start)).unwrap_or(0);
+        if self.position < start {
+            return Some(0);
+        }
+        let offset = usize::try_from(self.position.saturating_sub(start)).unwrap_or(0);
         let frames = usize::try_from(buffer.frames()).unwrap_or(0);
         if offset >= frames {
-            self.position = region.start.0;
+            if !wrapping {
+                return Some(0);
+            }
+            self.position = start;
             return Some(0);
         }
         let take = want.min(frames - offset);
         out[..take * 2].copy_from_slice(&buffer.data[offset * 2..(offset + take) * 2]);
         self.position += take as u64;
-        if self.position >= region.end.0 {
-            self.position = region.start.0;
+        if wrapping && self.position >= end {
+            self.position = start;
             self.stats.loop_wraps += 1;
         }
         Some(take)
