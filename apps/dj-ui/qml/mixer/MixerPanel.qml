@@ -115,8 +115,9 @@ Pane {
                     // Level with the channels' gain knobs: the master is the gain of the whole mix,
                     // and one line across the mixer is how a person reads four trims and a master.
                     anchors.topMargin: mixer.stripHeaderHeight
-                    width: mixer.masterKnobSide
-                    height: mixer.masterKnobSide
+                    width: mixer.eqKnobSide
+                    height: mixer.eqKnobSide
+                    diameter: mixer.eqKnobSide
                     gain: mixer.masterGain
                 }
                 MasterMeter {

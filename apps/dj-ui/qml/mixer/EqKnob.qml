@@ -25,6 +25,9 @@ Item {
 
     implicitWidth: diameter
     implicitHeight: diameter + 11
+    // What is actually drawn: the cap is the diameter even when the strip is a pixel narrower, so the
+    // channel knobs and the master measure the same on screen and not only in the request.
+    readonly property real capSide: diameter
     objectName: "eq_" + band + "_" + deckId
 
     readonly property real rangeDb: 26.0
@@ -51,7 +54,7 @@ Item {
 
     Item {
         id: face
-        readonly property real side: Math.min(knob.width, knob.diameter)
+        readonly property real side: knob.capSide
         width: face.side
         height: face.side
         anchors.horizontalCenter: parent.horizontalCenter

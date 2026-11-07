@@ -5,8 +5,10 @@
 // them apart is why this is a knob at the top of the strip: a trim correction and a fader throw must
 // never move the same number.
 //
-// Travel is the same decibel range as before (-40 … +6, unity near the top), and the arc runs from
-// unity to the knob's angle, so a boost and a cut are told apart by which way the light goes.
+// Zero stands straight up, as a trim has it: a trim is set around unity in both directions, so the cut
+// (40 dB) and the boost (6 dB) each get 135 degrees of the same travel, and the pointer at unity points
+// at twelve o'clock. The arc runs from unity to the knob's angle, so a boost and a cut are told apart by
+// which way the light goes.
 import QtQuick
 import QtQuick.Controls
 
@@ -22,15 +24,16 @@ Item {
     implicitWidth: diameter
     implicitHeight: diameter + 11
     objectName: "trim_" + deckId
+    readonly property real capSide: diameter
 
     readonly property int minimumDb: -40
     readonly property int maximumDb: 6
     readonly property real db: gain > 0.0 ? 20.0 * Math.log(gain) / Math.LN10 : minimumDb
-    readonly property real fraction: Math.max(0.0, Math.min(1.0,
-                                                    (db - minimumDb) / (maximumDb - minimumDb)))
-    readonly property real unityFraction: (0.0 - minimumDb) / (maximumDb - minimumDb)
-    readonly property real angle: -135.0 + 270.0 * fraction
-    readonly property real unityAngle: -135.0 + 270.0 * unityFraction
+    // Zero up: 135 degrees each way, the cut compressed into 40 dB and the boost into 6.
+    readonly property real angle: db >= 0.0
+                                   ? 135.0 * db / maximumDb
+                                   : 135.0 * db / (-minimumDb)
+    readonly property real unityAngle: 0.0
 
     property bool dragging: false
     property real draggedDb: 0.0
@@ -48,7 +51,7 @@ Item {
 
     Item {
         id: face
-        readonly property real side: Math.min(knob.width, knob.diameter)
+        readonly property real side: knob.capSide
         width: face.side
         height: face.side
         anchors.horizontalCenter: parent.horizontalCenter
@@ -133,7 +136,14 @@ Item {
             if (!knob.dragging) {
                 return;
             }
-            knob.ask(knob.pressDb + (knob.pressY - mouse.y) * 0.5);
+            // The hand moves the pointer, not the number: the pointer runs -135…+135 over the travel,
+            // and the number follows from where it stands.
+            const share = 1.0 - Math.max(0.0, Math.min(1.0, mouse.y / knob.height));
+            const angle = -135.0 + 270.0 * share;
+            const decibels = angle >= 0.0
+                             ? angle / 135.0 * knob.maximumDb
+                             : angle / 135.0 * (-knob.minimumDb);
+            knob.ask(decibels);
         }
         onReleased: knob.dragging = false
         onCanceled: knob.dragging = false

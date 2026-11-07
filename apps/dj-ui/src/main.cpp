@@ -2754,7 +2754,7 @@ int main(int argc, char *argv[])
         const double masterSide = masterKnob->width();
         for (int deck = 0; deck < 2; ++deck) {
             for (int band = 0; band < 3; ++band) {
-                const double side = knobs[deck][band]->property("diameter").toDouble();
+                const double side = knobs[deck][band]->property("capSide").toDouble();
                 if (std::abs(side - masterSide) > 1.0) {
                     std::fprintf(stderr,
                                  "dj-ui: the %s %s knob is %.0f px against the master's %.0f px\n",
@@ -2766,6 +2766,56 @@ int main(int argc, char *argv[])
         std::fprintf(stdout,
                      "dj-ui: every EQ knob is %.0f px across, the same cap as the master knob\n",
                      masterSide);
+        // And the master is the same control, not a bigger one: its cap has to measure up to the
+        // channel caps, in both directions.
+        for (QQuickItem *trim : {trimA, trimB}) {
+            const double side = trim->property("capSide").toDouble();
+            if (std::abs(side - masterSide) > 1.0) {
+                std::fprintf(stderr,
+                             "dj-ui: a channel gain knob is %.0f px against the master's %.0f px\n",
+                             side, masterSide);
+                return 1;
+            }
+        }
+        std::fprintf(stdout,
+                     "dj-ui: the master knob is %.0f px, the channel gain knobs are %.0f px, the EQ "
+                     "knobs %.0f px\n",
+                     masterSide, trimA->property("capSide").toDouble(),
+                     knobs[0][0]->property("capSide").toDouble());
+
+        // Where the pointers stand at unity. The owner asked for two different zeroes and both are
+        // facts about the drawing, not about the numbers: a trim points at twelve o'clock, a volume
+        // knob sits at three.
+        //
+        // The engine may be anywhere: another check in the same gate leaves the master at half, and an
+        // angle read from someone else's setting is not a measurement of the knob. Ask for unity first.
+        bridge->setMasterGain(1.0);
+        bridge->setChannelGain(QStringLiteral("A"), 1.0);
+        QElapsedTimer settling;
+        settling.start();
+        while (settling.elapsed() < 1500) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            const double published = bridge->snapshot().value(QStringLiteral("master_gain")).toDouble();
+            if (std::abs(published - 1.0) < 0.01) {
+                break;
+            }
+            QThread::msleep(20);
+        }
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+
+        const double trimAngle = trimA->property("angle").toDouble();
+        const double masterAngle = masterKnob->property("angle").toDouble();
+        std::fprintf(stdout,
+                     "dj-ui: at unity the gain knob points %.0f deg and the master knob %.0f deg\n",
+                     trimAngle, masterAngle);
+        if (std::abs(trimAngle) > 1.0) {
+            std::fprintf(stderr, "dj-ui: the gain knob's zero is not straight up\n");
+            return 1;
+        }
+        if (std::abs(masterAngle - 90.0) > 1.0) {
+            std::fprintf(stderr, "dj-ui: the master knob's unity is not to the right\n");
+            return 1;
+        }
 
         const double masterTop = masterKnob->mapToItem(content, QPointF(0, 0)).y();
         for (QQuickItem *trim : {trimA, trimB}) {
