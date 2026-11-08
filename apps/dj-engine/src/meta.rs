@@ -147,6 +147,7 @@ pub fn write_beatgrid(
     root: &Path,
     path: &Path,
     grid: StoredGrid,
+    force: bool,
 ) -> Result<bool, String> {
     if !grid.bpm.is_finite() || grid.bpm <= 0.0 {
         return Ok(false);
@@ -163,7 +164,9 @@ pub fn write_beatgrid(
             (TrackMeta::new(print, now_ms), false)
         }
     };
-    if meta.analysis_lock || meta.beatgrid.is_some() {
+    // A stored grid is a decision, unless the DJ asked for the measurement again: then the answer
+    // replaces it, lock or no lock.
+    if !force && (meta.analysis_lock || meta.beatgrid.is_some()) {
         return Ok(false);
     }
     meta.beatgrid = Some(dj_library::BeatGrid {

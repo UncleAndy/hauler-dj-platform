@@ -332,6 +332,25 @@ int BridgeClient::load(const QString &deck, const QString &path)
     options.insert(QStringLiteral("path"), path);
     QJsonObject command;
     command.insert(QStringLiteral("Load"), options);
+    if (!path.isEmpty()) {
+        m_deckPaths.insert(deck, path);
+    }
+    return sendCommand(deck, command);
+}
+
+int BridgeClient::analyzeTempo(const QString &deck)
+{
+    // Only a file this client loaded can be measured: the path is what the analysis reads, and a guess
+    // here would write one track's numbers into another track's metadata.
+    const QString path = m_deckPaths.value(deck);
+    if (path.isEmpty()) {
+        return -1;
+    }
+    QJsonObject options;
+    options.insert(QStringLiteral("deck"), deck);
+    options.insert(QStringLiteral("path"), path);
+    QJsonObject command;
+    command.insert(QStringLiteral("AnalyzeTempo"), options);
     return sendCommand(deck, command);
 }
 
@@ -341,6 +360,7 @@ int BridgeClient::eject(const QString &deck)
     options.insert(QStringLiteral("deck"), deck);
     QJsonObject command;
     command.insert(QStringLiteral("Eject"), options);
+    m_deckPaths.remove(deck);
     return sendCommand(deck, command);
 }
 

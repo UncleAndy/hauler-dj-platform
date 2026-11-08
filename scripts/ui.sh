@@ -214,6 +214,10 @@ case "${1:-}" in
     cp crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav "$tempo_file"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --tempo-check --load "$tempo_file"
+    # The same measurement, asked for by hand: the button must put a question between the click and the
+    # work, and the answer must replace the grid the load wrote — the file's revision is what proves it.
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
+        --tempo-recheck --load "$tempo_file"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --eq-check
     # A double click is the way back to neutral on every mouse-driven control, and each control has its
     # own neutral: a gain or a band goes flat, a fader opens, the master stands at three quarters of its

@@ -919,6 +919,10 @@ int main(int argc, char *argv[])
         QStringLiteral("Close the window after this many milliseconds: the shutdown path, exercised "
                        "instead of described."),
         QStringLiteral("ms"));
+    const QCommandLineOption tempoRecheckOption(
+        QStringLiteral("tempo-recheck"),
+        QStringLiteral("With --connect and --load: require the deck's re-measure button to ask before "
+                       "it runs, then confirm it and require the new grid on disk."));
     const QCommandLineOption cueWriteOption(
         QStringLiteral("cue-write-check"),
         QStringLiteral("With --connect and --load: seek, store hotcue 2 and set a loop, then require the "
@@ -1159,6 +1163,7 @@ int main(int argc, char *argv[])
     parser.addOption(windowCheckOption);
     parser.addOption(curveCheckOption);
     parser.addOption(masterCheckOption);
+    parser.addOption(tempoRecheckOption);
     parser.addOption(cueWriteOption);
     parser.addOption(cueReadOption);
     parser.addOption(exitAfterOption);
@@ -3149,6 +3154,120 @@ int main(int argc, char *argv[])
             return 1;
         }
         std::fprintf(stdout, "dj-ui: the measured tempo reached the deck\n");
+        return 0;
+    }
+
+    if (parser.isSet(tempoRecheckOption)) {
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        const QString fixture = parser.value(loadOption);
+        if (fixture.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: --tempo-recheck needs --load\n");
+            return 1;
+        }
+        bridge->connectToEngine(parser.value(connectOption));
+        const auto waitFor = [](const std::function<bool()> &ready, int budget) {
+            QElapsedTimer timer;
+            timer.start();
+            while (timer.elapsed() < budget) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                if (ready()) {
+                    return true;
+                }
+                QThread::msleep(10);
+            }
+            return ready();
+        };
+        if (!waitFor([&]() { return bridge->isConnected(); }, 3000)) {
+            std::fprintf(stderr, "dj-ui: no engine\n");
+            return 1;
+        }
+        const auto deckA = [&]() {
+            const QVariantList decks = bridge->snapshot().value(QStringLiteral("decks")).toList();
+            for (const QVariant &entry : decks) {
+                const QVariantMap deck = entry.toMap();
+                if (deck.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                    return deck;
+                }
+            }
+            return QVariantMap();
+        };
+        bridge->load(QStringLiteral("A"), fixture);
+        if (!waitFor(
+                [&]() {
+                    const QVariant tempo = deckA()
+                                               .value(QStringLiteral("track"))
+                                               .toMap()
+                                               .value(QStringLiteral("bpm"));
+                    return tempo.isValid() && !tempo.isNull();
+                },
+                20000)) {
+            std::fprintf(stderr, "dj-ui: the engine measured no tempo to re-measure\n");
+            return 1;
+        }
+        const QString sidecar =
+            QFileInfo(fixture).absolutePath() + QStringLiteral("/.djmeta/") +
+            QFileInfo(fixture).fileName() + QStringLiteral(".json");
+        const auto revision = [&]() {
+            QFile file(sidecar);
+            if (!file.open(QIODevice::ReadOnly)) {
+                return -1;
+            }
+            const QJsonObject meta = QJsonDocument::fromJson(file.readAll()).object();
+            return meta.value(QStringLiteral("revision")).toInt(-1);
+        };
+        // The load itself writes the measured grid, on the engine's writer thread: wait for that write
+        // before capturing the revision, or the check would credit the button with the loader's work.
+        if (!waitFor([&]() { return revision() > 0; }, 8000)) {
+            std::fprintf(stderr, "dj-ui: the load wrote no grid to %s\n", qPrintable(sidecar));
+            return 1;
+        }
+        const int before = revision();
+        auto *button = findItem(window->contentItem(), QStringLiteral("tempo_A"));
+        if (button == nullptr) {
+            std::fprintf(stderr, "dj-ui: the deck has no re-measure button\n");
+            return 1;
+        }
+        auto *confirm = findItem(window->contentItem(), QStringLiteral("tempoGo_A"));
+        // Nothing is asked of a person who has clicked nothing yet. The popup's content may not exist
+        // until it is first opened, which is also a way of asking nothing.
+        if (confirm != nullptr && confirm->isVisible()) {
+            std::fprintf(stderr, "dj-ui: the re-measure asks nothing before it runs\n");
+            return 1;
+        }
+        QMetaObject::invokeMethod(button, "clicked");
+        QCoreApplication::processEvents();
+        if (confirm == nullptr) {
+            confirm = findItem(window->contentItem(), QStringLiteral("tempoGo_A"));
+        }
+        if (confirm == nullptr) {
+            std::fprintf(stderr, "dj-ui: the re-measure opened no question at all\n");
+            return 1;
+        }
+        if (!waitFor([&]() { return confirm->isVisible(); }, 2000)) {
+            std::fprintf(stderr, "dj-ui: the re-measure button did not ask for confirmation\n");
+            return 1;
+        }
+        // The question alone must change nothing: what is written follows the answer, not the click.
+        waitFor([]() { return false; }, 300);
+        if (revision() != before) {
+            std::fprintf(stderr, "dj-ui: the grid was rewritten before the question was answered\n");
+            return 1;
+        }
+        QMetaObject::invokeMethod(confirm, "clicked");
+        if (!waitFor([&]() { return revision() > before; }, 20000)) {
+            std::fprintf(stderr, "dj-ui: the confirmed re-measure never reached the metadata\n");
+            return 1;
+        }
+        const QVariant tempo =
+            deckA().value(QStringLiteral("track")).toMap().value(QStringLiteral("bpm"));
+        std::fprintf(stdout,
+                     "dj-ui: the re-measure asked, was confirmed, and reached the file: %.2f BPM, "
+                     "revision %d -> %d\n",
+                     tempo.toDouble(), before, revision());
         return 0;
     }
 

@@ -215,6 +215,7 @@ impl Engine {
             | DjCommand::SeekFrames { .. }
             | DjCommand::SetLoop { .. }
             | DjCommand::Load { .. }
+            | DjCommand::AnalyzeTempo { .. }
             | DjCommand::Eject { .. } => {
                 Some(Ack::rejected(command_id, RejectReason::NotSupported))
             }

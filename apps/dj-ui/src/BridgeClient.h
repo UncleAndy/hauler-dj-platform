@@ -92,6 +92,10 @@ public:
         m_loadFolder = std::move(handler);
     }
     Q_INVOKABLE int eject(const QString &deck);
+    /// Measure the deck's tempo again and replace the stored grid (B02). Returns a negative number
+    /// when this client never loaded a file into that deck, which is the only case with nothing to
+    /// measure.
+    Q_INVOKABLE int analyzeTempo(const QString &deck);
     Q_INVOKABLE int seek(const QString &deck, qulonglong frame);
     Q_INVOKABLE int setLoop(const QString &deck, bool enabled, qulonglong start, qulonglong end);
     Q_INVOKABLE int setCrossfader(double position);
@@ -157,4 +161,7 @@ private:
     int m_nextCommandId = 1;
     // Commands sent but not yet acknowledged; used to prove the UI is not optimistic.
     int m_pendingCommands = 0;
+    // Which file each deck holds, as this client loaded it: a re-measure needs the path, and the
+    // engine should not have to remember what its client already knows.
+    QMap<QString, QString> m_deckPaths;
 };

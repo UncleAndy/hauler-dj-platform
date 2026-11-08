@@ -64,6 +64,24 @@ fn an_eq_knob_names_its_band_and_the_deck_it_belongs_to() {
 }
 
 #[test]
+fn a_re_measurement_names_its_deck_and_its_file_and_is_never_dropped() {
+    // The button sends this: the engine has no way to guess which file the deck holds, and a lost
+    // request would leave the DJ clicking a button that does nothing.
+    let command = DjCommand::AnalyzeTempo {
+        deck: DeckId::A,
+        path: String::from("/music/track.wav"),
+    };
+    let json = serde_json::to_value(&command).unwrap_or_default();
+    assert_eq!(
+        json,
+        serde_json::json!({
+            "AnalyzeTempo": { "deck": "A", "path": "/music/track.wav" }
+        })
+    );
+    assert!(command.is_critical(), "a person asked for it by hand");
+}
+
+#[test]
 fn a_snapshot_from_before_the_eq_still_reads_as_flat() {
     // A client of the previous build must keep working: the field is defaulted, and three bands at
     // unity is what a channel without an EQ is doing.

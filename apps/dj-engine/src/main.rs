@@ -318,6 +318,8 @@ fn run(argv: &[String]) -> Result<(), String> {
         .collect::<Vec<_>>();
     let subscribers: Subscribers = Arc::new(Mutex::new(Vec::new()));
     let (submissions, submissions_rx) = std::sync::mpsc::channel::<Submission>();
+    // Requests to measure a tempo again; the worker below owns the answers.
+    let (analysis_requests, analysis_requests_rx) = std::sync::mpsc::channel::<AnalysisRequest>();
     // Loads never enter the audio callback: clients hand them to a loader thread, which hands a
     // prepared source back to the graph and a new description to the publisher.
     let (load_requests, load_requests_rx) = std::sync::mpsc::channel::<LoadRequest>();
@@ -392,7 +394,10 @@ fn run(argv: &[String]) -> Result<(), String> {
     {
         let subscribers = Arc::clone(&subscribers);
         let cells = Arc::clone(&cells);
-        let loads = load_requests.clone();
+        let work = Workers {
+            loads: load_requests.clone(),
+            analyses: analysis_requests.clone(),
+        };
         let stop_handle = Arc::clone(&stop);
         std::thread::spawn(move || {
             // Accept forever: a refused connection must not take the engine down with it.
@@ -418,7 +423,7 @@ fn run(argv: &[String]) -> Result<(), String> {
                 }
                 let submissions = submissions.clone();
                 let alerts = outgoing_clone;
-                let loads = loads.clone();
+                let work = work.clone();
                 let stop = Arc::clone(&stop_handle);
                 let playing = Arc::clone(&playing);
                 std::thread::spawn(move || {
@@ -427,11 +432,54 @@ fn run(argv: &[String]) -> Result<(), String> {
                         receiver,
                         alerts,
                         submissions,
-                        loads,
+                        work,
                         stop,
                         playing,
                     )
                 });
+            }
+        });
+    }
+
+    // Re-measuring a tempo is another full decode, so it gets a thread of its own: the DJ asks for it
+    // by hand, and the answer replaces the grid the deck and the file carry (B02).
+    {
+        let prepared = graph_loads.clone();
+        let store = store.clone();
+        std::thread::spawn(move || {
+            while let Ok(request) = analysis_requests_rx.recv() {
+                let path = std::path::PathBuf::from(&request.path);
+                match dj_analysis::tempo::analyse(&path) {
+                    Ok(Some(found)) => {
+                        // An explicit request outranks what the file remembers: that is the whole
+                        // point of the button — the stored grid was wrong.
+                        let grid = dj_engine::StoredGrid {
+                            bpm: found.bpm,
+                            first_beat_frame: found.first_beat_frame,
+                        };
+                        match dj_engine::meta::write_beatgrid(
+                            &store,
+                            volume(),
+                            root(),
+                            &path,
+                            grid,
+                            true,
+                        ) {
+                            Ok(_) => {}
+                            Err(message) => eprintln!("dj-engine: {message}"),
+                        }
+                        let _ = prepared.send(GraphLoad::SetGrid {
+                            deck: request.deck,
+                            bpm: found.bpm,
+                            first_beat_frame: found.first_beat_frame,
+                        });
+                    }
+                    Ok(None) => eprintln!(
+                        "dj-engine: no tempo found in {} — the grid is unchanged",
+                        request.path
+                    ),
+                    Err(message) => eprintln!("dj-engine: {message}"),
+                }
             }
         });
     }
@@ -465,8 +513,14 @@ fn run(argv: &[String]) -> Result<(), String> {
                     // The grid is worth keeping: measuring it is a decode of the whole file, and the
                     // next load should not pay for it again. A stored grid is left alone by the write.
                     if let Some(grid) = prepared.grid {
-                        match dj_engine::meta::write_beatgrid(&store, volume(), root(), &path, grid)
-                        {
+                        match dj_engine::meta::write_beatgrid(
+                            &store,
+                            volume(),
+                            root(),
+                            &path,
+                            grid,
+                            false,
+                        ) {
                             Ok(true) => {}
                             Ok(false) => {}
                             Err(message) => eprintln!("dj-engine: {message}"),
@@ -768,12 +822,30 @@ fn default_socket() -> PathBuf {
     PathBuf::from(base).join("hauler-dj-engine.sock")
 }
 
+/// The background work a client connection may ask for: a decode, or a second measurement.
+#[derive(Clone)]
+struct Workers {
+    /// Decodes a track and prepares a deck.
+    loads: Sender<LoadRequest>,
+    /// Measures a deck's tempo again (B02).
+    analyses: Sender<AnalysisRequest>,
+}
+
+/// A request to measure a deck's tempo again (B02).
+#[derive(Debug, Clone)]
+struct AnalysisRequest {
+    /// Deck whose grid will be replaced.
+    deck: dj_domain::DeckId,
+    /// The file the deck holds.
+    path: String,
+}
+
 fn serve_client(
     connection: dj_bridge::Connection,
     outgoing: Receiver<ServerMessage>,
     alerts: Sender<ServerMessage>,
     submissions: Sender<Submission>,
-    loads: Sender<LoadRequest>,
+    work: Workers,
     stop: Arc<AtomicBool>,
     playing: Arc<Vec<AtomicBool>>,
 ) {
@@ -814,7 +886,7 @@ fn serve_client(
                             }
                             continue;
                         }
-                        let ack = match loads.send(request) {
+                        let ack = match work.loads.send(request) {
                             Ok(()) => dj_domain::Ack::accepted(command.id),
                             Err(_) => dj_domain::Ack::rejected(
                                 command.id,
@@ -845,6 +917,21 @@ fn serve_client(
                             return;
                         }
                         let _ = deck;
+                        continue;
+                    }
+                    dj_engine::Routed::Analyze { deck, path } => {
+                        // Answered at once, not when the answer is ready: the measurement takes as long
+                        // as a decode, and the state publishes the new grid when it lands.
+                        let ack = match work.analyses.send(AnalysisRequest { deck, path }) {
+                            Ok(()) => dj_domain::Ack::accepted(command.id),
+                            Err(_) => dj_domain::Ack::rejected(
+                                command.id,
+                                dj_domain::RejectReason::InvalidValue,
+                            ),
+                        };
+                        if alerts.send(ServerMessage::Ack(ack)).is_err() {
+                            return;
+                        }
                         continue;
                     }
                     dj_engine::Routed::Render => {}

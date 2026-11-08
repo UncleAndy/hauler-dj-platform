@@ -1446,6 +1446,17 @@ impl Deck {
     }
 
     /// Read-only state for displays and the UI (fields ordered by display priority, ADR-0006).
+    /// Replace the beat grid the deck publishes for its track (B02).
+    ///
+    /// Called at a block boundary when the DJ asks for the tempo again: the measurement is what the
+    /// deck now shows, and the publisher will carry it on the next snapshot.
+    pub fn set_beat_grid(&mut self, bpm: f64, first_beat_frame: u64) {
+        if let Some(track) = self.track.as_mut() {
+            track.bpm = Some(bpm);
+            track.first_beat_frame = Some(first_beat_frame);
+        }
+    }
+
     pub fn snapshot(&self) -> DeckSnapshot {
         let total = self.source.as_ref().and_then(|source| source.frames());
         let heard = self.position();

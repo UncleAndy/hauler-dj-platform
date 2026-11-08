@@ -315,6 +315,16 @@ pub enum DjCommand {
         /// Absolute path as the client spelled it.
         path: String,
     },
+    /// Measure the deck's tempo again and replace the stored grid (B02, DJP-MEDIA-006).
+    ///
+    /// The deck's own analysis runs once, at load; this is the DJ saying "measure it again", after the
+    /// first answer was wrong — so it overrides what the file remembers instead of deferring to it.
+    AnalyzeTempo {
+        /// Target deck.
+        deck: DeckId,
+        /// The file the deck holds, as the client spelled it when it loaded it.
+        path: String,
+    },
     /// Return a deck to `Empty` and stop it.
     Eject {
         /// Target deck.
@@ -440,6 +450,7 @@ impl DjCommand {
             | DjCommand::SeekFrames { .. }
             | DjCommand::SetLoop { .. }
             | DjCommand::Load { .. }
+            | DjCommand::AnalyzeTempo { .. }
             | DjCommand::Eject { .. } => true,
             DjCommand::SetTempoRatio { .. }
             | DjCommand::SetChannelGain { .. }

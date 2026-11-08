@@ -94,6 +94,7 @@ fn the_grid_is_stored_and_a_stored_grid_is_not_overwritten() {
             bpm: 128.0,
             first_beat_frame: 4_800,
         },
+        false,
     )
     .expect("write");
     assert!(written, "an empty record takes the grid");
@@ -113,12 +114,51 @@ fn the_grid_is_stored_and_a_stored_grid_is_not_overwritten() {
             bpm: 127.0,
             first_beat_frame: 0,
         },
+        false,
     )
     .expect("second write");
     assert!(!again, "a stored grid is a decision, not a cache");
     let loaded = store.load("vol", &dir, &track).expect("load again");
     let grid = loaded.meta.beatgrid.expect("the grid is still there");
     assert!((grid.bpm - 128.0).abs() < 1e-9, "the stored tempo survived");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_measurement_the_dj_asked_for_replaces_the_stored_grid() {
+    let dir = scratch("force");
+    let track = dir.join("clicks.wav");
+    write_click_track(&track, 16.0);
+    let store = dj_library::Store::new(dir.join("mirror"));
+    let grid = dj_engine::StoredGrid {
+        bpm: 128.0,
+        first_beat_frame: 4_800,
+    };
+    dj_engine::meta::write_beatgrid(&store, "vol", &dir, &track, grid, false).expect("first");
+
+    // The button says: measure it again. That is the DJ overruling the file, so the answer lands even
+    // though a grid is already there.
+    let replaced = dj_engine::meta::write_beatgrid(
+        &store,
+        "vol",
+        &dir,
+        &track,
+        dj_engine::StoredGrid {
+            bpm: 124.0,
+            first_beat_frame: 9_000,
+        },
+        true,
+    )
+    .expect("replace");
+    assert!(replaced, "an asked-for measurement is written");
+    let loaded = store.load("vol", &dir, &track).expect("load");
+    let grid = loaded.meta.beatgrid.expect("a grid");
+    assert!(
+        (grid.bpm - 124.0).abs() < 1e-9,
+        "the new tempo: {}",
+        grid.bpm
+    );
+    assert_eq!(grid.first_beat_frame, 9_000);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -137,6 +177,7 @@ fn a_stored_grid_comes_back_on_the_deck() {
             bpm: 128.25,
             first_beat_frame: 5_000,
         },
+        false,
     )
     .expect("write");
 

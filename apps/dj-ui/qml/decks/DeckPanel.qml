@@ -513,6 +513,19 @@ Pane {
                     }
                 }
             }
+            // The tempo the deck shows was measured once, at load. When the answer is wrong the DJ
+            // asks again — a full decode, so it is asked for, never done behind their back, and a
+            // confirmation stands between the click and the new grid (B02).
+            Button {
+                objectName: "tempo_" + panel.deckId
+                text: qsTr("BPM ⟳")
+                font.pixelSize: 10
+                enabled: panel.live
+                focusPolicy: Qt.NoFocus
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Measure the tempo of this track again")
+                onClicked: tempoConfirm.open()
+            }
             Item { Layout.fillWidth: true }
             Label {
                 objectName: "status_" + panel.deckId
@@ -566,6 +579,54 @@ Pane {
         MenuItem {
             text: qsTr("Clear")
             onTriggered: Bridge.cue(panel.deckId, "Delete", cueMenu.slot)
+        }
+    }
+
+    // The second answer to the same question: measure this track again and replace its grid.
+    Popup {
+        id: tempoConfirm
+        objectName: "tempoConfirm_" + panel.deckId
+        anchors.centerIn: Overlay.overlay
+        modal: true
+        focus: true
+        padding: 8
+        width: Math.min(340, Overlay.overlay !== null ? Overlay.overlay.width * 0.6 : 340)
+
+        ColumnLayout {
+            spacing: 6
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: panel.track !== null && panel.track.bpm
+                      ? qsTr("Measure the tempo again? Deck %1 now says %2 BPM; the new measurement "
+                             + "replaces it and is written into the track's metadata.")
+                            .arg(panel.deckId).arg(panel.track.bpm.toFixed(1))
+                      : qsTr("Measure the tempo again? Deck %1 has no tempo yet; the measurement "
+                             + "will be written into the track's metadata.").arg(panel.deckId)
+                color: UiSettings.themeText
+                font.pixelSize: 11
+            }
+            RowLayout {
+                spacing: 6
+                Item { Layout.fillWidth: true }
+                Button {
+                    objectName: "tempoCancel_" + panel.deckId
+                    text: qsTr("Cancel")
+                    font.pixelSize: 11
+                    focusPolicy: Qt.NoFocus
+                    onClicked: tempoConfirm.close()
+                }
+                Button {
+                    objectName: "tempoGo_" + panel.deckId
+                    text: qsTr("Measure")
+                    font.pixelSize: 11
+                    focusPolicy: Qt.NoFocus
+                    onClicked: {
+                        Bridge.analyzeTempo(panel.deckId);
+                        tempoConfirm.close();
+                    }
+                }
+            }
         }
     }
 

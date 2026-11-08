@@ -828,6 +828,15 @@ pub enum GraphLoad {
         /// Target deck.
         deck: DeckId,
     },
+    /// A new beat grid for a loaded track: the DJ asked for the tempo again (B02).
+    SetGrid {
+        /// Target deck.
+        deck: DeckId,
+        /// Beats per minute the measurement found.
+        bpm: f64,
+        /// Frame of the first beat.
+        first_beat_frame: u64,
+    },
 }
 
 /// What the loader hands back to the graph once the deck is playable.
@@ -931,6 +940,13 @@ pub enum Routed {
         /// Target deck.
         deck: DeckId,
     },
+    /// Handed to the worker that measures tempo: a full decode, so never the callback.
+    Analyze {
+        /// Target deck.
+        deck: DeckId,
+        /// The file to measure.
+        path: String,
+    },
 }
 
 /// Decide where a command goes without applying it.
@@ -942,6 +958,10 @@ pub fn route(command: &ScheduledCommand) -> Routed {
             path: path.clone(),
         }),
         DjCommand::Eject { deck } => Routed::Eject { deck: *deck },
+        DjCommand::AnalyzeTempo { deck, path } => Routed::Analyze {
+            deck: *deck,
+            path: path.clone(),
+        },
         _ => Routed::Render,
     }
 }
@@ -1227,6 +1247,15 @@ impl EngineGraph {
                         self.decks[index].set_auto_gain(prepared.auto_gain, prepared.auto_gain_db);
                         self.paths[index] = prepared.path;
                         self.loads_applied += 1;
+                    }
+                }
+                GraphLoad::SetGrid {
+                    deck,
+                    bpm,
+                    first_beat_frame,
+                } => {
+                    if let Some(index) = self.decks.iter().position(|held| held.id() == deck) {
+                        self.decks[index].set_beat_grid(bpm, first_beat_frame);
                     }
                 }
                 GraphLoad::Clear { deck } => {
