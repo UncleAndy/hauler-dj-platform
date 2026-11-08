@@ -73,6 +73,17 @@ Pane {
         Bridge.shiftGrid(panel.deckId, direction * Math.round(panel.gridRate * 0.010));
     }
 
+    /// Move the grid by one bar — four beats of the tempo under the play head. A grid that is a bar out
+    /// is the other mistake worth a button: ten milliseconds solve a late kick, a bar solves a decoder
+    /// that started the grid on the wrong beat.
+    function shiftBar(direction) {
+        if (!(panel.localBpm > 0)) {
+            return;
+        }
+        const bar = Math.round(panel.gridRate * 60 / panel.localBpm * 4);
+        Bridge.shiftGrid(panel.deckId, direction * bar);
+    }
+
     /// The tempo the DJ tapped: the median gap between taps, and a beat on the last one.
     function tap() {
         const now = Date.now();
@@ -608,6 +619,20 @@ Pane {
             visible: panel.gridReady
             spacing: 3
 
+            // A bar a press, on the outside of the ten-millisecond arrows: the two mistakes a grid makes
+            // are "a few milliseconds late" and "started on the wrong beat", and they need different
+            // buttons.
+            Button {
+                objectName: "gridBarLeft_" + panel.deckId
+                text: qsTr("⇤")
+                font.pixelSize: 9
+                Layout.preferredWidth: 22
+                Layout.preferredHeight: 18
+                focusPolicy: Qt.NoFocus
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Move the grid one bar earlier")
+                onClicked: panel.shiftBar(-1)
+            }
             // Ten milliseconds a press: a grid a whole beat out is rare, and a few milliseconds is
             // what the ear actually hears.
             Button {
@@ -631,6 +656,17 @@ Pane {
                 ToolTip.visible: hovered
                 ToolTip.text: qsTr("Move the grid 10 ms later")
                 onClicked: panel.shiftGrid(1)
+            }
+            Button {
+                objectName: "gridBarRight_" + panel.deckId
+                text: qsTr("⇥")
+                font.pixelSize: 9
+                Layout.preferredWidth: 22
+                Layout.preferredHeight: 18
+                focusPolicy: Qt.NoFocus
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Move the grid one bar later")
+                onClicked: panel.shiftBar(1)
             }
             Button {
                 objectName: "gridHalf_" + panel.deckId

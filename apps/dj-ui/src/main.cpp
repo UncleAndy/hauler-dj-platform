@@ -3544,14 +3544,13 @@ int main(int argc, char *argv[])
         }
         const qint64 start = firstBeat();
         const double tempo = tempoNow();
-
-        // One press, ten milliseconds of the file: the grid moves and every line moves with it. Ten
-        // milliseconds is the rate over a hundred, whatever the file's own rate is.
+        // A step of ten milliseconds is the rate over a hundred, whatever the file's own rate is.
         const qint64 rate = deckA().value(QStringLiteral("source_rate")).toLongLong();
         if (rate <= 0) {
             std::fprintf(stderr, "dj-ui: the deck published no source rate\n");
             return 1;
         }
+
         const qint64 step = std::clamp<qint64>(rate / 100, 1, 100000);
         if (!click(QStringLiteral("gridRight_A"))) {
             return 1;
@@ -3566,6 +3565,25 @@ int main(int argc, char *argv[])
         }
         if (!waitFor([&]() { return firstBeat() == start; }, 5000)) {
             std::fprintf(stderr, "dj-ui: the grid did not come back\n");
+            return 1;
+        }
+        // A bar a press: four beats of the tempo under the play head, and back again. A grid that is a
+        // bar out is the other mistake worth its own button.
+        const qint64 bar = std::llround(double(rate) * 60.0 / tempo * 4.0);
+        if (!click(QStringLiteral("gridBarRight_A"))) {
+            return 1;
+        }
+        if (!waitFor([&]() { return firstBeat() == start + bar; }, 5000)) {
+            std::fprintf(stderr, "dj-ui: the bar shift moved the grid to %lld instead of %lld\n",
+                         static_cast<long long>(firstBeat()),
+                         static_cast<long long>(start + bar));
+            return 1;
+        }
+        if (!click(QStringLiteral("gridBarLeft_A"))) {
+            return 1;
+        }
+        if (!waitFor([&]() { return firstBeat() == start; }, 5000)) {
+            std::fprintf(stderr, "dj-ui: the bar shift back did not return the grid\n");
             return 1;
         }
 
@@ -3628,7 +3646,8 @@ int main(int argc, char *argv[])
         }
         const QJsonObject grid = stored().value(QStringLiteral("beatgrid")).toObject();
         std::fprintf(stdout,
-                     "dj-ui: the grid moved, halved, doubled and took a typed tempo: %.2f -> 128.00 BPM, "
+                     "dj-ui: the grid moved a bar and back, halved, doubled and took a typed tempo: "
+                     "%.2f -> 128.00 BPM, "
                      "first beat %lld, file revision %d, locked\n",
                      tempo, static_cast<long long>(grid.value(QStringLiteral("first_beat_frame"))
                                                        .toVariant()
