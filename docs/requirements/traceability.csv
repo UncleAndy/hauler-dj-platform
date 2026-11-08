@@ -68,7 +68,7 @@ DJP-MEDIA-002,media,P0,R0,DJP-SRS-001 §5,crates/dj-codec/src/prefetch.rs; crate
 DJP-MEDIA-003,media,P0,R0,DJP-SRS-001 §5,конверт волновой формы: min/max на столбец; время в кадрах источника; кэш с отпечатком файла; отрисовка Canvas с плейхедом по source_frame,dj-analysis::the_timebase_maps_a_playhead_to_the_right_column; a_changed_fingerprint_invalidates_the_cache; WaveformPainter — рисунок в C++; ui.sh --engine-check читает конверт,passing,docs/qa/evidence/A07/waveform.md,docs/qa/evidence/A07/waveform.md,2026-11-05
 DJP-MEDIA-004,media,P1,R1,DJP-SRS-001 §5,,,unverified,,,
 DJP-MEDIA-005,media,P1,R1,DJP-SRS-001 §5,,,unverified,,,
-DJP-MEDIA-006,media,P1,R1,DJP-SRS-001 §5,,,unverified,,,
+DJP-MEDIA-006,media,P1,R1,DJP-SRS-001 §5,темп и сетка: dj_analysis::tempo — спектральный поток и спектр огибающей; сетка пишется в .djmeta. Тональность/пики и редактор — не сделаны,ui.sh --engine-check (--tempo-check); tempo::detect,review,docs/qa/evidence/A15/summary.md,,2026-11-08
 DJP-MEDIA-007,media,P1,R1,DJP-SRS-001 §5,,,unverified,,,
 DJP-MEDIA-008,media,P1,R1,DJP-SRS-001 §5,,,unverified,,,
 DJP-MEDIA-009,media,P2,R2,DJP-SRS-001 §5,,,unverified,,,
@@ -122,7 +122,7 @@ DJP-STEM-006,ml,P2,R2,DJP-SRS-001 §5,,,unverified,,,
 DJP-STEM-007,ml,P2,R3,DJP-SRS-001 §5,,,unverified,,,
 DJP-SYNC-001,audio-core,P1,R1,DJP-SRS-001 §5,,,unverified,,,
 DJP-SYNC-002,audio-core,P1,R1,DJP-SRS-001 §5,,,unverified,,,
-DJP-SYNC-003,audio-core,P1,R1,DJP-SRS-001 §5,,,unverified,,,
+DJP-SYNC-003,audio-core,P1,R1,DJP-SRS-001 §5,хранение статического BPM/grid в .djmeta; сохранённая сетка главнее измерения. Ручной правки/half-double/tap tempo нет,engine tests/tempo_grid.rs — 3 теста,review,docs/qa/evidence/A15/summary.md,,2026-11-08
 DJP-SYNC-004,audio-core,P2,R2,DJP-SRS-001 §5,,,unverified,,,
 DJP-SYNC-005,audio-core,P2,R2,DJP-SRS-001 §5,,,unverified,,,
 DJP-SYNC-006,audio-core,P2,R2,DJP-SRS-001 §5,,,unverified,,,

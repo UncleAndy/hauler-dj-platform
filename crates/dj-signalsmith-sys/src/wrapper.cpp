@@ -4,11 +4,13 @@
 // steady rate. Each new consumer adds its own functions here rather than a general "call any header"
 // surface, because every function in this file is a promise to the Rust side about lifetimes.
 
+#include <cmath>
 #include <cstddef>
 #include <vector>
 
 #include "signalsmith-basics/include/signalsmith-basics/limiter.h"
 #include "signalsmith-dsp/envelopes.h"
+#include "signalsmith-dsp/fft.h"
 #include "signalsmith-dsp/filters.h"
 
 namespace {
@@ -146,6 +148,36 @@ struct ChannelView {
     float operator[](int index) const {
         return base[static_cast<size_t>(index) * 2 + static_cast<size_t>(channel)];
     }
+};
+
+// One real-input spectrum: a windowed block in, magnitudes out (A07/B02, the tempo detector).
+//
+// The library's FFT works on interleaved complex pairs, so a real block is written as (x, 0) and the
+// plan, the scratch buffers and the window are allocated once, at construction — the analysis runs on
+// a worker thread, and allocating there would be a habit worth not having.
+struct FftHandle {
+    explicit FftHandle(int size)
+        : size(size)
+        , fft(static_cast<size_t>(size))
+        , input(static_cast<size_t>(size))
+        , output(static_cast<size_t>(size))
+        , window(static_cast<size_t>(size), 0.0f) {
+        // Hann: a rectangular block smears flux across the block edges, and the tempo detector reads
+        // flux, not level.
+        for (int i = 0; i < size; ++i) {
+            const double phase = 2.0 * 3.14159265358979323846 * static_cast<double>(i) /
+                                 static_cast<double>(size - 1);
+            window[static_cast<size_t>(i)] = static_cast<float>(0.5 - 0.5 * std::cos(phase));
+        }
+    }
+
+    int size;
+    signalsmith::fft::FFT<float> fft;
+    // The library's FFT works on complex elements, so a real block is written as (x, 0) and the
+    // spectrum comes back as complex pairs; magnitudes are taken here, not by the caller.
+    std::vector<std::complex<float>> input;
+    std::vector<std::complex<float>> output;
+    std::vector<float> window;
 };
 
 } // namespace
@@ -482,6 +514,38 @@ double dj_isolator_response_db(void *raw, int band, double hertz, double sample_
     }
     const float magnitude = std::abs(total);
     return 20.0 * std::log10(magnitude > 1e-20f ? magnitude : 1e-20f);
+}
+
+void *dj_fft_new(int size)
+{
+    // Below a few samples per period there is nothing to measure; the caller is told, not served.
+    if (size < 16) {
+        return nullptr;
+    }
+    return new FftHandle(size);
+}
+
+void dj_fft_free(void *raw)
+{
+    delete static_cast<FftHandle *>(raw);
+}
+
+// Magnitudes of `size` windowed real samples: `out` gets `size / 2` bins, bin k at k * rate / size.
+void dj_fft_magnitudes(void *raw, const float *input, float *out)
+{
+    auto *handle = static_cast<FftHandle *>(raw);
+    if (handle == nullptr || input == nullptr || out == nullptr) {
+        return;
+    }
+    const int size = handle->size;
+    for (int i = 0; i < size; ++i) {
+        handle->input[static_cast<size_t>(i)] = {
+            input[i] * handle->window[static_cast<size_t>(i)], 0.0f};
+    }
+    handle->fft.fft(handle->input.begin(), handle->output.begin());
+    for (int k = 0; k < size / 2; ++k) {
+        out[k] = std::abs(handle->output[static_cast<size_t>(k)]);
+    }
 }
 
 } // extern "C"

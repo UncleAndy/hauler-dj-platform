@@ -205,6 +205,15 @@ case "${1:-}" in
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --fader-curve linear --gain-curve-check
     # The channel EQ, end to end: three knobs per channel must reach the deck they name, come back in
     # the snapshot already applied, and show the engine's number rather than a local model.
+    # B02: the engine measures the tempo on load, the deck shows it, and the number is the one the
+    # analysis produced — the check reads the deck's own label, not the snapshot behind it. The
+    # fixture is a click track at a known tempo: a sine has no beats, and a check on it would only
+    # prove that the detector refuses, which `cargo test` already covers.
+    # A copy, never the fixture: the analysis stores the grid beside the file (DJP-MEDIA-006).
+    tempo_file="$run_dir/grid-track.wav"
+    cp crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav "$tempo_file"
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
+        --tempo-check --load "$tempo_file"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --eq-check
     # A double click is the way back to neutral on every mouse-driven control, and each control has its
     # own neutral: a gain or a band goes flat, a fader opens, the master stands at three quarters of its

@@ -351,6 +351,17 @@ Pane {
                     font.pixelSize: 11
                 }
                 Label {
+                    objectName: "bpm_" + panel.deckId
+                    // The measured tempo, one decimal. A grid nobody can see is a grid nobody trusts,
+                    // and the deck is where the DJ looks while the track is already playing (B02).
+                    visible: panel.track !== null && panel.track.bpm !== undefined
+                             && panel.track.bpm !== null
+                    text: panel.track !== null && panel.track.bpm
+                          ? panel.track.bpm.toFixed(1) + " BPM" : ""
+                    color: UiSettings.themeAccent
+                    font.pixelSize: 10
+                }
+                Label {
                     objectName: "autogain_" + panel.deckId
                     // Every measured track says what was done to its level: a DJ who cannot see the
                     // correction cannot trust the fader either. A track nobody measured says nothing.

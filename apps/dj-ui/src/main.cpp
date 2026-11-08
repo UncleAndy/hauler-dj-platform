@@ -963,6 +963,10 @@ int main(int argc, char *argv[])
         QStringLiteral("gain-curve-check"),
         QStringLiteral("Measure the level knobs' law at unity and at the end of their travel and "
                        "require the configured curve to be in force."));
+    const QCommandLineOption tempoCheckOption(
+        QStringLiteral("tempo-check"),
+        QStringLiteral("With --connect and --load: require the engine to measure a tempo and the "
+                       "deck to show it."));
     const QCommandLineOption eqCheckOption(
         QStringLiteral("eq-check"),
         QStringLiteral("With --connect: send three band gains to one deck and require the snapshot "
@@ -1141,6 +1145,7 @@ int main(int argc, char *argv[])
     parser.addOption(faderCurveMiddleOption);
     parser.addOption(gainCurveCheckOption);
     parser.addOption(eqCheckOption);
+    parser.addOption(tempoCheckOption);
     parser.addOption(neutralOption);
     parser.addOption(pitchOption);
     parser.addOption(transportOption);
@@ -3068,6 +3073,82 @@ int main(int argc, char *argv[])
         }
         std::fprintf(stdout, "dj-ui: the level knobs follow the %s curve\n",
                      qPrintable(settings.gainCurve()));
+        return 0;
+    }
+
+    if (parser.isSet(tempoCheckOption)) {
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        const QString fixture = parser.value(loadOption);
+        if (fixture.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: --tempo-check needs --load\n");
+            return 1;
+        }
+        bridge->connectToEngine(parser.value(connectOption));
+        QElapsedTimer linking;
+        linking.start();
+        while (!bridge->isConnected() && linking.elapsed() < 3000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QThread::msleep(10);
+        }
+        if (!bridge->isConnected()) {
+            std::fprintf(stderr, "dj-ui: no engine\n");
+            return 1;
+        }
+        const auto deckA = [&]() {
+            const QVariantList decks = bridge->snapshot().value(QStringLiteral("decks")).toList();
+            for (const QVariant &entry : decks) {
+                const QVariantMap deck = entry.toMap();
+                if (deck.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                    return deck;
+                }
+            }
+            return QVariantMap();
+        };
+        bridge->load(QStringLiteral("A"), fixture);
+        double bpm = 0.0;
+        quint64 firstBeat = 0;
+        // The loader decodes the file twice (level and tempo) before it says Ready, so the wait is
+        // generous on purpose: a slow first load is not a defect.
+        bool measured = false;
+        QElapsedTimer waiting;
+        waiting.start();
+        while (waiting.elapsed() < 20000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            const QVariantMap track = deckA().value(QStringLiteral("track")).toMap();
+            const QVariant tempo = track.value(QStringLiteral("bpm"));
+            if (tempo.isValid() && !tempo.isNull()) {
+                bpm = tempo.toDouble();
+                firstBeat = track.value(QStringLiteral("first_beat_frame")).toULongLong();
+                measured = true;
+                break;
+            }
+            QThread::msleep(10);
+        }
+        if (!measured) {
+            std::fprintf(stderr, "dj-ui: the engine measured no tempo\n");
+            return 1;
+        }
+        // What the DJ sees, not only what the snapshot holds: the label is part of the feature.
+        // The label is a QQuickItem, not a plain QObject child: the scene is a tree of items, and a
+        // `findChild` on the window finds the C++ wrappers only by accident.
+        auto *label = findItem(window->contentItem(), QStringLiteral("bpm_A"));
+        const QString shown = label != nullptr ? label->property("text").toString() : QString();
+        std::fprintf(stdout, "dj-ui: tempo %.2f BPM, first beat %llu, label \"%s\"\n", bpm,
+                     static_cast<unsigned long long>(firstBeat), qPrintable(shown));
+        if (bpm <= 0.0 || firstBeat == 0) {
+            std::fprintf(stderr, "dj-ui: the deck published no usable grid\n");
+            return 1;
+        }
+        if (!shown.contains(QStringLiteral("BPM"))) {
+            std::fprintf(stderr, "dj-ui: the deck shows no tempo (label \"%s\")\n",
+                         qPrintable(shown));
+            return 1;
+        }
+        std::fprintf(stdout, "dj-ui: the measured tempo reached the deck\n");
         return 0;
     }
 

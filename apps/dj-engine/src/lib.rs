@@ -844,6 +844,8 @@ pub struct PreparedTrack {
     pub path: Option<std::path::PathBuf>,
     /// Cues recorded for this file, restored at attach.
     pub cues: Vec<(u8, u64)>,
+    /// Beat grid from the analysis, replaced by the stored one when the file carries it.
+    pub grid: Option<StoredGrid>,
     /// Names and colours of those cues, restored at attach (DJP-DECK-003).
     pub cue_meta: Vec<(u8, Option<String>, Option<String>)>,
     /// Loops stored on pads, restored at attach (DJP-DECK-004).
@@ -871,6 +873,18 @@ pub struct MetaEdit {
     pub pad_loops: Vec<(u8, u64, u64)>,
     /// The active loop as `(start, end)` frames.
     pub loop_region: Option<(u64, u64)>,
+}
+
+/// A beat grid: the tempo and where its first beat sits (B02, DJP-SYNC-003).
+///
+/// The grid is stored beside the music, because measuring it is a decode of the whole file and the DJ
+/// corrects what the measurement gets wrong: a stored grid is a decision and outranks a fresh one.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StoredGrid {
+    /// Beats per minute.
+    pub bpm: f64,
+    /// Frame of the first beat.
+    pub first_beat_frame: u64,
 }
 
 /// What the loader tells the publisher, so the UI can show `Loading` and `Failed`.
@@ -959,9 +973,10 @@ pub fn prepare_track(
         artist: String::new(),
         duration_frames: info.frames,
         bpm: None,
+        first_beat_frame: None,
         key: None,
     };
-    let static_info = DeckStatic {
+    let mut static_info = DeckStatic {
         deck: DeckId::A, // replaced by the caller, which knows the deck
         load: DeckLoad::Ready,
         track: Some(track.clone()),
@@ -978,9 +993,17 @@ pub fn prepare_track(
     // applied whole and the matched level is then taken down by the configured factor, so a snapshot that
     // showed only the correction would describe a gain the deck does not run at.
     let auto_gain_db = measured.map(|loudness| 20.0 * loudness.gain.max(1e-6).log10());
+    // Tempo is measured here too: another full decode, on the thread that already owns one, and the
+    // audio callback never sees it. A file whose tempo cannot be measured plays without a grid.
+    let tempo = dj_analysis::tempo::analyse(path).ok().flatten();
+    let mut track = track;
+    if let Some(found) = tempo {
+        track.bpm = Some(found.bpm);
+        track.first_beat_frame = Some(found.first_beat_frame);
+    }
+    static_info.track = Some(track.clone());
     // The published deck description carries the correction too: the shell reads the snapshot, and a
     // snapshot that says "1.0" about a trimmed track hides the only place the number could be seen.
-    let mut static_info = static_info;
     static_info.auto_gain = auto_gain;
     static_info.auto_gain_db = auto_gain_db;
 
@@ -988,6 +1011,10 @@ pub fn prepare_track(
         deck: DeckId::A,
         source: Box::new(prefetcher),
         track: Some(track),
+        grid: tempo.map(|found| StoredGrid {
+            bpm: found.bpm,
+            first_beat_frame: found.first_beat_frame,
+        }),
         static_info,
         path: Some(path.to_path_buf()),
         // What the file remembers is read by the caller: this function knows samples, not sessions.

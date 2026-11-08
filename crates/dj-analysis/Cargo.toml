@@ -9,6 +9,7 @@ authors.workspace = true
 
 [dependencies]
 dj-codec = { path = "../dj-codec" }
+dj-signalsmith-sys = { path = "../dj-signalsmith-sys" }
 
 [lints]
 workspace = true

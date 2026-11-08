@@ -11,7 +11,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use dj_library::{Cue, Store, TrackMeta, fingerprint};
 
-use crate::{MetaEdit, PreparedTrack};
+use crate::{MetaEdit, PreparedTrack, StoredGrid};
 
 /// How long the shutdown waits for the last edit to reach the disk before saying it gave up.
 const SHUTDOWN_WAIT: Duration = Duration::from_secs(2);
@@ -110,6 +110,19 @@ pub fn restore(
                 .iter()
                 .map(|stored| (stored.slot, stored.start, stored.end))
                 .collect();
+            // A stored grid outranks the measurement: either the DJ moved it or the analysis was
+            // locked, and both are decisions the detector may not overwrite (DJP-SYNC-003).
+            if let Some(grid) = loaded.meta.beatgrid.as_ref() {
+                prepared.grid = Some(StoredGrid {
+                    bpm: grid.bpm,
+                    first_beat_frame: grid.first_beat_frame,
+                });
+                if let Some(track) = prepared.track.as_mut() {
+                    track.bpm = Some(grid.bpm);
+                    track.first_beat_frame = Some(grid.first_beat_frame);
+                }
+                prepared.static_info.track = prepared.track.clone();
+            }
             loaded.conflict.map(|(loser, winner)| {
                 format!(
                     "{}: metadata disagreed (revision {} vs {}), used {}",
@@ -122,6 +135,49 @@ pub fn restore(
         }
         Err(error) => Some(format!("{}: {error}", path.display())),
     }
+}
+
+/// Store the measured grid, unless the file already carries one.
+///
+/// Returns whether a write happened. A stored grid is a decision — the DJ's manual shift, or an
+/// analysis locked against re-measurement — so the detector never replaces one (DJP-MEDIA-006).
+pub fn write_beatgrid(
+    store: &Store,
+    volume: &str,
+    root: &Path,
+    path: &Path,
+    grid: StoredGrid,
+) -> Result<bool, String> {
+    if !grid.bpm.is_finite() || grid.bpm <= 0.0 {
+        return Ok(false);
+    }
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or_default();
+    let (mut meta, existed) = match store.load(volume, root, path) {
+        Ok(loaded) => (loaded.meta, true),
+        Err(_) => {
+            let print = fingerprint::of_path(path)
+                .map_err(|error| format!("{}: {error}", path.display()))?;
+            (TrackMeta::new(print, now_ms), false)
+        }
+    };
+    if meta.analysis_lock || meta.beatgrid.is_some() {
+        return Ok(false);
+    }
+    meta.beatgrid = Some(dj_library::BeatGrid {
+        bpm: grid.bpm,
+        first_beat_frame: grid.first_beat_frame,
+        anchors: Vec::new(),
+    });
+    if existed {
+        meta.bump(now_ms);
+    }
+    store
+        .save(volume, root, path, &meta)
+        .map(|_| true)
+        .map_err(|error| error.to_string())
 }
 
 /// Write the deck's cues and loop into the track's metadata file.

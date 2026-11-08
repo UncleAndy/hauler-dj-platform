@@ -11,6 +11,7 @@
 
 pub mod cache;
 pub mod loudness;
+pub mod tempo;
 pub mod waveform;
 
 pub use cache::{Fingerprint, WaveformCache, write_envelope};

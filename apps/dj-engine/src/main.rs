@@ -462,6 +462,16 @@ fn run(argv: &[String]) -> Result<(), String> {
                     {
                         eprintln!("dj-engine: {problem}");
                     }
+                    // The grid is worth keeping: measuring it is a decode of the whole file, and the
+                    // next load should not pay for it again. A stored grid is left alone by the write.
+                    if let Some(grid) = prepared.grid {
+                        match dj_engine::meta::write_beatgrid(&store, volume(), root(), &path, grid)
+                        {
+                            Ok(true) => {}
+                            Ok(false) => {}
+                            Err(message) => eprintln!("dj-engine: {message}"),
+                        }
+                    }
                     prepared
                 }) {
                     Ok(mut prepared_track) => {

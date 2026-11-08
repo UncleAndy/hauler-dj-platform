@@ -982,7 +982,8 @@ fn prepared_with(
         },
         path: Some(std::path::PathBuf::from("/tmp/dj-engine-cue-test.wav")),
         cues,
-        // Built by hand: the pads carry no names, colours or loops of their own here.
+        // Built by hand: the track has no measured grid, and the pads carry no names or colours here.
+        grid: None,
         cue_meta: Vec::new(),
         pad_loops: Vec::new(),
         loop_region: loop_region.map(|(start, end)| dj_domain::FrameRange {

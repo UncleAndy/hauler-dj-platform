@@ -662,6 +662,11 @@ pub struct TrackMeta {
     pub duration_frames: Option<u64>,
     /// Beats per minute, once analysis exists (DJP-MEDIA-006).
     pub bpm: Option<f64>,
+    /// Frame of the first beat of the grid: the beat lines sit at
+    /// `first_beat_frame + k · 60 / bpm · rate`. Defaulted and omitted when unknown, so a snapshot from
+    /// a build without a tempo detector reads the same as one from a file without a measured grid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_beat_frame: Option<u64>,
     /// Musical key, once analysis exists.
     pub key: Option<String>,
 }

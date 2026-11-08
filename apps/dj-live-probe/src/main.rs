@@ -263,6 +263,7 @@ fn run(argv: &[String]) -> Result<String, Error> {
                     artist: String::new(),
                     duration_frames: info.frames,
                     bpm: None,
+                    first_beat_frame: None,
                     key: None,
                 }),
             );

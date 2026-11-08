@@ -10,6 +10,10 @@ mod ffi {
     use std::ffi::c_void;
 
     unsafe extern "C" {
+        pub fn dj_fft_new(size: i32) -> *mut c_void;
+        pub fn dj_fft_free(handle: *mut c_void);
+        pub fn dj_fft_magnitudes(handle: *mut c_void, input: *const f32, out: *mut f32);
+
         pub fn dj_peak_decay_new(length: i32) -> *mut c_void;
         pub fn dj_peak_decay_free(handle: *mut c_void);
         pub fn dj_peak_decay_reset(handle: *mut c_void);
@@ -70,6 +74,50 @@ pub const DEFAULT_FALL_SECONDS: f32 = 0.5;
 ///
 /// Feed it the peak of every block; it returns what the bar should show, which stays above the signal
 /// and slides down over [`DEFAULT_FALL_SECONDS`] once the signal stops.
+/// A windowed real-input spectrum, for analysis that reads flux rather than level (B02).
+///
+/// Owns the plan and its scratch buffers: [`Spectrum::magnitudes`] allocates nothing, so it can run on
+/// the analysis worker without a surprise in the middle of a measurement.
+pub struct Spectrum {
+    handle: *mut c_void,
+    size: usize,
+}
+
+// The handle is a plan plus its buffers, and every call takes `&mut self`: sending it to another
+// thread cannot make two calls share the scratch space.
+unsafe impl Send for Spectrum {}
+
+impl Spectrum {
+    /// Build a plan for `size` samples per block; `None` when the size is too small to be a spectrum.
+    pub fn new(size: usize) -> Option<Self> {
+        if size < 16 {
+            return None;
+        }
+        let handle = unsafe { ffi::dj_fft_new(i32::try_from(size).ok()?) };
+        if handle.is_null() {
+            return None;
+        }
+        Some(Self { handle, size })
+    }
+
+    /// Magnitudes of `size` samples, in the order of the bins; the buffer must be `size / 2` long.
+    ///
+    /// The block is windowed inside the call, so the caller hands over raw samples.
+    pub fn magnitudes(&mut self, input: &[f32], out: &mut [f32]) {
+        let wanted = self.size / 2;
+        if input.len() < self.size || out.len() < wanted {
+            return;
+        }
+        unsafe { ffi::dj_fft_magnitudes(self.handle, input.as_ptr(), out.as_mut_ptr()) }
+    }
+}
+
+impl Drop for Spectrum {
+    fn drop(&mut self) {
+        unsafe { ffi::dj_fft_free(self.handle) };
+    }
+}
+
 pub struct PeakDecay {
     handle: *mut c_void,
 }

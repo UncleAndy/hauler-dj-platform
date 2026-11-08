@@ -139,6 +139,7 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
                 artist: "Artist".to_string(),
                 duration_frames: Some(124_800),
                 bpm: Some(128.0),
+                first_beat_frame: None,
                 key: Some("8A".to_string()),
             }),
             loop_region: None,
@@ -253,4 +254,32 @@ fn an_unknown_variant_is_rejected_instead_of_ignored() {
         serde_json::from_str::<DjCommand>(json).is_err(),
         "a malformed command must not silently deserialise"
     );
+}
+
+#[test]
+fn a_measured_grid_travels_with_the_track() {
+    // B02: the deck draws beat lines from these two numbers, so they are part of the state contract.
+    // A file without a measured grid omits the field instead of sending a zero, because a grid at
+    // frame zero and no grid at all are different statements.
+    let measured = TrackMeta {
+        title: "Track".to_string(),
+        artist: String::new(),
+        duration_frames: Some(124_800),
+        bpm: Some(128.0),
+        first_beat_frame: Some(4_800),
+        key: None,
+    };
+    let json = serde_json::to_string(&measured).unwrap_or_default();
+    assert!(
+        json.contains(r#""bpm":128.0"#) && json.contains(r#""first_beat_frame":4800"#),
+        "{json}"
+    );
+
+    let unmeasured = TrackMeta {
+        first_beat_frame: None,
+        bpm: None,
+        ..measured
+    };
+    let json = serde_json::to_string(&unmeasured).unwrap_or_default();
+    assert!(!json.contains("first_beat_frame"), "{json}");
 }
