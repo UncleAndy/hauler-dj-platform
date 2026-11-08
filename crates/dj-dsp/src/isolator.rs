@@ -100,29 +100,33 @@ impl Isolator {
         self.inner.reset();
     }
 
-    /// Magnitude of the removed bands at `frequency`, in decibels.
+    /// Magnitude of what the isolated bands leave behind at `frequency`, in decibels.
     ///
-    /// The response of a Linkwitz-Riley fourth order: `w⁴/(1+w⁴)` for a highpass and `1/(1+w⁴)` for a
-    /// lowpass, with `w` the frequency over the crossover. The mid band is the low lowpass plus the high
-    /// highpass, which is why killing it leaves both neighbours alone.
+    /// The bands come from nested splits, so their magnitudes are a chain: the lowpass below the low
+    /// crossover, then everything above it times a lowpass or a highpass at the high crossover. Each
+    /// split is a Linkwitz-Riley pair (`w⁴/(1+w⁴)` highpass, `1/(1+w⁴)` lowpass, `w` the frequency over
+    /// the crossover), which is in phase at every frequency — that is why the three add up to the dry
+    /// signal and killing all of them leaves silence.
     pub fn magnitude_db(&self, hertz: f64) -> f64 {
-        let mut db = 0.0;
-        for band in IsolatorBand::ALL {
-            if !self.killed[band.index()] {
-                continue;
-            }
-            let gain = match band {
-                IsolatorBand::Low => highpass_magnitude(hertz, self.crossover.low_hz),
-                IsolatorBand::High => lowpass_magnitude(hertz, self.crossover.high_hz),
-                IsolatorBand::Mid => {
-                    lowpass_magnitude(hertz, self.crossover.low_hz)
-                        + highpass_magnitude(hertz, self.crossover.high_hz)
+        let low = lowpass_magnitude(hertz, self.crossover.low_hz);
+        let upper = highpass_magnitude(hertz, self.crossover.low_hz);
+        let magnitude_of = |band: IsolatorBand| match band {
+            IsolatorBand::Low => low,
+            IsolatorBand::Mid => lowpass_magnitude(hertz, self.crossover.high_hz) * upper,
+            IsolatorBand::High => highpass_magnitude(hertz, self.crossover.high_hz) * upper,
+        };
+        let kept: f64 = IsolatorBand::ALL
+            .into_iter()
+            .map(|band| {
+                if self.killed[band.index()] {
+                    0.0
+                } else {
+                    magnitude_of(band)
                 }
-            };
-            // The bands are removed one after another, so their responses add in decibels.
-            db += 20.0 * gain.max(f64::MIN_POSITIVE).log10();
-        }
-        db
+            })
+            .sum();
+        // Silence is a real answer here, not an error: three kills are −∞ dB.
+        20.0 * kept.max(f64::MIN_POSITIVE).log10()
     }
 }
 

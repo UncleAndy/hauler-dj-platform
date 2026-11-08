@@ -87,3 +87,43 @@ fn an_untouched_isolator_is_a_bypass() {
     isolator.process(&mut block);
     assert_eq!(block, before, "an untouched isolator changed the signal");
 }
+
+/// Killing all three bands has to leave nothing: three isolations are a mask, not a last one wins.
+#[test]
+fn killing_every_band_leaves_nothing() {
+    let mut isolator = Isolator::new(48_000.0, Crossover::default());
+    for band in IsolatorBand::ALL {
+        isolator.set_killed(band, true);
+    }
+    // A signal in every band, so a band left open shows up whatever the crossover points are.
+    let mut dry = Vec::new();
+    let mut block = Vec::new();
+    for frame in 0..48_000 {
+        let t = frame as f64 / 48_000.0;
+        let value = (0.5 * (std::f64::consts::TAU * 50.0 * t).sin()
+            + 0.35 * (std::f64::consts::TAU * 150.0 * t).sin()
+            + 0.25 * (std::f64::consts::TAU * 1_000.0 * t).sin()
+            + 0.2 * (std::f64::consts::TAU * 8_000.0 * t).sin()) as f32;
+        block.push(value);
+        block.push(value);
+    }
+    dry.extend_from_slice(&block);
+    isolator.process(&mut block);
+
+    let rms = |samples: &[f32]| {
+        let half = samples.len() / 2;
+        let start = half - half % 2;
+        let sum: f64 = samples[start..]
+            .iter()
+            .map(|v| f64::from(*v) * f64::from(*v))
+            .sum();
+        (sum / (samples.len() - start) as f64).sqrt()
+    };
+    let left = rms(&block);
+    let reference = rms(&dry);
+    let db = 20.0 * (left / reference).log10();
+    assert!(
+        db < -60.0,
+        "killing all three bands still passes {left:.6} against {reference:.6} ({db:.1} dB)"
+    );
+}

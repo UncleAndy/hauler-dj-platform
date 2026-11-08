@@ -267,3 +267,38 @@ fn an_ordinary_cut_is_not_a_kill() {
         "an ordinary cut should be a shelf, measured {low:.1} dB at 40 Hz"
     );
 }
+
+#[test]
+fn the_detent_is_deeper_than_the_cut_before_it() {
+    // The hand crosses a line into the kill, and crossing it must never make the band louder. On a drum
+    // loop the kill used to come back 5.3 dB louder at 250 Hz than the deepest cut: a shelf bleeds
+    // upward, a crossover does not, and nothing joined the two.
+    for hertz in [55.0, 110.0, 250.0, 500.0] {
+        let mut cut = ChannelEq::new(RATE);
+        let mut gains = EqGains::FLAT;
+        gains.set_band(EqBand::Low, -24.8);
+        cut.set_gains(gains);
+        let cut_db = measured_db(&mut cut, hertz);
+
+        let mut kill = ChannelEq::new(RATE);
+        let mut gains = EqGains::FLAT;
+        gains.set_band(EqBand::Low, FLOOR_DB);
+        kill.set_gains(gains);
+        let kill_db = measured_db(&mut kill, hertz);
+
+        assert!(
+            kill_db <= cut_db,
+            "at {hertz:.0} Hz the detent gives {kill_db:.1} dB against the cut's {cut_db:.1} dB, so \
+             killing the band makes it louder"
+        );
+        // Inside the band the kill has to be plainly deeper, not merely not louder: the point of the
+        // detent is a band that goes away.
+        if hertz <= 250.0 {
+            assert!(
+                kill_db <= cut_db - 1.0,
+                "at {hertz:.0} Hz the detent is only {:.1} dB deeper than the cut",
+                cut_db - kill_db
+            );
+        }
+    }
+}

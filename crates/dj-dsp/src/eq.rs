@@ -207,11 +207,13 @@ impl ChannelEq {
             self.high = [Biquad::bypass(); 2];
             return;
         }
-        // A killed band leaves the shelf chain at unity: two filters doing the same job would double
-        // the attenuation and fight over the phase.
+        // A killed band keeps the deepest shelf it has and the crossover removes what the shelf leaves
+        // behind. That is what makes the detent monotone: crossing it can only take more away. With the
+        // shelf standing aside the kill came back 5 dB louder at 250 Hz than the cut before it, because
+        // a shelf bleeds upward and a crossover does not.
         let step = |db: f32| {
             if db <= KILL_DB {
-                EqTable::UNITY_STEP
+                EqTable::step_of(-EQ_CUT_DB)
             } else {
                 EqTable::step_of(db)
             }

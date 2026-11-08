@@ -71,10 +71,11 @@ struct ResampleHandle {
 };
 
 // A three-way crossover that removes a band instead of shelving it: two Linkwitz-Riley fourth-order
-// splits (each two Butterworth second-order sections), summed back together. Killing the low band is a
-// highpass at the low crossover; killing the mid band is the low and high halves added; killing the
-// high band is a lowpass. All four chains run on the dry signal and the result is blended in by weight,
-// so a weight of zero leaves the signal untouched.
+// splits (each two Butterworth second-order sections). The three bands are the lowpass below the low
+// crossover, the highpass above the high one, and what is left in between; because a Linkwitz-Riley
+// lowpass and highpass of one crossover add to one, the three add to the dry signal exactly, and a
+// weight of one on every band leaves nothing at all. Blending each band by its weight is a mask over
+// the spectrum — which is the whole point: three isolations are three masks, not a last one wins.
 struct IsolatorHandle {
     IsolatorHandle(int channels, double sample_rate, double low_hz, double high_hz)
         : channels(channels) {
@@ -83,10 +84,10 @@ struct IsolatorHandle {
         const double high = high_hz / sample_rate;
         for (int channel = 0; channel < channels && channel < 2; ++channel) {
             for (int section = 0; section < 2; ++section) {
-                lowHighpass[channel][section].highpassQ(low, q);
                 lowLowpass[channel][section].lowpassQ(low, q);
-                highHighpass[channel][section].highpassQ(high, q);
-                highLowpass[channel][section].lowpassQ(high, q);
+                lowHighpass[channel][section].highpassQ(low, q);
+                midLowpass[channel][section].lowpassQ(high, q);
+                midHighpass[channel][section].highpassQ(high, q);
             }
         }
     }
@@ -98,20 +99,20 @@ struct IsolatorHandle {
     void reset() {
         for (int channel = 0; channel < 2; ++channel) {
             for (int section = 0; section < 2; ++section) {
-                lowHighpass[channel][section].reset();
                 lowLowpass[channel][section].reset();
-                highHighpass[channel][section].reset();
-                highLowpass[channel][section].reset();
+                lowHighpass[channel][section].reset();
+                midLowpass[channel][section].reset();
+                midHighpass[channel][section].reset();
             }
         }
     }
 
     int channels;
     float weights[3] = {0.0f, 0.0f, 0.0f};
-    signalsmith::filters::BiquadStatic<float> lowHighpass[2][2] = {};
     signalsmith::filters::BiquadStatic<float> lowLowpass[2][2] = {};
-    signalsmith::filters::BiquadStatic<float> highHighpass[2][2] = {};
-    signalsmith::filters::BiquadStatic<float> highLowpass[2][2] = {};
+    signalsmith::filters::BiquadStatic<float> lowHighpass[2][2] = {};
+    signalsmith::filters::BiquadStatic<float> midLowpass[2][2] = {};
+    signalsmith::filters::BiquadStatic<float> midHighpass[2][2] = {};
 };
 
 // Views an interleaved buffer as one channel with an index base, which is what the interpolators
@@ -350,23 +351,20 @@ void dj_isolator_process(void *raw, float *interleaved, int frames)
         for (int channel = 0; channel < channels; ++channel) {
             const size_t index = static_cast<size_t>(frame) * 2 + static_cast<size_t>(channel);
             const float dry = interleaved[index];
-            float value = dry;
-            if (low > 0.0f) {
-                const float removed = IsolatorHandle::through(handle->lowHighpass[channel], dry);
-                value = value * (1.0f - low) + removed * low;
-            }
-            if (high > 0.0f) {
-                const float removed = IsolatorHandle::through(handle->highLowpass[channel], dry);
-                value = value * (1.0f - high) + removed * high;
-            }
-            if (mid > 0.0f) {
-                // The mid band is what is left when the low half and the high half are added: a
-                // Linkwitz-Riley lowpass and highpass sum to one, so their complement is exact.
-                const float removed = IsolatorHandle::through(handle->lowLowpass[channel], dry) +
-                                      IsolatorHandle::through(handle->highHighpass[channel], dry);
-                value = value * (1.0f - mid) + removed * mid;
-            }
-            interleaved[index] = value;
+            // Nested splits, which is the only way the three bands add up to the dry signal: the low
+            // crossover separates the bottom from everything above it, and the high crossover then
+            // separates that upper part into the middle and the top. A Linkwitz-Riley pair is in phase
+            // at all frequencies, so each split is exact — and so is their sum. Subtracting a filter's
+            // output from the dry signal instead would not be: away from the crossover the two are not
+            // in phase, and the "complement" comes back louder than the dry signal.
+            const float lowBand = IsolatorHandle::through(handle->lowLowpass[channel], dry);
+            const float upper = IsolatorHandle::through(handle->lowHighpass[channel], dry);
+            const float midBand = IsolatorHandle::through(handle->midLowpass[channel], upper);
+            const float highBand = IsolatorHandle::through(handle->midHighpass[channel], upper);
+            // Every chain runs on every frame, whether or not its band is removed: one that only runs
+            // while it is used starts from cold, and a cold filter is a click.
+            interleaved[index] = lowBand * (1.0f - low) + midBand * (1.0f - mid) +
+                                 highBand * (1.0f - high);
         }
     }
 }
