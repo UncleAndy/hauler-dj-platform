@@ -172,6 +172,31 @@ fn an_intro_without_a_beat_does_not_hide_the_tempo() {
     assert!(error <= 30.0, "the grid is {error:.1} ms off the clicks");
 }
 
+/// A beat whose tempo creeps: a click track that speeds up a little in every section.
+fn creeping_beat(sections: &[f64], seconds: f64) -> Vec<f32> {
+    let mut samples = Vec::new();
+    for bpm in sections {
+        samples.extend(click_track(*bpm, 0, seconds));
+    }
+    samples
+}
+
+#[test]
+fn a_beat_that_does_not_hold_its_tempo_is_still_a_beat() {
+    // Two real remixes were refused as a whole while every window of them found the beat: the phase was
+    // fitted across the entire span, and a tenth of a percent of tempo error walks off the grid by the
+    // time it reaches the window the check looks at. A track whose tempo moves is still a track with a
+    // beat; what it does not have is one grid for its whole length.
+    let samples = creeping_beat(&[124.0, 124.8, 125.6], 40.0);
+    let tempo = dj_analysis::tempo::detect(&samples, RATE)
+        .expect("a tempo from a beat that creeps from 124 to 125.6");
+    assert!(
+        (123.0..=127.0).contains(&tempo.bpm),
+        "measured {} BPM, which is not the beat it was given",
+        tempo.bpm
+    );
+}
+
 #[test]
 fn a_track_with_no_beat_anywhere_is_still_refused() {
     // Three minutes of rubato: the detector must keep saying "no", not pick the strongest of the noise.

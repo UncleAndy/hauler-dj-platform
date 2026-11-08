@@ -40,6 +40,17 @@ const MIN_BEATS: usize = 8;
 /// 0,15 sat within one percent of that real track and would have refused the next one.
 const MIN_EXPLAINED_SHARE: f64 = 0.08;
 
+/// Where most music a DJ plays sits, and how far the octave choice may be pulled towards it.
+///
+/// The measure cannot tell a tempo from its double: a hit every second makes a grid of one second and a
+/// grid of half a second both land on hits. The score already prefers the grid that is actually played,
+/// which settles most tracks, but the finer grid always has at least as many empty points as the coarser
+/// one, so near a tie the coarser reading wins by a hair. This prior decides only that hair — it is flat
+/// across 90 … 150 and falls to about 0.57 at the edges of the range, so a real half-time track, whose
+/// fine grid is half empty, still beats the reading the prior would prefer.
+const PREFERRED_BPM: f64 = 120.0;
+const PRIOR_SPREAD_OCTAVES: f64 = 0.9;
+
 /// How much of the file the detector reads, in seconds. Four minutes covers every intro and breakdown
 /// a track is likely to open with, and a DJ waits for the number.
 pub const ANALYSED_SECONDS: f64 = 240.0;
@@ -128,18 +139,40 @@ pub fn detect_in_envelope(envelope: &[f32], rate: f64) -> Option<Tempo> {
     // The spectrum is coarse by construction: it says "128-ish". The comb over the whole analysed span
     // says "this period and no other", which is what keeps a five-minute track from drifting away from
     // its own grid by a beat.
-    let period = refine_period(envelope, per_second * 60.0 / bpm);
+    let hint = per_second * 60.0 / bpm;
+    let mut period = refine_period(envelope, hint);
     if period <= 0.0 {
         return None;
     }
-    let phase = best_phase(envelope, period);
     // How much of the onset energy actually sits on this grid: a real beat explains nearly all of it,
     // while a rubato line or a sparse noise explains a fraction. This is the confidence that matters —
     // the spectrum can be sharp about a tempo nothing is playing to.
     // Measured where the tempo is actually clear, not over the whole file: an intro that explains
     // nothing would otherwise veto a grid the rest of the track makes perfectly well.
-    let inside = (phase - clear.start as f64).rem_euclid(period);
-    let (explained, beats) = explained_share(&envelope[clear.clone()], period, inside);
+    //
+    // The phase is measured there too, and not fitted over the whole span. A grid that is right in one
+    // place is wrong in another: a tenth of a percent of tempo error walks a quarter of a beat across
+    // four minutes, and a phase fitted over all of it lands between the beats of the very window the
+    // gate is judging — which is how a track whose every window found the tempo was refused as a whole.
+    let mut inside = best_phase(&envelope[clear.clone()], period);
+    let (mut explained, mut beats) = explained_share(&envelope[clear.clone()], period, inside);
+    // A long baseline is the more precise estimate, and the right one for a track that holds its tempo.
+    // When the grid does not survive the very window it is checked in, the track does not hold one: the
+    // answer is then the tempo of the part that plays, measured there and published as that.
+    if explained < MIN_EXPLAINED_SHARE {
+        let local = refine_period(&envelope[clear.clone()], hint);
+        if local > 0.0 {
+            let local_inside = best_phase(&envelope[clear.clone()], local);
+            let (local_explained, local_beats) =
+                explained_share(&envelope[clear.clone()], local, local_inside);
+            if local_explained > explained {
+                period = local;
+                inside = local_inside;
+                explained = local_explained;
+                beats = local_beats;
+            }
+        }
+    }
     // A grid has to be played, not just hit once: a held note explains its own beginning and nothing
     // else, and a tempo needs a run of beats to be a tempo.
     if explained < MIN_EXPLAINED_SHARE || beats < MIN_BEATS {
@@ -149,7 +182,11 @@ pub fn detect_in_envelope(envelope: &[f32], rate: f64) -> Option<Tempo> {
     // Half a block: the block that saw the onset starts at `phase · HOP`, and flux rises as soon as its
     // 21 ms window touches the beat, so the block's centre is the better estimate of where the beat is.
     // Measured on click tracks: 1 … 27 ms late over 72 … 174 BPM, against 5 … 38 ms early without it.
-    let first_beat_frame = (phase * HOP as f64 + BLOCK as f64 / 2.0).round().max(0.0) as u64;
+    // The phase is counted from the window the grid was checked in, so the anchor is a beat of the audio
+    // and not of a straight line drawn through four minutes of it; it is then carried back to the first
+    // beat of the track, which is where a grid is read from.
+    let anchor = (clear.start as f64 + inside).rem_euclid(period);
+    let first_beat_frame = (anchor * HOP as f64 + BLOCK as f64 / 2.0).round().max(0.0) as u64;
     Some(Tempo {
         bpm,
         first_beat_frame,
@@ -228,16 +265,28 @@ fn choose_tempo(envelope: &[f32], per_second: f64) -> Option<(f64, std::ops::Ran
             }
             inner += 1;
         }
+        // Between clusters the prior has its say: it cannot make a weak reading win, only settle a tie.
+        let cluster_bpm = moment / weight;
+        let settled = weight * tempo_prior(cluster_bpm);
         if best
             .as_ref()
-            .is_none_or(|(best_weight, _, _)| weight > *best_weight)
+            .is_none_or(|(best_weight, _, _)| settled > *best_weight)
         {
-            best = Some((weight, moment / weight, clear));
+            best = Some((settled, cluster_bpm, clear));
         }
         index = inner.max(index + 1);
     }
     let (_, bpm, clear) = best?;
     Some((bpm, clear))
+}
+
+/// How plausible a tempo is for the music a DJ plays, as a weight of 0 … 1.
+fn tempo_prior(bpm: f64) -> f64 {
+    if bpm <= 0.0 {
+        return 0.0;
+    }
+    let octaves = (bpm / PREFERRED_BPM).log2() / PRIOR_SPREAD_OCTAVES;
+    (-0.5 * octaves * octaves).exp()
 }
 
 /// The tempo of one window: the candidate whose grid sits on the onsets and not between them.
