@@ -26,6 +26,11 @@ pub const MAX_BPM: f64 = 200.0;
 /// A peak below this share of the strongest is a ripple, not a candidate tempo.
 const PEAK_SHARE: f32 = 0.15;
 
+/// Half-width, in hops, of the window around a grid point that counts as "on the beat". The flux of one
+/// onset is a few hops wide, and a grid that is a fraction of a hop out is not wrong; a window this wide
+/// measures whether the beat is there, not whether the arithmetic is perfect.
+const SHARE_SPREAD: f64 = 1.5;
+
 /// How many beats of the grid must carry a real onset: a beat that happens twice is not a tempo.
 const MIN_BEATS: usize = 8;
 
@@ -321,8 +326,8 @@ fn played_share(envelope: &[f32], period: f64, phase: f64, strongest: f32) -> f6
     let mut position = phase;
     let length = envelope.len() as f64;
     while position < length && counted < 4_096 {
-        let from = (position - 0.5).max(0.0) as usize;
-        let to = ((position + 0.5) as usize + 1).min(envelope.len());
+        let from = (position - SHARE_SPREAD).max(0.0) as usize;
+        let to = ((position + SHARE_SPREAD) as usize + 1).min(envelope.len());
         let here: f32 = envelope[from..to].iter().sum();
         if here >= floor {
             played += 1;
@@ -471,8 +476,8 @@ fn explained_share(envelope: &[f32], period: f64, phase: f64) -> (f64, usize) {
     let length = envelope.len() as f64;
     let mut last = f64::NEG_INFINITY;
     while position < length {
-        let from = (position - 0.5).max(0.0) as usize;
-        let to = ((position + 0.5) as usize + 1).min(envelope.len());
+        let from = (position - SHARE_SPREAD).max(0.0) as usize;
+        let to = ((position + SHARE_SPREAD) as usize + 1).min(envelope.len());
         if from as f64 > last {
             let mut here = 0.0f32;
             for value in &envelope[from..to] {
