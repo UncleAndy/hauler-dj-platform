@@ -21,7 +21,7 @@
 | `dj-session` | media | A08 | R0 | DJP-ENV-006; DJP-SET-002, -003 |
 | `dj-bridge` | ui | A06 | R0 | DJP-ARCH-004; DJP-UI-001, -002 | — **реализовано в A06 (часть 1)**: кадры с длиной, рукопожатие `command-v1`, снапшоты, отказ чужому протоколу, замена протухшего сокета
 | `dj-controller-core` | hardware | A09 | R0 | DJP-CTRL-001, -002, -004 |
-| `dj-signalsmith-sys` | audio-core | A04 (B04) | R0 | Вендоренные Signalsmith DSP и Basics (MIT) за C ABI: метры с баллистикой (`PeakDecayLinear`) и мастер-лимитер с lookahead (`LimiterFloat`, задержка публикуется как `master_latency_frames`). Каждый новый потребитель добавляет свою функцию, а не общий доступ ко всем заголовкам |
+| `dj-signalsmith-sys` | audio-core | A04 (B04) | R0 | Вендоренные Signalsmith DSP и Basics (MIT) за C ABI: метры с баллистикой (`PeakDecayLinear`), мастер-лимитер с lookahead (`LimiterFloat`, задержка публикуется как `master_latency_frames`) и ресемплер 16 отводов Кайзера (`InterpolatorKaiserSincN`) для смены частоты и темпа. Каждый новый потребитель добавляет свою функцию, а не общий доступ ко всем заголовкам |
 | `dj-stretch-sys` | audio-core | A03 (B04) | R0 | DJP-DECK-008 — **реализовано**: key lock через вендоренную MIT-библиотеку Signalsmith Stretch (спектральный фазовый вокодер), обёрнутую C ABI; `vendor/` хранит копию и лицензии (THIRD_PARTY.md) |
 | `dj-testkit` | qa | A11 | R0 | DJP-NFR-001 — `rt::CountingAllocator`/`RtScope` уже в A01; фикстуры и остальная инструментация — A11 |
 

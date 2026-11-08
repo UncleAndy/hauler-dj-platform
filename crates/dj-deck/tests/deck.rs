@@ -1051,6 +1051,42 @@ fn a_slower_tempo_stretches_the_material() {
     );
 }
 
+#[test]
+fn a_tone_from_a_forty_four_one_file_does_not_fold_back_on_a_forty_eight_device() {
+    // 15 kHz sits close to the 44.1 kHz file's own Nyquist. Converting the rate by interpolating between
+    // neighbouring samples leaves an image at 44100 - 15000 = 29.1 kHz, and the 48 kHz output folds that
+    // down to 18.9 kHz — a whistle four kilohertz away from the tone, on every file the deck opens.
+    let mut deck = Deck::new(DeckId::A);
+    deck.set_output_rate(48_000);
+    deck.attach(
+        Box::new(ToneAtRate {
+            frames: 44_100 * 2,
+            position: 0,
+            rate: 44_100,
+            hertz: 15_000.0,
+        }),
+        None,
+    );
+    deck.play();
+    let mut block = vec![0.0f32; 256 * 2];
+    let mut all = Vec::new();
+    for _ in 0..188 {
+        deck.render(&mut block);
+        all.extend_from_slice(&block);
+    }
+    let skip = deck.keylock_latency() + 2400;
+    let image = purity(&all[skip * 2..], 18_900.0);
+    let tone = purity(&all[skip * 2..], 15_000.0);
+    assert!(
+        tone > 0.9,
+        "the tone itself should still be there, got {tone:.3}"
+    );
+    assert!(
+        image < 0.001,
+        "the image at 18.9 kHz carries {image:.4} of the energy — the rate conversion is folding it back"
+    );
+}
+
 /// Share of the block's energy that sits exactly at `hertz`.
 ///
 /// A stretched sine that keeps its pitch still sounds rough if the windows are placed badly: the damage
@@ -1187,9 +1223,14 @@ fn the_pitch_stays_where_the_file_put_it_when_the_tempo_moves() {
     let latency = fast.keylock_latency() as f64;
     let heard = fast.position() as f64;
     let all_read = fast.read_position() as f64;
+    // Three things separate the read head from the sound: the stretcher's delay, and the material the
+    // resampler has pulled but not yet played (its kernel needs a window, so the read head runs ahead by
+    // a few frames and the scratch holds the rest).
+    let buffered = all_read - heard - latency;
     assert!(
-        latency > 0.0 && (all_read - heard - latency).abs() < 2.0,
-        "the heard position {heard} is not the read position {all_read} minus the delay {latency}"
+        latency > 0.0 && (0.0..4096.0).contains(&buffered),
+        "the heard position {heard} trails the read position {all_read} by {buffered}, which is not \
+         the delay {latency} plus at most a block of buffered material"
     );
 }
 
@@ -1222,7 +1263,9 @@ fn a_block_larger_than_the_scratch_still_plays_at_the_tempo() {
     deck.play();
     let mut block = vec![0.0f32; 40_000 * 2];
     deck.render(&mut block);
-    let played = deck.read_position() as f64;
+    // What the block consumed, not what was read: the resampler pulls a kernel window ahead of the
+    // play head, so the read pointer legitimately runs a few frames further.
+    let played = deck.position() as f64;
     assert!(
         (played - 40_000.0 * 1.08).abs() < 4.0,
         "a 40000-frame block at 1.08 advanced the source to {played}"

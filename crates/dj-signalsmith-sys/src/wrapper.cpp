@@ -56,6 +56,30 @@ struct LimiterHandle {
     signalsmith::basics::LimiterFloat effect;
 };
 
+// A fractional-delay interpolator. The deck resamples with it: the file's rate against the device's,
+// and the tempo on top of that.
+struct ResampleHandle {
+    enum class Mode { linear, cubic, kaiser16 };
+
+    explicit ResampleHandle(int mode)
+        : mode(static_cast<Mode>(mode)) {
+    }
+
+    Mode mode;
+    signalsmith::delay::InterpolatorKaiserSincN<float, 16> kaiser{};
+};
+
+// Views an interleaved buffer as one channel with an index base, which is what the interpolators
+// expect from `data[i]`.
+struct ChannelView {
+    const float *base;
+    int channel;
+
+    float operator[](int index) const {
+        return base[static_cast<size_t>(index) * 2 + static_cast<size_t>(channel)];
+    }
+};
+
 } // namespace
 
 extern "C" {
@@ -158,6 +182,79 @@ void dj_limiter_process(void *raw, float *interleaved, int frames)
             interleaved[static_cast<size_t>(frame) * channels + channel] = line[frame];
         }
     }
+}
+
+void *dj_resampler_new(int mode)
+{
+    if (mode < 0 || mode > 2) {
+        return nullptr;
+    }
+    return new ResampleHandle(mode);
+}
+
+void dj_resampler_free(void *raw)
+{
+    delete static_cast<ResampleHandle *>(raw);
+}
+
+// Interpolate `out_frames` frames at `phase`, `phase + step`, … measured from frame `base` of
+// `input`, and return the position reached. The caller keeps the fractional part as its next phase.
+double dj_resample(void *raw, const float *input, int in_frames, float *output, int out_frames,
+                   int base, double phase, double step)
+{
+    auto *handle = static_cast<ResampleHandle *>(raw);
+    if (handle == nullptr || in_frames <= 0 || out_frames <= 0) {
+        return phase;
+    }
+    const int taps = (handle->mode == ResampleHandle::Mode::kaiser16)
+                         ? signalsmith::delay::InterpolatorKaiserSincN<float, 16>::inputLength
+                         : (handle->mode == ResampleHandle::Mode::cubic) ? 4 : 2;
+    const int lookback = (handle->mode == ResampleHandle::Mode::kaiser16)
+                             ? signalsmith::delay::InterpolatorKaiserSincN<float, 16>::latency
+                             : (handle->mode == ResampleHandle::Mode::cubic) ? 1 : 0;
+
+    double position = phase;
+    int written = 0;
+    for (int frame = 0; frame < out_frames; ++frame) {
+        const int index = base + static_cast<int>(position);
+        const int start = index - lookback;
+        const float fraction = static_cast<float>(position - static_cast<int>(position));
+        if (start < 0 || start + taps > in_frames) {
+            break;
+        }
+        ChannelView left{input + static_cast<size_t>(start) * 2, 0};
+        ChannelView right{input + static_cast<size_t>(start) * 2, 1};
+        float valueLeft = 0.0f;
+        float valueRight = 0.0f;
+        switch (handle->mode) {
+        case ResampleHandle::Mode::linear: {
+            signalsmith::delay::InterpolatorLinear<float> interpolator;
+            valueLeft = interpolator.fractional(left, fraction);
+            valueRight = interpolator.fractional(right, fraction);
+            break;
+        }
+        case ResampleHandle::Mode::cubic: {
+            signalsmith::delay::InterpolatorCubic<float> interpolator;
+            valueLeft = interpolator.fractional(left, fraction);
+            valueRight = interpolator.fractional(right, fraction);
+            break;
+        }
+        case ResampleHandle::Mode::kaiser16:
+            valueLeft = handle->kaiser.fractional(left, fraction);
+            valueRight = handle->kaiser.fractional(right, fraction);
+            break;
+        }
+        output[static_cast<size_t>(frame) * 2] = valueLeft;
+        output[static_cast<size_t>(frame) * 2 + 1] = valueRight;
+        written = frame + 1;
+        position += step;
+    }
+    // Anything not written stays silent: the caller sees a short block as the end of the material.
+    for (size_t sample = static_cast<size_t>(written) * 2; sample < static_cast<size_t>(out_frames) * 2;
+         ++sample) {
+        output[sample] = 0.0f;
+    }
+    return position;
 }
 
 } // extern "C"

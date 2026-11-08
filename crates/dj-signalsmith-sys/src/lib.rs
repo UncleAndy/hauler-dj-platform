@@ -27,6 +27,19 @@ mod ffi {
         pub fn dj_limiter_reset(handle: *mut c_void);
         pub fn dj_limiter_latency(handle: *mut c_void) -> i32;
         pub fn dj_limiter_process(handle: *mut c_void, interleaved: *mut f32, frames: i32);
+
+        pub fn dj_resampler_new(mode: i32) -> *mut c_void;
+        pub fn dj_resampler_free(handle: *mut c_void);
+        pub fn dj_resample(
+            handle: *mut c_void,
+            input: *const f32,
+            in_frames: i32,
+            output: *mut f32,
+            out_frames: i32,
+            base: i32,
+            phase: f64,
+            step: f64,
+        ) -> f64;
     }
 }
 
@@ -191,6 +204,131 @@ impl std::fmt::Debug for LookaheadLimiter {
     }
 }
 
+/// Which fractional-delay kernel the resampler uses.
+///
+/// A file at its own rate needs nothing; a 44.1 kHz file on a 48 kHz device, or a tempo the hand
+/// asked for, is a resampling job, and the kernel decides how much of the signal folds back into the
+/// audible band.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Interpolation {
+    /// Two taps: what the deck did before, kept so the difference can be measured.
+    Linear,
+    /// Four taps: cheap and much cleaner than linear, good enough for a tempo move.
+    Cubic,
+    /// Sixteen taps of Kaiser-windowed sinc: the quality the rate conversion needs, at a cost.
+    KaiserSinc16,
+}
+
+impl Interpolation {
+    fn code(self) -> i32 {
+        match self {
+            Interpolation::Linear => 0,
+            Interpolation::Cubic => 1,
+            Interpolation::KaiserSinc16 => 2,
+        }
+    }
+
+    /// Taps the kernel needs, and how many frames before the integer position.
+    ///
+    /// A caller has to keep that much history at the front of the buffer it interpolates from.
+    pub fn geometry(self) -> (usize, usize) {
+        match self {
+            Interpolation::Linear => (2, 0),
+            Interpolation::Cubic => (4, 1),
+            Interpolation::KaiserSinc16 => (16, 7),
+        }
+    }
+}
+
+/// A fractional-delay resampler: interpolates an interleaved stereo buffer at any step.
+///
+/// The state is the kernel's (the windowed-sinc coefficients); the position lives with the caller,
+/// who passes `phase` and gets the position reached back.
+pub struct Resampler {
+    handle: *mut c_void,
+    interpolation: Interpolation,
+}
+
+impl Resampler {
+    /// A resampler with the given kernel.
+    ///
+    /// # Panics
+    /// Only if the library refuses a mode this crate itself defines.
+    pub fn new(interpolation: Interpolation) -> Self {
+        // SAFETY: the mode code is one of the crate's own values, and the handle is checked below.
+        let handle = unsafe { ffi::dj_resampler_new(interpolation.code()) };
+        assert!(
+            !handle.is_null(),
+            "the DSP library refused {interpolation:?}"
+        );
+        Self {
+            handle,
+            interpolation,
+        }
+    }
+
+    /// Which kernel this resampler uses.
+    pub fn interpolation(&self) -> Interpolation {
+        self.interpolation
+    }
+
+    /// Interpolate `out` from `input`, starting `phase` frames past frame `base`.
+    ///
+    /// Every output frame sits `step` frames further than the one before. Returns the position
+    /// reached, in frames from `base`: the caller keeps the fractional part as its next phase and
+    /// discards the whole frames it has consumed. Frames the kernel cannot reach — the tail of the
+    /// buffer, or material before `base` — come back as silence rather than a guess.
+    pub fn process(
+        &mut self,
+        input: &[f32],
+        out: &mut [f32],
+        base: usize,
+        phase: f64,
+        step: f64,
+    ) -> f64 {
+        let in_frames = i32::try_from(input.len() / 2).unwrap_or(0);
+        let out_frames = i32::try_from(out.len() / 2).unwrap_or(0);
+        let base = i32::try_from(base).unwrap_or(i32::MAX);
+        if in_frames <= 0 || out_frames <= 0 {
+            out.fill(0.0);
+            return phase;
+        }
+        // SAFETY: both slices hold at least `frames * 2` samples, `input` is only read, the handle is
+        // live, and every other argument is a plain value.
+        unsafe {
+            ffi::dj_resample(
+                self.handle,
+                input.as_ptr(),
+                in_frames,
+                out.as_mut_ptr(),
+                out_frames,
+                base,
+                phase,
+                step,
+            )
+        }
+    }
+}
+
+// SAFETY: the handle owns the kernel and its coefficients, and every method takes `&mut self`, so it
+// moves between threads without being shared.
+unsafe impl Send for Resampler {}
+
+impl Drop for Resampler {
+    fn drop(&mut self) {
+        // SAFETY: `handle` came from `dj_resampler_new` and is freed exactly once, here.
+        unsafe { ffi::dj_resampler_free(self.handle) };
+    }
+}
+
+impl std::fmt::Debug for Resampler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Resampler")
+            .field("interpolation", &self.interpolation)
+            .finish_non_exhaustive()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,6 +397,68 @@ mod tests {
             "the material must arrive after the delay"
         );
         assert_ne!(block, before, "the peak must be turned down");
+    }
+
+    #[test]
+    fn a_kernel_that_folds_less_keeps_the_image_out_of_the_band() {
+        // A 15 kHz tone read at 0.919 (44.1 kHz into a 48 kHz device). Linear interpolation leaves an
+        // image at 44100 - 15000 = 29.1 kHz, which folds to 18.9 kHz. A windowed-sinc kernel does not.
+        let step = 44_100.0 / 48_000.0;
+        let frames = 4096;
+        let mut input = vec![0.0f32; frames * 2];
+        for frame in 0..frames {
+            let value =
+                (std::f64::consts::TAU * 15_000.0 * frame as f64 / 44_100.0).sin() as f32 * 0.5;
+            input[frame * 2] = value;
+            input[frame * 2 + 1] = value;
+        }
+        let mut energy_at_image = Vec::new();
+        for interpolation in [
+            Interpolation::Linear,
+            Interpolation::Cubic,
+            Interpolation::KaiserSinc16,
+        ] {
+            let (_, lookback) = interpolation.geometry();
+            let mut resampler = Resampler::new(interpolation);
+            let mut out = vec![0.0f32; 2048 * 2];
+            let reached = resampler.process(&input, &mut out, lookback + 16, 0.0, step);
+            assert!(reached > 0.0, "{interpolation:?} produced nothing");
+            energy_at_image.push(share_at(&out, 18_900.0));
+        }
+        assert!(
+            energy_at_image[0] > 0.01,
+            "the linear kernel is the reason for this test: {:?}",
+            energy_at_image
+        );
+        assert!(
+            energy_at_image[2] < energy_at_image[0] / 100.0,
+            "the sinc kernel must fold at least 20 dB less: {:?}",
+            energy_at_image
+        );
+        assert!(
+            energy_at_image[1] < energy_at_image[0],
+            "cubic must be better than linear: {:?}",
+            energy_at_image
+        );
+    }
+
+    /// Share of the energy that sits at `hertz`, measured at 48 kHz.
+    fn share_at(block: &[f32], hertz: f64) -> f64 {
+        let frames = block.len() / 2;
+        let mut re = 0.0f64;
+        let mut im = 0.0f64;
+        let mut energy = 0.0f64;
+        for index in 0..frames {
+            let value = f64::from(block[index * 2]);
+            let phase = std::f64::consts::TAU * hertz * index as f64 / 48_000.0;
+            re += value * phase.cos();
+            im += value * phase.sin();
+            energy += value * value;
+        }
+        if energy <= 0.0 {
+            return 0.0;
+        }
+        2.0 * (re * re + im * im) / frames as f64 / energy
     }
 
     #[test]

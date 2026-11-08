@@ -16,7 +16,19 @@ use dj_domain::{
     TrackMeta,
 };
 use dj_dsp::ChannelEq;
-use dj_signalsmith_sys::{DEFAULT_FALL_SECONDS, PeakDecay};
+use dj_signalsmith_sys::{DEFAULT_FALL_SECONDS, Interpolation, PeakDecay, Resampler};
+
+/// The fractional-delay kernel the deck resamples with.
+///
+/// A file at the device's own rate and the file's own speed still passes through the resampler at step
+/// 1, where every kernel returns the sample it was given; the moment either rate or tempo moves, the
+/// kernel decides how much of the signal folds back into the audible band. Sixteen taps of
+/// Kaiser-windowed sinc is the quality a rate conversion needs: linear interpolation put a 15 kHz tone
+/// from a 44.1 kHz file back at 18.9 kHz on a 48 kHz device.
+const RESAMPLE_KERNEL: Interpolation = Interpolation::KaiserSinc16;
+
+/// Frames of history reserved at the front of the scratch: the most any kernel asks for.
+const RESAMPLE_HISTORY_MAX: usize = 8;
 
 mod stretch;
 
@@ -247,6 +259,9 @@ pub struct Deck {
     /// the block holds and hands out the difference. The tail is kept here so the seam between blocks is
     /// one frame wide, and nothing is allocated inside the callback.
     scratch: Vec<f32>,
+    /// The resampling kernel, and how many frames before the play head it needs.
+    resampler: Resampler,
+    history: usize,
     /// Frames at the front of `scratch` carried over from the previous block.
     scratch_frames: usize,
     /// Where between two source frames the next output frame sits, 0.0 … 1.0.
@@ -312,8 +327,12 @@ impl Deck {
             eq: ChannelEq::new(EQ_SAMPLE_RATE),
             output_rate: EQ_SAMPLE_RATE as u32,
             rate_ratio: 1.0,
-            scratch: vec![0.0; MAX_TEMPO_BLOCK_FRAMES * 2],
+            // The front of the scratch holds the frames before the play head, which the kernel needs;
+            // the rest is unplayed material.
+            scratch: vec![0.0; (MAX_TEMPO_BLOCK_FRAMES + RESAMPLE_HISTORY_MAX) * 2],
             scratch_frames: 0,
+            resampler: Resampler::new(RESAMPLE_KERNEL),
+            history: RESAMPLE_KERNEL.geometry().1,
             phase: 0.0,
             keylock: true,
             stretcher: Stretcher::new(EQ_SAMPLE_RATE),
@@ -414,6 +433,9 @@ impl Deck {
     fn drop_pending(&mut self) {
         self.scratch_frames = 0;
         self.phase = 0.0;
+        // The frames before the new play head belong to the old one: silence is what precedes frame 0.
+        let history = (self.history * 2).min(self.scratch.len());
+        self.scratch[..history].fill(0.0);
         // The stretcher's windows belong to the old playhead as well: keeping them would repeat the
         // material that was already heard.
         self.stretcher.reset();
@@ -428,9 +450,12 @@ impl Deck {
 
     /// Source position of the next frame to render.
     pub fn position(&self) -> u64 {
-        // The stretcher holds a history before its output appears: the clock and the loop marker
-        // describe what is heard, not what has already been read.
-        self.position.saturating_sub(self.lead())
+        // Two things sit between what has been read and what is heard: the material pulled into the
+        // scratch but not yet played, and the stretcher's own delay. The clock and the loop marker
+        // describe the sound, not the read head.
+        self.position
+            .saturating_sub(self.scratch_frames as u64)
+            .saturating_sub(self.lead())
     }
 
     /// Frames the read head leads what is heard.
@@ -1121,10 +1146,13 @@ impl Deck {
         //
         // The piece size is measured in *source* frames: at 1.08 a block of 8190 output frames asks for
         // 8848 source frames and walks off the end of the scratch. Divide by the step.
-        let capacity = (self.scratch.len() / 2).saturating_sub(4).max(1);
-        // `need` is `phase + step * frames + 2`, and `phase` can be almost a whole frame: keep two
-        // frames of slack for it, or the last piece walks off the scratch by exactly those two.
-        let chunk = (((capacity as f64) - 2.0) / step.max(1.0)).floor().max(1.0) as usize;
+        let (taps, _) = self.resampler.interpolation().geometry();
+        let capacity = (self.scratch.len() / 2)
+            .saturating_sub(taps + self.history + 8)
+            .max(1);
+        // `need` is `ceil(phase + step * frames) + taps + history`, and both `phase` and the ceiling can
+        // add a frame: keep four frames of slack, or the last piece walks off the scratch by exactly one.
+        let chunk = (((capacity as f64) - 4.0) / step.max(1.0)).floor().max(1.0) as usize;
         let mut done = 0usize;
         while done < frames {
             let take = (frames - done).min(chunk);
@@ -1139,36 +1167,39 @@ impl Deck {
         if frames == 0 {
             return;
         }
-        // One frame beyond what the block consumes: the last output frame interpolates between two source
-        // frames, and the second of them may belong to the next block.
-        let need = (self.phase + step * frames as f64).ceil() as usize + 2;
+        // The kernel looks back before the play head and ahead by its taps: pull enough that the last
+        // output frame has a whole window under it.
+        let (taps, _) = self.resampler.interpolation().geometry();
+        let history = self.history;
+        // Frames of material needed *after* the play head: the kernel's window reaches forward from the
+        // last interpolated position. The history sits in front and is not part of this count.
+        let need = (self.phase + step * frames as f64).ceil() as usize + taps + 2;
+        let capacity = self.scratch.len() / 2;
+        assert!(
+            need <= capacity,
+            "a block of {frames} frames needs {need} of scratch, which holds {capacity}: the caller \
+             must slice the block first"
+        );
 
         let mut scratch = std::mem::take(&mut self.scratch);
         let tail = self.scratch_frames;
         let missing = need.saturating_sub(tail);
         if missing > 0 {
-            self.pull(&mut scratch[tail * 2..(tail + missing) * 2]);
+            let from = (history + tail) * 2;
+            let to = from + missing * 2;
+            scratch[from..to].fill(0.0);
+            self.pull(&mut scratch[from..to]);
         }
-        let total = tail + missing;
+        let total = history + tail + missing;
 
-        let mut position = self.phase;
-        for index in 0..frames {
-            let frame = position as usize;
-            if frame + 1 >= total {
-                break; // the source ended inside this block; the rest is the silence it already holds
-            }
-            let fraction = (position - frame as f64) as f32;
-            let left = frame * 2;
-            let right = left + 2;
-            out[index * 2] = scratch[left] * (1.0 - fraction) + scratch[right] * fraction;
-            out[index * 2 + 1] =
-                scratch[left + 1] * (1.0 - fraction) + scratch[right + 1] * fraction;
-            position += step;
-        }
-
-        let consumed = (position as usize).min(total);
-        let rest = total - consumed;
+        // The play head sits `history` frames into the buffer; the kernel looks back from there.
+        let position =
+            self.resampler
+                .process(&scratch[..total * 2], out, history, self.phase, step);
+        let consumed = (position.floor() as usize).min(total);
+        let rest = total.saturating_sub(consumed + history);
         scratch.copy_within(consumed * 2..total * 2, 0);
+        // Frames that were before the play head and are now behind it: none of them are needed again.
         self.scratch_frames = rest;
         self.phase = position - consumed as f64;
         self.scratch = scratch;
@@ -1206,10 +1237,20 @@ impl Deck {
             return;
         }
         let capacity = self.stretch_in.len() / 2;
-        // Output frames one piece can fill, leaving room for the two frames the resampler reads ahead.
-        let piece = (((capacity.saturating_sub(4)) as f64) / self.tempo_ratio)
+        // The staging buffer is what the stretcher reads; the scratch behind it needs room for the
+        // kernel's window as well, so the piece is bounded by both.
+        let (taps, _) = self.resampler.interpolation().geometry();
+        let scratch_room = (self.scratch.len() / 2).saturating_sub(taps + self.history + 8);
+        // Every output frame asks the scratch for `rate_ratio` frames of device material, and every
+        // device frame asks the stretcher for `tempo_ratio` frames of it: both divide the room.
+        let stretch_per_out = self.rate_ratio * self.tempo_ratio;
+        let piece_out = ((scratch_room as f64) / stretch_per_out.max(1e-6))
             .floor()
             .max(1.0) as usize;
+        let piece_staging = (((capacity.saturating_sub(4)) as f64) / self.tempo_ratio)
+            .floor()
+            .max(1.0) as usize;
+        let piece = piece_out.min(piece_staging).max(1);
 
         let mut done = 0usize;
         while done < frames {
