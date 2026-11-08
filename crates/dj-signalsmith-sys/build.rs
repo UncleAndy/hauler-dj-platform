@@ -13,6 +13,7 @@ fn main() {
     println!("cargo:rerun-if-changed=src/wrapper.cpp");
     println!("cargo:rerun-if-changed=vendor/signalsmith-dsp/envelopes.h");
     println!("cargo:rerun-if-changed=vendor/signalsmith-dsp/delay.h");
+    println!("cargo:rerun-if-changed=vendor/signalsmith-dsp/filters.h");
     println!("cargo:rerun-if-changed=vendor/signalsmith-dsp/common.h");
     println!(
         "cargo:rerun-if-changed=vendor/signalsmith-basics/include/signalsmith-basics/limiter.h"

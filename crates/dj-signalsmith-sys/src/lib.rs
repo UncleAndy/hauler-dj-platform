@@ -30,6 +30,17 @@ mod ffi {
 
         pub fn dj_resampler_new(mode: i32) -> *mut c_void;
         pub fn dj_resampler_free(handle: *mut c_void);
+        pub fn dj_isolator_new(
+            channels: i32,
+            sample_rate: f64,
+            low_hz: f64,
+            high_hz: f64,
+        ) -> *mut c_void;
+        pub fn dj_isolator_free(handle: *mut c_void);
+        pub fn dj_isolator_reset(handle: *mut c_void);
+        pub fn dj_isolator_set_weights(handle: *mut c_void, low: f32, mid: f32, high: f32);
+        pub fn dj_isolator_process(handle: *mut c_void, interleaved: *mut f32, frames: i32);
+
         pub fn dj_resample(
             handle: *mut c_void,
             input: *const f32,
@@ -326,6 +337,73 @@ impl std::fmt::Debug for Resampler {
         f.debug_struct("Resampler")
             .field("interpolation", &self.interpolation)
             .finish_non_exhaustive()
+    }
+}
+
+/// A three-way crossover that removes a band instead of shelving it.
+///
+/// The splits are Linkwitz-Riley fourth order, built from the library's biquads: a lowpass and a
+/// highpass of that family sum to one, so the complement of a band is exact rather than approximate.
+/// Weights are per band, `1.0` removes the band and `0.0` leaves the signal untouched — with every
+/// weight at zero the signal comes back bit for bit.
+pub struct Isolator {
+    handle: *mut c_void,
+}
+
+impl Isolator {
+    /// An isolator for stereo `sample_rate`, splitting at `low_hz` and `high_hz`.
+    ///
+    /// # Panics
+    /// When the crossover points are not a pair of positive, ordered frequencies.
+    pub fn new(sample_rate: f64, low_hz: f64, high_hz: f64) -> Self {
+        assert!(
+            low_hz > 0.0 && high_hz > low_hz,
+            "an isolator needs an ordered pair of crossover points, got {low_hz} and {high_hz}"
+        );
+        // SAFETY: every argument is a plain value, and the handle is checked below.
+        let handle = unsafe { ffi::dj_isolator_new(2, sample_rate, low_hz, high_hz) };
+        assert!(!handle.is_null(), "the DSP library refused an isolator");
+        Self { handle }
+    }
+
+    /// How much of each band is removed: `(low, mid, high)`, each `0.0 … 1.0`.
+    pub fn set_weights(&mut self, low: f32, mid: f32, high: f32) {
+        // SAFETY: `handle` came from `dj_isolator_new` and lives until `Drop`.
+        unsafe { ffi::dj_isolator_set_weights(self.handle, low, mid, high) };
+    }
+
+    /// Filter one interleaved stereo block in place.
+    pub fn process(&mut self, interleaved: &mut [f32]) {
+        let frames = i32::try_from(interleaved.len() / 2).unwrap_or(0);
+        if frames <= 0 {
+            return;
+        }
+        // SAFETY: the slice holds at least `frames * 2` samples, which is what the wrapper reads and
+        // writes, and the handle is live.
+        unsafe { ffi::dj_isolator_process(self.handle, interleaved.as_mut_ptr(), frames) };
+    }
+
+    /// Drop the filter history, for a deck that starts a new track.
+    pub fn reset(&mut self) {
+        // SAFETY: `handle` is live; the call only clears the filters' own state.
+        unsafe { ffi::dj_isolator_reset(self.handle) };
+    }
+}
+
+// SAFETY: the handle owns the filters, and every method takes `&mut self`, so it moves between threads
+// without being shared.
+unsafe impl Send for Isolator {}
+
+impl Drop for Isolator {
+    fn drop(&mut self) {
+        // SAFETY: `handle` came from `dj_isolator_new` and is freed exactly once, here.
+        unsafe { ffi::dj_isolator_free(self.handle) };
+    }
+}
+
+impl std::fmt::Debug for Isolator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Isolator").finish_non_exhaustive()
     }
 }
 

@@ -204,23 +204,66 @@ fn a_knob_move_is_the_same_filter_the_curve_describes() {
 }
 
 #[test]
-fn the_floor_kills_its_band_but_bleeds_upwards() {
-    // Why the isolator is a separate task and not a knob that reaches -120 dB: a shelf with that much
-    // gain has a transition spread over octaves. It does silence its own band, but it also takes -32 dB
-    // out of 1 kHz — measured, not feared — which is a gutted channel, not a killed band. The number is
-    // pinned here so nobody "fixes" the law to the floor believing it is a kill.
+fn the_floor_removes_the_band_and_leaves_its_neighbours() {
+    // The floor used to be a −120 dB shelf: it silenced its own band but took −32 dB out of 1 kHz —
+    // a gutted channel, not a killed band. The floor is now a kill through a three-way crossover, so
+    // the band is gone and the neighbours do not move.
     let mut eq = ChannelEq::new(RATE);
     let mut gains = EqGains::FLAT;
     gains.set_band(EqBand::Low, FLOOR_DB);
     eq.set_gains(gains);
     assert_eq!(eq.gains().low_db, FLOOR_DB);
+    assert!(
+        eq.isolator().killed()[0],
+        "the floor must reach the isolator, not the shelf"
+    );
 
     let low = measured_db(&mut eq, 40.0);
-    assert!(low < -60.0, "the floor still passes {low:.1} dB at 40 Hz");
-    let mid = eq.magnitude_db(1_000.0);
+    assert!(low < -50.0, "the floor still passes {low:.1} dB at 40 Hz");
+    let mid = measured_db(&mut eq, 1_000.0);
     assert!(
-        mid < -25.0,
-        "the bleed dried up ({mid:.2} dB at 1 kHz): the shelf now behaves like a crossover, so \
-         revisit whether the isolator is still needed"
+        mid.abs() < 0.5,
+        "killing the low band moved 1 kHz by {mid:.2} dB"
+    );
+}
+
+#[test]
+fn the_high_floor_removes_the_top_and_leaves_the_bass() {
+    let mut eq = ChannelEq::new(RATE);
+    let mut gains = EqGains::FLAT;
+    gains.set_band(EqBand::High, FLOOR_DB);
+    eq.set_gains(gains);
+    assert!(
+        eq.isolator().killed()[2],
+        "the high floor must kill the top"
+    );
+
+    let high = measured_db(&mut eq, 15_000.0);
+    assert!(
+        high < -40.0,
+        "the floor still passes {high:.1} dB at 15 kHz"
+    );
+    let bass = measured_db(&mut eq, 100.0);
+    assert!(
+        bass.abs() < 0.5,
+        "killing the top moved 100 Hz by {bass:.2} dB"
+    );
+}
+
+#[test]
+fn an_ordinary_cut_is_not_a_kill() {
+    // −26 dB is a deep cut and stays a shelf: the isolator is what the floor means, not what a cut means.
+    let mut eq = ChannelEq::new(RATE);
+    let mut gains = EqGains::FLAT;
+    gains.set_band(EqBand::Low, -CUT_DB);
+    eq.set_gains(gains);
+    assert!(
+        !eq.isolator().killed()[0],
+        "an ordinary cut must not reach the crossover"
+    );
+    let low = measured_db(&mut eq, 40.0);
+    assert!(
+        low > -40.0,
+        "an ordinary cut should be a shelf, measured {low:.1} dB at 40 Hz"
     );
 }

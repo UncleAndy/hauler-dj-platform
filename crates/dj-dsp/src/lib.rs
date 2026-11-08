@@ -11,10 +11,12 @@
 
 pub mod biquad;
 pub mod eq;
+pub mod isolator;
 
 pub use biquad::Biquad;
 pub use dj_domain::{EQ_BOOST_DB, EQ_CUT_DB, EQ_FLOOR_DB, EqBand, EqGains};
 pub use eq::{ChannelEq, Crossover, EqTable, STEP_DB, STEPS, Section};
+pub use isolator::{Isolator, IsolatorBand, KILL_DB};
 
 /// The knob's ends, re-exported here because this is where a caller looks for them.
 ///

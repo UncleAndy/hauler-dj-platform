@@ -11,6 +11,7 @@
 //! touched keeps its samples bit for bit — and three knobs at zero cost nothing at all.
 
 use crate::biquad::Biquad;
+use crate::isolator::{Isolator, IsolatorBand, KILL_DB};
 pub use dj_domain::{EQ_BOOST_DB, EQ_CUT_DB, EQ_FLOOR_DB, EqBand, EqGains};
 
 /// Distance between two positions of a knob, in decibels.
@@ -146,6 +147,8 @@ impl EqTable {
 pub struct ChannelEq {
     table: EqTable,
     gains: EqGains,
+    /// What the floor means: a band commanded to the kill is removed by a crossover, not by a shelf.
+    isolator: Isolator,
     low: [Biquad; 2],
     mid: [Biquad; 2],
     high: [Biquad; 2],
@@ -156,6 +159,7 @@ impl ChannelEq {
     pub fn new(sample_rate: f64) -> Self {
         let mut eq = Self {
             table: EqTable::new(sample_rate),
+            isolator: Isolator::new(sample_rate, Crossover::default()),
             gains: EqGains::FLAT,
             low: [Biquad::bypass(); 2],
             mid: [Biquad::bypass(); 2],
@@ -185,6 +189,16 @@ impl ChannelEq {
             applied.set_band(band, EqTable::gain_of(EqTable::step_of(gains.band(band))));
         }
         self.gains = applied;
+        // The floor is a kill: the band is taken out by the crossover, and its shelf stands aside.
+        for band in IsolatorBand::ALL {
+            let eq_band = match band {
+                IsolatorBand::Low => EqBand::Low,
+                IsolatorBand::Mid => EqBand::Mid,
+                IsolatorBand::High => EqBand::High,
+            };
+            self.isolator
+                .set_killed(band, applied.band(eq_band) <= KILL_DB);
+        }
         if applied.is_flat() {
             // Unity is a bypass, not a multiplication by one: a flat EQ must not cost a sample of
             // precision, and must not drift with every block.
@@ -193,15 +207,18 @@ impl ChannelEq {
             self.high = [Biquad::bypass(); 2];
             return;
         }
-        let lows = self
-            .table
-            .row(EqBand::Low, EqTable::step_of(applied.low_db));
-        let mids = self
-            .table
-            .row(EqBand::Mid, EqTable::step_of(applied.mid_db));
-        let highs = self
-            .table
-            .row(EqBand::High, EqTable::step_of(applied.high_db));
+        // A killed band leaves the shelf chain at unity: two filters doing the same job would double
+        // the attenuation and fight over the phase.
+        let step = |db: f32| {
+            if db <= KILL_DB {
+                EqTable::UNITY_STEP
+            } else {
+                EqTable::step_of(db)
+            }
+        };
+        let lows = self.table.row(EqBand::Low, step(applied.low_db));
+        let mids = self.table.row(EqBand::Mid, step(applied.mid_db));
+        let highs = self.table.row(EqBand::High, step(applied.high_db));
         for (sections, row) in [
             (&mut self.low, lows),
             (&mut self.mid, mids),
@@ -223,6 +240,8 @@ impl ChannelEq {
             frame[0] = self.high[0].process(self.mid[0].process(self.low[0].process(frame[0])));
             frame[1] = self.high[1].process(self.mid[1].process(self.low[1].process(frame[1])));
         }
+        // The isolator works on the equalised signal: a killed band is the last thing to go.
+        self.isolator.process(frames);
     }
 
     /// Magnitude response of one band at `frequency`, in decibels — the number a sweep would measure.
@@ -236,7 +255,13 @@ impl ChannelEq {
         EqBand::ALL
             .into_iter()
             .map(|band| self.band_magnitude_db(band, frequency))
-            .sum()
+            .sum::<f64>()
+            + self.isolator.magnitude_db(frequency)
+    }
+
+    /// The isolator this equaliser drives, which is what its floor means.
+    pub fn isolator(&self) -> &Isolator {
+        &self.isolator
     }
 
     /// Where this band sits in the table right now.
@@ -254,6 +279,7 @@ impl ChannelEq {
                 section.reset();
             }
         }
+        self.isolator.reset();
     }
 }
 
