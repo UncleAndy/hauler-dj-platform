@@ -747,6 +747,12 @@ pub struct DeckSnapshot {
     /// Colours of the hotcues as `#rrggbb`, slot for slot.
     #[serde(default)]
     pub cue_colors: Vec<Option<String>>,
+    /// True while a measurement is running over this deck's file (B02).
+    ///
+    /// Defaulted: a client that knows nothing about re-measuring is not a protocol error, and an old
+    /// engine never says a measurement is running.
+    #[serde(default)]
+    pub analyzing: bool,
     /// Current output peaks.
     pub levels: Levels,
     /// Waveform envelope, once the deck has one.

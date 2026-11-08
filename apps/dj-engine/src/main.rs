@@ -20,7 +20,7 @@ use dj_bridge::{BridgeServer, ClientMessage, ServerMessage};
 use dj_deck::{Deck, DeckSource};
 use dj_domain::DeckId;
 use dj_engine::{
-    DeckStatic, DeckUpdate, EngineGraph, GraphLoad, LoadRequest, StateCells, Submission,
+    DeckStatic, DeckUpdate, EngineGraph, GraphLoad, LoadRequest, Published, StateCells, Submission,
     prepare_track,
 };
 use dj_mixer::{ChannelSettings, CrossAssign, Mixer};
@@ -337,7 +337,7 @@ fn run(argv: &[String]) -> Result<(), String> {
     );
 
     let (graph_loads, graph_loads_rx) = std::sync::mpsc::channel::<GraphLoad>();
-    let (deck_updates, deck_updates_rx) = std::sync::mpsc::channel::<DeckUpdate>();
+    let (deck_updates, deck_updates_rx) = std::sync::mpsc::channel::<Published>();
 
     // Ctrl-C must stop the engine. PipeWire's thread loop blocks signals in the thread that creates
     // it, so the flag and the receiving thread have to exist before the stream does.
@@ -369,8 +369,34 @@ fn run(argv: &[String]) -> Result<(), String> {
                 // A load changes what the deck is; only this thread reads the description, so the
                 // audio path never sees a lock.
                 while let Ok(update) = deck_updates_rx.try_recv() {
-                    if let Some(slot) = statics.iter_mut().find(|entry| entry.deck == update.deck) {
-                        *slot = update.static_info;
+                    match update {
+                        Published::Deck(update) => {
+                            if let Some(slot) =
+                                statics.iter_mut().find(|entry| entry.deck == update.deck)
+                            {
+                                *slot = update.static_info;
+                            }
+                        }
+                        Published::Grid {
+                            deck,
+                            bpm,
+                            first_beat_frame,
+                        } => {
+                            if let Some(track) = statics
+                                .iter_mut()
+                                .find(|entry| entry.deck == deck)
+                                .and_then(|slot| slot.track.as_mut())
+                            {
+                                track.bpm = Some(bpm);
+                                track.first_beat_frame = Some(first_beat_frame);
+                            }
+                        }
+                        Published::Analyzing { deck, analyzing } => {
+                            if let Some(slot) = statics.iter_mut().find(|entry| entry.deck == deck)
+                            {
+                                slot.analyzing = analyzing;
+                            }
+                        }
                     }
                 }
                 revision += 1;
@@ -445,9 +471,22 @@ fn run(argv: &[String]) -> Result<(), String> {
     // by hand, and the answer replaces the grid the deck and the file carry (B02).
     {
         let prepared = graph_loads.clone();
+        let published_to = deck_updates.clone();
         let store = store.clone();
         std::thread::spawn(move || {
             while let Ok(request) = analysis_requests_rx.recv() {
+                let deck = request.deck;
+                // The screen says what is happening while it happens: a decode of a five-minute track
+                // is long enough that a silent button reads as a button that did nothing.
+                let started = std::time::Instant::now();
+                let _ = published_to.send(Published::Analyzing {
+                    deck,
+                    analyzing: true,
+                });
+                let _ = prepared.send(GraphLoad::SetAnalyzing {
+                    deck,
+                    analyzing: true,
+                });
                 let path = std::path::PathBuf::from(&request.path);
                 match dj_analysis::tempo::analyse(&path) {
                     Ok(Some(found)) => {
@@ -457,7 +496,7 @@ fn run(argv: &[String]) -> Result<(), String> {
                             bpm: found.bpm,
                             first_beat_frame: found.first_beat_frame,
                         };
-                        match dj_engine::meta::write_beatgrid(
+                        if let Err(message) = dj_engine::meta::write_beatgrid(
                             &store,
                             volume(),
                             root(),
@@ -465,11 +504,17 @@ fn run(argv: &[String]) -> Result<(), String> {
                             grid,
                             true,
                         ) {
-                            Ok(_) => {}
-                            Err(message) => eprintln!("dj-engine: {message}"),
+                            eprintln!("dj-engine: {message}");
                         }
+                        // The publisher carries the wire: the deck's own numbers are for the graph,
+                        // the description is what a client reads, and both have to change together.
+                        let _ = published_to.send(Published::Grid {
+                            deck,
+                            bpm: found.bpm,
+                            first_beat_frame: found.first_beat_frame,
+                        });
                         let _ = prepared.send(GraphLoad::SetGrid {
-                            deck: request.deck,
+                            deck,
                             bpm: found.bpm,
                             first_beat_frame: found.first_beat_frame,
                         });
@@ -480,6 +525,20 @@ fn run(argv: &[String]) -> Result<(), String> {
                     ),
                     Err(message) => eprintln!("dj-engine: {message}"),
                 }
+                // The answer is published at once, the badge lingers: a state that lasts a couple of
+                // frames is not information, it is a flicker. The measurement is over either way.
+                let shown = std::time::Duration::from_millis(400);
+                if let Some(left) = shown.checked_sub(started.elapsed()) {
+                    std::thread::sleep(left);
+                }
+                let _ = published_to.send(Published::Analyzing {
+                    deck,
+                    analyzing: false,
+                });
+                let _ = prepared.send(GraphLoad::SetAnalyzing {
+                    deck,
+                    analyzing: false,
+                });
             }
         });
     }
@@ -491,7 +550,7 @@ fn run(argv: &[String]) -> Result<(), String> {
         let updates = deck_updates.clone();
         std::thread::spawn(move || {
             while let Ok(request) = load_requests_rx.recv() {
-                let _ = updates.send(DeckUpdate {
+                let _ = updates.send(Published::Deck(Box::new(DeckUpdate {
                     deck: request.deck,
                     static_info: DeckStatic {
                         deck: request.deck,
@@ -501,8 +560,9 @@ fn run(argv: &[String]) -> Result<(), String> {
                         waveform: None,
                         auto_gain: 1.0,
                         auto_gain_db: None,
+                        analyzing: false,
                     },
-                });
+                })));
                 let path = std::path::PathBuf::from(&request.path);
                 match prepare_track(&path, rate, 2.0, auto_gain_share).map(|mut prepared| {
                     if let Some(problem) =
@@ -543,14 +603,14 @@ fn run(argv: &[String]) -> Result<(), String> {
                         // a cue sent before the deck holds the track would belong to nothing.
                         let static_info = prepared_track.static_info.clone();
                         let _ = prepared.send(GraphLoad::Attach(Box::new(prepared_track)));
-                        let _ = updates.send(DeckUpdate {
+                        let _ = updates.send(Published::Deck(Box::new(DeckUpdate {
                             deck: request.deck,
                             static_info: static_info.clone(),
-                        });
+                        })));
                     }
                     Err(message) => {
                         eprintln!("dj-engine: cannot load {}: {message}", request.path);
-                        let _ = updates.send(DeckUpdate {
+                        let _ = updates.send(Published::Deck(Box::new(DeckUpdate {
                             deck: request.deck,
                             static_info: DeckStatic {
                                 deck: request.deck,
@@ -560,8 +620,9 @@ fn run(argv: &[String]) -> Result<(), String> {
                                 waveform: None,
                                 auto_gain: 1.0,
                                 auto_gain_db: None,
+                                analyzing: false,
                             },
-                        });
+                        })));
                     }
                 }
             }

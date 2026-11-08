@@ -149,6 +149,7 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
             deck: DeckId::A,
             load: DeckLoad::Ready,
             playing: true,
+            analyzing: false,
             source_frame: SourceFrame(4_800),
             remaining_frames: Some(120_000),
             position_ratio: Some(0.0384),
@@ -241,6 +242,9 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
             r#""active_loops":[],"#,
             r#""cue_labels":["drop",null,null,null,null,null,null,null],"#,
             r##""cue_colors":["#5fb85f",null,null,null,null,null,null,null],"##,
+            // A measurement under way is published so the deck can say so; defaulted, so a snapshot
+            // from a build without the button still reads.
+            r#""analyzing":false,"#,
             r#""levels":{"peak_left":0.5,"peak_right":0.25,"held_left":0.4,"held_right":0.2},"#,
             r#""linear_gain":1.0,"#,
             r#""auto_gain":1.0,"auto_gain_db":-3.5,"tempo_ratio":1.0,"fader":0.85,"#,

@@ -335,6 +335,8 @@ pub struct DeckStatic {
     pub auto_gain: f32,
     /// The same correction in decibels, `None` when the level of this file was never measured.
     pub auto_gain_db: Option<f32>,
+    /// True while the tempo of this deck's file is being measured again (B02).
+    pub analyzing: bool,
 }
 
 impl DeckStatic {
@@ -357,6 +359,7 @@ impl DeckStatic {
             waveform: snapshot.waveform.clone(),
             auto_gain: snapshot.auto_gain,
             auto_gain_db: snapshot.auto_gain_db,
+            analyzing: snapshot.analyzing,
         }
     }
 }
@@ -715,6 +718,7 @@ impl StateCells {
                     .filter(|total| *total > 0)
                     .map(|total| (frame as f32 / total as f32).clamp(0.0, 1.0)),
                 track: if attached { fixed.track.clone() } else { None },
+                analyzing: fixed.analyzing,
                 waveform: if attached {
                     fixed.waveform.clone()
                 } else {
@@ -828,6 +832,13 @@ pub enum GraphLoad {
         /// Target deck.
         deck: DeckId,
     },
+    /// A measurement started or finished for this deck (B02).
+    SetAnalyzing {
+        /// Target deck.
+        deck: DeckId,
+        /// Whether the deck is being measured now.
+        analyzing: bool,
+    },
     /// A new beat grid for a loaded track: the DJ asked for the tempo again (B02).
     SetGrid {
         /// Target deck.
@@ -903,6 +914,34 @@ pub struct DeckUpdate {
     pub deck: DeckId,
     /// New static description.
     pub static_info: DeckStatic,
+}
+
+/// What the publisher learns between two frames, from the threads that own the slow work.
+///
+/// The render thread knows nothing of this: a measurement is a decode, so its answers arrive from
+/// the worker, exactly like a load does. A grid update carries two numbers rather than a whole
+/// description, because everything else about the track is unchanged.
+#[derive(Debug, Clone)]
+pub enum Published {
+    /// A deck was loaded, emptied or failed: the whole description changes. Boxed, like an attach:
+    /// the description carries strings and a waveform reference, and the other variants are two words.
+    Deck(Box<DeckUpdate>),
+    /// A tempo was measured again (B02): only the grid changes.
+    Grid {
+        /// Deck whose grid was replaced.
+        deck: DeckId,
+        /// Beats per minute the measurement found.
+        bpm: f64,
+        /// Frame of the first beat.
+        first_beat_frame: u64,
+    },
+    /// A measurement started or finished (B02): the deck says so while it runs.
+    Analyzing {
+        /// Deck being measured.
+        deck: DeckId,
+        /// Whether a measurement is running now.
+        analyzing: bool,
+    },
 }
 
 /// Build and cache the waveform for a file, returning the reference the UI needs.
@@ -1004,6 +1043,7 @@ pub fn prepare_track(
         waveform: None, // filled by the caller, which knows the cache directory
         auto_gain: 1.0, // the loader fills it in below: this function knows samples, not levels
         auto_gain_db: None,
+        analyzing: false,
     };
     // Loudness is measured here, on the loader thread: it is a full decode of the file, and the audio
     // callback must never see it. A file that cannot be measured opens at unity and says nothing.
@@ -1247,6 +1287,11 @@ impl EngineGraph {
                         self.decks[index].set_auto_gain(prepared.auto_gain, prepared.auto_gain_db);
                         self.paths[index] = prepared.path;
                         self.loads_applied += 1;
+                    }
+                }
+                GraphLoad::SetAnalyzing { deck, analyzing } => {
+                    if let Some(index) = self.decks.iter().position(|held| held.id() == deck) {
+                        self.decks[index].set_analyzing(analyzing);
                     }
                 }
                 GraphLoad::SetGrid {

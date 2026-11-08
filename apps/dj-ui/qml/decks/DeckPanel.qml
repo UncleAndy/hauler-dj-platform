@@ -55,6 +55,8 @@ Pane {
     }
 
     readonly property bool playing: panel.deck.playing === true
+    /// True while the engine is measuring this deck's tempo again (B02).
+    readonly property bool analyzing: panel.deck.analyzing === true
     readonly property var track: panel.deck.track !== undefined ? panel.deck.track : null
     readonly property var loop: panel.deck.loop_region !== undefined ? panel.deck.loop_region : null
 
@@ -520,7 +522,9 @@ Pane {
                 objectName: "tempo_" + panel.deckId
                 text: qsTr("BPM ⟳")
                 font.pixelSize: 10
-                enabled: panel.live
+                // A second question while the first is being answered would queue another decode of
+                // the same file for the same answer.
+                enabled: panel.live && !panel.analyzing
                 focusPolicy: Qt.NoFocus
                 ToolTip.visible: hovered
                 ToolTip.text: qsTr("Measure the tempo of this track again")
@@ -547,6 +551,42 @@ Pane {
             Repeater {
                 model: 8
                 delegate: padDelegate
+            }
+        }
+    }
+
+    // A small window over the deck while its tempo is measured again: a decode of a five-minute file
+    // takes seconds, and a button that answers nothing reads as a button that did nothing. Not modal —
+    // the music keeps playing and the hand keeps working (B02).
+    Rectangle {
+        objectName: "analyzing_" + panel.deckId
+        visible: panel.analyzing
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.margins: 10
+        z: 100
+        width: analyzeRow.implicitWidth + 18
+        height: 26
+        radius: 3
+        color: UiSettings.themeRaised
+        border.width: 1
+        border.color: UiSettings.themeAccent
+
+        RowLayout {
+            id: analyzeRow
+            anchors.centerIn: parent
+            spacing: 6
+
+            BusyIndicator {
+                running: panel.analyzing
+                visible: panel.analyzing
+                Layout.preferredWidth: 16
+                Layout.preferredHeight: 16
+            }
+            Label {
+                text: qsTr("Analyze…")
+                color: UiSettings.themeText
+                font.pixelSize: 11
             }
         }
     }
@@ -589,13 +629,19 @@ Pane {
         anchors.centerIn: Overlay.overlay
         modal: true
         focus: true
-        padding: 8
-        width: Math.min(340, Overlay.overlay !== null ? Overlay.overlay.width * 0.6 : 340)
+        padding: 10
+        // A question, not a paragraph: the width is fixed and the sentence wraps inside it, instead of
+        // the window growing to the length of the text.
+        width: Math.min(300, Overlay.overlay !== null ? Overlay.overlay.width - 40 : 300)
+        contentWidth: width - 2 * padding
 
         ColumnLayout {
             spacing: 6
+            Layout.fillWidth: true
             Label {
+                objectName: "tempoText_" + panel.deckId
                 Layout.fillWidth: true
+                Layout.preferredWidth: tempoConfirm.contentWidth
                 wrapMode: Text.WordWrap
                 text: panel.track !== null && panel.track.bpm
                       ? qsTr("Measure the tempo again? Deck %1 now says %2 BPM; the new measurement "

@@ -259,6 +259,7 @@ impl Engine {
                 // and has no track, loop or hotcues. Decks arrive in A03 (`dj-deck`).
                 load: dj_domain::DeckLoad::Ready,
                 playing: self.playing,
+                analyzing: false,
                 source_frame: SourceFrame(self.source_frame),
                 remaining_frames: None,
                 position_ratio: None,

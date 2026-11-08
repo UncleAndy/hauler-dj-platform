@@ -199,6 +199,9 @@ pub struct Deck {
     source: Option<Box<dyn DeckSource>>,
     load: DeckLoad,
     playing: bool,
+    /// True while the deck's file is being measured again (B02): the screen says so, and the button
+    /// that asked stays quiet until the answer arrives.
+    analyzing: bool,
     position: u64,
     gain: f32,
     /// Correction from the file's own loudness, applied with the trim but never written into it: the
@@ -299,6 +302,7 @@ impl Deck {
             source: None,
             load: DeckLoad::Empty,
             playing: false,
+            analyzing: false,
             position: 0,
             gain: 1.0,
             auto_gain: 1.0,
@@ -1450,6 +1454,10 @@ impl Deck {
     ///
     /// Called at a block boundary when the DJ asks for the tempo again: the measurement is what the
     /// deck now shows, and the publisher will carry it on the next snapshot.
+    pub fn set_analyzing(&mut self, analyzing: bool) {
+        self.analyzing = analyzing;
+    }
+
     pub fn set_beat_grid(&mut self, bpm: f64, first_beat_frame: u64) {
         if let Some(track) = self.track.as_mut() {
             track.bpm = Some(bpm);
@@ -1473,6 +1481,7 @@ impl Deck {
             deck: self.id,
             load: self.load.clone(),
             playing: self.playing,
+            analyzing: self.analyzing,
             source_frame: SourceFrame(heard),
             remaining_frames: remaining,
             position_ratio: ratio,

@@ -215,7 +215,10 @@ case "${1:-}" in
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --tempo-check --load "$tempo_file"
     # The same measurement, asked for by hand: the button must put a question between the click and the
-    # work, and the answer must replace the grid the load wrote — the file's revision is what proves it.
+    # work, the deck must say it is working, and the answer must replace the grid the load wrote — both
+    # in the file and on the strip. To see the strip change, it first has to be wrong: the stored grid is
+    # what the deck shows, so the file is given a number the measurement cannot return.
+    sed -i -E 's/"bpm": [0-9.eE+-]+/"bpm": 100.0/' "$run_dir/.djmeta/grid-track.wav.json"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --tempo-recheck --load "$tempo_file"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --eq-check

@@ -979,6 +979,7 @@ fn prepared_with(
             waveform: None,
             auto_gain: 1.0,
             auto_gain_db: None,
+            analyzing: false,
         },
         path: Some(std::path::PathBuf::from("/tmp/dj-engine-cue-test.wav")),
         cues,

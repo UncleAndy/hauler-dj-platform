@@ -3257,17 +3257,65 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: the grid was rewritten before the question was answered\n");
             return 1;
         }
+        auto *strip = findItem(window->contentItem(), QStringLiteral("bpm_A"));
+        // The question must fit in its window: a sentence that runs off the edge is a sentence nobody
+        // finishes reading. Wrapping is what makes the window narrow instead of as wide as the text.
+        auto *question = findItem(window->contentItem(), QStringLiteral("tempoText_A"));
+        if (question == nullptr) {
+            std::fprintf(stderr, "dj-ui: the question has no text to read\n");
+            return 1;
+        }
+        const double questionWidth = question->width();
+        const double unwrapped = question->property("implicitWidth").toDouble();
+        const double questionHeight = question->height();
+        if (questionWidth > 300.0 || unwrapped <= questionWidth || questionHeight < 24.0) {
+            std::fprintf(
+                stderr,
+                "dj-ui: the question does not wrap (%.0f px wide, %.0f px unwrapped, %.0f px tall)\n",
+                questionWidth, unwrapped, questionHeight);
+            return 1;
+        }
+        auto *badge = findItem(window->contentItem(), QStringLiteral("analyzing_A"));
+        const QString shownBefore = strip != nullptr ? strip->property("text").toString() : QString();
         QMetaObject::invokeMethod(confirm, "clicked");
+        // The screen has to say that the work is happening: the engine publishes the flag, the panel
+        // draws a small window, and the check reads the panel rather than the snapshot behind it.
+        const bool announced = waitFor(
+            [&]() {
+                return badge != nullptr && badge->isVisible() &&
+                       deckA().value(QStringLiteral("analyzing")).toBool();
+            },
+            5000);
+        if (!announced) {
+            std::fprintf(stderr, "dj-ui: the re-measure ran without saying so\n");
+            return 1;
+        }
         if (!waitFor([&]() { return revision() > before; }, 20000)) {
             std::fprintf(stderr, "dj-ui: the confirmed re-measure never reached the metadata\n");
             return 1;
         }
+        // ... and the number on the strip is the new one: the file and the screen must not disagree.
+        // The publisher assembles the description at display rate, so the new number arrives a frame or
+        // two after the file does — waiting for it is the difference between a slow screen and a stale one.
+        waitFor(
+            [&]() {
+                return strip != nullptr && strip->property("text").toString() != shownBefore;
+            },
+            5000);
         const QVariant tempo =
             deckA().value(QStringLiteral("track")).toMap().value(QStringLiteral("bpm"));
+        const QString shownAfter = strip != nullptr ? strip->property("text").toString() : QString();
+        if (shownAfter.isEmpty() || shownAfter == shownBefore) {
+            std::fprintf(stderr,
+                         "dj-ui: the strip still shows \"%s\" after the measurement of %.2f BPM\n",
+                         qPrintable(shownAfter), tempo.toDouble());
+            return 1;
+        }
         std::fprintf(stdout,
-                     "dj-ui: the re-measure asked, was confirmed, and reached the file: %.2f BPM, "
-                     "revision %d -> %d\n",
-                     tempo.toDouble(), before, revision());
+                     "dj-ui: the re-measure asked, was announced \"%s\", confirmed, and reached the "
+                     "strip: \"%s\" -> \"%s\", revision %d -> %d\n",
+                     deckA().value(QStringLiteral("analyzing")).toBool() ? "yes" : "seen",
+                     qPrintable(shownBefore), qPrintable(shownAfter), before, revision());
         return 0;
     }
 
