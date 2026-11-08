@@ -943,7 +943,7 @@ int main(int argc, char *argv[])
     const QCommandLineOption gainCurveMiddleOption(
         QStringLiteral("gain-curve-middle"),
         QStringLiteral("How much of the straight rate a level knob keeps at unity, 0.05 to 1 "
-                       "(1 is straight through; the default is 0.5)."),
+                       "(1 is straight through; the default is 0.1)."),
         QStringLiteral("share"));
     const QCommandLineOption gainCurveCheckOption(
         QStringLiteral("gain-curve-check"),
@@ -2825,23 +2825,29 @@ int main(int argc, char *argv[])
         };
         const double capSide = trim->property("capSide").toDouble();
         const double degreesPerPixel = 270.0 / capSide;
-        // The trim: ends exact, then one pixel of hand at unity and one pixel at the end of the cut.
+        // A rate, not an average: a hair of a degree and a hundredth of a pixel, so the numbers below are
+        // the slope at a spot rather than a chord across a fifth of the travel. The chord is what made an
+        // earlier version of this check pass for the wrong shape.
+        const double hair = 0.01;
+        const double trimRange = 40.0;
+        const double masterRange = 60.0;
+        const double masterTravel = master->property("travelPixels").toDouble();
+        // The trim: ends exact, then the slope at unity and at the very end of the cut.
         double unity = 0.0;
         double bottom = 0.0;
         double top = 0.0;
-        double nearUnity = 0.0;
-        double nearEnd = 0.0;
-        double beforeEnd = 0.0;
+        double firstHair = 0.0;
+        double lastHairBefore = 0.0;
+        double lastHair = 0.0;
         if (!ask(trim, "dbOf", 0.0, &unity) || !ask(trim, "dbOf", -135.0, &bottom)
-            || !ask(trim, "dbOf", 135.0, &top)
-            || !ask(trim, "dbOf", -degreesPerPixel, &nearUnity)
-            || !ask(trim, "dbOf", -135.0 + degreesPerPixel, &beforeEnd)
-            || !ask(trim, "dbOf", -135.0, &nearEnd)) {
+            || !ask(trim, "dbOf", 135.0, &top) || !ask(trim, "dbOf", -hair, &firstHair)
+            || !ask(trim, "dbOf", -135.0 + hair, &lastHairBefore)
+            || !ask(trim, "dbOf", -135.0, &lastHair)) {
             return 1;
         }
-        const double perPixel = std::abs(nearUnity);
-        const double perPixelAtEnd = std::abs(nearEnd - beforeEnd);
-        // The master drags from wherever the hand pressed, so its law takes two arguments.
+        const double trimAtUnity = std::abs(firstHair) / hair * degreesPerPixel;
+        const double trimAtEnd = std::abs(lastHair - lastHairBefore) / hair * degreesPerPixel;
+        // The master drags in pixels, so its law takes two arguments.
         const auto drag = [&](double pixels, double fromDb, double *out) {
             QVariant answer;
             if (!QMetaObject::invokeMethod(master, "dbForPixels", Q_RETURN_ARG(QVariant, answer),
@@ -2853,61 +2859,66 @@ int main(int argc, char *argv[])
             *out = answer.toDouble();
             return true;
         };
-        double masterNearUnity = 0.0;
-        double masterLow = 0.0;
-        double masterNearEnd = 0.0;
-        double masterJustBefore = 0.0;
-        if (!drag(1.0, 0.0, &masterNearUnity) || !drag(119.0, 0.0, &masterJustBefore)
-            || !drag(120.0, 0.0, &masterNearEnd)) {
+        double masterFirst = 0.0;
+        double masterLastBefore = 0.0;
+        double masterLast = 0.0;
+        if (!drag(0.01, 0.0, &masterFirst) || !drag(masterTravel - 0.01, 0.0, &masterLastBefore)
+            || !drag(masterTravel, 0.0, &masterLast)) {
             return 1;
         }
-        // The last pixel of the travel is where the curve is steepest, which is the point of it.
-        const double smallest = std::abs(masterNearEnd - masterJustBefore);
-        (void)masterLow;
+        const double masterAtUnity = std::abs(masterFirst) / 0.01;
+        const double masterAtEnd = std::abs(masterLast - masterLastBefore) / 0.01;
         std::fprintf(stdout,
-                     "dj-ui: the gain curve is %s at %.2f; the trim moves %.2f dB per pixel at unity "
-                     "and %.2f dB at the end of the cut; the master moves %.2f dB per pixel at unity "
-                     "and %.2f dB at the bottom\n",
-                     qPrintable(settings.gainCurve()), settings.gainCurveMiddle(), perPixel,
-                     perPixelAtEnd, std::abs(masterNearUnity), smallest);
+                     "dj-ui: the gain curve is %s at %.2f; the trim moves %.3f dB per pixel at unity "
+                     "and %.3f at the end of the cut; the master moves %.3f dB per pixel at unity and "
+                     "%.3f at the bottom\n",
+                     qPrintable(settings.gainCurve()), settings.gainCurveMiddle(), trimAtUnity,
+                     trimAtEnd, masterAtUnity, masterAtEnd);
         if (std::abs(unity) > 0.01 || std::abs(bottom + 40.0) > 0.01 || std::abs(top - 6.0) > 0.01) {
             std::fprintf(stderr,
                          "dj-ui: the ends of the trim are not where they were: %.2f / %.2f / %.2f\n",
                          unity, bottom, top);
             return 1;
         }
-        if (settings.gainCurve() == QStringLiteral("cubic")) {
-            // Half the straight rate around unity (2,67 dB per pixel on the trim, 0,5 on the master),
-            // and plainly faster at the end — which is what makes the middle usable.
-            if (perPixel < 1.0 || perPixel > 2.0) {
-                std::fprintf(stderr,
-                             "dj-ui: the trim moves %.2f dB per pixel at unity, which is neither soft "
-                             "nor straight\n",
-                             perPixel);
-                return 1;
-            }
-            if (perPixelAtEnd < perPixel * 1.3) {
-                std::fprintf(stderr,
-                             "dj-ui: the end of the trim is not faster than its middle (%.2f against "
-                             "%.2f dB per pixel)\n",
-                             perPixelAtEnd, perPixel);
-                return 1;
-            }
-            if (std::abs(masterNearUnity) > 0.35) {
-                std::fprintf(stderr, "dj-ui: the master moves %.2f dB on its first pixel\n",
-                             std::abs(masterNearUnity));
-                return 1;
-            }
-        } else {
-            // The straight law, to the numbers the old knobs had: a knob that only pretends to be
-            // linear is worse than either.
-            if (std::abs(perPixel - 2.67) > 0.05 || std::abs(masterNearUnity + 0.5) > 0.05) {
-                std::fprintf(stderr,
-                             "dj-ui: linear means 2,67 dB per pixel on the trim and 0,5 on the master, "
-                             "measured %.2f and %.2f\n",
-                             perPixel, std::abs(masterNearUnity));
-                return 1;
-            }
+        // What the law promises, whatever the configured shape: the straight rate scaled by the
+        // configured share at unity, and by the rest of the average slope at the end.
+        const double middle = settings.gainCurveMiddle();
+        const bool curved = settings.gainCurve() == QStringLiteral("cubic");
+        const double promisedTrim = trimRange * (curved ? middle : 1.0) / 135.0 * degreesPerPixel;
+        const double promisedTrimEnd =
+            trimRange * (curved ? 2.0 - middle : 1.0) / 135.0 * degreesPerPixel;
+        const double promisedMaster =
+            masterRange * (curved ? middle : 1.0) / masterTravel;
+        const auto near = [](double measured, double promised) {
+            return std::abs(measured - promised) <= promised * 0.05;
+        };
+        if (!near(trimAtUnity, promisedTrim)) {
+            std::fprintf(stderr,
+                         "dj-ui: the trim moves %.3f dB per pixel at unity, and the curve promises "
+                         "%.3f\n",
+                         trimAtUnity, promisedTrim);
+            return 1;
+        }
+        if (!near(trimAtEnd, promisedTrimEnd)) {
+            std::fprintf(stderr,
+                         "dj-ui: the trim moves %.3f dB per pixel at the end of the cut, and the "
+                         "curve promises %.3f\n",
+                         trimAtEnd, promisedTrimEnd);
+            return 1;
+        }
+        if (!near(masterAtUnity, promisedMaster)) {
+            std::fprintf(stderr,
+                         "dj-ui: the master moves %.3f dB per pixel at unity, and the curve promises "
+                         "%.3f\n",
+                         masterAtUnity, promisedMaster);
+            return 1;
+        }
+        if (curved && !(trimAtEnd > trimAtUnity * 1.3)) {
+            std::fprintf(stderr,
+                         "dj-ui: the end of the trim is not faster than its middle (%.3f against "
+                         "%.3f dB per pixel)\n",
+                         trimAtEnd, trimAtUnity);
+            return 1;
         }
         std::fprintf(stdout, "dj-ui: the level knobs follow the %s curve\n",
                      qPrintable(settings.gainCurve()));

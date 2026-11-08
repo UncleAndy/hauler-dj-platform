@@ -5,7 +5,7 @@
 
 GainCurve::GainCurve()
 {
-    configure(QStringLiteral("cubic"), 0.5);
+    configure(QStringLiteral("cubic"), 0.1);
 }
 
 bool GainCurve::configure(const QString &kind, double middle)

@@ -38,6 +38,8 @@ public:
 
 private:
     QString m_kind = QStringLiteral("cubic");
-    double m_middle = 0.5;
+    // Chosen by ear, not by arithmetic: the owner tried the range and kept 0.1 — around unity the knob
+    // is a fifth of the straight rate, and the ends take the rest.
+    double m_middle = 0.1;
     signalsmith::curves::CubicSegmentCurve<float> m_curve;
 };
