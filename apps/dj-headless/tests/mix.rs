@@ -254,7 +254,10 @@ fn the_crossfader_routes_only_the_selected_side() {
     let peak_of = |slice: &[i16]| slice.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0);
 
     let first_half = peak_of(&samples[..44_100 * 2]);
-    let second_half = peak_of(&samples[44_100 * 2..]);
+    // The master carries the limiter's lookahead (5 ms, 240 frames at 48 kHz), so the loud deck's
+    // material runs a few milliseconds past the crossfader move: measure after that, not on the seam.
+    let after_the_lookahead = 44_100 * 2 + 480 * 2;
+    let second_half = peak_of(&samples[after_the_lookahead..]);
     assert!(
         first_half > 12_000,
         "channel A must be heard at crossfader 0, peak {first_half}"

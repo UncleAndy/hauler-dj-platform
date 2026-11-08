@@ -249,6 +249,8 @@ impl Engine {
             crossfader_curve: dj_domain::CrossfaderCurve::default(),
             master: dj_domain::Levels::default(),
             master_gain: 1.0,
+            // The A01 renderer has no mixer, so there is no limiter and no lookahead.
+            master_latency_frames: 0,
             decks: vec![DeckSnapshot {
                 waveform: None,
                 deck: DeckId::A,

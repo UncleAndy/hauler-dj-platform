@@ -158,7 +158,7 @@ fn the_law_names_round_trip() {
 fn routing_puts_each_channel_only_where_it_belongs() {
     // Crossfader fully to B: channel A must not reach the master, but its cue stays audible.
     let mut mixer = Mixer::new(2);
-    mixer.prepare(48_000, 128);
+    mixer.prepare(48_000, 256);
     mixer.set_crossfader(1.0);
     mixer.set_channel(
         0,
@@ -169,12 +169,15 @@ fn routing_puts_each_channel_only_where_it_belongs() {
     );
     mixer.set_channel(1, settings(CrossAssign::B, 1.0));
 
-    mixer.begin_block(128);
-    let block_a = dc_block(128, 0.5);
-    let silent_b = dc_block(128, 0.0);
-    mixer.mix_channel(0, &block_a);
-    mixer.mix_channel(1, &silent_b);
-    mixer.finish_block();
+    let block_a = dc_block(256, 0.5);
+    let silent_b = dc_block(256, 0.0);
+    // Both buses carry the limiter's lookahead, so it takes a few blocks before the material is out.
+    for _ in 0..3 {
+        mixer.begin_block(256);
+        mixer.mix_channel(0, &block_a);
+        mixer.mix_channel(1, &silent_b);
+        mixer.finish_block();
+    }
 
     assert!(
         mixer.master().iter().all(|sample| sample.abs() < 1e-6),
@@ -266,6 +269,53 @@ fn clipping_is_reported_when_the_input_is_over_full_scale() {
 }
 
 #[test]
+fn the_master_limiter_looks_ahead_of_the_peak() {
+    // A limiter without lookahead can only drop the gain on the sample that needs it: everything
+    // before the peak leaves at full level and the waveform gets an edge the ear hears as the limiter
+    // working. With a lookahead the gain is already down when the peak arrives.
+    let mut mixer = Mixer::new(1);
+    mixer.prepare(48_000, 512);
+    mixer.set_channel(0, settings(CrossAssign::Thru, 1.0));
+
+    let latency = mixer.latency_frames() as usize;
+    assert!(
+        latency > 0,
+        "a lookahead limiter adds its attack as latency, and the mixer must say so"
+    );
+
+    // Half scale for 200 frames, then a step to 1.5 for 40 frames, then silence.
+    let mut block = vec![0.0f32; 512 * 2];
+    for frame in 0..200 {
+        block[frame * 2] = 0.5;
+        block[frame * 2 + 1] = 0.5;
+    }
+    for frame in 200..240 {
+        block[frame * 2] = 1.5;
+        block[frame * 2 + 1] = 1.5;
+    }
+
+    mixer.begin_block(512);
+    mixer.mix_channel(0, &block);
+    mixer.finish_block();
+    let master = mixer.master();
+
+    let peak = master
+        .iter()
+        .fold(0.0f32, |acc, sample| acc.max(sample.abs()));
+    assert!(peak <= 1.0, "the limiter let {peak} through");
+
+    // The output is the input delayed by the lookahead, so the frames just before the step sit at
+    // `latency + 186`. With a lookahead they are already turned down; without one they stay at 0.5.
+    let before = (latency + 186..latency + 200)
+        .map(|frame| master[frame * 2].abs())
+        .fold(0.0f32, f32::max);
+    assert!(
+        before < 0.45,
+        "the gain must be down before the peak arrives, got {before} just ahead of it"
+    );
+}
+
+#[test]
 fn meters_report_peak_and_rms_of_the_channel() {
     let mut mixer = Mixer::new(1);
     mixer.prepare(48_000, 128);
@@ -278,7 +328,55 @@ fn meters_report_peak_and_rms_of_the_channel() {
     let channel = mixer.meters().channels[0];
     assert!((channel.peak - 0.3).abs() < 1e-6, "peak {}", channel.peak);
     assert!((channel.rms - 0.3).abs() < 1e-6, "rms {}", channel.rms);
-    assert!((mixer.meters().master.peak - 0.3).abs() < 1e-3);
+    // The master comes out of the limiter's delay line, so its first block is still filling: keep
+    // feeding the same material until the delay is past.
+    let mut seen = 0.0f32;
+    for _ in 0..4 {
+        mixer.begin_block(128);
+        mixer.mix_channel(0, &block);
+        mixer.finish_block();
+        seen = seen.max(mixer.meters().master.peak);
+    }
+    assert!(
+        (seen - 0.3).abs() < 1e-3,
+        "the master never reached 0.3: {seen}"
+    );
+}
+
+#[test]
+fn the_cue_bus_is_delayed_like_the_master() {
+    // The limiter's lookahead delays the master. If the cue bus stayed early, a DJ matching beats by
+    // ear would hear the two buses a few milliseconds apart — the one thing headphones are for.
+    let mut mixer = Mixer::new(1);
+    mixer.prepare(48_000, 512);
+    mixer.set_channel(
+        0,
+        ChannelSettings {
+            trim_db: 0.0,
+            fader: 1.0,
+            assign: CrossAssign::Thru,
+            cue: true,
+        },
+    );
+
+    // One click, then silence, over a block long enough for both buses to come out.
+    let mut block = vec![0.0f32; 512 * 2];
+    block[0] = 0.5;
+    block[1] = 0.5;
+    mixer.begin_block(512);
+    mixer.mix_channel(0, &block);
+    mixer.finish_block();
+
+    let master_at = mixer.master().iter().position(|sample| sample.abs() > 1e-6);
+    let cue_at = mixer.cue().iter().position(|sample| sample.abs() > 1e-6);
+    assert_eq!(
+        master_at, cue_at,
+        "the cue bus must arrive with the master, not before it"
+    );
+    assert!(
+        master_at.is_some_and(|index| index >= mixer.latency_frames() as usize * 2),
+        "both buses carry the lookahead delay"
+    );
 }
 
 #[test]
@@ -343,9 +441,20 @@ fn trim_is_a_decibel_gain() {
 }
 
 #[test]
-fn the_mixer_declares_no_latency() {
+fn the_mixer_declares_the_limiters_lookahead_as_its_latency() {
+    // The lookahead is what lets the gain come down before a peak, and it is a delay: the graph has to
+    // know about it, so the mixer states it instead of pretending to be free.
     let mut mixer = Mixer::new(2);
     mixer.prepare(48_000, 256);
-    assert_eq!(mixer.latency_frames(), 0);
+    let latency = mixer.latency_frames();
+    assert_eq!(
+        latency,
+        (48_000.0 * f64::from(dj_signalsmith_sys::LIMITER_ATTACK_MS) / 1000.0).ceil() as u32,
+        "the latency is the limiter's attack"
+    );
+    assert!(
+        latency > 0 && latency < 480,
+        "a booth limiter cannot add 10 ms: {latency}"
+    );
     assert_eq!(mixer.tail_frames(), 0);
 }

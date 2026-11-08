@@ -25,7 +25,10 @@ pub enum CrossAssign {
 /// Crossfader law, defined by the protocol so a client can name the one in force.
 pub use dj_domain::CrossfaderCurve;
 
-use dj_signalsmith_sys::{DEFAULT_FALL_SECONDS, PeakDecay};
+use dj_signalsmith_sys::{DEFAULT_FALL_SECONDS, LookaheadLimiter, PeakDecay};
+
+/// Level the limiter holds, slightly below full scale to leave room for inter-sample peaks.
+const LIMITER_THRESHOLD: f32 = 0.999;
 
 /// One channel strip's settings.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -106,7 +109,12 @@ pub struct Mixer {
     curve: CrossfaderCurve,
     master_gain: f32,
     cue_gain: f32,
-    limiter: Limiter,
+    /// The master limiter: lookahead, so the gain is down before the peak arrives.
+    limiter: LookaheadLimiter,
+    /// The cue bus runs through this to stay level with the master, which the limiter delays: a DJ
+    /// mixing by ear must not hear the two buses a few milliseconds apart.
+    cue_delay: Vec<f32>,
+    cue_delay_pos: usize,
     /// One fall-back filter per metered signal: the channels, the master and the cue bus.
     channel_decay: Vec<PeakDecay>,
     master_decay: PeakDecay,
@@ -140,7 +148,9 @@ impl Mixer {
             curve: CrossfaderCurve::ConstantPower,
             master_gain: 1.0,
             cue_gain: 1.0,
-            limiter: Limiter::default(),
+            limiter: LookaheadLimiter::new(2, 256, 48_000, LIMITER_THRESHOLD),
+            cue_delay: Vec::new(),
+            cue_delay_pos: 0,
             channel_decay: (0..channels.max(1))
                 .map(|_| PeakDecay::new(48_000, DEFAULT_FALL_SECONDS))
                 .collect(),
@@ -164,21 +174,32 @@ impl Mixer {
         self.master = vec![0.0; max_block_frames * 2];
         self.cue = vec![0.0; max_block_frames * 2];
         self.reference = vec![0.0; max_block_frames * 2];
-        self.limiter = Limiter::default();
+        self.limiter = LookaheadLimiter::new(
+            2,
+            max_block_frames.max(1),
+            self.sample_rate,
+            LIMITER_THRESHOLD,
+        );
         self.channel_decay = (0..self.channels.len())
             .map(|_| PeakDecay::new(self.sample_rate, DEFAULT_FALL_SECONDS))
             .collect();
         self.master_decay = PeakDecay::new(self.sample_rate, DEFAULT_FALL_SECONDS);
         self.cue_decay = PeakDecay::new(self.sample_rate, DEFAULT_FALL_SECONDS);
+        // The cue bus gets the same delay the limiter gives the master, so the two stay aligned.
+        self.cue_delay = vec![0.0; self.latency_frames() as usize * 2];
+        self.cue_delay_pos = 0;
         self.meters.channels = vec![Meter::default(); self.channels.len()];
         self.meters.non_finite_samples = 0;
         self.meters.clipped_samples = 0;
         self.meters.limiter_gain = 1.0;
     }
 
-    /// Latency the mixer adds to the graph, in frames. The limiter has no lookahead, so zero.
+    /// Latency the mixer adds to the graph, in frames.
+    ///
+    /// The limiter's lookahead: the master comes out that much later than the material that made it,
+    /// which is the price of the gain being down before a peak arrives.
     pub fn latency_frames(&self) -> u32 {
-        0
+        self.limiter.latency_frames()
     }
 
     /// Tail length after the input stops.
@@ -339,7 +360,14 @@ impl Mixer {
         for sample in &mut self.master[..frames * 2] {
             *sample *= gain;
         }
-        let reduction = self.limiter.process(&mut self.master[..frames * 2]);
+        self.limiter.process(&mut self.master[..frames * 2]);
+        // The library does not report its gain; the peak of the block says the same thing at the
+        // resolution the meter is read at.
+        let reduction = if pre_peak > LIMITER_THRESHOLD {
+            (LIMITER_THRESHOLD / pre_peak).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
 
         let (peak, rms) = analyse(&self.master[..frames * 2]);
         self.meters.master = Meter {
@@ -347,6 +375,7 @@ impl Mixer {
             rms,
             held: self.master_decay.block(peak, frames),
         };
+        self.delay_cue(frames);
         let (peak, rms) = analyse(&self.cue[..frames * 2]);
         self.meters.cue = Meter {
             peak,
@@ -357,6 +386,20 @@ impl Mixer {
         if pre_peak > 1.0 && self.meters.clipped_samples == 0 {
             // Gain can push an otherwise legal channel over full scale.
             self.meters.clipped_samples = 1;
+        }
+    }
+
+    /// Push the cue bus through the delay line that matches the limiter's lookahead.
+    fn delay_cue(&mut self, frames: usize) {
+        if self.cue_delay.is_empty() {
+            return;
+        }
+        let line = self.cue_delay.len();
+        for sample in 0..frames * 2 {
+            let slot = self.cue_delay_pos;
+            // What comes out of the line is the sample written a lookahead ago; what goes in is now.
+            std::mem::swap(&mut self.cue_delay[slot], &mut self.cue[sample]);
+            self.cue_delay_pos = if slot + 1 == line { 0 } else { slot + 1 };
         }
     }
 
@@ -432,67 +475,4 @@ fn analyse(block: &[f32]) -> (f32, f32) {
         (sum_squares / block.len() as f64).sqrt() as f32
     };
     (peak, rms)
-}
-
-/// Peak limiter without lookahead.
-///
-/// It is not a mastering limiter: it exists so a careless gain setting cannot send samples past
-/// full scale into the device. Latency is zero by construction, which has one consequence worth
-/// stating: the attack is **instant**, because a smoothed attack on a signal that is already over
-/// full scale lets the first samples through (measured: 1.41 in, 1.40 out). Release is smoothed so
-/// the gain does not chatter.
-#[derive(Debug, Clone)]
-pub struct Limiter {
-    /// Level the limiter holds, slightly below full scale to leave room for inter-sample peaks.
-    threshold: f32,
-    /// Current gain reduction, 1.0 = none.
-    gain: f32,
-    /// Per-sample release coefficient.
-    release: f32,
-}
-
-impl Default for Limiter {
-    fn default() -> Self {
-        Self {
-            threshold: 0.999,
-            gain: 1.0,
-            // ~150 ms release at 48 kHz; attack is instantaneous (see the type comment).
-            release: 1.0 - (-1.0f32 / (0.150 * 48_000.0)).exp(),
-        }
-    }
-}
-
-impl Limiter {
-    /// Process a block in place, returning the smallest gain applied.
-    pub fn process(&mut self, block: &mut [f32]) -> f32 {
-        let mut minimum = 1.0f32;
-        for sample in block.iter_mut() {
-            if !sample.is_finite() {
-                *sample = 0.0;
-                continue;
-            }
-            let level = sample.abs();
-            let target = if level > self.threshold {
-                self.threshold / level
-            } else {
-                1.0
-            };
-            if target < self.gain {
-                // Instant attack: without lookahead, smoothing here would let the very samples
-                // that need limiting through at unity gain.
-                self.gain = target;
-            } else {
-                self.gain += (target - self.gain) * self.release;
-            }
-            self.gain = self.gain.clamp(0.0, 1.0);
-            minimum = minimum.min(self.gain);
-            *sample *= self.gain;
-        }
-        minimum
-    }
-
-    /// Reset the envelope to unity.
-    pub fn reset(&mut self) {
-        self.gain = 1.0;
-    }
 }

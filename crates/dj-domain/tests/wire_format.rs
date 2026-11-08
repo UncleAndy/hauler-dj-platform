@@ -125,6 +125,7 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
         crossfader_curve: CrossfaderCurve::Smooth,
         master: dj_domain::Levels::default(),
         master_gain: 1.0,
+        master_latency_frames: 240,
         decks: vec![DeckSnapshot {
             waveform: None,
             deck: DeckId::A,
@@ -211,7 +212,7 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
             r#"{"protocol":"state-v1","revision":3,"epoch":1,"audio_clock_samples":4800,"#,
             r#""sample_rate":48000,"crossfader":0.25,"crossfader_curve":"smooth","#,
             r#""master":{"peak_left":0.0,"peak_right":0.0,"held_left":0.0,"held_right":0.0},"#,
-            r#""master_gain":1.0,"#,
+            r#""master_gain":1.0,"master_latency_frames":240,"#,
             r#""decks":[{"deck":"A","#,
             r#""load":"Ready","playing":true,"source_frame":4800,"remaining_frames":120000,"#,
             r#""position_ratio":0.0384,"track":{"title":"Track","artist":"Artist","#,

@@ -40,6 +40,7 @@ fn empty_snapshot(revision: u64) -> Snapshot {
         crossfader_curve: dj_domain::CrossfaderCurve::default(),
         master: dj_domain::Levels::default(),
         master_gain: 1.0,
+        master_latency_frames: 0,
         decks: Vec::new(),
     }
 }
@@ -264,6 +265,7 @@ fn a_split_connection_writes_while_its_reader_is_blocked() {
         crossfader_curve: dj_domain::CrossfaderCurve::default(),
         master: dj_domain::Levels::default(),
         master_gain: 1.0,
+        master_latency_frames: 0,
         decks: Vec::new(),
     }));
     writer

@@ -867,7 +867,9 @@ fn the_crossfader_moves_the_sides_it_is_meant_to_move() {
     // The handle moved and nothing happened, because every channel was `Thru` — off the crossfader by
     // design. This walks the mixer the way the engine sets it up: A and C left, B and D right.
     let mut mixer = Mixer::new(4);
-    mixer.prepare(48_000, 4);
+    // The master comes out of the limiter's lookahead, so a four-frame block never reaches the
+    // output: the block has to be longer than the delay to see anything at all.
+    mixer.prepare(48_000, 256);
     for index in 0..4 {
         mixer.set_channel(
             index,
@@ -881,18 +883,24 @@ fn the_crossfader_moves_the_sides_it_is_meant_to_move() {
     }
     assign_crossfader_sides(&mut mixer, &[DeckId::A, DeckId::B, DeckId::C, DeckId::D]);
 
-    let block = [0.25_f32; 8];
+    let block = [0.25_f32; 256 * 2];
 
     let mut level = |position: f32, index: usize| {
         mixer.set_crossfader(position);
-        mixer.begin_block(4);
-        mixer.mix_channel(index, &block);
-        mixer.finish_block();
-        mixer
-            .master()
-            .iter()
-            .map(|sample| sample.abs())
-            .sum::<f32>()
+        // The master is the delay line's output: the first block fills it, the second one carries the
+        // material mixed under this same crossfader position.
+        let mut loudest = 0.0f32;
+        for _ in 0..2 {
+            mixer.begin_block(256);
+            mixer.mix_channel(index, &block);
+            mixer.finish_block();
+            loudest = mixer
+                .master()
+                .iter()
+                .map(|sample| sample.abs())
+                .sum::<f32>();
+        }
+        loudest
     };
 
     // 0.0 is the left stop: A and C are open, B and D are shut.

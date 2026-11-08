@@ -273,6 +273,7 @@ pub fn snapshot(
             held_right: mixer.meters().master.held,
         },
         master_gain: mixer.master_gain(),
+        master_latency_frames: mixer.latency_frames(),
         decks: decks
             .iter()
             .enumerate()
@@ -441,6 +442,7 @@ pub struct StateCells {
     curve: AtomicU8,
     master_peak: AtomicU32,
     master_held: AtomicU32,
+    master_latency: AtomicU32,
     master_gain: AtomicU32,
     count: AtomicUsize,
     decks: [DeckCells; MAX_DECKS],
@@ -602,6 +604,7 @@ impl StateCells {
             curve: AtomicU8::new(curve_index(CrossfaderCurve::default())),
             master_peak: AtomicU32::new(0),
             master_held: AtomicU32::new(0),
+            master_latency: AtomicU32::new(0),
             master_gain: AtomicU32::new(1.0f32.to_bits()),
             count: AtomicUsize::new(0),
             decks: std::array::from_fn(|_| DeckCells::new()),
@@ -620,6 +623,8 @@ impl StateCells {
             .store(curve_index(mixer.curve()), Ordering::Relaxed);
         self.master_held
             .store(mixer.meters().master.held.to_bits(), Ordering::Relaxed);
+        self.master_latency
+            .store(mixer.latency_frames(), Ordering::Relaxed);
         self.master_peak
             .store(mixer.meters().master.peak.to_bits(), Ordering::Relaxed);
         self.master_gain
@@ -788,6 +793,7 @@ impl StateCells {
                 held_right: f32::from_bits(self.master_held.load(Ordering::Relaxed)),
             },
             master_gain: f32::from_bits(self.master_gain.load(Ordering::Relaxed)),
+            master_latency_frames: self.master_latency.load(Ordering::Relaxed),
             decks,
         }
     }

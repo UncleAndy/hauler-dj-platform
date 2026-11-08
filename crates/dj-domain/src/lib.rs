@@ -804,6 +804,11 @@ pub struct Snapshot {
     /// Master gain in force, linear.
     #[serde(default = "unity")]
     pub master_gain: f32,
+    /// Frames the master path delays the sound by: the limiter's lookahead.
+    ///
+    /// Defaulted, so a snapshot from a build without a lookahead still reads as zero.
+    #[serde(default)]
+    pub master_latency_frames: u32,
     /// One entry per deck.
     pub decks: Vec<DeckSnapshot>,
 }
