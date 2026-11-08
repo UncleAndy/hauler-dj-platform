@@ -79,6 +79,9 @@ fn deck_at_48k(frames: u64, source_rate: u32) -> Deck {
 #[test]
 fn a_deck_is_silent_until_the_transport_runs() {
     let mut deck = deck_with_ramp(44_100);
+    // Frames are the transport's contract here; key lock is a separate stage with its own delay,
+    // so this test asks the vinyl path.
+    deck.set_keylock(false);
     let mut block = vec![1.0f32; 512 * 2];
     deck.render(&mut block);
     assert!(
@@ -96,6 +99,9 @@ fn a_deck_is_silent_until_the_transport_runs() {
 #[test]
 fn a_loop_wraps_at_the_exact_sample() {
     let mut deck = deck_with_ramp(44_100);
+    // Frames are the transport's contract here; key lock is a separate stage with its own delay,
+    // so this test asks the vinyl path.
+    deck.set_keylock(false);
     let region = FrameRange::new(1_000, 3_000).unwrap_or_else(|| panic!("region"));
     deck.set_loop(Some(region));
     deck.play();
@@ -122,6 +128,9 @@ fn switching_loop_mode_off_stops_the_copy_repeating() {
     // switched-off mode. Switching off must stop that: the copy runs to its end, the track carries on
     // from there, and the switch costs no seek.
     let mut deck = deck_with_ramp(44_100);
+    // Frames are the transport's contract here; key lock is a separate stage with its own delay,
+    // so this test asks the vinyl path.
+    deck.set_keylock(false);
     let region = FrameRange::new(1_000, 2_000).unwrap_or_else(|| panic!("region"));
     deck.set_loop(Some(region));
     assert_eq!(deck.active_loops().len(), 1, "the button's loop is armed");
@@ -163,6 +172,9 @@ fn saving_a_playing_loop_on_a_pad_keeps_the_sound_where_it_is() {
     // Saving a loop is a bookkeeping act. Halfway through a loop played from memory, it must not move
     // the sound: the copy keeps playing, and the loop keeps repeating because it is armed as a pad.
     let mut deck = deck_with_ramp(44_100);
+    // Frames are the transport's contract here; key lock is a separate stage with its own delay,
+    // so this test asks the vinyl path.
+    deck.set_keylock(false);
     let region = FrameRange::new(1_000, 2_000).unwrap_or_else(|| panic!("region"));
     deck.set_loop(Some(region));
     deck.seek(1_000);
@@ -323,6 +335,9 @@ fn loop_mode_repeats_every_saved_loop() {
     // A track can hold many loops. Loop mode is one switch for all of them: a playhead that comes to any
     // saved loop repeats that loop, wherever it was dropped.
     let mut deck = deck_with_ramp(44_100);
+    // Frames are the transport's contract here; key lock is a separate stage with its own delay,
+    // so this test asks the vinyl path.
+    deck.set_keylock(false);
     let first = FrameRange::new(1_000, 2_000).unwrap_or_else(|| panic!("first"));
     let second = FrameRange::new(5_000, 6_000).unwrap_or_else(|| panic!("second"));
     assert!(deck.set_pad_loop(1, Some(first)));
@@ -374,6 +389,9 @@ fn a_loop_armed_while_playing_inside_it_has_no_silent_head() {
     // progress, the wrap plays the uncaptured head of the buffer — silence — until it reaches the point
     // where the loop was switched on.
     let mut deck = deck_with_ramp(44_100);
+    // Frames are the transport's contract here; key lock is a separate stage with its own delay,
+    // so this test asks the vinyl path.
+    deck.set_keylock(false);
     let region = FrameRange::new(1_000, 3_000).unwrap_or_else(|| panic!("region"));
     deck.seek(2_000);
     deck.set_loop(Some(region));
@@ -399,6 +417,9 @@ fn clearing_a_loop_is_inaudible() {
     // Switching a loop off inside it must be inaudible: no repeat of the tail already heard, no jump,
     // no click. The playhead finishes the copy it is inside and the decoder takes over where it stood.
     let mut deck = deck_with_ramp(44_100);
+    // Frames are the transport's contract here; key lock is a separate stage with its own delay,
+    // so this test asks the vinyl path.
+    deck.set_keylock(false);
     let region = FrameRange::new(1_000, 3_000).unwrap_or_else(|| panic!("region"));
     deck.seek(1_000);
     deck.set_loop(Some(region));
@@ -445,6 +466,9 @@ fn a_loop_pad_takes_the_sound_with_it() {
     // The marker and the sound have to move together: a pad that arms a loop must move the decoder too,
     // otherwise the strip shows the loop start while the ears still hear the old position.
     let mut deck = deck_with_ramp(44_100);
+    // Frames are the transport's contract here; key lock is a separate stage with its own delay,
+    // so this test asks the vinyl path.
+    deck.set_keylock(false);
     let region = FrameRange::new(10_000, 14_000).unwrap_or_else(|| panic!("region"));
     assert!(deck.set_pad_loop(4, Some(region)));
     deck.seek(30_000);
@@ -472,6 +496,9 @@ fn a_loop_pad_takes_the_sound_with_it() {
 #[test]
 fn a_hotcue_jumps_to_the_stored_frame() {
     let mut deck = deck_with_ramp(44_100);
+    // Frames are the transport's contract here; key lock is a separate stage with its own delay,
+    // so this test asks the vinyl path.
+    deck.set_keylock(false);
     deck.seek(5_000);
     assert!(deck.store_hotcue(3));
     deck.seek(0);
@@ -715,9 +742,16 @@ fn a_live_deck_never_waits_for_a_seek() {
     deck.set_blocking(false);
     assert!(deck.play());
 
+    // The stage fills its delay before anything is heard, so the playhead reaches the loop's end a few
+    // thousand frames in; the point of the test is that reaching it never waits.
     let started = std::time::Instant::now();
     let mut out = vec![0.0f32; 512];
-    deck.render(&mut out);
+    for _ in 0..40 {
+        deck.render(&mut out);
+        if deferred.load(Ordering::Relaxed) >= 1 {
+            break;
+        }
+    }
     let elapsed = started.elapsed();
 
     assert!(
@@ -750,6 +784,9 @@ fn an_offline_deck_still_waits_for_a_seek() {
     };
 
     let mut deck = Deck::new(DeckId::A);
+    // Frames and crossings are the transport's contract here; key lock is a separate stage with its
+    // own delay, so these measurements ask the vinyl path.
+    deck.set_keylock(false);
     deck.attach(Box::new(source), None);
     assert!(deck.play());
     deck.seek(1_000);
@@ -1062,6 +1099,51 @@ fn a_stretched_tone_stays_clean() {
     }
 }
 
+/// Largest jump between neighbouring samples: a click is a step the material never makes.
+fn biggest_step(block: &[f32]) -> f32 {
+    let mut worst = 0.0f32;
+    let mut previous = block.first().copied().unwrap_or(0.0);
+    for frame in block.chunks_exact(2) {
+        let value = frame[0];
+        worst = worst.max((value - previous).abs());
+        previous = value;
+    }
+    worst
+}
+
+#[test]
+fn starting_the_tempo_from_playback_does_not_click() {
+    // The fader's first movement must not put the stretcher into the path mid-playback: a stage that goes
+    // in cold plays silence while it fills its delay, and the edges of that hole are clicks. A 440 Hz tone
+    // never steps further than 0,029 from one sample to the next.
+    let mut deck = tone_deck(480_000);
+    deck.play();
+    let mut block = vec![0.0f32; 256 * 2];
+    for _ in 0..20 {
+        deck.render(&mut block);
+    }
+    let last_before = block[block.len() - 2];
+    deck.set_tempo(1.08);
+    let mut after = Vec::new();
+    for _ in 0..60 {
+        deck.render(&mut block);
+        after.extend_from_slice(&block);
+    }
+    // The seam is the first pair of samples across the change: start from the sample that was playing.
+    let mut stream = vec![last_before];
+    stream.extend_from_slice(&after);
+    let step = biggest_step(&stream);
+    assert!(
+        step < 0.06,
+        "the tempo change stepped {step:.3} in one sample — that is a click"
+    );
+    let silent = after.chunks_exact(256 * 2).filter(|chunk| {
+        let energy: f32 = chunk.iter().map(|value| value * value).sum::<f32>() / chunk.len() as f32;
+        energy.sqrt() < 0.01
+    });
+    assert_eq!(silent.count(), 0, "the tempo change left a hole of silence");
+}
+
 #[test]
 fn the_pitch_stays_where_the_file_put_it_when_the_tempo_moves() {
     // Key lock is the default (DJP-DECK-008): the deck plays faster, the note stays the note.
@@ -1158,6 +1240,9 @@ fn without_key_lock_the_pitch_follows_the_rate_as_on_a_turntable() {
     // The vinyl behaviour stays available, and stays measurable: it is what a DJ wants when scratching
     // or when matching a track by ear.
     let mut plain = tone_deck(480_000);
+    // Frames and crossings are the transport's contract here; key lock is a separate stage with its
+    // own delay, so these measurements ask the vinyl path.
+    plain.set_keylock(false);
     plain.play();
     let mut reference = vec![0.0f32; 9600];
     plain.render(&mut reference);
@@ -1282,6 +1367,9 @@ fn a_forty_four_one_file_plays_at_its_own_speed_on_a_forty_eight_device() {
     // The defect this guards: 44.1 kHz material read as if it were 48 kHz plays 8.8 % fast, which the
     // ear reports as "a little faster than it should be" on every file, not as a broken one.
     let mut deck = deck_at_48k(480_000, 44_100);
+    // Frames and crossings are the transport's contract here; key lock is a separate stage with its
+    // own delay, so these measurements ask the vinyl path.
+    deck.set_keylock(false);
     deck.play();
     // Two blocks of 4800 frames: a tenth of a second of device time each.
     let mut block = vec![0.0f32; 9_600];
@@ -1301,11 +1389,17 @@ fn a_forty_four_one_tone_keeps_its_pitch_on_a_forty_eight_device() {
     // Same tone, same half second, two rates: the device must hear the same number of cycles. Reading
     // 44.1 kHz as 48 kHz would multiply the pitch by 1.088.
     let mut native = deck_at_48k(480_000, 48_000);
+    // Frames and crossings are the transport's contract here; key lock is a separate stage with its
+    // own delay, so these measurements ask the vinyl path.
+    native.set_keylock(false);
     native.play();
     let mut reference = vec![0.0f32; 19_200];
     native.render(&mut reference);
 
     let mut foreign = deck_at_48k(480_000, 44_100);
+    // Frames and crossings are the transport's contract here; key lock is a separate stage with its
+    // own delay, so these measurements ask the vinyl path.
+    foreign.set_keylock(false);
     assert!(
         (foreign.rate_ratio() - 44_100.0 / 48_000.0).abs() < 1e-9,
         "the deck did not notice the file's rate: {}",

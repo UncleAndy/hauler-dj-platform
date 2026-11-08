@@ -30,6 +30,7 @@ mod ffi {
         pub fn dj_stretch_free(handle: *mut c_void);
         pub fn dj_stretch_reset(handle: *mut c_void);
         pub fn dj_stretch_latency(handle: *mut c_void) -> i32;
+        pub fn dj_stretch_input_latency(handle: *mut c_void) -> i32;
         pub fn dj_stretch_block(handle: *mut c_void) -> i32;
         pub fn dj_stretch_process(
             handle: *mut c_void,
@@ -37,12 +38,6 @@ mod ffi {
             input_frames: i32,
             output: *mut f32,
             output_frames: i32,
-        );
-        pub fn dj_stretch_seek(
-            handle: *mut c_void,
-            input: *const f32,
-            input_frames: i32,
-            playback_rate: f64,
         );
     }
 }
@@ -123,6 +118,13 @@ impl Stretch {
 
     /// Play `input` (interleaved stereo) into `out`, which may have a different frame count.
     ///
+    /// Frames of history the analysis side holds. The sound is delayed by this plus [`Stretch::latency`],
+    /// so a caller that wants its clock to describe the sound needs the sum.
+    pub fn input_latency(&self) -> usize {
+        // SAFETY: `handle` lives as long as `self`.
+        unsafe { ffi::dj_stretch_input_latency(self.handle) }.max(0) as usize
+    }
+
     /// The ratio is not passed: the library infers it from the two lengths and keeps the remainder
     /// between calls, so a caller that keeps the average right gets a steady tempo.
     pub fn process(&mut self, input: &[f32], out: &mut [f32]) {
@@ -143,17 +145,6 @@ impl Stretch {
                 out_frames,
             );
         }
-    }
-
-    /// Tell the library the material before this point belongs to the old position, and hand it the
-    /// pre-roll it needs to keep the output continuous across a jump.
-    pub fn seek(&mut self, input: &[f32], playback_rate: f64) {
-        let frames = i32::try_from(input.len() / 2).unwrap_or(0);
-        if frames <= 0 {
-            return;
-        }
-        // SAFETY: `input` holds at least `frames * 2` samples and the handle is live.
-        unsafe { ffi::dj_stretch_seek(self.handle, input.as_ptr(), frames, playback_rate) };
     }
 }
 

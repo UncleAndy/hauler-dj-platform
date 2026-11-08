@@ -460,6 +460,11 @@ fn a_block_through_the_graph_is_audible_acked_and_published() {
 
     let mut master = vec![0.0f32; 256 * 2];
     let mut cue = vec![0.0f32; 256 * 2];
+    // A key-locked deck runs the time-stretch stage from its first block, and that stage spends its delay
+    // before it has a sample to give: sixty milliseconds of analysis, twenty blocks of 256 frames.
+    for _ in 0..20 {
+        graph.render_pair(&mut master, &mut cue, 256);
+    }
     graph.render_pair(&mut master, &mut cue, 256);
 
     assert!(
@@ -476,7 +481,7 @@ fn a_block_through_the_graph_is_audible_acked_and_published() {
     assert!(matches!(ack.status, AckStatus::Applied { .. }));
     assert_eq!(
         graph.clock(),
-        256,
+        256 * 21,
         "the clock advances by the rendered frames"
     );
 
@@ -489,7 +494,7 @@ fn a_block_through_the_graph_is_audible_acked_and_published() {
         state.decks[0].playing,
         "the graph publishes what it rendered"
     );
-    assert_eq!(state.audio_clock_samples, 256);
+    assert_eq!(state.audio_clock_samples, 256 * 21);
 }
 
 #[test]
@@ -690,7 +695,9 @@ fn a_prepared_track_is_attached_at_a_block_boundary_and_plays() {
             reply,
         })
         .unwrap_or_else(|err| panic!("{err}"));
-    graph.render_pair(&mut master, &mut cue, 256);
+    for _ in 0..21 {
+        graph.render_pair(&mut master, &mut cue, 256);
+    }
     assert!(
         master.iter().any(|sample| sample.abs() > 0.01),
         "a loaded and playing deck must reach the master bus"
@@ -1320,6 +1327,10 @@ fn a_fader_moves_the_channel_and_leaves_the_gain_alone() {
             .iter()
             .fold(0.0f32, |peak, sample| peak.max(sample.abs()))
     };
+    // The first blocks only fill the stretcher's delay, so the measurement starts once it has material.
+    for _ in 0..20 {
+        let _ = quiet(&mut decks, &mut mixer);
+    }
     let with_fader = quiet(&mut decks, &mut mixer);
     let full = ScheduledCommand {
         id: 23,
@@ -1450,11 +1461,12 @@ fn a_forty_four_one_file_plays_for_its_recorded_length() {
         })
         .expect("send");
 
-    // One second of device time, in blocks of 256 frames.
+    // One second of device time, in blocks of 256 frames. The material read is what this measures, so the
+    // stretcher's delay is not taken off (the clock pays it back; the file's frames are real).
     for _ in 0..188 {
         graph.render_pair(&mut master, &mut cue, 256);
     }
-    let consumed = graph.decks()[0].position();
+    let consumed = graph.decks()[0].read_position();
     // One second of the file is 44100 frames; playing it at the file's own speed means the device's second
     // eats 44100 of them. Reading the file as if it were 48 kHz would have eaten all 44100 in 0.919 of a
     // second and the deck would sit at the end of a one-second file before the second was over.

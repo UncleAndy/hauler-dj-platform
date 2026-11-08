@@ -35,12 +35,11 @@ impl Stretcher {
         }
     }
 
-    /// Frames the library holds before its output appears.
-    ///
-    /// The deck subtracts this from its playhead, so the clock, the waveform marker and the loop
-    /// region all describe what is heard rather than what has been read.
-    pub(crate) fn latency(&self) -> usize {
-        self.stretch.latency()
+    /// Frames the sound is delayed by: the analysis history plus the output latency. This is the
+    /// distance the read head keeps ahead of what is heard, so the deck subtracts it from its playhead
+    /// and adds it back when it aims at a frame.
+    pub(crate) fn delay(&self) -> usize {
+        self.stretch.input_latency() + self.stretch.latency()
     }
 
     /// Forget the history: the playhead jumped, and the material before it is not part of the sound.

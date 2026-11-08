@@ -11,9 +11,16 @@
 
 namespace {
 
+/// Seed for the library's phase randomisation.
+///
+/// The default constructor seeds itself from `std::random_device`, which would make two decks — and two
+/// renders of the same scenario — differ in their least significant bits. Determinism is a contract of
+/// this project (DJP-NFR-001), so the seed is fixed.
+constexpr long kSeed = 1;
+
 struct Handle {
     Handle(double sample_rate, double block_seconds, double interval_seconds)
-        : stretch()
+        : stretch(kSeed)
         , channels(2)
     {
         if (block_seconds > 0.0 && interval_seconds > 0.0) {
@@ -140,34 +147,14 @@ void dj_stretch_process(void *raw, const float *input, int input_frames, float *
     }
 }
 
-// Points the internal read position at `input`, so a seek does not leave the stretch replaying the
-// material before it.
-void dj_stretch_seek(void *raw, const float *input, int input_frames, double playback_rate)
+// Frames of history the analysis side holds. The material is delayed by this plus the output latency,
+// so the deck needs both numbers to know how far its read head leads what is heard.
+int dj_stretch_input_latency(void *raw)
 {
-    auto *handle = static_cast<Handle *>(raw);
-    if (handle == nullptr || input_frames <= 0) {
-        return;
+    if (auto *handle = static_cast<Handle *>(raw)) {
+        return handle->stretch.inputLatency();
     }
-    const size_t needed = static_cast<size_t>(input_frames);
-    if (needed > handle->capacity) {
-        handle->capacity = needed;
-        handle->planar.assign(static_cast<size_t>(handle->channels) * needed, 0.0f);
-        handle->produced.assign(static_cast<size_t>(handle->channels) * needed, 0.0f);
-        for (int channel = 0; channel < handle->channels; ++channel) {
-            handle->pointers[static_cast<size_t>(channel)] =
-                handle->planar.data() + static_cast<size_t>(channel) * needed;
-            handle->out_pointers[static_cast<size_t>(channel)] =
-                handle->produced.data() + static_cast<size_t>(channel) * needed;
-        }
-    }
-    for (int channel = 0; channel < handle->channels; ++channel) {
-        float *line = handle->pointers[static_cast<size_t>(channel)];
-        const size_t from = static_cast<size_t>(channel);
-        for (int frame = 0; frame < input_frames; ++frame) {
-            line[frame] = input[static_cast<size_t>(frame) * 2 + from];
-        }
-    }
-    handle->stretch.seek(handle->pointers, input_frames, playback_rate);
+    return 0;
 }
 
 } // extern "C"

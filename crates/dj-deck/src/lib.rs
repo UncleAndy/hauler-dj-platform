@@ -36,6 +36,11 @@ pub const MIN_TEMPO_RATIO: f64 = 0.25;
 /// Fastest playback rate a deck accepts.
 pub const MAX_TEMPO_RATIO: f64 = 4.0;
 
+/// How long the playing rate takes to reach what the hand asked, in seconds.
+///
+/// Shorter and the stretcher's phase jumps (a click); longer and the fader feels laggy under the hand.
+const TEMPO_GLIDE_SECONDS: f64 = 0.03;
+
 /// Largest block the tempo stage can hold, in frames.
 ///
 /// The engine renders fixed blocks far below this; the number only bounds the buffer allocated once, so a
@@ -190,6 +195,9 @@ pub struct Deck {
     /// measured: a deck that says "0,0 дБ" about an unmeasured file is lying about what it knows.
     auto_gain_db: Option<f32>,
     tempo_ratio: f64,
+    /// What the hand asked for. The deck glides `tempo_ratio` towards it: a rate that jumps in one
+    /// block makes the stretcher jump its phase, and that is heard as a click at the start of a move.
+    tempo_target: f64,
     /// The loop the Loop button made, if any: it is the one that can be captured into memory.
     loop_region: Option<FrameRange>,
     /// Whether loop mode is on. In loop mode **every** saved loop plays: a track can have many, and a
@@ -246,6 +254,10 @@ pub struct Deck {
     stretcher: Stretcher,
     /// Material at the device's rate, held back so the stretcher can be fed ahead of the output.
     stretch_in: Vec<f32>,
+    /// Whether the stretcher is in the signal path. It goes in on the first tempo change and stays in
+    /// until the playhead moves: flipping the path every time the fader crosses the file's own speed
+    /// is what a listener hears as a click.
+    keylock_engaged: bool,
 }
 
 impl std::fmt::Debug for Deck {
@@ -273,6 +285,7 @@ impl Deck {
             auto_gain: 1.0,
             auto_gain_db: None,
             tempo_ratio: 1.0,
+            tempo_target: 1.0,
             loop_region: None,
             loop_mode: false,
             armed: Vec::new(),
@@ -297,6 +310,7 @@ impl Deck {
             keylock: true,
             stretcher: Stretcher::new(EQ_SAMPLE_RATE),
             stretch_in: vec![0.0; MAX_TEMPO_BLOCK_FRAMES * 2],
+            keylock_engaged: false,
         }
     }
 
@@ -353,10 +367,16 @@ impl Deck {
             return;
         }
         let clamped = ratio.clamp(MIN_TEMPO_RATIO, MAX_TEMPO_RATIO);
-        if (clamped - self.tempo_ratio).abs() < f64::EPSILON {
+        if (clamped - self.tempo_target).abs() < f64::EPSILON {
             return;
         }
-        self.tempo_ratio = clamped;
+        self.tempo_target = clamped;
+        if !self.playing || !self.keylock_engaged {
+            // Nothing is sounding, or nothing is being stretched: the rate can move in one piece. The
+            // resampling stage is sample-continuous and takes a jump; only the spectral stage needs the
+            // glide below.
+            self.tempo_ratio = clamped;
+        }
         // A rate change keeps the carried frames: they are still the material after the playhead, and
         // dropping them would drop a fraction of a frame the ear cannot hear but a test can.
     }
@@ -367,6 +387,8 @@ impl Deck {
             return;
         }
         self.keylock = enabled;
+        // Turning the key lock off takes the stage out of the path, and back in when it returns.
+        self.keylock_engaged = enabled;
         self.drop_pending();
     }
 
@@ -382,6 +404,8 @@ impl Deck {
         // The stretcher's windows belong to the old playhead as well: keeping them would repeat the
         // material that was already heard.
         self.stretcher.reset();
+        // The stage stays in the path across a pause or a seek: taking it out and putting it back would
+        // be a transition, and a transition is heard. Only the material it held is dropped.
     }
 
     /// Which deck this is.
@@ -391,14 +415,32 @@ impl Deck {
 
     /// Source position of the next frame to render.
     pub fn position(&self) -> u64 {
-        // With key lock the stretcher holds a short history before its output appears: the clock and
-        // the loop marker describe what is heard, not what has already been read.
-        if self.keylock && (self.tempo_ratio - 1.0).abs() > 1e-9 {
-            self.position
-                .saturating_sub(self.stretcher.latency() as u64)
+        // The stretcher holds a history before its output appears: the clock and the loop marker
+        // describe what is heard, not what has already been read.
+        self.position.saturating_sub(self.lead())
+    }
+
+    /// Frames the read head leads what is heard.
+    ///
+    /// Zero on the vinyl path. With key lock the audio passes through an analysis window plus an output
+    /// buffer, so the material read is that much ahead of the material heard; everything the deck shows
+    /// or hands out is in heard frames, and the source is read that much further on.
+    fn lead(&self) -> u64 {
+        if self.keylock_engaged {
+            self.stretcher.delay() as u64
         } else {
-            self.position
+            0
         }
+    }
+
+    /// A heard frame as the frame the source is read from.
+    fn read_at(&self, heard: u64) -> u64 {
+        heard.saturating_add(self.lead())
+    }
+
+    /// A frame the source was read from, as the frame that is heard.
+    fn heard_at(&self, read: u64) -> u64 {
+        read.saturating_sub(self.lead())
     }
 
     /// Source position that has been read, without the key-lock delay taken off.
@@ -411,11 +453,7 @@ impl Deck {
 
     /// Frames the key-lock stage delays its output by, zero when it is not in the path.
     pub fn keylock_latency(&self) -> usize {
-        if self.keylock && (self.tempo_ratio - 1.0).abs() > 1e-9 {
-            self.stretcher.latency()
-        } else {
-            0
-        }
+        self.lead() as usize
     }
 
     /// Preparation state.
@@ -460,6 +498,11 @@ impl Deck {
         // The file's own rate against the device's: a 44.1 kHz file on a 48 kHz device must come out
         // at its recorded speed, which means reading 0.91875 source frames per output frame.
         self.rate_ratio = self.source_rate_of_current() / f64::from(self.output_rate);
+        // The stage is in the path from the first block when the key is locked: a deck that plays its own
+        // speed through the resampler and switches stages the moment the fader moves hears that switch as
+        // a click. The price is the stretcher's delay, which `position()` pays back.
+        self.stretcher.reset();
+        self.keylock_engaged = self.keylock;
         // A new track carries its own pads, names and colours; the last track's are not part of it.
         // Leaving them behind put the previous file's cue on an empty pad, and a click on that pad
         // jumped into a position the new track never had.
@@ -543,6 +586,7 @@ impl Deck {
     pub fn seek(&mut self, frame: u64) -> u64 {
         // A seek moves the playhead: the frames carried for the tempo stage are now behind it.
         self.drop_pending();
+        let lead = self.lead();
         let Some(source) = self.source.as_mut() else {
             return 0;
         };
@@ -554,6 +598,12 @@ impl Deck {
         // window cannot stall the callback for however long the file needs to be re-read.
         self.reading_loop_buffer = false;
         self.drain_until = None;
+        // The caller means the frame that will be heard next; the source is read that much further on.
+        let clamped = clamped.saturating_add(lead).min(
+            source
+                .frames()
+                .map_or(u64::MAX, |total| total.saturating_sub(1)),
+        );
         let result = if self.blocking {
             source.seek(clamped)
         } else {
@@ -563,7 +613,8 @@ impl Deck {
             Ok(landed) => {
                 self.stats.seeks += 1;
                 self.position = landed;
-                landed
+                // The caller asked for a frame and gets the frame that will be heard.
+                self.position()
             }
             Err(_) => self.position,
         }
@@ -754,13 +805,15 @@ impl Deck {
         let Some(region) = self.loop_region else {
             return;
         };
+        let lead = self.lead();
         let Some(buffer) = self.loop_buffer.as_mut() else {
             return;
         };
-        if from_frame < region.start.0 {
+        let heard = from_frame.saturating_sub(lead);
+        if heard < region.start.0 {
             return;
         }
-        let offset = from_frame - region.start.0;
+        let offset = heard - region.start.0;
         let frames_here = (samples.len() / 2) as u64;
         if offset + frames_here > buffer.frames() {
             return;
@@ -786,7 +839,7 @@ impl Deck {
         if slot >= HOTCUE_SLOTS {
             return false;
         }
-        self.hotcues[slot] = Some(self.position);
+        self.hotcues[slot] = Some(self.position());
         true
     }
 
@@ -952,6 +1005,27 @@ impl Deck {
         self.tempo_ratio
     }
 
+    /// The rate the hand asked for, which the playing rate is gliding towards.
+    pub fn tempo_target(&self) -> f64 {
+        self.tempo_target
+    }
+
+    /// Move the playing rate towards what the hand asked, over a few blocks.
+    ///
+    /// The stretcher derives its phase from the ratio; changing the ratio in one block moves the phase,
+    /// and a moved phase is a click. Thirty milliseconds is short enough to feel immediate and long
+    /// enough to be inaudible as a jump.
+    fn glide_tempo(&mut self, frames: usize) {
+        let difference = self.tempo_target - self.tempo_ratio;
+        if difference.abs() < 1e-9 {
+            self.tempo_ratio = self.tempo_target;
+            return;
+        }
+        let reach =
+            (frames as f64 / (TEMPO_GLIDE_SECONDS * f64::from(self.output_rate))).clamp(0.0, 1.0);
+        self.tempo_ratio += difference * reach;
+    }
+
     /// Track metadata, without building a snapshot.
     pub fn track(&self) -> Option<&TrackMeta> {
         self.track.as_ref()
@@ -961,11 +1035,12 @@ impl Deck {
         self.gain
     }
 
-    /// Tempo ratio is stored here and applied by the time-stretch stage (M2); it does not change
-    /// which source frames are read yet, and the snapshot says so honestly.
+    /// The rate the deck plays at, set directly: the honest way in for a caller that has already
+    /// climbed the glide (the engine's scheduler and the surfaces that restore a session).
     pub fn set_tempo_ratio(&mut self, ratio: f64) {
         if ratio.is_finite() && ratio > 0.0 {
             self.tempo_ratio = ratio;
+            self.tempo_target = ratio;
         }
     }
 
@@ -981,17 +1056,29 @@ impl Deck {
             return;
         }
 
+        if self.keylock_engaged {
+            // Only the stretcher cares: the resampling stage is sample-continuous and takes a jump.
+            self.glide_tempo(out.len() / 2);
+        }
         let step = self.tempo_ratio * self.rate_ratio;
-        if (step - 1.0).abs() < 1e-9 {
-            // At the file's own speed the deck is unchanged: same bytes as before the tempo stage existed,
-            // which is what the golden render compares against.
-            self.pull(out);
-        } else if self.keylock && (self.tempo_ratio - 1.0).abs() > 1e-9 {
-            // The tempo moves and the pitch does not: stretch first, then convert the file's rate to the
-            // device's. Two stages, because they answer two different questions.
-            self.render_keylocked(out);
+        // Key lock answers the tempo, not the file's rate: a 44,1 kHz file at the deck's own speed is a
+        // resampling job, and sending it through the stretcher would delay it for nothing.
+        let wants_keylock =
+            self.keylock && ((self.tempo_ratio - 1.0).abs() > 1e-9 || self.keylock_engaged);
+        if !wants_keylock {
+            // At the file's own speed the output is byte for byte what it was before any tempo stage
+            // existed, which is what the golden render compares against.
+            if (step - 1.0).abs() < 1e-9 {
+                self.pull(out);
+            } else {
+                self.render_at_tempo(out, step);
+            }
         } else {
-            self.render_at_tempo(out, step);
+            // The tempo moves the material and not the pitch. Once in the path the stretcher stays there
+            // at any tempo, including the file's own: leaving it and coming back on every pass through
+            // unity is audible.
+            self.enter_keylock();
+            self.render_keylocked(out);
         }
 
         // Trim, then the measured correction: both are gain staging before the EQ, and neither one is
@@ -1072,6 +1159,23 @@ impl Deck {
         self.scratch = scratch;
     }
 
+    /// Put the stretcher in the path without a hole: hand it the material it would already have played.
+    ///
+    /// The library delays its output by its own latency, so a cold stretcher plays silence first. The
+    /// deck has just played that stretch of the track, so it feeds the same material in, discards the
+    /// matching output, and the next block continues where the ear left off.
+    /// Put the stretcher in the path. It normally goes in when a track is attached; this is the way in
+    /// for a deck whose key lock was switched on while it was already playing.
+    /// Put the stretcher in the path. It goes in when a track is attached; this is the way in for a deck
+    /// whose key lock was switched on while it was already playing.
+    fn enter_keylock(&mut self) {
+        if self.keylock_engaged {
+            return;
+        }
+        self.keylock_engaged = true;
+        self.stretcher.reset();
+    }
+
     /// Key lock: the tempo moves, the pitch does not (DJP-DECK-008).
     ///
     /// Two stages, in the order that keeps the stretcher's buffers fixed for the life of the deck: the
@@ -1100,10 +1204,8 @@ impl Deck {
             let mut staging = std::mem::take(&mut self.stretch_in);
             // Device-rate material for this piece, from the loop-aware source.
             self.render_at_tempo_chunk(&mut staging[..wanted * 2], self.rate_ratio);
-            self.stretcher.process(
-                &staging[..wanted * 2],
-                &mut out[done * 2..(done + take) * 2],
-            );
+            let piece_out = &mut out[done * 2..(done + take) * 2];
+            self.stretcher.process(&staging[..wanted * 2], piece_out);
             self.stretch_in = staging;
             done += take;
         }
@@ -1123,7 +1225,7 @@ impl Deck {
             // Once the loop has been captured, the seam is a copy: no seek, no gap (ADR-0009).
             if self.reading_loop_buffer
                 && let Some(until) = self.drain_until
-                && self.position >= until
+                && self.heard_at(self.position) >= until
             {
                 // The copy is played out; the decoder is exactly here, so nothing is repeated or lost.
                 self.reading_loop_buffer = false;
@@ -1142,13 +1244,13 @@ impl Deck {
 
             let total = self.source.as_ref().and_then(|source| source.frames());
             let until_end = total
-                .map(|total| total.saturating_sub(self.position))
+                .map(|total| total.saturating_sub(self.heard_at(self.position)))
                 .unwrap_or(u64::MAX);
             // A loop caps the read at its end whether the playhead is inside the region or still
             // before it: the wrap happens when the end is reached, not when it is entered.
-            let active_region = self.armed_loop_at(self.position);
+            let active_region = self.armed_loop_at(self.heard_at(self.position));
             let until_loop = match active_region {
-                Some(region) => region.end.0.saturating_sub(self.position),
+                Some(region) => region.end.0.saturating_sub(self.heard_at(self.position)),
                 None => u64::MAX,
             };
             // Only a read that was cut by the loop end wraps; a playhead that merely sits past an
@@ -1202,7 +1304,7 @@ impl Deck {
 
             if clamped_by_loop
                 && let Some(region) = active_region
-                && self.position >= region.end.0
+                && self.heard_at(self.position) >= region.end.0
             {
                 // Only the button's own loop is captured in memory; a saved loop wrapping from the
                 // pads asks the decoder for its start.
@@ -1214,16 +1316,22 @@ impl Deck {
                 if buffered {
                     // Nothing to ask the decoder: the loop is in memory from here on.
                     self.reading_loop_buffer = true;
-                } else if let Some(source) = self.source.as_mut() {
-                    // Measured on the S4 run: a blocking wrap seek cost 3.8 ms inside the callback
-                    // and produced late intervals. Offline waits (deterministic WAV), live asks.
-                    let _ = if self.blocking {
-                        source.seek(region.start.0)
-                    } else {
-                        source.request_seek(region.start.0)
-                    };
+                } else {
+                    let target = self.read_at(region.start.0);
+                    if let Some(source) = self.source.as_mut() {
+                        // Measured on the S4 run: a blocking wrap seek cost 3.8 ms inside the callback
+                        // and produced late intervals. Offline waits (deterministic WAV), live asks.
+                        let _ = if self.blocking {
+                            source.seek(target)
+                        } else {
+                            source.request_seek(target)
+                        };
+                    }
+                    self.position = target;
                 }
-                self.position = region.start.0;
+                if buffered {
+                    self.position = self.read_at(region.start.0);
+                }
                 self.stats.loop_wraps += 1;
             }
         }
@@ -1241,6 +1349,7 @@ impl Deck {
         }
         let start = buffer.start;
         let end = start.saturating_add(buffer.frames());
+        let heard = self.heard_at(self.position);
         // Wrapping belongs to loop mode and to the region this copy holds; a copy being drained for a
         // switched-off loop simply ends. Hanging it on the button's slot would stop the loop the moment
         // it is saved on a pad, which is a jump in the sound at the worst possible time.
@@ -1249,29 +1358,32 @@ impl Deck {
                 .armed
                 .iter()
                 .any(|armed| armed.start.0 == start && armed.end.0 == end);
-        if self.position >= end {
+        let mut heard = heard;
+        if heard >= end {
             if !wrapping {
                 return Some(0);
             }
-            self.position = start;
+            heard = start;
+            self.position = self.read_at(start);
         }
-        if self.position < start {
+        if heard < start {
             return Some(0);
         }
-        let offset = usize::try_from(self.position.saturating_sub(start)).unwrap_or(0);
+        let offset = usize::try_from(heard.saturating_sub(start)).unwrap_or(0);
         let frames = usize::try_from(buffer.frames()).unwrap_or(0);
         if offset >= frames {
             if !wrapping {
                 return Some(0);
             }
-            self.position = start;
+            self.position = self.read_at(start);
             return Some(0);
         }
         let take = want.min(frames - offset);
         out[..take * 2].copy_from_slice(&buffer.data[offset * 2..(offset + take) * 2]);
         self.position += take as u64;
-        if wrapping && self.position >= end {
-            self.position = start;
+        heard += take as u64;
+        if wrapping && heard >= end {
+            self.position = self.read_at(start);
             self.stats.loop_wraps += 1;
         }
         Some(take)
@@ -1280,12 +1392,13 @@ impl Deck {
     /// Read-only state for displays and the UI (fields ordered by display priority, ADR-0006).
     pub fn snapshot(&self) -> DeckSnapshot {
         let total = self.source.as_ref().and_then(|source| source.frames());
-        let remaining = total.map(|total| total.saturating_sub(self.position));
+        let heard = self.position();
+        let remaining = total.map(|total| total.saturating_sub(heard));
         let ratio = total.and_then(|total| {
             if total == 0 {
                 None
             } else {
-                Some((self.position as f32 / total as f32).clamp(0.0, 1.0))
+                Some((heard as f32 / total as f32).clamp(0.0, 1.0))
             }
         });
         DeckSnapshot {
@@ -1293,7 +1406,7 @@ impl Deck {
             deck: self.id,
             load: self.load.clone(),
             playing: self.playing,
-            source_frame: SourceFrame(self.position),
+            source_frame: SourceFrame(heard),
             remaining_frames: remaining,
             position_ratio: ratio,
             track: self.track.clone(),
@@ -1311,7 +1424,7 @@ impl Deck {
             linear_gain: self.gain,
             auto_gain: self.auto_gain,
             auto_gain_db: self.auto_gain_db,
-            tempo_ratio: self.tempo_ratio,
+            tempo_ratio: self.tempo_target,
             // The channel fader belongs to the mixer strip, not to the deck: a deck on its own is at
             // unity, and the engine's snapshot fills the fader in from the strip.
             fader: 1.0,
