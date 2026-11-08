@@ -33,6 +33,28 @@ ALSA) допустимы только через динамическую лин
 | Mixxx | GPL-2.0-or-later | референс **фактов** о протоколе S4 MK3 (HID) | A09 | **код и маппинги не используются**: только факты со ссылкой на источник, clean-room-лог `docs/hardware/s4mk3/cleanroom-log.md` (DJP-LIC-003/006, ADR-0006) |
 | Ableton Link | GPLv2+ / коммерческая | внешняя синхронизация | M6 | **исключён**; только при отдельной коммерческой лицензии и новом ADR (DJP-LIC-004) |
 
+## Рассмотрено, лежит в `./tmp` (не подключено)
+
+Набор Signalsmith, разобранный под наши части. Заголовочные C++11, без сборки; лицензии MIT, кроме
+`githilbert-iir` (0BSD). Включать по правилу DJP-LIC-001: запись здесь, затем вендоринг в отдельный
+`crates/dj-*-sys` с C ABI и Rust-фасадом, затем замер до интеграции. Подробный разбор с привязкой к
+нашим файлам — `references/signalsmith-libs.md` в скилле `hauler-dj-platform`.
+
+| Компонент | Версия | Лицензия | Куда просится |
+|---|---|---|---|
+| Signalsmith Basics: `limiter.h` | 2022–2025 (repo) | MIT | мастер-лимитер: lookahead, hold, release, линковка каналов (наш `dj-mixer` без lookahead) |
+| Signalsmith Basics: `dynamics.h` | там же | MIT | гейт тишины деки, экспандер, мягкая динамика мастера |
+| Signalsmith Basics: `analyser.h` | там же | MIT | спектр для UI (Bark-полосы, `spectrumHz`/`spectrumEnergy`), потокобезопасные метры |
+| Signalsmith Basics: `reverb.h`, `chorus.h`, `freq-shifter.h`, `crunch.h` | там же | MIT | будущая FX-секция (beat FX); `freq-shifter` опирается на `githilbert-iir` |
+| Signalsmith DSP (`filters.h`, `delay.h`, `rates.h`, `envelopes.h`, `curves.h`, `spectral.h`, `windows.h`) | 1.7.0 | MIT | биквады с расчётом Вицанека (EQ, настоящий isolator), интерполированные задержки (ресемплер темпа, скраб), Кайзер-синк (44,1 → 48), баллистика метров, законы кривых |
+| Signalsmith FFT | repo | MIT (в README) | самостоятельный FFT, если понадобится без Stretch |
+| Signalsmith Pitch Tracker | 2026 (repo) | MIT | оценка тональности трека, детект вокала (монофонический — на миксе врёт) |
+| Signalsmith IIR Hilbert (`githilbert-iir`) | 2024 | **0BSD** | сдвиг частоты, ширина стерео, фазовое вращение |
+
+Stretch `1.3.2` и Linear `0.6.6` из этого же набора уже в сборке (см. выше) и дают больше, чем мы
+используем: `setTransposeSemitones`/`setFormantSemitones`/`setFreqMap` — это будущий сдвиг тональности
+деки без смены темпа.
+
 ## Запрещено
 
 Фирменные иконки, графика, сэмплы, прошивки, proprietary-бинарники Native Instruments, а также
