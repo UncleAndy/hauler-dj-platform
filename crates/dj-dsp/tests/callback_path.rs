@@ -61,12 +61,11 @@ fn a_knob_move_and_a_block_are_free_of_transcendentals() {
     let source = std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("{err}"));
 
     let set_gains = body_of(&source, "pub fn set_gains");
-    // The body has to be the one that selects from the table: an empty or renamed function would
+    // The body has to be the one that hands the gains to the split: an empty or renamed function would
     // make every assertion below true for the wrong reason.
-    // An invariant of the body that survives `cargo fmt`: the row lookup, not its shape on screen.
     assert!(
-        set_gains.contains(".row(EqBand::"),
-        "set_gains no longer selects a row: {set_gains}"
+        set_gains.contains(".set_gains("),
+        "set_gains no longer hands the gains on: {set_gains}"
     );
     let process = body_of(&source, "pub fn process(&mut self, frames: &mut [f32])");
     assert!(
@@ -90,14 +89,14 @@ fn a_knob_move_and_a_block_are_free_of_transcendentals() {
 }
 
 #[test]
-fn the_table_is_built_where_transcendentals_are_allowed() {
-    // The counterpart: the table itself must do the arithmetic, otherwise the guard above is
-    // satisfied by a table of ones.
+fn the_coefficients_are_designed_where_transcendentals_are_allowed() {
+    // The counterpart: the design has to happen when the equaliser is built, otherwise the guard above
+    // is satisfied by a split that designs nothing and the first knob move would pay for it.
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/eq.rs");
     let source = std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("{err}"));
     let build = body_of(&source, "pub fn new(sample_rate: f64) -> Self");
     assert!(
-        build.contains("shelf_coefficients") && build.contains("peak_coefficients"),
-        "the table does not build shelves and a peak: {build}"
+        build.contains("Isolator::new("),
+        "the equaliser no longer designs its split when it is built: {build}"
     );
 }

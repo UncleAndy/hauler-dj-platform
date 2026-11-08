@@ -38,8 +38,14 @@ mod ffi {
         ) -> *mut c_void;
         pub fn dj_isolator_free(handle: *mut c_void);
         pub fn dj_isolator_reset(handle: *mut c_void);
-        pub fn dj_isolator_set_weights(handle: *mut c_void, low: f32, mid: f32, high: f32);
+        pub fn dj_isolator_set_gains(handle: *mut c_void, low: f32, mid: f32, high: f32);
         pub fn dj_isolator_process(handle: *mut c_void, interleaved: *mut f32, frames: i32);
+        pub fn dj_isolator_response_db(
+            handle: *mut c_void,
+            band: i32,
+            hertz: f64,
+            sample_rate: f64,
+        ) -> f64;
 
         pub fn dj_resample(
             handle: *mut c_void,
@@ -340,12 +346,12 @@ impl std::fmt::Debug for Resampler {
     }
 }
 
-/// A three-way crossover that removes a band instead of shelving it.
+/// A three-way crossover with a linear gain on each band.
 ///
 /// The splits are Linkwitz-Riley fourth order, built from the library's biquads: a lowpass and a
-/// highpass of that family sum to one, so the complement of a band is exact rather than approximate.
-/// Weights are per band, `1.0` removes the band and `0.0` leaves the signal untouched — with every
-/// weight at zero the signal comes back bit for bit.
+/// highpass of that family sum to one in phase, so the three bands add up to the dry signal exactly.
+/// A gain of `1.0` leaves its band alone, `0.0` removes it, above one boosts it, and with every gain
+/// at one the signal comes back bit for bit.
 pub struct Isolator {
     handle: *mut c_void,
 }
@@ -366,10 +372,10 @@ impl Isolator {
         Self { handle }
     }
 
-    /// How much of each band is removed: `(low, mid, high)`, each `0.0 … 1.0`.
-    pub fn set_weights(&mut self, low: f32, mid: f32, high: f32) {
+    /// Linear gain of each band: `(low, mid, high)`. `1.0` is unity, `0.0` removes the band.
+    pub fn set_gains(&mut self, low: f32, mid: f32, high: f32) {
         // SAFETY: `handle` came from `dj_isolator_new` and lives until `Drop`.
-        unsafe { ffi::dj_isolator_set_weights(self.handle, low, mid, high) };
+        unsafe { ffi::dj_isolator_set_gains(self.handle, low, mid, high) };
     }
 
     /// Filter one interleaved stereo block in place.
@@ -381,6 +387,15 @@ impl Isolator {
         // SAFETY: the slice holds at least `frames * 2` samples, which is what the wrapper reads and
         // writes, and the handle is live.
         unsafe { ffi::dj_isolator_process(self.handle, interleaved.as_mut_ptr(), frames) };
+    }
+
+    /// Response of one band (`0`, `1`, `2`) or of the whole split (`3`) at `hertz`, in decibels.
+    ///
+    /// Read from the sections' own coefficients, so the curve a strip draws is the response the filter
+    /// has, not the one a formula predicts.
+    pub fn response_db(&self, band: i32, hertz: f64, sample_rate: f64) -> f64 {
+        // SAFETY: the handle is live for the whole call and the function only reads the coefficients.
+        unsafe { ffi::dj_isolator_response_db(self.handle, band, hertz, sample_rate) }
     }
 
     /// Drop the filter history, for a deck that starts a new track.

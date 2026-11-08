@@ -1,40 +1,37 @@
-//! The isolator: what the knob's floor actually means.
+//! The three bands of a channel, and what the knobs do to them.
 //!
-//! A shelf with −120 dB of gain silences its own band but takes −32 dB out of the neighbour an octave
-//! and a half away — a gutted channel, not a killed band. The isolator is the real thing: a three-way
-//! Linkwitz-Riley crossover (two Butterworth second-order sections per edge, from the library's
-//! biquads), where removing a band is the exact complement of that band rather than a very deep shelf.
+//! A mixer's three-band EQ is a crossover with a gain on each band, not three shelves: a shelf shapes
+//! the spectrum around a corner, so a "−26 dB" shelf is 26 dB at its centre and 13 dB at an octave
+//! away — the number on the knob and the sound disagree, and the detent then has all the missing
+//! decibels to make up in one step (measured: 46 dB at 1 kHz).
 //!
-//! A Linkwitz-Riley lowpass and highpass of the same order sum to one, in phase, so the complement is
-//! arithmetic and not an approximation: the low band is removed by the highpass, the high band by the
-//! lowpass, and the mid band is what is left when the low half and the high half are added.
+//! This is the real thing: two Linkwitz-Riley fourth-order splits (two Butterworth second-order
+//! sections per edge, from the library's biquads), and a linear gain per band. A Linkwitz-Riley
+//! lowpass and highpass of one crossover sum to one in phase, so the three bands add up to the dry
+//! signal exactly: the bands tile the spectrum, a gain of zero removes its band and nothing else, and
+//! the floor of a knob is silence for that band.
 
 use dj_signalsmith_sys::Isolator as Library;
 
 use crate::eq::Crossover;
 
-/// Gains at or below this are a kill, not a cut.
-///
-/// The ordinary law stops at −26 dB, which is a deep cut; the floor is −120 dB and only a crossover can
-/// deliver it without gutting the neighbours.
-pub const KILL_DB: f32 = -60.0;
-
-/// Which of the three bands an isolator is removing.
+/// Which of the three bands a knob moves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IsolatorBand {
-    /// Removed by a highpass at the low crossover.
+    /// Everything below the low crossover.
     Low,
-    /// Removed by lowpass at the low crossover plus highpass at the high one.
+    /// What is left between the two crossovers.
     Mid,
-    /// Removed by a lowpass at the high crossover.
+    /// Everything above the high crossover.
     High,
 }
 
 impl IsolatorBand {
-    /// All three, in the order the weights are passed.
+    /// All three, in the order the gains are passed.
     pub const ALL: [IsolatorBand; 3] = [IsolatorBand::Low, IsolatorBand::Mid, IsolatorBand::High];
 
-    fn index(self) -> usize {
+    /// Index into a three-element array of gains.
+    pub fn index(self) -> usize {
         match self {
             IsolatorBand::Low => 0,
             IsolatorBand::Mid => 1,
@@ -43,21 +40,28 @@ impl IsolatorBand {
     }
 }
 
-/// A three-way crossover that removes bands.
+/// A three-way crossover with a gain on each band.
 #[derive(Debug)]
 pub struct Isolator {
     inner: Library,
     crossover: Crossover,
-    killed: [bool; 3],
+    sample_rate: f64,
+    gains: [f32; 3],
 }
 
 impl Isolator {
-    /// An isolator for `sample_rate`, splitting where the EQ's bands sit.
+    /// An isolator for `sample_rate`, splitting where the bands meet.
     pub fn new(sample_rate: f64, crossover: Crossover) -> Self {
+        let rate = if sample_rate > 0.0 {
+            sample_rate
+        } else {
+            48_000.0
+        };
         Self {
-            inner: Library::new(sample_rate, crossover.low_hz, crossover.high_hz),
+            inner: Library::new(rate, crossover.low_hz, crossover.high_hz),
             crossover,
-            killed: [false; 3],
+            sample_rate: rate,
+            gains: [1.0; 3],
         }
     }
 
@@ -66,25 +70,25 @@ impl Isolator {
         self.crossover
     }
 
-    /// Which bands are being removed.
-    pub fn killed(&self) -> [bool; 3] {
-        self.killed
+    /// Sample rate its coefficients were designed for.
+    pub fn sample_rate(&self) -> f64 {
+        self.sample_rate
     }
 
-    /// Kill `band`, or stop killing it.
-    pub fn set_killed(&mut self, band: IsolatorBand, killed: bool) {
-        self.killed[band.index()] = killed;
-        let [low, mid, high] = self.killed;
-        self.inner.set_weights(
-            f32::from(u8::from(low)),
-            f32::from(u8::from(mid)),
-            f32::from(u8::from(high)),
-        );
+    /// Linear gain of every band: `(low, mid, high)`.
+    pub fn gains(&self) -> [f32; 3] {
+        self.gains
     }
 
-    /// True when no band is being removed, which is a bypass.
+    /// Set all three band gains, linearly: `1.0` is unity, `0.0` takes the band out.
+    pub fn set_gains(&mut self, low: f32, mid: f32, high: f32) {
+        self.gains = [low, mid, high];
+        self.inner.set_gains(low, mid, high);
+    }
+
+    /// True when every band stands at unity, which is a bypass.
     pub fn is_bypassed(&self) -> bool {
-        !self.killed.iter().any(|killed| *killed)
+        self.gains.iter().all(|gain| *gain == 1.0)
     }
 
     /// Filter one interleaved stereo block in place. A bypass changes nothing, bit for bit.
@@ -100,58 +104,25 @@ impl Isolator {
         self.inner.reset();
     }
 
-    /// Magnitude of what the isolated bands leave behind at `frequency`, in decibels.
-    ///
-    /// The bands come from nested splits, so their magnitudes are a chain: the lowpass below the low
-    /// crossover, then everything above it times a lowpass or a highpass at the high crossover. Each
-    /// split is a Linkwitz-Riley pair (`w⁴/(1+w⁴)` highpass, `1/(1+w⁴)` lowpass, `w` the frequency over
-    /// the crossover), which is in phase at every frequency — that is why the three add up to the dry
-    /// signal and killing all of them leaves silence.
+    /// Response of one band at `frequency`, in decibels, with that band's gain — read from the
+    /// coefficients the filter is actually running, so the drawn curve and the sound cannot drift.
+    pub fn band_magnitude_db(&self, band: IsolatorBand, hertz: f64) -> f64 {
+        self.inner
+            .response_db(band.index() as i32, hertz, self.sample_rate)
+    }
+
+    /// Response of the whole split at `frequency`, in decibels: the three bands summed.
     pub fn magnitude_db(&self, hertz: f64) -> f64 {
-        let low = lowpass_magnitude(hertz, self.crossover.low_hz);
-        let upper = highpass_magnitude(hertz, self.crossover.low_hz);
-        let magnitude_of = |band: IsolatorBand| match band {
-            IsolatorBand::Low => low,
-            IsolatorBand::Mid => lowpass_magnitude(hertz, self.crossover.high_hz) * upper,
-            IsolatorBand::High => highpass_magnitude(hertz, self.crossover.high_hz) * upper,
-        };
-        let kept: f64 = IsolatorBand::ALL
-            .into_iter()
-            .map(|band| {
-                if self.killed[band.index()] {
-                    0.0
-                } else {
-                    magnitude_of(band)
-                }
-            })
-            .sum();
-        // Silence is a real answer here, not an error: three kills are −∞ dB.
-        20.0 * kept.max(f64::MIN_POSITIVE).log10()
+        self.inner.response_db(3, hertz, self.sample_rate)
     }
 }
 
 impl Clone for Isolator {
-    /// A fresh isolator with the same crossover and the same bands killed, and no filter history: the
-    /// state belongs to the audio that was already played, and a copy has not played it.
+    /// A fresh splitter with the same gains and no filter history: the state belongs to the audio that
+    /// was already played, and a copy has not played it.
     fn clone(&self) -> Self {
-        let mut copy = Self::new(48_000.0, self.crossover);
-        for band in IsolatorBand::ALL {
-            copy.set_killed(band, self.killed[band.index()]);
-        }
+        let mut copy = Self::new(self.sample_rate, self.crossover);
+        copy.set_gains(self.gains[0], self.gains[1], self.gains[2]);
         copy
     }
-}
-
-/// Linkwitz-Riley fourth-order highpass magnitude, `w⁴/(1+w⁴)`.
-fn highpass_magnitude(hertz: f64, crossover: f64) -> f64 {
-    let w = hertz / crossover;
-    let w4 = w * w * w * w;
-    w4 / (1.0 + w4)
-}
-
-/// Linkwitz-Riley fourth-order lowpass magnitude, `1/(1+w⁴)`.
-fn lowpass_magnitude(hertz: f64, crossover: f64) -> f64 {
-    let w = hertz / crossover;
-    let w4 = w * w * w * w;
-    1.0 / (1.0 + w4)
 }

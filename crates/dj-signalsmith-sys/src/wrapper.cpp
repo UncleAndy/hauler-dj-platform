@@ -70,12 +70,13 @@ struct ResampleHandle {
     signalsmith::delay::InterpolatorKaiserSincN<float, 16> kaiser{};
 };
 
-// A three-way crossover that removes a band instead of shelving it: two Linkwitz-Riley fourth-order
-// splits (each two Butterworth second-order sections). The three bands are the lowpass below the low
-// crossover, the highpass above the high one, and what is left in between; because a Linkwitz-Riley
-// lowpass and highpass of one crossover add to one, the three add to the dry signal exactly, and a
-// weight of one on every band leaves nothing at all. Blending each band by its weight is a mask over
-// the spectrum — which is the whole point: three isolations are three masks, not a last one wins.
+// A three-way crossover with a gain on each band, which is what a mixer's three-band EQ is: two
+// Linkwitz-Riley fourth-order splits (each two Butterworth second-order sections), the lowpass below
+// the low crossover, everything above it split again into the middle and the top. A Linkwitz-Riley
+// pair adds to one in phase, so the three bands add to the dry signal exactly — with every gain at one
+// the signal comes back bit for bit, and with every gain at zero nothing comes back at all. A gain
+// below one takes its own band down and nothing else; at zero it removes the band, which is what the
+// floor of a knob means.
 struct IsolatorHandle {
     IsolatorHandle(int channels, double sample_rate, double low_hz, double high_hz)
         : channels(channels) {
@@ -108,7 +109,8 @@ struct IsolatorHandle {
     }
 
     int channels;
-    float weights[3] = {0.0f, 0.0f, 0.0f};
+    // Linear gains: 1 is unity, 0 removes the band, above 1 is a boost.
+    float gains[3] = {1.0f, 1.0f, 1.0f};
     signalsmith::filters::BiquadStatic<float> lowLowpass[2][2] = {};
     signalsmith::filters::BiquadStatic<float> lowHighpass[2][2] = {};
     signalsmith::filters::BiquadStatic<float> midLowpass[2][2] = {};
@@ -323,13 +325,15 @@ void dj_isolator_reset(void *raw)
     }
 }
 
-// 0…1 per band: 1 removes the band entirely, 0 leaves the signal alone.
-void dj_isolator_set_weights(void *raw, float low, float mid, float high)
+// Linear gain per band: 1 is unity, 0 removes the band. A negative or broken gain is silence for that
+// band rather than a sign flip in the mix.
+void dj_isolator_set_gains(void *raw, float low, float mid, float high)
 {
     if (auto *handle = static_cast<IsolatorHandle *>(raw)) {
-        handle->weights[0] = low < 0.0f ? 0.0f : (low > 1.0f ? 1.0f : low);
-        handle->weights[1] = mid < 0.0f ? 0.0f : (mid > 1.0f ? 1.0f : mid);
-        handle->weights[2] = high < 0.0f ? 0.0f : (high > 1.0f ? 1.0f : high);
+        const float wanted[3] = {low, mid, high};
+        for (int band = 0; band < 3; ++band) {
+            handle->gains[band] = wanted[band] > 0.0f && wanted[band] <= 64.0f ? wanted[band] : 0.0f;
+        }
     }
 }
 
@@ -339,11 +343,11 @@ void dj_isolator_process(void *raw, float *interleaved, int frames)
     if (handle == nullptr || frames <= 0) {
         return;
     }
-    const float low = handle->weights[0];
-    const float mid = handle->weights[1];
-    const float high = handle->weights[2];
-    if (low <= 0.0f && mid <= 0.0f && high <= 0.0f) {
-        // Nothing killed: not a filter at all, and the signal comes back bit for bit.
+    const float low = handle->gains[0];
+    const float mid = handle->gains[1];
+    const float high = handle->gains[2];
+    if (low == 1.0f && mid == 1.0f && high == 1.0f) {
+        // Unity on every band: not a filter at all, and the signal comes back bit for bit.
         return;
     }
     const int channels = handle->channels < 2 ? handle->channels : 2;
@@ -363,10 +367,44 @@ void dj_isolator_process(void *raw, float *interleaved, int frames)
             const float highBand = IsolatorHandle::through(handle->midHighpass[channel], upper);
             // Every chain runs on every frame, whether or not its band is removed: one that only runs
             // while it is used starts from cold, and a cold filter is a click.
-            interleaved[index] = lowBand * (1.0f - low) + midBand * (1.0f - mid) +
-                                 highBand * (1.0f - high);
+            interleaved[index] = lowBand * low + midBand * mid + highBand * high;
         }
     }
+}
+
+// Response of one band, or of the whole split (`band` 0…2, or 3 for everything), in decibels.
+//
+// Computed from the sections' own coefficients rather than from a formula: the library designs its
+// crossings with a bilinear (bandwidth-compensated) method, so textbook Linkwitz-Riley magnitudes are
+// a few tenths of a decibel away from what the filter actually does — and a curve drawn from the
+// textbook would disagree with the ear.
+double dj_isolator_response_db(void *raw, int band, double hertz, double sample_rate)
+{
+    auto *handle = static_cast<IsolatorHandle *>(raw);
+    if (handle == nullptr || sample_rate <= 0.0) {
+        return 0.0;
+    }
+    const float w = static_cast<float>(hertz / sample_rate);
+    auto cascaded = [w](const signalsmith::filters::BiquadStatic<float> *sections) {
+        return sections[0].response(w) * sections[1].response(w);
+    };
+    const int channel = 0; // both channels hold the same coefficients
+    const auto low = cascaded(handle->lowLowpass[channel]);
+    const auto upper = cascaded(handle->lowHighpass[channel]);
+    const auto mid = upper * cascaded(handle->midLowpass[channel]);
+    const auto high = upper * cascaded(handle->midHighpass[channel]);
+    std::complex<float> total = {0.0f, 0.0f};
+    if (band == 0) {
+        total = low * handle->gains[0];
+    } else if (band == 1) {
+        total = mid * handle->gains[1];
+    } else if (band == 2) {
+        total = high * handle->gains[2];
+    } else {
+        total = low * handle->gains[0] + mid * handle->gains[1] + high * handle->gains[2];
+    }
+    const float magnitude = std::abs(total);
+    return 20.0 * std::log10(magnitude > 1e-20f ? magnitude : 1e-20f);
 }
 
 } // extern "C"
