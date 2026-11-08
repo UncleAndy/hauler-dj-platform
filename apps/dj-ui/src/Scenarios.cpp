@@ -1363,8 +1363,8 @@ int runScenarios(BridgeClient &bridge, QQuickWindow &window, const QString &deck
                      [](Runner &run, Reason &why) {
                          // 0,343 amplitude of a sine is 12,3 dBFS RMS: the correction is +0,3 dB, the
                          // size a hand would call "nothing". What the deck runs at is that correction
-                         // times the level factor (0,9 by default, 0,92 dB), so the published number is
-                         // −0,6 dB — and it still has to be shown, not swallowed.
+                         // times the level factor (0,7 by default, 3,1 dB), so the published number is
+                         // −2,8 dB — and it still has to be shown, not swallowed.
                          const QString path = writeTone(QStringLiteral("/tmp/dj-scenario-autogain.wav"),
                                                         0.343, 2.0);
                          if (path.isEmpty()) {
@@ -1393,13 +1393,13 @@ int runScenarios(BridgeClient &bridge, QQuickWindow &window, const QString &deck
                              return false;
                          }
                          const double db = raw.toDouble();
-                         // The correction of this tone is +0,3 dB and the level factor takes 0,92 dB
-                         // off it, so the published gain is −0,62 dB. Both halves are asserted: a
-                         // snapshot that dropped either would look plausible and be wrong.
+                         // The correction of this tone is +0,3 dB and the level factor takes 3,1 dB off
+                         // it, so the published gain is −2,8 dB. Both halves are asserted: a snapshot
+                         // that dropped either would look plausible and be wrong.
                          const double gain =
                              run.deck().value(QStringLiteral("auto_gain")).toDouble();
                          const double applied = 20.0 * std::log10(std::max(gain, 1e-6));
-                         const double expected = 0.3 - 0.915;
+                         const double expected = 0.3 + 20.0 * std::log10(0.7);
                          if (std::abs(db - expected) > 0.4) {
                              why = QStringLiteral("the applied gain is %1 dB, not the %2 dB of this tone")
                                        .arg(db, 0, 'f', 2)

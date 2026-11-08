@@ -68,8 +68,8 @@ pub fn correction_for(rms_db: f32) -> f32 {
 ///
 /// The two are separate on purpose. The correction is what makes one file match another, and it is
 /// applied whole: a share of it would leave loud files loud and quiet files quiet, which is the one
-/// thing level matching exists to prevent. `level` then moves the now-common level — 0,9 is about a
-/// decibel down for all of them, 1,0 leaves it alone, and 0,0 is silence.
+/// thing level matching exists to prevent. `level` then moves the now-common level — 0,7 is about three
+/// decibels down for all of them, 1,0 leaves it alone, and 0,0 is silence.
 pub fn gain_for(correction_db: f32, level: f32) -> f32 {
     if !correction_db.is_finite() {
         return 1.0;

@@ -54,18 +54,20 @@ impl Default for Config {
     }
 }
 
-/// How much of the measured level correction is applied, unless someone asks for another share.
-pub const DEFAULT_AUTO_GAIN_SHARE: f32 = 0.9;
+/// The level a matched track stands at, unless someone asks for another: seven tenths of the matched
+/// level, about three decibels down. Chosen by ear — nine tenths still put the meters in the red on the
+/// owner's loudest files, and the peaks are what the meters show, not the RMS that was matched.
+pub const DEFAULT_AUTO_GAIN_SHARE: f32 = 0.7;
 
 /// Level matching of the files a deck opens.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AnalysisSettings {
-    /// Share of the measured correction that is applied, 0…1.
+    /// Share of the matched level the channel then stands at, 0…1.
     ///
-    /// A file is trimmed to its target RMS, and a full correction takes its peaks along: the meters go
-    /// red on material whose RMS says it should not. Nine tenths keeps tracks matcheable by ear and out
-    /// of the limiter; 1,0 is the full correction, 0,0 is none.
+    /// A file is trimmed to its target RMS, and the peaks travel with it: the meters go red on material
+    /// whose RMS says it should not. Seven tenths puts the matched level about three decibels lower,
+    /// which keeps the peaks out of the limiter; 1,0 is the matched level itself, 0,0 is silence.
     pub auto_gain_share: f32,
 }
 
