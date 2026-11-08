@@ -320,6 +320,11 @@ fn run(argv: &[String]) -> Result<(), String> {
     let (submissions, submissions_rx) = std::sync::mpsc::channel::<Submission>();
     // Requests to measure a tempo again; the worker below owns the answers.
     let (analysis_requests, analysis_requests_rx) = std::sync::mpsc::channel::<AnalysisRequest>();
+    // Requests to edit a grid. The grid in force lives with the deck; the publisher hands a copy to
+    // this map on every change, and the edit worker is the only one who reads it.
+    let (grid_edits, grid_edits_rx) = std::sync::mpsc::channel::<GridEditRequest>();
+    let grids: Arc<Mutex<Vec<Option<dj_domain::BeatGrid>>>> =
+        Arc::new(Mutex::new(vec![None; dj_domain::DeckId::COUNT]));
     // Loads never enter the audio callback: clients hand them to a loader thread, which hands a
     // prepared source back to the graph and a new description to the publisher.
     let (load_requests, load_requests_rx) = std::sync::mpsc::channel::<LoadRequest>();
@@ -358,6 +363,7 @@ fn run(argv: &[String]) -> Result<(), String> {
         let published = Arc::clone(&published);
         let playing = Arc::clone(&playing);
         let subscribers = Arc::clone(&subscribers);
+        let grids = Arc::clone(&grids);
         // The state rate is a parameter (display.state_hz): twenty snapshots a second is the
         // default, and raising it trades IPC for less projection between snapshots.
         let publish_every = Duration::from_micros(1_000_000 / u64::from(state_hz));
@@ -371,13 +377,24 @@ fn run(argv: &[String]) -> Result<(), String> {
                 while let Ok(update) = deck_updates_rx.try_recv() {
                     match update {
                         Published::Deck(update) => {
-                            if let Some(slot) =
-                                statics.iter_mut().find(|entry| entry.deck == update.deck)
+                            let deck = update.deck;
+                            let grid = update.static_info.grid.clone();
+                            if let Some(slot) = statics.iter_mut().find(|entry| entry.deck == deck)
                             {
                                 *slot = update.static_info;
                             }
+                            if let Ok(mut held) = grids.lock()
+                                && let Some(slot) = held.get_mut(deck.index())
+                            {
+                                *slot = grid;
+                            }
                         }
                         Published::Grid { deck, grid } => {
+                            if let Ok(mut held) = grids.lock()
+                                && let Some(slot) = held.get_mut(deck.index())
+                            {
+                                *slot = Some(*grid.clone());
+                            }
                             if let Some(slot) = statics.iter_mut().find(|entry| entry.deck == deck)
                             {
                                 slot.grid = Some(*grid.clone());
@@ -420,6 +437,7 @@ fn run(argv: &[String]) -> Result<(), String> {
         let work = Workers {
             loads: load_requests.clone(),
             analyses: analysis_requests.clone(),
+            grids: grid_edits.clone(),
         };
         let stop_handle = Arc::clone(&stop);
         std::thread::spawn(move || {
@@ -542,6 +560,49 @@ fn run(argv: &[String]) -> Result<(), String> {
                 let _ = prepared.send(GraphLoad::SetAnalyzing {
                     deck,
                     analyzing: false,
+                });
+            }
+        });
+    }
+
+    // Grid edits: no decode, but they write the file and must land at a block boundary in the deck, so
+    // they get the same treatment as a measurement — a worker, not the callback, not the client thread.
+    {
+        let prepared = graph_loads.clone();
+        let published_to = deck_updates.clone();
+        let store = store.clone();
+        let grids = Arc::clone(&grids);
+        std::thread::spawn(move || {
+            while let Ok(request) = grid_edits_rx.recv() {
+                let deck = request.deck;
+                let current = grids
+                    .lock()
+                    .ok()
+                    .and_then(|held| held.get(deck.index()).cloned().flatten());
+                let Some(current) = current else {
+                    eprintln!(
+                        "dj-engine: no grid on deck {:?} to edit — the track has none yet",
+                        deck
+                    );
+                    continue;
+                };
+                let Some(edited) = dj_engine::edit_grid(&current, &request.edit) else {
+                    eprintln!("dj-engine: the edit does not make a grid; nothing changed");
+                    continue;
+                };
+                let path = std::path::PathBuf::from(&request.path);
+                if let Err(message) =
+                    dj_engine::meta::write_beatgrid(&store, volume(), root(), &path, &edited, true)
+                {
+                    eprintln!("dj-engine: {message}");
+                }
+                let _ = published_to.send(Published::Grid {
+                    deck,
+                    grid: Box::new(edited.clone()),
+                });
+                let _ = prepared.send(GraphLoad::SetGrid {
+                    deck,
+                    grid: Box::new(edited),
                 });
             }
         });
@@ -891,6 +952,17 @@ fn default_socket() -> PathBuf {
     PathBuf::from(base).join("hauler-dj-engine.sock")
 }
 
+/// A request to edit the grid of the deck's track (DJP-SYNC-003).
+#[derive(Debug, Clone)]
+struct GridEditRequest {
+    /// Deck whose grid is being edited.
+    deck: dj_domain::DeckId,
+    /// The file the deck holds.
+    path: String,
+    /// What the DJ asked for.
+    edit: dj_domain::GridEdit,
+}
+
 /// The background work a client connection may ask for: a decode, or a second measurement.
 #[derive(Clone)]
 struct Workers {
@@ -898,6 +970,8 @@ struct Workers {
     loads: Sender<LoadRequest>,
     /// Measures a deck's tempo again (B02).
     analyses: Sender<AnalysisRequest>,
+    /// Edits the grid of what a deck plays (DJP-SYNC-003).
+    grids: Sender<GridEditRequest>,
 }
 
 /// A request to measure a deck's tempo again (B02).
@@ -986,6 +1060,22 @@ fn serve_client(
                             return;
                         }
                         let _ = deck;
+                        continue;
+                    }
+                    dj_engine::Routed::EditGrid { deck, path, edit } => {
+                        // Like a measurement, answered at once and carried out where the file can be
+                        // written: an edit is a decision about the track, and the deck shows it when the
+                        // worker has written and published it.
+                        let ack = match work.grids.send(GridEditRequest { deck, path, edit }) {
+                            Ok(()) => dj_domain::Ack::accepted(command.id),
+                            Err(_) => dj_domain::Ack::rejected(
+                                command.id,
+                                dj_domain::RejectReason::InvalidValue,
+                            ),
+                        };
+                        if alerts.send(ServerMessage::Ack(ack)).is_err() {
+                            return;
+                        }
                         continue;
                     }
                     dj_engine::Routed::Analyze { deck, path } => {

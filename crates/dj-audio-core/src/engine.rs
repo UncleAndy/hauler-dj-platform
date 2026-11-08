@@ -216,6 +216,7 @@ impl Engine {
             | DjCommand::SetLoop { .. }
             | DjCommand::Load { .. }
             | DjCommand::AnalyzeTempo { .. }
+            | DjCommand::EditGrid { .. }
             | DjCommand::Eject { .. } => {
                 Some(Ack::rejected(command_id, RejectReason::NotSupported))
             }

@@ -157,6 +157,8 @@ pub fn restore(
 ///
 /// Returns whether a write happened. A stored grid is a decision — the DJ's manual shift, or an
 /// analysis locked against re-measurement — so the detector never replaces one (DJP-MEDIA-006).
+/// `force` is the DJ asking: the grid is replaced and the file is locked against the next automatic
+/// measurement, because a hand edit outranks a detector.
 pub fn write_beatgrid(
     store: &Store,
     volume: &str,
@@ -184,6 +186,11 @@ pub fn write_beatgrid(
     // replaces it, lock or no lock.
     if !force && (meta.analysis_lock || meta.beatgrid.is_some()) {
         return Ok(false);
+    }
+    // A grid written because a person asked for it is a decision: the automatic measurement must not
+    // quietly replace it on the next load, and the flag is what says so.
+    if force {
+        meta.analysis_lock = true;
     }
     meta.beatgrid = Some(dj_library::BeatGrid {
         bpm: grid.bpm(),

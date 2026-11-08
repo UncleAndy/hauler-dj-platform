@@ -58,6 +58,54 @@ Pane {
     /// True while the engine is measuring this deck's tempo again (B02).
     readonly property bool analyzing: panel.deck.analyzing === true
     readonly property var track: panel.deck.track !== undefined ? panel.deck.track : null
+    /// Whether there is a grid to edit at all.
+    readonly property bool gridReady: panel.track !== null && panel.track.grid !== undefined
+                                      && panel.track.grid !== null
+                                      && panel.track.grid.segments !== undefined
+                                      && panel.track.grid.segments.length > 0
+    /// The file's own rate: a millisecond is `rate / 1000` frames of the track, not of the device.
+    readonly property int gridRate: panel.deck.source_rate > 0 ? panel.deck.source_rate : 48000
+    /// Taps in the last few seconds, for the tempo the DJ beats out by hand.
+    property var taps: []
+
+    /// Move the grid by ten milliseconds: one press is one step, and the ear is the judge.
+    function shiftGrid(direction) {
+        Bridge.shiftGrid(panel.deckId, direction * Math.round(panel.gridRate * 0.010));
+    }
+
+    /// The tempo the DJ tapped: the median gap between taps, and a beat on the last one.
+    function tap() {
+        const now = Date.now();
+        if (panel.taps.length > 0 && now - panel.taps[panel.taps.length - 1] > 2000) {
+            panel.taps = [];
+        }
+        const taps = panel.taps.concat([now]);
+        panel.taps = taps;
+        if (taps.length < 4) {
+            return;
+        }
+        const gaps = [];
+        for (let index = 1; index < taps.length; ++index) {
+            gaps.push(taps[index] - taps[index - 1]);
+        }
+        gaps.sort((left, right) => left - right);
+        const median = gaps[Math.floor(gaps.length / 2)];
+        if (!(median > 0)) {
+            panel.taps = [];
+            return;
+        }
+        const bpm = 60000 / median;
+        Bridge.setGridTempo(panel.deckId, bpm);
+        // The last tap is the beat: move the grid so a line lands on it. Measured against the first
+        // segment, which is where a tapped grid always is.
+        const first = panel.track.grid.segments[0];
+        const period = panel.gridRate * 60 / bpm;
+        const offset = ((panel.deck.source_frame - first.frame) % period + period) % period;
+        const delta = offset > period / 2 ? offset - period : offset;
+        Bridge.shiftGrid(panel.deckId, Math.round(delta));
+        panel.taps = [];
+    }
+
     /// The tempo under the play head, falling back to the track's own number for a client that talks to
     /// an engine which does not publish one (DJP-SYNC-003).
     readonly property real localBpm: {
@@ -551,6 +599,89 @@ Pane {
             }
         }
 
+        // The grid editor: the measurement is a first answer, and this is where the DJ corrects it. Each
+        // press is one edit, written into the track's metadata at once and locked against the next
+        // automatic measurement (DJP-SYNC-003).
+        RowLayout {
+            objectName: "gridedit_" + panel.deckId
+            Layout.fillWidth: true
+            visible: panel.gridReady
+            spacing: 3
+
+            // Ten milliseconds a press: a grid a whole beat out is rare, and a few milliseconds is
+            // what the ear actually hears.
+            Button {
+                objectName: "gridLeft_" + panel.deckId
+                text: qsTr("◀")
+                font.pixelSize: 9
+                Layout.preferredWidth: 22
+                Layout.preferredHeight: 18
+                focusPolicy: Qt.NoFocus
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Move the grid 10 ms earlier")
+                onClicked: panel.shiftGrid(-1)
+            }
+            Button {
+                objectName: "gridRight_" + panel.deckId
+                text: qsTr("▶")
+                font.pixelSize: 9
+                Layout.preferredWidth: 22
+                Layout.preferredHeight: 18
+                focusPolicy: Qt.NoFocus
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Move the grid 10 ms later")
+                onClicked: panel.shiftGrid(1)
+            }
+            Button {
+                objectName: "gridHalf_" + panel.deckId
+                text: qsTr("½")
+                font.pixelSize: 9
+                Layout.preferredHeight: 18
+                focusPolicy: Qt.NoFocus
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Read the grid half as fast")
+                onClicked: Bridge.halveGrid(panel.deckId)
+            }
+            Button {
+                objectName: "gridDouble_" + panel.deckId
+                text: qsTr("×2")
+                font.pixelSize: 9
+                Layout.preferredHeight: 18
+                focusPolicy: Qt.NoFocus
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Read the grid twice as fast")
+                onClicked: Bridge.doubleGrid(panel.deckId)
+            }
+            Button {
+                objectName: "gridTempo_" + panel.deckId
+                text: qsTr("BPM…")
+                font.pixelSize: 9
+                Layout.preferredHeight: 18
+                focusPolicy: Qt.NoFocus
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Type the tempo")
+                onClicked: tempoEdit.open()
+            }
+            Button {
+                objectName: "gridTap_" + panel.deckId
+                text: qsTr("Tap")
+                font.pixelSize: 9
+                Layout.preferredHeight: 18
+                focusPolicy: Qt.NoFocus
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Tap the tempo: four taps, the last one is the beat")
+                onClicked: panel.tap()
+            }
+            Item { Layout.fillWidth: true }
+            Label {
+                objectName: "tapHint_" + panel.deckId
+                visible: panel.taps.length > 0
+                text: qsTr("%1 tap(s)").arg(panel.taps.length)
+                color: UiSettings.themeTextDim
+                font.pixelSize: 9
+            }
+        }
+
         // The pads, right under the transport where the hand already is.
         RowLayout {
             objectName: "cuepads_" + panel.deckId
@@ -679,6 +810,74 @@ Pane {
                     onClicked: {
                         Bridge.analyzeTempo(panel.deckId);
                         tempoConfirm.close();
+                    }
+                }
+            }
+        }
+    }
+
+    // The tempo typed by hand: the number the DJ knows, instead of the one the detector guessed.
+    Popup {
+        id: tempoEdit
+        objectName: "tempoEdit_" + panel.deckId
+        anchors.centerIn: Overlay.overlay
+        modal: true
+        focus: true
+        padding: 10
+        width: Math.min(260, Overlay.overlay !== null ? Overlay.overlay.width - 40 : 260)
+        contentWidth: width - 2 * padding
+
+        onOpened: {
+            tempoField.text = panel.localBpm > 0 ? panel.localBpm.toFixed(1) : "";
+            tempoField.forceActiveFocus();
+            tempoField.selectAll();
+        }
+
+        ColumnLayout {
+            spacing: 6
+            Layout.fillWidth: true
+            Label {
+                objectName: "tempoEditLabel_" + panel.deckId
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: qsTr("Tempo of deck %1, in beats per minute. The first beat stays where it is.")
+                        .arg(panel.deckId)
+                color: UiSettings.themeText
+                font.pixelSize: 11
+            }
+            TextField {
+                id: tempoField
+                objectName: "tempoField_" + panel.deckId
+                Layout.fillWidth: true
+                font.pixelSize: 11
+                selectByMouse: true
+                validator: DoubleValidator { bottom: 20.0; top: 400.0; decimals: 3 }
+                onAccepted: {
+                    // Either separator: a DJ types 128.0 or 128,0 and means the same thing.
+                    Bridge.setGridTempo(panel.deckId, parseFloat(text.replace(",", ".")));
+                    tempoEdit.close();
+                }
+            }
+            RowLayout {
+                spacing: 6
+                Item { Layout.fillWidth: true }
+                Button {
+                    text: qsTr("Cancel")
+                    font.pixelSize: 11
+                    focusPolicy: Qt.NoFocus
+                    onClicked: tempoEdit.close()
+                }
+                Button {
+                    objectName: "tempoApply_" + panel.deckId
+                    text: qsTr("Apply")
+                    font.pixelSize: 11
+                    focusPolicy: Qt.NoFocus
+                    onClicked: {
+                        const typed = parseFloat(tempoField.text.replace(",", "."));
+                        if (typed > 0) {
+                            Bridge.setGridTempo(panel.deckId, typed);
+                        }
+                        tempoEdit.close();
                     }
                 }
             }

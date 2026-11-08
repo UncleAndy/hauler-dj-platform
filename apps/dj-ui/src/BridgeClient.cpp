@@ -354,6 +354,54 @@ int BridgeClient::analyzeTempo(const QString &deck)
     return sendCommand(deck, command);
 }
 
+int BridgeClient::sendGridEdit(const QString &deck, const QJsonValue &edit)
+{
+    // The engine writes the edit beside the file, so it needs the path — and only the client that
+    // loaded the track knows it. A deck this client did not fill has no grid to edit from here.
+    const QString path = m_deckPaths.value(deck);
+    if (path.isEmpty()) {
+        return -1;
+    }
+    QJsonObject payload;
+    payload.insert(QStringLiteral("deck"), deck);
+    payload.insert(QStringLiteral("path"), path);
+    payload.insert(QStringLiteral("edit"), edit);
+    QJsonObject command;
+    command.insert(QStringLiteral("EditGrid"), payload);
+    return sendCommand(deck, command);
+}
+
+int BridgeClient::shiftGrid(const QString &deck, qlonglong frames)
+{
+    QJsonObject inner;
+    inner.insert(QStringLiteral("frames"), QJsonValue::fromVariant(frames));
+    QJsonObject edit;
+    edit.insert(QStringLiteral("Shift"), inner);
+    return sendGridEdit(deck, edit);
+}
+
+int BridgeClient::setGridTempo(const QString &deck, double bpm)
+{
+    if (!(bpm > 0.0)) {
+        return -1;
+    }
+    QJsonObject inner;
+    inner.insert(QStringLiteral("bpm"), bpm);
+    QJsonObject edit;
+    edit.insert(QStringLiteral("Tempo"), inner);
+    return sendGridEdit(deck, edit);
+}
+
+int BridgeClient::doubleGrid(const QString &deck)
+{
+    return sendGridEdit(deck, QJsonValue(QStringLiteral("Double")));
+}
+
+int BridgeClient::halveGrid(const QString &deck)
+{
+    return sendGridEdit(deck, QJsonValue(QStringLiteral("Half")));
+}
+
 int BridgeClient::eject(const QString &deck)
 {
     QJsonObject options;

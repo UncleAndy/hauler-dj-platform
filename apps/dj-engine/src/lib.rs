@@ -15,7 +15,8 @@ use dj_deck::{Deck, DeckSource};
 use dj_domain::CommandId;
 use dj_domain::{
     Ack, AckStatus, BeatGrid, BeatSegment, CueAction, DeckId, DeckLoad, DeckSnapshot, DjCommand,
-    EqGains, FrameRange, Levels, RejectReason, ScheduledCommand, Snapshot, SourceFrame, TrackMeta,
+    EqGains, FrameRange, GridEdit, Levels, RejectReason, ScheduledCommand, Snapshot, SourceFrame,
+    TrackMeta,
 };
 use dj_mixer::{ChannelSettings, CrossAssign, CrossfaderCurve, Mixer};
 
@@ -917,6 +918,20 @@ pub struct MetaEdit {
 
 /// A beat grid: the tempo and where its first beat sits (B02, DJP-SYNC-003).
 ///
+/// Apply one edit to a grid, or refuse it.
+///
+/// One place, so the meaning of "half" is the same in the engine, in the file and in a test. The edits
+/// are the DJ's: they are applied to the whole track, because a grid is how the whole track is read, and
+/// a refusal (a shift off the start of the file, a tempo that is not a number) leaves the grid alone.
+pub fn edit_grid(grid: &BeatGrid, edit: &GridEdit) -> Option<BeatGrid> {
+    match edit {
+        GridEdit::Shift { frames } => grid.shifted(*frames),
+        GridEdit::Tempo { bpm } => grid.retimed(*bpm),
+        GridEdit::Double => grid.retimed(grid.bpm() * 2.0),
+        GridEdit::Half => grid.retimed(grid.bpm() / 2.0),
+    }
+}
+
 /// What the loader tells the publisher, so the UI can show `Loading` and `Failed`.
 #[derive(Debug, Clone)]
 pub struct DeckUpdate {
@@ -994,6 +1009,15 @@ pub enum Routed {
         /// The file to measure.
         path: String,
     },
+    /// Handed to the worker that edits grids: it owns the file write and the publication.
+    EditGrid {
+        /// Target deck.
+        deck: DeckId,
+        /// The file the deck holds.
+        path: String,
+        /// The edit the DJ made.
+        edit: GridEdit,
+    },
 }
 
 /// Decide where a command goes without applying it.
@@ -1008,6 +1032,11 @@ pub fn route(command: &ScheduledCommand) -> Routed {
         DjCommand::AnalyzeTempo { deck, path } => Routed::Analyze {
             deck: *deck,
             path: path.clone(),
+        },
+        DjCommand::EditGrid { deck, path, edit } => Routed::EditGrid {
+            deck: *deck,
+            path: path.clone(),
+            edit: *edit,
         },
         _ => Routed::Render,
     }

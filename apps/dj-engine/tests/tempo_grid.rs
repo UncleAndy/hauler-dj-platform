@@ -156,6 +156,12 @@ fn a_measurement_the_dj_asked_for_replaces_the_stored_grid() {
         grid.bpm
     );
     assert_eq!(grid.first_beat_frame, 9_000);
+    // A grid the DJ asked for is locked against the next automatic measurement: a hand edit outranks a
+    // detector, and this flag is the only thing that remembers it after a restart.
+    assert!(
+        loaded.meta.analysis_lock,
+        "a hand edit must lock the grid against re-measurement"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

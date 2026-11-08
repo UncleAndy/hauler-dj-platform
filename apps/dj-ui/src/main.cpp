@@ -919,6 +919,10 @@ int main(int argc, char *argv[])
         QStringLiteral("Close the window after this many milliseconds: the shutdown path, exercised "
                        "instead of described."),
         QStringLiteral("ms"));
+    const QCommandLineOption gridCheckOption(
+        QStringLiteral("grid-check"),
+        QStringLiteral("With --connect and --load: move the grid, halve it, double it and type a tempo, "
+                       "requiring the deck and the file to follow every edit."));
     const QCommandLineOption tempoRecheckOption(
         QStringLiteral("tempo-recheck"),
         QStringLiteral("With --connect and --load: require the deck's re-measure button to ask before "
@@ -1163,6 +1167,7 @@ int main(int argc, char *argv[])
     parser.addOption(windowCheckOption);
     parser.addOption(curveCheckOption);
     parser.addOption(masterCheckOption);
+    parser.addOption(gridCheckOption);
     parser.addOption(tempoRecheckOption);
     parser.addOption(cueWriteOption);
     parser.addOption(cueReadOption);
@@ -3316,6 +3321,175 @@ int main(int argc, char *argv[])
                      "strip: \"%s\" -> \"%s\", revision %d -> %d\n",
                      deckA().value(QStringLiteral("analyzing")).toBool() ? "yes" : "seen",
                      qPrintable(shownBefore), qPrintable(shownAfter), before, revision());
+        return 0;
+    }
+
+    if (parser.isSet(gridCheckOption)) {
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        const QString fixture = parser.value(loadOption);
+        if (fixture.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: --grid-check needs --load\n");
+            return 1;
+        }
+        bridge->connectToEngine(parser.value(connectOption));
+        const auto waitFor = [](const std::function<bool()> &ready, int budget) {
+            QElapsedTimer timer;
+            timer.start();
+            while (timer.elapsed() < budget) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                if (ready()) {
+                    return true;
+                }
+                QThread::msleep(10);
+            }
+            return ready();
+        };
+        if (!waitFor([&]() { return bridge->isConnected(); }, 3000)) {
+            std::fprintf(stderr, "dj-ui: no engine\n");
+            return 1;
+        }
+        const auto deckA = [&]() {
+            const QVariantList decks = bridge->snapshot().value(QStringLiteral("decks")).toList();
+            for (const QVariant &entry : decks) {
+                const QVariantMap deck = entry.toMap();
+                if (deck.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                    return deck;
+                }
+            }
+            return QVariantMap();
+        };
+        // The grid as the deck publishes it: the same numbers the beat lines are drawn from.
+        const auto gridOf = [&]() {
+            return deckA()
+                .value(QStringLiteral("track"))
+                .toMap()
+                .value(QStringLiteral("grid"))
+                .toMap()
+                .value(QStringLiteral("segments"))
+                .toList();
+        };
+        const auto firstBeat = [&]() -> qint64 {
+            const QVariantList segments = gridOf();
+            if (segments.isEmpty()) {
+                return -1;
+            }
+            return segments.first().toMap().value(QStringLiteral("frame")).toLongLong();
+        };
+        const auto tempoNow = [&]() {
+            return deckA().value(QStringLiteral("local_bpm")).toDouble();
+        };
+        const auto click = [&](const QString &name) {
+            auto *item = findItem(window->contentItem(), name);
+            if (item == nullptr) {
+                std::fprintf(stderr, "dj-ui: no %s to press\n", qPrintable(name));
+                return false;
+            }
+            QMetaObject::invokeMethod(item, "clicked");
+            QCoreApplication::processEvents();
+            return true;
+        };
+
+        bridge->load(QStringLiteral("A"), fixture);
+        if (!waitFor([&]() { return firstBeat() >= 0 && tempoNow() > 0.0; }, 20000)) {
+            std::fprintf(stderr, "dj-ui: the deck published no grid to edit\n");
+            return 1;
+        }
+        const qint64 start = firstBeat();
+        const double tempo = tempoNow();
+
+        // One press, ten milliseconds of the file: the grid moves and every line moves with it. Ten
+        // milliseconds is the rate over a hundred, whatever the file's own rate is.
+        const qint64 rate = deckA().value(QStringLiteral("source_rate")).toLongLong();
+        if (rate <= 0) {
+            std::fprintf(stderr, "dj-ui: the deck published no source rate\n");
+            return 1;
+        }
+        const qint64 step = std::clamp<qint64>(rate / 100, 1, 100000);
+        if (!click(QStringLiteral("gridRight_A"))) {
+            return 1;
+        }
+        if (!waitFor([&]() { return firstBeat() == start + step; }, 5000)) {
+            std::fprintf(stderr, "dj-ui: the shift did not move the grid by ten milliseconds (%lld -> %lld)\n",
+                         static_cast<long long>(start), static_cast<long long>(firstBeat()));
+            return 1;
+        }
+        if (!click(QStringLiteral("gridLeft_A"))) {
+            return 1;
+        }
+        if (!waitFor([&]() { return firstBeat() == start; }, 5000)) {
+            std::fprintf(stderr, "dj-ui: the grid did not come back\n");
+            return 1;
+        }
+
+        // Half, then double: the same grid read twice as slow and then back.
+        if (!click(QStringLiteral("gridHalf_A"))) {
+            return 1;
+        }
+        if (!waitFor([&]() { return std::abs(tempoNow() - tempo / 2.0) < 0.05; }, 5000)) {
+            std::fprintf(stderr, "dj-ui: half did not halve the tempo (%.2f)\n", tempoNow());
+            return 1;
+        }
+        if (!click(QStringLiteral("gridDouble_A"))) {
+            return 1;
+        }
+        if (!waitFor([&]() { return std::abs(tempoNow() - tempo) < 0.05; }, 5000)) {
+            std::fprintf(stderr, "dj-ui: double did not bring the tempo back (%.2f)\n", tempoNow());
+            return 1;
+        }
+
+        // A tempo typed by hand: the number the DJ knows. The question is built when it is first
+        // opened, so the field only exists after the button has been pressed.
+        if (!click(QStringLiteral("gridTempo_A"))) {
+            return 1;
+        }
+        auto *field = findItem(window->contentItem(), QStringLiteral("tempoField_A"));
+        if (field == nullptr) {
+            std::fprintf(stderr, "dj-ui: the tempo field was never created\n");
+            return 1;
+        }
+        field->setProperty("text", QStringLiteral("128.0"));
+        if (!click(QStringLiteral("tempoApply_A"))) {
+            return 1;
+        }
+        if (!waitFor([&]() { return std::abs(tempoNow() - 128.0) < 0.05; }, 5000)) {
+            std::fprintf(stderr, "dj-ui: the typed tempo did not reach the deck (%.2f)\n", tempoNow());
+            return 1;
+        }
+
+        // Every edit is a decision about the file: it is written beside the music and locked against
+        // the next automatic measurement.
+        const QString sidecar =
+            QFileInfo(fixture).absolutePath() + QStringLiteral("/.djmeta/") +
+            QFileInfo(fixture).fileName() + QStringLiteral(".json");
+        const auto stored = [&]() {
+            QFile file(sidecar);
+            if (!file.open(QIODevice::ReadOnly)) {
+                return QJsonObject();
+            }
+            return QJsonDocument::fromJson(file.readAll()).object();
+        };
+        if (!waitFor(
+                [&]() {
+                    const QJsonObject grid = stored().value(QStringLiteral("beatgrid")).toObject();
+                    return std::abs(grid.value(QStringLiteral("bpm")).toDouble() - 128.0) < 0.05 &&
+                           stored().value(QStringLiteral("analysis_lock")).toBool();
+                },
+                5000)) {
+            std::fprintf(stderr, "dj-ui: the edit never reached %s\n", qPrintable(sidecar));
+            return 1;
+        }
+        const QJsonObject grid = stored().value(QStringLiteral("beatgrid")).toObject();
+        std::fprintf(stdout,
+                     "dj-ui: the grid moved, halved, doubled and took a typed tempo: %.2f -> 128.00 BPM, "
+                     "first beat %lld, file revision %d, locked\n",
+                     tempo, static_cast<long long>(grid.value(QStringLiteral("first_beat_frame"))
+                                                       .toVariant()
+                                                       .toLongLong()),
+                     stored().value(QStringLiteral("revision")).toInt());
         return 0;
     }
 

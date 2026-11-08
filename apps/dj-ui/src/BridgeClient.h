@@ -96,6 +96,13 @@ public:
     /// when this client never loaded a file into that deck, which is the only case with nothing to
     /// measure.
     Q_INVOKABLE int analyzeTempo(const QString &deck);
+    /// Move the deck's grid by `frames` (positive is later). The DJ's ear is the authority here.
+    Q_INVOKABLE int shiftGrid(const QString &deck, qlonglong frames);
+    /// Give the deck's track this tempo, keeping its first beat where it is.
+    Q_INVOKABLE int setGridTempo(const QString &deck, double bpm);
+    /// Read the same grid twice as fast, or half as fast: the half/double of a mis-read tempo.
+    Q_INVOKABLE int doubleGrid(const QString &deck);
+    Q_INVOKABLE int halveGrid(const QString &deck);
     Q_INVOKABLE int seek(const QString &deck, qulonglong frame);
     Q_INVOKABLE int setLoop(const QString &deck, bool enabled, qulonglong start, qulonglong end);
     Q_INVOKABLE int setCrossfader(double position);
@@ -164,4 +171,6 @@ private:
     // Which file each deck holds, as this client loaded it: a re-measure needs the path, and the
     // engine should not have to remember what its client already knows.
     QMap<QString, QString> m_deckPaths;
+    /// Sends one grid edit, or refuses when this client never loaded a file into the deck.
+    int sendGridEdit(const QString &deck, const QJsonValue &edit);
 };

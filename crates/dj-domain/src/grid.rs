@@ -31,6 +31,25 @@ pub struct BeatGrid {
     segments: Vec<BeatSegment>,
 }
 
+/// Move a frame by a signed amount, refusing to walk off the start of the file.
+fn shift_frame(frame: u64, frames: i64) -> Option<u64> {
+    let moved = i128::from(frame) + i128::from(frames);
+    u64::try_from(moved).ok()
+}
+
+/// A frame scaled away from an anchor, refusing a negative or absurd result.
+fn rescale_frame(frame: u64, anchor: u64, scale: f64) -> Option<u64> {
+    if !scale.is_finite() || scale <= 0.0 {
+        return None;
+    }
+    let offset = (frame as f64 - anchor as f64) * scale;
+    let moved = anchor as f64 + offset;
+    if !moved.is_finite() || moved < 0.0 || moved > u64::MAX as f64 {
+        return None;
+    }
+    Some(moved.round() as u64)
+}
+
 impl BeatGrid {
     /// A grid of one tempo: the shape every measured track has today.
     ///
@@ -142,6 +161,44 @@ impl BeatGrid {
     /// sync has to follow.
     pub fn bpm_at(&self, frame: u64) -> f64 {
         self.segment_at(frame).bpm
+    }
+
+    /// The same grid, moved along the track by `frames` (positive is later).
+    ///
+    /// The DJ hears the beat a few milliseconds off and says so; the fix is one number, and the whole
+    /// grid moves — every segment, so a track that changes tempo keeps its shape.
+    pub fn shifted(&self, frames: i64) -> Option<Self> {
+        let mut moved: Vec<BeatSegment> = Vec::with_capacity(self.segments.len());
+        for segment in &self.segments {
+            moved.push(BeatSegment {
+                frame: shift_frame(segment.frame, frames)?,
+                beat: segment.beat,
+                bpm: segment.bpm,
+            });
+        }
+        Self::from_segments(moved)
+    }
+
+    /// The same grid read at a new tempo, with every beat where the music puts it.
+    ///
+    /// The first beat stays; the rest of the grid is stretched around it by the ratio of the old tempo
+    /// to the new one, so a DJ who says "this is 128, not 124" gets the beats he hears, and one who says
+    /// "half" gets every other beat of the same grid.
+    pub fn retimed(&self, bpm: f64) -> Option<Self> {
+        let first = self.segments.first()?;
+        if !bpm.is_finite() || bpm <= 0.0 || !first.bpm.is_finite() || first.bpm <= 0.0 {
+            return None;
+        }
+        let scale = first.bpm / bpm;
+        let mut retimed: Vec<BeatSegment> = Vec::with_capacity(self.segments.len());
+        for segment in &self.segments {
+            retimed.push(BeatSegment {
+                frame: rescale_frame(segment.frame, first.frame, scale)?,
+                beat: segment.beat,
+                bpm: segment.bpm * bpm / first.bpm,
+            });
+        }
+        Self::from_segments(retimed)
     }
 
     /// The grid as it is stored beside the music: the first segment becomes `bpm` and

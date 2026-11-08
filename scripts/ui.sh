@@ -221,6 +221,12 @@ case "${1:-}" in
     sed -i -E 's/"bpm": [0-9.eE+-]+/"bpm": 100.0/' "$run_dir/.djmeta/grid-track.wav.json"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --tempo-recheck --load "$tempo_file"
+    # The grid editor: the DJ's ear outranks the detector. Each edit must reach the deck *and* the file,
+    # and the file must come back locked against the next automatic measurement.
+    grid_file="$run_dir/grid-edit.wav"
+    cp crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav "$grid_file"
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
+        --grid-check --load "$grid_file"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --eq-check
     # A double click is the way back to neutral on every mouse-driven control, and each control has its
     # own neutral: a gain or a band goes flat, a fader opens, the master stands at three quarters of its

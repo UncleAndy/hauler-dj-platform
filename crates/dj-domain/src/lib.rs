@@ -25,6 +25,27 @@ pub const COMMAND_PROTOCOL: &str = "command-v1";
 /// Version tag of the state snapshot protocol. Bump it on any incompatible change.
 pub const STATE_PROTOCOL: &str = "state-v1";
 
+/// An edit the DJ makes to a beat grid, in the beats the grid is made of.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum GridEdit {
+    /// Move every beat by this many frames; positive is later. At 48 kHz, 48 frames are a millisecond.
+    Shift {
+        /// Frames to move the grid by.
+        frames: i64,
+    },
+    /// Give the track this tempo, keeping its first beat where it is.
+    Tempo {
+        /// Beats per minute, as the DJ hears them.
+        bpm: f64,
+    },
+    /// Read the same grid twice as fast: every other beat becomes a beat (the "×2" of a half-time
+    /// reading).
+    Double,
+    /// Read the same grid half as fast: every second beat is the beat (the "½" of a double-time
+    /// reading).
+    Half,
+}
+
 /// A deck as the engine sees it.
 ///
 /// C and D exist in the protocol from the start so that going from two decks to four is
@@ -329,6 +350,20 @@ pub enum DjCommand {
         /// The file the deck holds, as the client spelled it when it loaded it.
         path: String,
     },
+    /// Edit the beat grid of the track in this deck (DJP-SYNC-003).
+    ///
+    /// The DJ is the one who decides where the beat is: the measurement is a first answer, and every
+    /// edit here overrules it for good — the grid is written into the file and locked against the next
+    /// automatic measurement.
+    EditGrid {
+        /// Target deck.
+        deck: DeckId,
+        /// The file the deck holds, as the client spelled it when it loaded it: the edit is written
+        /// beside the music.
+        path: String,
+        /// What to do to the grid.
+        edit: GridEdit,
+    },
     /// Return a deck to `Empty` and stop it.
     Eject {
         /// Target deck.
@@ -455,6 +490,7 @@ impl DjCommand {
             | DjCommand::SetLoop { .. }
             | DjCommand::Load { .. }
             | DjCommand::AnalyzeTempo { .. }
+            | DjCommand::EditGrid { .. }
             | DjCommand::Eject { .. } => true,
             DjCommand::SetTempoRatio { .. }
             | DjCommand::SetChannelGain { .. }

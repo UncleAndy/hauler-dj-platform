@@ -98,6 +98,63 @@ fn a_grid_that_does_not_move_forwards_is_refused() {
 }
 
 #[test]
+fn a_shift_moves_the_whole_grid_and_nothing_else() {
+    let grid = BeatGrid::single(120.0, 12_000).expect("a grid");
+    let moved = grid.shifted(480).expect("a shifted grid");
+    assert_eq!(moved.first_beat_frame(), 12_480);
+    assert_eq!(moved.bpm(), 120.0);
+    let back = moved.shifted(-480).expect("back again");
+    assert_eq!(back.first_beat_frame(), 12_000);
+    // Off the start of the file is not a grid: the beats would be before the audio they belong to.
+    assert!(grid.shifted(-12_001).is_none());
+}
+
+#[test]
+fn a_new_tempo_stretches_the_grid_around_its_first_beat() {
+    let grid = BeatGrid::single(120.0, 12_000).expect("a grid");
+    // Saying "this is 128" keeps the first beat and pulls the rest closer together: 12 000 + 22 500
+    // instead of 12 000 + 24 000.
+    let retimed = grid.retimed(128.0).expect("a retimed grid");
+    assert_eq!(retimed.first_beat_frame(), 12_000);
+    assert!((retimed.bpm() - 128.0).abs() < 1e-9);
+    let second_beat = retimed.frame_of_beat(1.0, RATE);
+    assert!(
+        (second_beat - 34_500.0).abs() < 1e-6,
+        "second beat at {second_beat} instead of 34 500"
+    );
+    // Half the tempo is the same grid twice as slow, first beat still where it was.
+    let halved = grid.retimed(60.0).expect("a halved grid");
+    assert_eq!(halved.first_beat_frame(), 12_000);
+    assert!((halved.frame_of_beat(1.0, RATE) - 60_000.0).abs() < 1e-6);
+    assert!(grid.retimed(0.0).is_none() && grid.retimed(-1.0).is_none());
+}
+
+#[test]
+fn retiming_keeps_the_shape_of_a_track_with_two_tempos() {
+    let grid = BeatGrid::from_segments(vec![
+        BeatSegment {
+            frame: 0,
+            beat: 0,
+            bpm: 120.0,
+        },
+        BeatSegment {
+            frame: 192_000,
+            beat: 8,
+            bpm: 128.0,
+        },
+    ])
+    .expect("a grid");
+    // Read the whole track twice as fast: every stretch keeps its relationship to the first beat, and the
+    // cut lands at half the frame.
+    let halved = grid.retimed(60.0).expect("a retimed grid");
+    assert_eq!(halved.segments().len(), 2);
+    assert!((halved.segments()[0].bpm - 60.0).abs() < 1e-9);
+    assert!((halved.segments()[1].bpm - 64.0).abs() < 1e-9);
+    assert_eq!(halved.segments()[1].beat, 8);
+    assert_eq!(halved.segments()[1].frame, 384_000);
+}
+
+#[test]
 fn what_a_file_holds_becomes_a_grid() {
     // A file with one tempo and no anchors: exactly the old pair.
     let stored = BeatGrid::from_stored(120.0, 12_000, &[], RATE).expect("a grid");
