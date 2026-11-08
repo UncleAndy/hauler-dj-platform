@@ -974,10 +974,10 @@ pub fn prepare_track(
     // callback must never see it. A file that cannot be measured opens at unity and says nothing.
     let measured = dj_analysis::loudness::analyse(path, auto_gain_share).ok();
     let auto_gain = measured.map_or(1.0, |loudness| loudness.gain);
-    // The published number is the correction in force, not the one the file asked for: a snapshot that
-    // shows the full correction while the deck runs on a share of it hides the only place it is visible.
-    let auto_gain_db =
-        measured.map(|loudness| loudness.correction_db * auto_gain_share.clamp(0.0, 1.0));
+    // The published number is the gain in force, not the correction the file asked for: the correction is
+    // applied whole and the matched level is then taken down by the configured factor, so a snapshot that
+    // showed only the correction would describe a gain the deck does not run at.
+    let auto_gain_db = measured.map(|loudness| 20.0 * loudness.gain.max(1e-6).log10());
     // The published deck description carries the correction too: the shell reads the snapshot, and a
     // snapshot that says "1.0" about a trimmed track hides the only place the number could be seen.
     let mut static_info = static_info;

@@ -41,16 +41,17 @@ pub struct Loudness {
 
 /// Measure a file and work out the gain its channel should open with.
 ///
-/// `share` is how much of the correction to apply, 0…1, and it comes from the settings
-/// (`dj-config`'s `AnalysisSettings`): a full correction lands the RMS on the target and takes the peaks
-/// with it, which is what puts the meters in the red on material whose RMS says it should not.
-pub fn analyse(path: &Path, share: f32) -> Result<Loudness, MediaError> {
+/// `level` is the share of the matched level the channel then sits at: the correction is applied whole,
+/// so every file lands on the same level, and this factor takes that one level down (or, at 1,0, leaves
+/// it alone). It comes from the settings (`dj-config`'s `AnalysisSettings`), because the matched level
+/// itself was a decibel too hot for the meters.
+pub fn analyse(path: &Path, level: f32) -> Result<Loudness, MediaError> {
     let rms_db = rms_db(path)?;
     let correction_db = rms_db.map_or(0.0, correction_for);
     Ok(Loudness {
         rms_db,
         correction_db,
-        gain: gain_for(correction_db, share),
+        gain: gain_for(correction_db, level),
     })
 }
 
@@ -63,17 +64,22 @@ pub fn correction_for(rms_db: f32) -> f32 {
     (TARGET_RMS_DB - rms_db).clamp(-MAX_CORRECTION_DB, MAX_CORRECTION_DB)
 }
 
-/// The linear gain of a correction applied at `share`, where 1,0 is the whole of it and 0,0 is none.
-pub fn gain_for(correction_db: f32, share: f32) -> f32 {
+/// The linear gain of `correction_db`, then scaled by `level`.
+///
+/// The two are separate on purpose. The correction is what makes one file match another, and it is
+/// applied whole: a share of it would leave loud files loud and quiet files quiet, which is the one
+/// thing level matching exists to prevent. `level` then moves the now-common level — 0,9 is about a
+/// decibel down for all of them, 1,0 leaves it alone, and 0,0 is silence.
+pub fn gain_for(correction_db: f32, level: f32) -> f32 {
     if !correction_db.is_finite() {
         return 1.0;
     }
-    let share = if share.is_finite() {
-        share.clamp(0.0, 1.0)
+    let level = if level.is_finite() {
+        level.clamp(0.0, 1.0)
     } else {
         1.0
     };
-    10f32.powf(correction_db * share / 20.0)
+    10f32.powf(correction_db / 20.0) * level
 }
 
 /// Gated RMS of a file, in dBFS.
@@ -158,26 +164,42 @@ mod tests {
     }
 
     #[test]
-    fn the_correction_is_applied_at_the_share_asked_for() {
-        // A file eight decibels low asks for a +7,67 dB lift, and a full one takes its peaks into the
-        // limiter: at nine tenths the file opens 0,77 dB lower, which is the difference between a red
-        // meter and a matching one.
+    fn the_correction_is_whole_and_the_level_is_scaled() {
+        // A file eight decibels low asks for a +7,67 dB lift, and that lift is applied whole: the
+        // matching is what makes two files sit at one level. What is scaled is that one level — nine
+        // tenths of it is 0,92 dB down for every file, so they stay matched to each other.
         let correction = correction_for(-19.67);
         assert!((correction - 7.67).abs() < 0.01, "{correction}");
         let full = 20.0 * gain_for(correction, 1.0).log10();
-        let share = 20.0 * gain_for(correction, 0.9).log10();
+        let shared = 20.0 * gain_for(correction, 0.9).log10();
         assert!((full - 7.67).abs() < 0.01, "{full}");
         assert!(
-            (share - 7.67 * 0.9).abs() < 0.01,
-            "the share of the correction is {share} dB"
+            (shared - (7.67 - 0.915)).abs() < 0.01,
+            "the level factor should take 0,92 dB off the whole level, not a tenth of the correction:              {shared} dB"
         );
+        // The point of applying the correction whole: a quiet and a loud file end up level with each
+        // other, and both sit the same distance below the target — that is what a share of the
+        // correction would break.
+        let quiet = -24.0 + 20.0 * gain_for(correction_for(-24.0), 0.9).log10();
+        let loud = -9.0 + 20.0 * gain_for(correction_for(-9.0), 0.9).log10();
         assert!(
-            (20.0 * gain_for(correction, 0.0).log10()).abs() < 1e-6,
-            "no share is no correction"
+            (quiet - loud).abs() < 0.01,
+            "two files were left {:.2} dB apart after matching",
+            quiet - loud
         );
-        // A share outside the range is clamped, not obeyed: a settings file cannot invert a gain.
+        let below_target = TARGET_RMS_DB + 20.0 * 0.9f32.log10();
+        assert!(
+            (loud - below_target).abs() < 0.01,
+            "the matched level sits at {loud} dB against the {below_target} dB the factor asks for"
+        );
+        assert_eq!(
+            gain_for(correction, 0.0),
+            0.0,
+            "a level of zero is silence, not a silent correction"
+        );
+        // A factor outside the range is clamped, not obeyed: a settings file cannot invert a gain.
         assert!((gain_for(correction, 2.0) - gain_for(correction, 1.0)).abs() < 1e-6);
-        assert!((gain_for(correction, -1.0) - 1.0).abs() < 1e-6);
+        assert_eq!(gain_for(correction, -1.0), 0.0);
     }
 
     #[test]

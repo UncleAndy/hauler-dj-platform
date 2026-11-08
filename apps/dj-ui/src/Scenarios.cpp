@@ -1362,8 +1362,9 @@ int runScenarios(BridgeClient &bridge, QQuickWindow &window, const QString &deck
     cases.push_back({"a small level correction is shown beside the clock",
                      [](Runner &run, Reason &why) {
                          // 0,343 amplitude of a sine is 12,3 dBFS RMS: the correction is +0,3 dB, the
-                         // size a hand would call "nothing" — and exactly the size the shell used to
-                         // swallow whole.
+                         // size a hand would call "nothing". What the deck runs at is that correction
+                         // times the level factor (0,9 by default, 0,92 dB), so the published number is
+                         // −0,6 dB — and it still has to be shown, not swallowed.
                          const QString path = writeTone(QStringLiteral("/tmp/dj-scenario-autogain.wav"),
                                                         0.343, 2.0);
                          if (path.isEmpty()) {
@@ -1392,9 +1393,23 @@ int runScenarios(BridgeClient &bridge, QQuickWindow &window, const QString &deck
                              return false;
                          }
                          const double db = raw.toDouble();
-                         if (std::abs(db - 0.3) > 0.4) {
-                             why = QStringLiteral("the correction is %1 dB, not the +0,3 dB of this tone")
-                                       .arg(db, 0, 'f', 2);
+                         // The correction of this tone is +0,3 dB and the level factor takes 0,92 dB
+                         // off it, so the published gain is −0,62 dB. Both halves are asserted: a
+                         // snapshot that dropped either would look plausible and be wrong.
+                         const double gain =
+                             run.deck().value(QStringLiteral("auto_gain")).toDouble();
+                         const double applied = 20.0 * std::log10(std::max(gain, 1e-6));
+                         const double expected = 0.3 - 0.915;
+                         if (std::abs(db - expected) > 0.4) {
+                             why = QStringLiteral("the applied gain is %1 dB, not the %2 dB of this tone")
+                                       .arg(db, 0, 'f', 2)
+                                       .arg(expected, 0, 'f', 2);
+                             return false;
+                         }
+                         if (std::abs(applied - db) > 0.05) {
+                             why = QStringLiteral("the snapshot says %1 dB about a gain of %2 dB")
+                                       .arg(db, 0, 'f', 2)
+                                       .arg(applied, 0, 'f', 2);
                              return false;
                          }
                          QQuickItem *label = run.item(QStringLiteral("autogain_") + run.deckId());
@@ -1407,9 +1422,27 @@ int runScenarios(BridgeClient &bridge, QQuickWindow &window, const QString &deck
                                        .arg(db, 0, 'f', 1);
                              return false;
                          }
-                         const QString text = label->property("text").toString();
-                         if (!text.contains(QStringLiteral("0.3"))) {
-                             why = QStringLiteral("the label reads \"%1\"").arg(text);
+                         // The label shows the number the deck runs at, to a tenth of a decibel: the
+                         // typographic minus and the locale's decimal comma are the shell's business, so
+                         // the text is read as a number rather than matched as a string.
+                         QString text = label->property("text").toString();
+                         text.replace(QChar(0x2212), QLatin1Char('-'));
+                         text.replace(QLatin1Char(','), QLatin1Char('.'));
+                         QString digits;
+                         for (const QChar character : text) {
+                             if (character.isDigit() || character == QLatin1Char('-')
+                                 || character == QLatin1Char('+') || character == QLatin1Char('.')) {
+                                 digits.append(character);
+                             } else if (!digits.isEmpty()) {
+                                 break;
+                             }
+                         }
+                         bool parsed = false;
+                         const double shown = digits.toDouble(&parsed);
+                         if (!parsed || std::abs(shown - db) > 0.06) {
+                             why = QStringLiteral("the label reads \"%1\" where %2 dB was applied")
+                                       .arg(label->property("text").toString())
+                                       .arg(db, 0, 'f', 1);
                              return false;
                          }
                          return true;

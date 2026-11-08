@@ -1377,37 +1377,42 @@ fn a_fader_that_is_not_a_number_is_refused() {
 }
 
 #[test]
-fn the_correction_is_applied_at_the_share_the_settings_ask_for() {
+fn the_correction_is_whole_and_the_level_is_taken_down() {
     // The owner's report: with the whole correction in force the meters sat in the red on material whose
-    // RMS said it should not. The share is what keeps the peaks out of the limiter, so the number the
-    // deck runs on has to be the shared one and not the measured one.
+    // RMS said it should not. His fix, and the right one: match the files to one level completely, then
+    // take that one level down — not a share of each correction, which would leave the loud files loud.
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav");
     let full = match prepare_track(&path, 48_000, 2.0, 1.0) {
         Ok(track) => track,
         Err(message) => panic!("the fixture did not prepare: {message}"),
     };
-    let shared = match prepare_track(&path, 48_000, 2.0, 0.9) {
+    let lowered = match prepare_track(&path, 48_000, 2.0, 0.9) {
         Ok(track) => track,
         Err(message) => panic!("the fixture did not prepare: {message}"),
     };
     let full_db = full.auto_gain_db.expect("the loader measured nothing");
-    let shared_db = shared.auto_gain_db.expect("the loader measured nothing");
+    let lowered_db = lowered.auto_gain_db.expect("the loader measured nothing");
     assert!(full_db > 5.0, "the drum loop asks for {full_db} dB");
+    // Nine tenths of the level is 0,92 dB, taken off the matched level — not a tenth of the correction,
+    // which would have moved every file by a different amount.
     assert!(
-        (shared_db - full_db * 0.9).abs() < 0.02,
-        "the share gave {shared_db} dB where nine tenths of {full_db} dB was asked for"
+        (lowered_db - (full_db - 0.915)).abs() < 0.02,
+        "the lowered level is {lowered_db} dB against {full_db} dB"
     );
     // And the gain the samples see is the same number, in linear terms.
-    let expected = 10f32.powf(shared_db / 20.0);
+    let expected = 10f32.powf(lowered_db / 20.0);
     assert!(
-        (shared.auto_gain - expected).abs() < 0.01,
+        (lowered.auto_gain - expected).abs() < 0.02,
         "the deck runs at {} and the published correction says {expected}",
-        shared.auto_gain
+        lowered.auto_gain
     );
-    // A share of zero is no correction at all: the file opens at unity, not muted.
-    let none = prepare_track(&path, 48_000, 2.0, 0.0).expect("the fixture did not prepare");
-    assert!((none.auto_gain - 1.0).abs() < 1e-6, "{}", none.auto_gain);
+    assert!(
+        (lowered.auto_gain / full.auto_gain - 0.9).abs() < 0.01,
+        "the level factor did not survive as a factor: {} against {}",
+        lowered.auto_gain,
+        full.auto_gain
+    );
 }
 
 #[test]
