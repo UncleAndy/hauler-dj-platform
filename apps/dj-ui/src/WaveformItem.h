@@ -28,6 +28,15 @@ class WaveformItem : public QQuickPaintedItem
     Q_PROPERTY(bool loopActive READ loopActive WRITE setLoopActive NOTIFY appearanceChanged)
     Q_PROPERTY(double pendingFrom READ pendingFrom WRITE setPendingFrom NOTIFY appearanceChanged)
     Q_PROPERTY(QVariantList padLoops READ padLoops WRITE setPadLoops NOTIFY appearanceChanged)
+    // The grid: one entry per beat as {ratio, bar}, and one per anchor where the tempo changes.
+    Q_PROPERTY(QVariantList beats READ beats WRITE setBeats NOTIFY appearanceChanged)
+    Q_PROPERTY(QVariantList gridAnchors READ gridAnchors WRITE setGridAnchors NOTIFY appearanceChanged)
+    // What the last paint actually put on the strip: the check reads these instead of trusting the
+    // numbers it handed in.
+    Q_PROPERTY(int drawnBeats READ drawnBeats NOTIFY appearanceChanged)
+    Q_PROPERTY(int drawnBars READ drawnBars NOTIFY appearanceChanged)
+    Q_PROPERTY(int drawnAnchors READ drawnAnchors NOTIFY appearanceChanged)
+    Q_PROPERTY(double beatSpacing READ beatSpacing NOTIFY appearanceChanged)
     Q_PROPERTY(bool coloured READ coloured WRITE setColoured NOTIFY appearanceChanged)
     Q_PROPERTY(int barWidth READ barWidth WRITE setBarWidth NOTIFY appearanceChanged)
     Q_PROPERTY(int barGap READ barGap WRITE setBarGap NOTIFY appearanceChanged)
@@ -67,6 +76,14 @@ public:
     void setPendingFrom(double value);
     QVariantList padLoops() const { return m_padLoopsRaw; }
     void setPadLoops(const QVariantList &value);
+    QVariantList beats() const { return m_beatsRaw; }
+    void setBeats(const QVariantList &value);
+    QVariantList gridAnchors() const { return m_anchorsRaw; }
+    void setGridAnchors(const QVariantList &value);
+    int drawnBeats() const { return m_stats.beats; }
+    int drawnBars() const { return m_stats.bars; }
+    int drawnAnchors() const { return m_stats.anchors; }
+    double beatSpacing() const { return m_stats.beatSpacing; }
     void setLoopTo(double value);
     bool coloured() const { return m_coloured; }
     void setColoured(bool value);
@@ -109,6 +126,11 @@ private:
     double m_pendingFrom = -1.0;
     QVariantList m_padLoopsRaw;
     QList<LoopMark> m_padLoops;
+    QVariantList m_beatsRaw;
+    QList<BeatMark> m_beats;
+    QVariantList m_anchorsRaw;
+    QList<double> m_anchors;
+    WaveformStats m_stats;
     bool m_coloured = true;
     int m_barWidth = 2;
     int m_barGap = 0;

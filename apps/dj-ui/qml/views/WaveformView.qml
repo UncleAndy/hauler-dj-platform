@@ -41,6 +41,75 @@ Item {
                                    ? deckState.hotcues : []
     readonly property var loopRegion: deckState !== undefined && deckState.loop_region !== undefined
                                       ? deckState.loop_region : null
+    /// The beat grid the deck publishes, as segments of one tempo each (DJP-SYNC-003).
+    readonly property var gridSegments: {
+        const state = view.deckState;
+        // A deck with no track holds `null`, not `undefined`: both mean "there is no grid yet".
+        if (state === undefined || state === null || state.track === undefined || state.track === null
+                || state.track.grid === undefined || state.track.grid === null
+                || state.track.grid.segments === undefined) {
+            return [];
+        }
+        return state.track.grid.segments;
+    }
+    /// The file's own rate: the grid is in frames of the track, not of the device.
+    readonly property real sourceRate: view.deckState !== undefined
+                                       && view.deckState.source_rate !== undefined
+                                       && view.deckState.source_rate > 0
+                                       ? view.deckState.source_rate : 48000
+
+    /// The grid as fractions of the track: one entry per beat, a bar every fourth beat. The strip paints
+    /// in fractions and this is the only place that knows both the frames and the length of the track.
+    readonly property var beatMarks: {
+        const marks = [];
+        const segments = view.gridSegments;
+        const total = view.totalFrames;
+        if (segments.length === 0 || total <= 0) {
+            return marks;
+        }
+        const rate = view.sourceRate;
+        // A guard, not a limit: a track is a few thousand beats, and a grid that produced more would be
+        // a broken tempo rather than a long song.
+        const limit = 4000;
+        for (let index = 0; index < segments.length && marks.length < limit; ++index) {
+            const segment = segments[index];
+            const period = rate * 60 / segment.bpm;
+            if (!(period > 0)) {
+                continue;
+            }
+            const next = index + 1 < segments.length ? segments[index + 1] : null;
+            const until = next !== null ? next.frame : total;
+            let frame = segment.frame;
+            let beat = segment.beat;
+            while (frame < until && marks.length < limit) {
+                if (frame >= 0 && frame <= total) {
+                    marks.push({ "ratio": frame / total, "bar": beat % 4 === 0 });
+                }
+                frame += period;
+                beat += 1;
+            }
+        }
+        return marks;
+    }
+
+    /// Where the tempo changes, as fractions of the track: a grid that changes under the hand has to say
+    /// where it changed, or the DJ corrects the wrong part of the track.
+    readonly property var anchorMarks: {
+        const marks = [];
+        const segments = view.gridSegments;
+        const total = view.totalFrames;
+        if (segments.length < 2 || total <= 0) {
+            return marks;
+        }
+        for (let index = 1; index < segments.length; ++index) {
+            const ratio = segments[index].frame / total;
+            if (ratio >= 0 && ratio <= 1) {
+                marks.push(ratio);
+            }
+        }
+        return marks;
+    }
+
     /// The track's length in frames, straight from the deck: a marker placed by frame over this is
     /// right before the envelope has arrived, and an envelope that changes resolution cannot move it.
     readonly property real totalFrames: {
@@ -277,6 +346,8 @@ Item {
             loopActive: view.loopActive
             pendingFrom: view.pendingRatio
             padLoops: view.padLoopMarks
+            beats: view.beatMarks
+            gridAnchors: view.anchorMarks
 
             coloured: UiSettings.waveformStyle === "coloured"
             barWidth: UiSettings.waveformBarWidth

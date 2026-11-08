@@ -227,6 +227,10 @@ case "${1:-}" in
     cp crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav "$grid_file"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --grid-check --load "$grid_file"
+    # The grid has to be visible on the strip, not only in the snapshot: beat lines, a bar every fourth,
+    # and a spacing that follows the tempo — the same file, so the second run starts from a locked grid.
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
+        --grid-lines-check --load "$grid_file"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --eq-check
     # A double click is the way back to neutral on every mouse-driven control, and each control has its
     # own neutral: a gain or a band goes flat, a fader opens, the master stands at three quarters of its

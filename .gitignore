@@ -39,3 +39,5 @@ result-*
 
 # Scratch copies of third-party sources the owner drops in for review (signalsmith-stretch).
 /tmp/
+.hermes/scratch/
+

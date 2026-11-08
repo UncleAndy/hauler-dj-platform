@@ -7,13 +7,16 @@
 #include <algorithm>
 #include <cmath>
 
-void paintWaveform(QPainter &painter, const Waveform &waveform, const WaveformStyle &style,
-                   const QRect &area, double windowStart, double span, double playheadRatio,
-                   const QList<CueMark> &cues, const QList<LoopMark> &padLoops, bool hasLoop,
-                   double loopFrom, double loopTo, bool loopActive, double pendingFrom)
+WaveformStats paintWaveform(QPainter &painter, const Waveform &waveform,
+                             const WaveformStyle &style, const QRect &area, double windowStart,
+                             double span, double playheadRatio, const QList<CueMark> &cues,
+                             const QList<LoopMark> &padLoops, bool hasLoop, double loopFrom,
+                             double loopTo, bool loopActive, double pendingFrom,
+                             const QList<BeatMark> &beats, const QList<double> &anchors)
 {
+    WaveformStats stats;
     if (area.width() <= 0 || area.height() <= 0) {
-        return;
+        return stats;
     }
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, false);
@@ -69,6 +72,53 @@ void paintWaveform(QPainter &painter, const Waveform &waveform, const WaveformSt
                              QColor(int(std::lround(base.red() * factor)),
                                     int(std::lround(base.green() * factor)),
                                     int(std::lround(base.blue() * factor))));
+        }
+    }
+
+    // The grid: a line per beat, a thicker one per bar. Drawn over the waveform and under everything the
+    // DJ put there himself — the grid is what he reads the track against, and a line he cannot see is a
+    // grid he cannot use (DJP-SYNC-003).
+    {
+        QColor beatColour = style.border;
+        beatColour.setAlpha(170);
+        QColor barColour = style.accent;
+        barColour.setAlpha(190);
+        int firstBeatX = 0;
+        int secondBeatX = 0;
+        for (const BeatMark &beat : beats) {
+            const int x = xOfRatio(beat.ratio);
+            if (x < area.left() || x > area.right()) {
+                continue;
+            }
+            if (beat.bar) {
+                painter.fillRect(QRect(x, area.top(), 2, height), barColour);
+                ++stats.bars;
+            } else {
+                painter.fillRect(QRect(x, area.top() + height / 8, 1, height - height / 4), beatColour);
+                ++stats.beats;
+            }
+            if (stats.beats + stats.bars <= 2) {
+                if (stats.beats + stats.bars == 1) {
+                    firstBeatX = x;
+                } else {
+                    secondBeatX = x;
+                }
+            }
+        }
+        if (secondBeatX > firstBeatX) {
+            stats.beatSpacing = double(secondBeatX - firstBeatX);
+        }
+        // Anchors are the frames where the tempo changes: a grid that changes under the hand has to show
+        // where, or the DJ corrects the wrong part of the track.
+        QColor anchorColour = style.marker;
+        for (const double ratio : anchors) {
+            const int x = xOfRatio(ratio);
+            if (x < area.left() || x > area.right()) {
+                continue;
+            }
+            painter.fillRect(QRect(x, area.top(), 2, 6), anchorColour);
+            painter.fillRect(QRect(x, area.top(), 6, 2), anchorColour);
+            ++stats.anchors;
         }
     }
 
@@ -168,4 +218,5 @@ void paintWaveform(QPainter &painter, const Waveform &waveform, const WaveformSt
     const int playhead = xOfRatio(playheadRatio);
     painter.drawLine(playhead, area.top(), playhead, area.bottom());
     painter.restore();
+    return stats;
 }

@@ -22,6 +22,24 @@ struct CueMark
     QString label;
 };
 
+/// One beat of the grid, as a fraction of the track: drawn as a line, thicker when it starts a bar.
+struct BeatMark
+{
+    double ratio = -1.0;
+    /// Every fourth beat is a bar: the beat a DJ counts to four on, and the one worth a thicker line.
+    bool bar = false;
+};
+
+/// What the last paint actually drew: the check reads these numbers instead of believing the strip.
+struct WaveformStats
+{
+    int beats = 0;
+    int bars = 0;
+    int anchors = 0;
+    /// Distance between two neighbouring beats on screen, in pixels: 0 when fewer than two are visible.
+    double beatSpacing = 0.0;
+};
+
 /// A loop stored on a pad: drawn as a pair of edge marks along the bottom of the strip, so a loop that
 /// nobody has pressed yet is still visible on the track.
 struct LoopMark
@@ -61,7 +79,9 @@ inline int frameStep(const WaveformStyle &style)
 
 // `windowStart` and `span` are fractions of the track; `playheadRatio` is where it is now. Cues
 // and the loop are fractions too, so nothing is drawn twice with two different timebases.
-void paintWaveform(QPainter &painter, const Waveform &waveform, const WaveformStyle &style,
-                   const QRect &area, double windowStart, double span, double playheadRatio,
-                   const QList<CueMark> &cues, const QList<LoopMark> &padLoops, bool hasLoop,
-                   double loopFrom, double loopTo, bool loopActive, double pendingFrom);
+WaveformStats paintWaveform(QPainter &painter, const Waveform &waveform, const WaveformStyle &style,
+                             const QRect &area, double windowStart, double span,
+                             double playheadRatio, const QList<CueMark> &cues,
+                             const QList<LoopMark> &padLoops, bool hasLoop, double loopFrom,
+                             double loopTo, bool loopActive, double pendingFrom,
+                             const QList<BeatMark> &beats, const QList<double> &anchors);

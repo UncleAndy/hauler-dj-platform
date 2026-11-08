@@ -51,9 +51,20 @@ void WaveformItem::paint(QPainter *painter)
         cues.append(mark);
     }
 
-    paintWaveform(*painter, *m_waveform, style, QRect(0, 0, int(width()), int(height())),
-                  m_windowStart, m_span, m_playheadRatio, cues, m_padLoops, m_hasLoop, m_loopFrom,
-                  m_loopTo, m_loopActive, m_pendingFrom);
+    // The grid arrives as {ratio, bar}: the fractions belong to the side that knows the track's length,
+    // the painting belongs here, and neither has to know the other's arithmetic.
+    QList<BeatMark> beats;
+    beats.reserve(m_beats.size());
+    for (const BeatMark &mark : m_beats) {
+        if (mark.ratio >= 0.0 && mark.ratio <= 1.0) {
+            beats.append(mark);
+        }
+    }
+
+    m_stats = paintWaveform(*painter, *m_waveform, style,
+                            QRect(0, 0, int(width()), int(height())), m_windowStart, m_span,
+                            m_playheadRatio, cues, m_padLoops, m_hasLoop, m_loopFrom, m_loopTo,
+                            m_loopActive, m_pendingFrom, beats, m_anchors);
 }
 
 void WaveformItem::setWaveform(Waveform *waveform)
@@ -156,6 +167,40 @@ void WaveformItem::setPadLoops(const QVariantList &value)
         mark.to = map.value(QStringLiteral("to"), -1.0).toDouble();
         mark.active = map.value(QStringLiteral("active"), false).toBool();
         m_padLoops.append(mark);
+    }
+    QQuickPaintedItem::update();
+    emit appearanceChanged();
+}
+
+void WaveformItem::setBeats(const QVariantList &value)
+{
+    if (m_beatsRaw == value) {
+        return;
+    }
+    m_beatsRaw = value;
+    m_beats.clear();
+    m_beats.reserve(value.size());
+    for (const QVariant &entry : value) {
+        const QVariantMap map = entry.toMap();
+        BeatMark mark;
+        mark.ratio = map.value(QStringLiteral("ratio"), -1.0).toDouble();
+        mark.bar = map.value(QStringLiteral("bar"), false).toBool();
+        m_beats.append(mark);
+    }
+    QQuickPaintedItem::update();
+    emit appearanceChanged();
+}
+
+void WaveformItem::setGridAnchors(const QVariantList &value)
+{
+    if (m_anchorsRaw == value) {
+        return;
+    }
+    m_anchorsRaw = value;
+    m_anchors.clear();
+    m_anchors.reserve(value.size());
+    for (const QVariant &entry : value) {
+        m_anchors.append(entry.toDouble());
     }
     QQuickPaintedItem::update();
     emit appearanceChanged();

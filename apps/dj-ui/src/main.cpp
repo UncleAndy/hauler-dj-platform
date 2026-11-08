@@ -919,6 +919,10 @@ int main(int argc, char *argv[])
         QStringLiteral("Close the window after this many milliseconds: the shutdown path, exercised "
                        "instead of described."),
         QStringLiteral("ms"));
+    const QCommandLineOption gridLinesOption(
+        QStringLiteral("grid-lines-check"),
+        QStringLiteral("With --connect and --load: require the strip to draw the beat lines of the grid, "
+                       "with a bar line every fourth beat, and the spacing to follow the tempo."));
     const QCommandLineOption gridCheckOption(
         QStringLiteral("grid-check"),
         QStringLiteral("With --connect and --load: move the grid, halve it, double it and type a tempo, "
@@ -1167,6 +1171,7 @@ int main(int argc, char *argv[])
     parser.addOption(windowCheckOption);
     parser.addOption(curveCheckOption);
     parser.addOption(masterCheckOption);
+    parser.addOption(gridLinesOption);
     parser.addOption(gridCheckOption);
     parser.addOption(tempoRecheckOption);
     parser.addOption(cueWriteOption);
@@ -2339,7 +2344,7 @@ int main(int argc, char *argv[])
             timer.start();
             QPainter painter(&image);
             paintWaveform(painter, envelope, style, image.rect(), start, 0.1, start + 0.05, {}, {},
-                          false, 0.0, 0.0, false, -1.0);
+                          false, 0.0, 0.0, false, -1.0, {}, {});
             painter.end();
             costs.push_back(double(timer.nsecsElapsed()) / 1.0e6);
         }
@@ -3321,6 +3326,145 @@ int main(int argc, char *argv[])
                      "strip: \"%s\" -> \"%s\", revision %d -> %d\n",
                      deckA().value(QStringLiteral("analyzing")).toBool() ? "yes" : "seen",
                      qPrintable(shownBefore), qPrintable(shownAfter), before, revision());
+        return 0;
+    }
+
+    if (parser.isSet(gridLinesOption)) {
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        const QString fixture = parser.value(loadOption);
+        if (fixture.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: --grid-lines-check needs --load\n");
+            return 1;
+        }
+        bridge->connectToEngine(parser.value(connectOption));
+        const auto waitFor = [](const std::function<bool()> &ready, int budget) {
+            QElapsedTimer timer;
+            timer.start();
+            while (timer.elapsed() < budget) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                if (ready()) {
+                    return true;
+                }
+                QThread::msleep(10);
+            }
+            return ready();
+        };
+        if (!waitFor([&]() { return bridge->isConnected(); }, 3000)) {
+            std::fprintf(stderr, "dj-ui: no engine\n");
+            return 1;
+        }
+        const auto deckA = [&]() {
+            const QVariantList decks = bridge->snapshot().value(QStringLiteral("decks")).toList();
+            for (const QVariant &entry : decks) {
+                const QVariantMap deck = entry.toMap();
+                if (deck.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                    return deck;
+                }
+            }
+            return QVariantMap();
+        };
+        bridge->load(QStringLiteral("A"), fixture);
+        const auto gridOf = [&]() {
+            return deckA()
+                .value(QStringLiteral("track"))
+                .toMap()
+                .value(QStringLiteral("grid"))
+                .toMap()
+                .value(QStringLiteral("segments"))
+                .toList();
+        };
+        if (!waitFor([&]() { return !gridOf().isEmpty(); }, 20000)) {
+            std::fprintf(stderr, "dj-ui: the deck published no grid\n");
+            return 1;
+        }
+        const QVariantMap segment = gridOf().first().toMap();
+        const double bpm = segment.value(QStringLiteral("bpm")).toDouble();
+        const double rate = deckA().value(QStringLiteral("source_rate")).toDouble();
+        const double total = deckA().value(QStringLiteral("source_frame")).toDouble() +
+                             deckA().value(QStringLiteral("remaining_frames")).toDouble();
+        if (bpm <= 0.0 || rate <= 0.0 || total <= 0.0) {
+            std::fprintf(stderr, "dj-ui: the grid has no usable numbers\n");
+            return 1;
+        }
+
+        auto *view = findItem(window->contentItem(), QStringLiteral("deckDetail_A"));
+        auto *strip = findItem(window->contentItem(), QStringLiteral("waveStrip_A"));
+        if (view == nullptr || strip == nullptr) {
+            std::fprintf(stderr, "dj-ui: the deck has no waveform strip\n");
+            return 1;
+        }
+        // Play from the middle and look at the whole track: a strip centred on the start shows half of
+        // its window over the lead-in, and the beats there are not the track's.
+        bridge->seek(QStringLiteral("A"), static_cast<qulonglong>(total / 2.0));
+        // The strip is centred on the play head, and the seek reaches it a snapshot later: without this
+        // wait the check reads the paint of the old window and calls a working strip wrong.
+        if (!waitFor(
+                [&]() {
+                    return deckA().value(QStringLiteral("source_frame")).toDouble() >= total / 2.0 - 1.0;
+                },
+                5000)) {
+            std::fprintf(stderr, "dj-ui: the deck never moved to the middle of the track\n");
+            return 1;
+        }
+        QMetaObject::invokeMethod(view, "zoomBy", Q_ARG(QVariant, QVariant(0.1)));
+        QCoreApplication::processEvents();
+
+        const auto drawnBeats = [&]() { return strip->property("drawnBeats").toInt(); };
+        const auto drawnBars = [&]() { return strip->property("drawnBars").toInt(); };
+        const auto spacing = [&]() { return strip->property("beatSpacing").toDouble(); };
+        if (!waitFor([&]() { return drawnBeats() >= 2 && spacing() > 0.0; }, 5000)) {
+            std::fprintf(stderr, "dj-ui: the strip drew no beat lines (beats %d, spacing %.1f)\n",
+                         drawnBeats(), spacing());
+            return 1;
+        }
+        // The spacing is the tempo, on screen: one period of the grid, in pixels. Read here, after the
+        // paint, because the strip's span and width are what that paint actually used.
+        const double span = strip->property("span").toDouble();
+        const double width = strip->width();
+        const double expected = ((rate * 60.0 / bpm) / total) / span * width;
+        if (std::abs(spacing() - expected) > 2.0) {
+            std::fprintf(stderr,
+                         "dj-ui: beat lines are %.1f px apart, but the tempo puts them %.1f px apart "
+                         "(span %.4f, width %.1f)\n",
+                         spacing(), expected, span, width);
+            return 1;
+        }
+        const int beats = drawnBeats();
+        const int bars = drawnBars();
+
+        if (beats < 6 || bars < 2) {
+            std::fprintf(stderr, "dj-ui: the strip drew %d beats and %d bars over the track\n", beats,
+                         bars);
+            return 1;
+        }
+        // A single tempo has no anchors; a strip that invents one is lying about the track.
+        if (strip->property("drawnAnchors").toInt() != 0) {
+            std::fprintf(stderr, "dj-ui: anchors appeared on a track with one tempo\n");
+            return 1;
+        }
+
+        // Half the tempo and the lines move with the grid: this is the proof that they are the grid and
+        // not a decoration of the waveform.
+        auto *half = findItem(window->contentItem(), QStringLiteral("gridHalf_A"));
+        if (half == nullptr) {
+            std::fprintf(stderr, "dj-ui: there is no half button to press\n");
+            return 1;
+        }
+        QMetaObject::invokeMethod(half, "clicked");
+        if (!waitFor([&]() { return std::abs(spacing() - 2.0 * expected) < 4.0; }, 5000)) {
+            std::fprintf(stderr,
+                         "dj-ui: after half the beat lines are %.1f px apart, not %.1f\n", spacing(),
+                         2.0 * expected);
+            return 1;
+        }
+        std::fprintf(stdout,
+                     "dj-ui: the strip draws the grid: %d beats, %d bars, %.1f px a beat at %.2f BPM, "
+                     "%.1f px after half\n",
+                     beats, bars, expected, bpm, spacing());
         return 0;
     }
 
