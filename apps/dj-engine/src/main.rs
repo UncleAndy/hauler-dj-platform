@@ -489,9 +489,16 @@ fn run(argv: &[String]) -> Result<(), String> {
                     Ok(Some(found)) => {
                         // An explicit request outranks what the file remembers: that is the whole
                         // point of the button — the stored grid was wrong.
-                        let Some(grid) =
-                            dj_domain::BeatGrid::single(found.bpm, found.first_beat_frame)
-                        else {
+                        let segments: Vec<dj_domain::BeatSegment> = found
+                            .segments
+                            .iter()
+                            .map(|segment| dj_domain::BeatSegment {
+                                frame: segment.first_beat_frame,
+                                beat: segment.beat,
+                                bpm: segment.bpm,
+                            })
+                            .collect();
+                        let Some(grid) = dj_domain::BeatGrid::from_segments(segments) else {
                             eprintln!("dj-engine: the measurement is not a grid");
                             continue;
                         };

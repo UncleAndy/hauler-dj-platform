@@ -62,15 +62,84 @@ pub const WINDOW_SECONDS: f64 = 40.0;
 /// the point of having several is that an intro without a beat gets outvoted by the rest of the track.
 pub const WINDOW_HOP_SECONDS: f64 = 40.0;
 
-/// What the analysis found.
+/// Length of the window a tempo *change* is looked for in, in seconds.
+///
+/// Shorter than the window the tempo itself is chosen in: a change is a local question ("is the beat
+/// here the same as there?"), and twenty seconds hold forty beats at 120 BPM — enough to answer it,
+/// where forty seconds would smear the change across the whole look-back.
+pub const CHANGE_WINDOW_SECONDS: f64 = 20.0;
+
+/// Distance between those windows, in seconds. It is also how precisely a change is placed: the beat
+/// inside a stretch is right to the millisecond, the frame where the stretch starts to the hop.
+pub const CHANGE_HOP_SECONDS: f64 = 10.0;
+
+/// How many windows in a row a new tempo has to hold before it counts as a change.
+///
+/// One window is not a change: a bar of silence, a fill, a spoken line all read as a tempo of their own.
+/// Three windows — thirty seconds — is a section.
+const CHANGE_WINDOWS: usize = 3;
+
+/// How much better the other tempo has to explain a section than the track's own does.
+///
+/// A section is not "another tempo" because some window said so: the triplets of an arpeggio read as a
+/// careful-sounding tempo of their own in a short window, and the track's own grid still explains them
+/// better than that answer does. Only a stretch the track's tempo cannot explain is a change.
+const CHANGE_MARGIN: f64 = 1.15;
+
+/// How far a window's answer may sit from another and still be the same tempo, as a fraction of it.
+const TEMPO_TOLERANCE: f64 = 0.03;
+
+/// How far from a whole octave a tempo may sit and still be the same beat read twice.
+const OCTAVE_TOLERANCE: f64 = 0.03;
+
+/// How much of a stretch is used to place its first beat, in seconds.
+///
+/// The phase is measured at the start of the stretch on purpose: a grid that is right there is what the
+/// DJ needs at the moment the music changes, and measuring it over the whole stretch would average the
+/// drift of everything that follows into the one beat that matters.
+const PHASE_HEAD_SECONDS: f64 = 20.0;
+
+/// One stretch of a track at one tempo, as the analysis found it.
+///
+/// The same shape as `dj_domain::BeatSegment` on purpose — the engine turns these into a grid — but this
+/// crate stays free of the protocol: an analyser is useful without a wire.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Tempo {
-    /// Beats per minute, as measured (not corrected to a half or double).
+pub struct TempoSegment {
+    /// Beats per minute in this stretch, as measured (not corrected to a half or double).
     pub bpm: f64,
-    /// Frame of the file's first beat: the grid is `first_beat_frame + k · 60 / bpm · rate`.
+    /// Frame of the stretch's first beat.
     pub first_beat_frame: u64,
-    /// How sure the measurement is, 0 … 1: the winning autocorrelation peak against the runner-up.
+    /// Beat number of that frame, counted from the track's first beat.
+    pub beat: u64,
+}
+
+/// What the analysis found: the grid, as one segment per tempo.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Tempo {
+    /// The grid in order. Never empty; the first segment carries beat zero.
+    pub segments: Vec<TempoSegment>,
+    /// How sure the measurement is, 0 … 1: the share of the onset energy the weakest segment's grid
+    /// explains. The weakest, not the average: a track is only as measurable as its least measurable part.
     pub confidence: f32,
+}
+
+impl Tempo {
+    /// The tempo of the first stretch: what a track list shows without knowing where the play head is.
+    pub fn bpm(&self) -> f64 {
+        self.segments.first().map_or(0.0, |segment| segment.bpm)
+    }
+
+    /// Frame of the grid's first beat.
+    pub fn first_beat_frame(&self) -> u64 {
+        self.segments
+            .first()
+            .map_or(0, |segment| segment.first_beat_frame)
+    }
+
+    /// Whether the track holds one tempo throughout.
+    pub fn is_single(&self) -> bool {
+        self.segments.len() == 1
+    }
 }
 
 /// Spectral flux: the positive part of the change in magnitude between two blocks.
@@ -133,9 +202,31 @@ pub fn detect(mono: &[f32], rate: f64) -> Option<Tempo> {
 }
 
 /// The same, for an envelope someone already has: the analysis decodes the file once and works on it.
+///
+/// Two questions, answered apart. The tempo is chosen first, over windows of forty seconds, exactly as
+/// it has always been — that answer is what a track that holds its tempo gets, and it stays byte for
+/// byte what it was. Then the track is asked whether it holds that tempo all the way through: if some
+/// stretch of it answers a different beat for a section, the grid is built from stretches, and a track
+/// that changes tempo is described as one instead of being averaged into a tempo it never plays.
 pub fn detect_in_envelope(envelope: &[f32], rate: f64) -> Option<Tempo> {
     let per_second = rate / HOP as f64;
     let (bpm, clear) = choose_tempo(envelope, per_second)?;
+    let stretches = stretches_of(envelope, per_second, bpm);
+    if stretches.len() > 1
+        && let Some(changing) = grid_of_stretches(envelope, per_second, bpm, &stretches)
+    {
+        return Some(changing);
+    }
+    single_tempo(envelope, per_second, bpm, &clear)
+}
+
+/// The grid of a track that holds one tempo: the old answer, unchanged.
+fn single_tempo(
+    envelope: &[f32],
+    per_second: f64,
+    bpm: f64,
+    clear: &std::ops::Range<usize>,
+) -> Option<Tempo> {
     // The spectrum is coarse by construction: it says "128-ish". The comb over the whole analysed span
     // says "this period and no other", which is what keeps a five-minute track from drifting away from
     // its own grid by a beat.
@@ -188,9 +279,171 @@ pub fn detect_in_envelope(envelope: &[f32], rate: f64) -> Option<Tempo> {
     let anchor = (clear.start as f64 + inside).rem_euclid(period);
     let first_beat_frame = (anchor * HOP as f64 + BLOCK as f64 / 2.0).round().max(0.0) as u64;
     Some(Tempo {
-        bpm,
-        first_beat_frame,
+        segments: vec![TempoSegment {
+            bpm,
+            first_beat_frame,
+            beat: 0,
+        }],
         confidence: explained as f32,
+    })
+}
+
+/// A stretch of the envelope whose windows agree on one tempo.
+#[derive(Debug, Clone, Copy)]
+struct Stretch {
+    /// Tempo the windows of this stretch agreed on, snapped to the octave of the track's own.
+    bpm: f64,
+    /// First envelope frame.
+    start: usize,
+    /// One past the last envelope frame.
+    end: usize,
+    /// How many windows it was seen in.
+    windows: usize,
+}
+
+/// Whether two tempos are the same beat, read the same way.
+fn same_tempo(a: f64, b: f64) -> bool {
+    a > 0.0 && b > 0.0 && ((a / b).log2()).abs() <= TEMPO_TOLERANCE
+}
+
+/// Fold a tempo onto the track's own when it is that tempo read an octave away, and leave it otherwise.
+///
+/// A window can answer the beat, its double or its half: the score prefers the grid that is actually
+/// played, but over twenty seconds a section of half-time feel can read either way. Snapping to the
+/// track's own octave keeps one track from looking like three, while a real change of tempo — 124 to
+/// 128, a ratio no power of two explains — stays a change.
+fn snap_octave(bpm: f64, reference: f64) -> f64 {
+    if bpm <= 0.0 || reference <= 0.0 {
+        return bpm;
+    }
+    let octaves = (bpm / reference).log2();
+    // On an octave of the track's own reading, the window answered the same beat: the value the stretch
+    // carries is the track's own, so a half-time section does not look like a tempo of its own.
+    if (octaves - octaves.round()).abs() <= OCTAVE_TOLERANCE {
+        reference
+    } else {
+        bpm
+    }
+}
+
+/// The stretches of the envelope that hold one tempo, in order.
+///
+/// The windows here are short on purpose and the answer is coarse on purpose: this pass is not asked
+/// what the tempo is — the forty-second windows answered that — only whether the answer stays the same
+/// from one part of the track to the next. A reading shorter than [`CHANGE_WINDOWS`] windows is not a
+/// section, it is a fill or a line of speech, and it is folded back into its neighbour.
+fn stretches_of(envelope: &[f32], per_second: f64, dominant: f64) -> Vec<Stretch> {
+    let window = (CHANGE_WINDOW_SECONDS * per_second) as usize;
+    let hop = (CHANGE_HOP_SECONDS * per_second).max(1.0) as usize;
+    if window < 64 || envelope.len() < window * (CHANGE_WINDOWS + 1) {
+        return Vec::new();
+    }
+    let mut stretches: Vec<Stretch> = Vec::new();
+    let mut start = 0;
+    while start + window <= envelope.len() {
+        let reading = tempo_of_window(&envelope[start..start + window], per_second)
+            .map(|bpm| snap_octave(bpm, dominant));
+        match (reading, stretches.last_mut()) {
+            (Some(bpm), Some(last)) if same_tempo(bpm, last.bpm) => {
+                last.end = start + window;
+                last.windows += 1;
+            }
+            (Some(bpm), _) => stretches.push(Stretch {
+                bpm,
+                start,
+                end: start + window,
+                windows: 1,
+            }),
+            // A window with no answer neither extends a stretch nor starts one: silence inside a
+            // section is not the end of it, and it is certainly not a new tempo.
+            (None, _) => {}
+        }
+        start += hop;
+    }
+    stretches.retain(|stretch| stretch.windows >= CHANGE_WINDOWS);
+    // Whatever was dropped belongs to a neighbour: the spans are laid end to end, so the grid covers
+    // the track instead of leaving stretches of it without one.
+    for index in 0..stretches.len() {
+        if index > 0 {
+            stretches[index].start = stretches[index - 1].end;
+        }
+    }
+    if let Some(last) = stretches.last_mut() {
+        last.end = envelope.len();
+    }
+    stretches
+}
+
+/// The grid of a track that changes tempo: one segment per stretch, measured where it plays.
+fn grid_of_stretches(
+    envelope: &[f32],
+    per_second: f64,
+    dominant: f64,
+    stretches: &[Stretch],
+) -> Option<Tempo> {
+    let dominant_period = refine_period(envelope, per_second * 60.0 / dominant);
+    let mut segments: Vec<TempoSegment> = Vec::new();
+    let mut confidence = 1.0f64;
+    for stretch in stretches {
+        let span = &envelope[stretch.start..stretch.end];
+        let hint = per_second * 60.0 / stretch.bpm;
+        let period = refine_period(span, hint);
+        if period <= 0.0 {
+            continue;
+        }
+        let head_end =
+            (stretch.start + (PHASE_HEAD_SECONDS * per_second) as usize).min(stretch.end);
+        let inside = best_phase(&envelope[stretch.start..head_end], period);
+        let (explained, beats) = explained_share(span, period, inside);
+        // A stretch that cannot show its beat is not a tempo of its own: publishing it would put a grid
+        // on music nobody can hear a beat in, and the neighbour that does hold one is already right.
+        if explained < MIN_EXPLAINED_SHARE || beats < MIN_BEATS {
+            continue;
+        }
+        // Nor is a stretch a change just because a short window said so: the track's own tempo has to
+        // fail on it first. This is what keeps the triplets of an arpeggio from being read as a second
+        // tempo — the beat still lands on them better than their own answer does.
+        if !segments.is_empty() && dominant_period > 0.0 {
+            let own = best_phase(span, dominant_period);
+            let (track_share, _) = explained_share(span, dominant_period, own);
+            if explained < track_share * CHANGE_MARGIN {
+                continue;
+            }
+        }
+        let frame = ((stretch.start as f64 + inside) * HOP as f64 + BLOCK as f64 / 2.0)
+            .round()
+            .max(0.0) as u64;
+        let beat = match segments.last() {
+            None => 0,
+            Some(previous) => {
+                let period_frames = per_second * 60.0 / previous.bpm * HOP as f64;
+                let elapsed = frame as f64 - previous.first_beat_frame as f64;
+                if elapsed <= 0.0 || period_frames <= 0.0 {
+                    continue;
+                }
+                // The beat count runs on across the change: a bar number after the change is a bar
+                // number, not a second grid starting at zero.
+                previous.beat + (elapsed / period_frames).round() as u64
+            }
+        };
+        if let Some(previous) = segments.last()
+            && beat <= previous.beat
+        {
+            continue;
+        }
+        segments.push(TempoSegment {
+            bpm: per_second * 60.0 / period,
+            first_beat_frame: frame,
+            beat,
+        });
+        confidence = confidence.min(explained);
+    }
+    if segments.len() < 2 {
+        return None;
+    }
+    Some(Tempo {
+        segments,
+        confidence: confidence as f32,
     })
 }
 

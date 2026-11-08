@@ -33,16 +33,16 @@ fn a_click_track_at_128_bpm_is_measured() {
     let samples = click_track(128.0, 4_800, 20.0);
     let tempo = dj_analysis::tempo::detect(&samples, RATE).expect("a tempo");
     assert!(
-        (tempo.bpm - 128.0).abs() < 0.5,
+        (tempo.bpm() - 128.0).abs() < 0.5,
         "measured {} BPM instead of 128",
-        tempo.bpm
+        tempo.bpm()
     );
 }
 
 /// Distance from `frame` to the nearest beat of the grid, in milliseconds.
 fn off_the_grid(tempo: &dj_analysis::tempo::Tempo, frame: u64) -> f64 {
-    let period = RATE * 60.0 / tempo.bpm;
-    let position = (frame as f64 - tempo.first_beat_frame as f64) / period;
+    let period = RATE * 60.0 / tempo.bpm();
+    let position = (frame as f64 - tempo.first_beat_frame() as f64) / period;
     let nearest = position.round();
     (position - nearest).abs() * period / RATE * 1000.0
 }
@@ -87,9 +87,9 @@ fn an_unusual_tempo_is_measured_too() {
     let samples = click_track(174.0, 2_000, 20.0);
     let tempo = dj_analysis::tempo::detect(&samples, RATE).expect("a tempo");
     assert!(
-        (tempo.bpm - 174.0).abs() < 0.5,
+        (tempo.bpm() - 174.0).abs() < 0.5,
         "measured {} BPM instead of 174",
-        tempo.bpm
+        tempo.bpm()
     );
 }
 
@@ -104,9 +104,9 @@ fn a_half_time_pattern_reports_the_tempo_or_its_half() {
     assert!(
         matches
             .iter()
-            .any(|wanted| (tempo.bpm - wanted).abs() < 0.5),
+            .any(|wanted| (tempo.bpm() - wanted).abs() < 0.5),
         "measured {} BPM, neither 64 nor 128",
-        tempo.bpm
+        tempo.bpm()
     );
 }
 
@@ -161,13 +161,13 @@ fn an_intro_without_a_beat_does_not_hide_the_tempo() {
     samples.extend(music);
     let tempo = dj_analysis::tempo::detect(&samples, RATE).expect("a tempo behind the intro");
     assert!(
-        (tempo.bpm - 128.0).abs() < 0.5,
+        (tempo.bpm() - 128.0).abs() < 0.5,
         "measured {} BPM instead of 128",
-        tempo.bpm
+        tempo.bpm()
     );
     // And the grid still lands on the clicks, not on the intro.
-    let period = RATE * 60.0 / tempo.bpm;
-    let position = (music_start as f64 - tempo.first_beat_frame as f64) / period;
+    let period = RATE * 60.0 / tempo.bpm();
+    let position = (music_start as f64 - tempo.first_beat_frame() as f64) / period;
     let error = (position - position.round()).abs() * period / RATE * 1000.0;
     assert!(error <= 30.0, "the grid is {error:.1} ms off the clicks");
 }
@@ -191,9 +191,86 @@ fn a_beat_that_does_not_hold_its_tempo_is_still_a_beat() {
     let tempo = dj_analysis::tempo::detect(&samples, RATE)
         .expect("a tempo from a beat that creeps from 124 to 125.6");
     assert!(
-        (123.0..=127.0).contains(&tempo.bpm),
+        (123.0..=127.0).contains(&tempo.bpm()),
         "measured {} BPM, which is not the beat it was given",
-        tempo.bpm
+        tempo.bpm()
+    );
+}
+
+/// A track that plays one tempo and then another: `first` for `first_seconds`, then `second`.
+fn two_tempos(first: f64, first_seconds: f64, second: f64, second_seconds: f64) -> Vec<f32> {
+    let mut samples = click_track(first, 0, first_seconds);
+    samples.extend(click_track(second, 0, second_seconds));
+    samples
+}
+
+#[test]
+fn a_track_that_changes_tempo_is_described_as_two() {
+    // An edit, not a new track: the beat has to keep counting and the grid has to be right on both
+    // sides of the cut. Averaging the two tempos — which is what one grid for the whole file does —
+    // would be wrong everywhere instead of somewhere.
+    let samples = two_tempos(120.0, 90.0, 132.0, 90.0);
+    let tempo = dj_analysis::tempo::detect(&samples, RATE).expect("two tempos");
+    assert!(
+        tempo.segments.len() >= 2,
+        "one segment for a track with two tempos: {:?}",
+        tempo.segments
+    );
+    let first = tempo.segments.first().expect("a first segment");
+    let last = tempo.segments.last().expect("a last segment");
+    assert!(
+        (first.bpm - 120.0).abs() < 1.0,
+        "the first stretch is {} BPM instead of 120",
+        first.bpm
+    );
+    assert!(
+        (last.bpm - 132.0).abs() < 1.0,
+        "the last stretch is {} BPM instead of 132",
+        last.bpm
+    );
+    // The beats run on across the change: the second stretch does not start counting from zero.
+    assert!(last.beat > 0, "the beat count restarted at the change");
+
+    // Where the change is: within one window of the tenth second before it, and the grid of the second
+    // stretch lands on its own clicks.
+    let change_frame = (90.0 * RATE) as u64;
+    let boundary = last.first_beat_frame;
+    let off = (boundary as f64 - change_frame as f64).abs() / RATE;
+    assert!(
+        off <= 30.0,
+        "the second stretch starts {off:.1} s from the change"
+    );
+    let period = RATE * 60.0 / last.bpm;
+    let mut worst = 0.0f64;
+    let mut position = change_frame as f64 + period;
+    while position < samples.len() as f64 {
+        let beats = (position - boundary as f64) / period;
+        worst = worst.max((beats - beats.round()).abs() * period / RATE * 1000.0);
+        position += period;
+    }
+    assert!(
+        worst <= 15.0,
+        "the second grid is {worst:.1} ms off its clicks"
+    );
+}
+
+#[test]
+fn a_half_time_section_is_not_a_change_of_tempo() {
+    // The same beat written twice as slow: a section of the same track where the kick lands every other
+    // beat. The grid of 124 covers the 62 as well, so this is one tempo, not two — a half-time breakdown
+    // is not a new piece of music.
+    let samples = two_tempos(124.0, 60.0, 62.0, 60.0);
+    let tempo = dj_analysis::tempo::detect(&samples, RATE).expect("one tempo, played two ways");
+    assert_eq!(
+        tempo.segments.len(),
+        1,
+        "a half-time section split the track: {:?}",
+        tempo.segments
+    );
+    assert!(
+        tempo.bpm() > 100.0,
+        "the answer should be the beat, not its half: {}",
+        tempo.bpm()
     );
 }
 
@@ -243,9 +320,9 @@ fn the_beat_is_not_mistaken_for_its_triplets() {
         let samples = triplet_track(bpm, 4_000, 30.0);
         let tempo = dj_analysis::tempo::detect(&samples, RATE).expect("a tempo");
         assert!(
-            (tempo.bpm - bpm).abs() < 1.0,
+            (tempo.bpm() - bpm).abs() < 1.0,
             "measured {} BPM instead of {bpm}",
-            tempo.bpm
+            tempo.bpm()
         );
         let error = off_the_grid(&tempo, 4_000);
         assert!(error <= 20.0, "the grid is {error:.1} ms off the beat");

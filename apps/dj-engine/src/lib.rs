@@ -14,8 +14,8 @@ use dj_codec::{PrefetchConfig, Prefetcher};
 use dj_deck::{Deck, DeckSource};
 use dj_domain::CommandId;
 use dj_domain::{
-    Ack, AckStatus, BeatGrid, CueAction, DeckId, DeckLoad, DeckSnapshot, DjCommand, EqGains,
-    FrameRange, Levels, RejectReason, ScheduledCommand, Snapshot, SourceFrame, TrackMeta,
+    Ack, AckStatus, BeatGrid, BeatSegment, CueAction, DeckId, DeckLoad, DeckSnapshot, DjCommand,
+    EqGains, FrameRange, Levels, RejectReason, ScheduledCommand, Snapshot, SourceFrame, TrackMeta,
 };
 use dj_mixer::{ChannelSettings, CrossAssign, CrossfaderCurve, Mixer};
 
@@ -1069,8 +1069,18 @@ pub fn prepare_track(
     // The measurement is expressed in the file's own frames — the decoder reads at the file's rate and
     // so does the deck, so a 44.1 kHz track keeps its grid in 44.1 kHz frames whatever the device runs at.
     let measured_tempo = dj_analysis::tempo::analyse(path).ok().flatten();
-    let measured_grid =
-        measured_tempo.and_then(|found| BeatGrid::single(found.bpm, found.first_beat_frame));
+    let measured_grid = measured_tempo.and_then(|found| {
+        let segments: Vec<BeatSegment> = found
+            .segments
+            .iter()
+            .map(|segment| BeatSegment {
+                frame: segment.first_beat_frame,
+                beat: segment.beat,
+                bpm: segment.bpm,
+            })
+            .collect();
+        BeatGrid::from_segments(segments)
+    });
     let mut track = track;
     if let Some(grid) = measured_grid.clone() {
         track.bpm = Some(grid.bpm());
