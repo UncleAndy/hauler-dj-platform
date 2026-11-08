@@ -23,18 +23,17 @@ pub const MIN_BPM: f64 = 60.0;
 /// Upper end of the search: above this the search starts finding eighths, not beats.
 pub const MAX_BPM: f64 = 200.0;
 
-/// A peak counts as the fundamental when it carries this share of the band's strongest peak. Below
-/// this the peak is a rumble of the analysis, and the beat is one of the harmonics.
-const FUNDAMENTAL_SHARE: f32 = 0.35;
+/// A peak below this share of the strongest is a ripple, not a candidate tempo.
+const PEAK_SHARE: f32 = 0.15;
 
-/// Below this the band is noise rather than a beat, and the file gets no tempo instead of a guess.
-const MIN_CONFIDENCE: f32 = 0.35;
+/// How many beats of the grid must carry a real onset: a beat that happens twice is not a tempo.
+const MIN_BEATS: usize = 8;
 
-/// Share of the onset energy that must sit on the grid, measured on three signals: 0,93 for a click
-/// track, 0,39 for a real drum loop (off-beat hats are exactly the energy a grid does not explain), and
-/// 0,02 … 0,04 for an aperiodic line. 0,15 sits between the music and the noise with room on both
-/// sides; anything tighter would refuse real tracks, which is the defect this gate was added for.
-const MIN_EXPLAINED_SHARE: f64 = 0.15;
+/// Share of the onset energy that must sit on the grid. Measured: 0,93 for a click track, 0,39 for a
+/// drum loop, **0,16 for a real electronic track with triplet arpeggios** (most of its energy is off the
+/// beat), and 0,02 … 0,04 for an aperiodic line. 0,08 keeps a factor of two on both sides: a gate at
+/// 0,15 sat within one percent of that real track and would have refused the next one.
+const MIN_EXPLAINED_SHARE: f64 = 0.08;
 
 /// How much of the file the detector reads, in seconds. Four minutes covers every intro and breakdown
 /// a track is likely to open with, and a DJ waits for the number.
@@ -135,8 +134,10 @@ pub fn detect_in_envelope(envelope: &[f32], rate: f64) -> Option<Tempo> {
     // Measured where the tempo is actually clear, not over the whole file: an intro that explains
     // nothing would otherwise veto a grid the rest of the track makes perfectly well.
     let inside = (phase - clear.start as f64).rem_euclid(period);
-    let explained = explained_share(&envelope[clear.clone()], period, inside);
-    if explained < MIN_EXPLAINED_SHARE {
+    let (explained, beats) = explained_share(&envelope[clear.clone()], period, inside);
+    // A grid has to be played, not just hit once: a held note explains its own beginning and nothing
+    // else, and a tempo needs a run of beats to be a tempo.
+    if explained < MIN_EXPLAINED_SHARE || beats < MIN_BEATS {
         return None;
     }
     let bpm = per_second * 60.0 / period;
@@ -161,7 +162,7 @@ fn choose_tempo(envelope: &[f32], per_second: f64) -> Option<(f64, std::ops::Ran
     let window = (WINDOW_SECONDS * per_second) as usize;
     let hop = (WINDOW_HOP_SECONDS * per_second).max(1.0) as usize;
     if window < 64 || envelope.len() <= window {
-        let (bpm, _) = tempo_from_spectrum(envelope, per_second)?;
+        let bpm = tempo_of_window(envelope, per_second)?;
         return Some((bpm, 0..envelope.len()));
     }
     // Each answer remembers where it was found: the gate at the end asks "does this grid explain the
@@ -169,20 +170,21 @@ fn choose_tempo(envelope: &[f32], per_second: f64) -> Option<(f64, std::ops::Ran
     let mut found: Vec<(f64, f32, std::ops::Range<usize>)> = Vec::new();
     let mut start = 0;
     while start + window <= envelope.len() {
-        if let Some((bpm, confidence)) =
-            tempo_from_spectrum(&envelope[start..start + window], per_second)
-        {
-            found.push((bpm, confidence, start..start + window));
+        if let Some(bpm) = tempo_of_window(&envelope[start..start + window], per_second) {
+            // A window's vote is its contrast: a clear beat is a confident vote, a muddled one is not.
+            let period = per_second * 60.0 / bpm;
+            let contrast = contrast_of(&envelope[start..start + window], period);
+            found.push((bpm, contrast as f32, start..start + window));
         }
         start += hop;
     }
-    // A tail shorter than a window is still worth a look when the rest of the file was silent or
-    // beatless: half a window is enough for the spectrum to see a beat.
     if start < envelope.len()
         && envelope.len() - start >= window / 2
-        && let Some((bpm, confidence)) = tempo_from_spectrum(&envelope[start..], per_second)
+        && let Some(bpm) = tempo_of_window(&envelope[start..], per_second)
     {
-        found.push((bpm, confidence, start..envelope.len()));
+        let period = per_second * 60.0 / bpm;
+        let contrast = contrast_of(&envelope[start..], period);
+        found.push((bpm, contrast as f32, start..envelope.len()));
     }
     if found.is_empty() {
         return None;
@@ -194,43 +196,145 @@ fn choose_tempo(envelope: &[f32], per_second: f64) -> Option<(f64, std::ops::Ran
 
     // Cluster the answers by tempo: windows of the same track land within a fraction of a percent of
     // each other, and a window that saw a doubled or halved pattern lands an octave away, in its own
-    // cluster. The cluster with the most confidence behind it is the answer.
+    // cluster. The cluster with the most contrast behind it is the answer.
     let mut ordered = found.clone();
     ordered.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-    let mut best: Option<(f64, f64, usize, std::ops::Range<usize>, f32)> = None;
+    let mut best: Option<(f64, f64, std::ops::Range<usize>)> = None;
     let mut index = 0;
     while index < ordered.len() {
         let mut weight = 0.0f64;
         let mut moment = 0.0f64;
-        let mut votes = 0usize;
-        let mut clearest = (0.0f32, 0..0usize);
+        let mut clear = 0..0usize;
+        let mut clearest = f32::NEG_INFINITY;
         let anchor = ordered[index].0;
         let mut inner = index;
         while inner < ordered.len() {
-            let (bpm, confidence, range) = &ordered[inner];
-            // Within 3 % is the same tempo: the spectral peak is coarse, the windows are not exact.
+            let (bpm, contrast, range) = &ordered[inner];
+            // Within 3 % is the same tempo: the estimate is coarse, the windows are not exact.
             if (bpm / anchor).log2().abs() > 0.03 {
                 break;
             }
-            let confidence_value = f64::from(*confidence);
-            weight += confidence_value;
-            moment += confidence_value * bpm;
-            votes += 1;
-            if *confidence > clearest.0 {
-                clearest = (*confidence, range.clone());
+            let value = f64::from(*contrast);
+            weight += value;
+            moment += value * bpm;
+            if *contrast > clearest {
+                clearest = *contrast;
+                clear = range.clone();
             }
             inner += 1;
         }
         if best
             .as_ref()
-            .is_none_or(|(best_weight, _, _, _, _)| weight > *best_weight)
+            .is_none_or(|(best_weight, _, _)| weight > *best_weight)
         {
-            best = Some((weight, moment / weight, votes, clearest.1, clearest.0));
+            best = Some((weight, moment / weight, clear));
         }
         index = inner.max(index + 1);
     }
-    let (_, bpm, _, clear, _) = best?;
+    let (_, bpm, clear) = best?;
     Some((bpm, clear))
+}
+
+/// The tempo of one window: the candidate whose grid sits on the onsets and not between them.
+///
+/// The spectrum alone cannot answer this. A track built on sixteenths puts its strongest peak at four
+/// times its tempo, and its true beat can be a weak peak beside it; picking the lowest strong peak then
+/// picks a harmonic, or nothing at all. What separates a beat from its subdivisions is contrast: at the
+/// tempo, the grid lands on the loud hits and the halfway points land on quiet ones.
+fn tempo_of_window(envelope: &[f32], per_second: f64) -> Option<f64> {
+    let peaks = spectral_peaks(envelope, per_second);
+    if peaks.is_empty() {
+        return None;
+    }
+    let mut best = (0.0f64, 0.0f64); // (contrast, bpm)
+    for (bpm, _) in &peaks {
+        // A peak is either the tempo or one of its multiples: walk down by octaves and by thirds, and
+        // let the contrast decide which one the beat is.
+        let mut candidate = *bpm;
+        let mut steps = 0;
+        while candidate >= MIN_BPM && steps < 8 {
+            if (MIN_BPM..=MAX_BPM).contains(&candidate) {
+                let period = per_second * 60.0 / candidate;
+                let contrast = contrast_of(envelope, period);
+                if contrast > best.0 {
+                    best = (contrast, candidate);
+                }
+            }
+            candidate /= 2.0;
+            steps += 1;
+        }
+        let mut thirds = 3.0;
+        while *bpm / thirds >= MIN_BPM && thirds <= 9.0 {
+            let candidate = *bpm / thirds;
+            if (MIN_BPM..=MAX_BPM).contains(&candidate) {
+                let period = per_second * 60.0 / candidate;
+                let contrast = contrast_of(envelope, period);
+                if contrast > best.0 {
+                    best = (contrast, candidate);
+                }
+            }
+            thirds *= 3.0;
+        }
+    }
+    if best.1 <= 0.0 {
+        return None;
+    }
+    Some(best.1)
+}
+
+/// How well a period works as the beat: the beat stands out from its own subdivisions, and the grid is
+/// actually played.
+///
+/// Contrast alone cannot tell a beat from its double: a click every second makes a grid of one second
+/// and a grid of half a second both look perfect, because neither has anything between its points. What
+/// separates them is that the doubled grid has points nobody played — half of them land on silence — so
+/// the score is the contrast times the share of the grid that carries an onset.
+fn contrast_of(envelope: &[f32], period: f64) -> f64 {
+    let mut best = 0.0f64;
+    let steps = ((period / 0.5).ceil() as usize).clamp(4, 512);
+    let strongest = envelope.iter().cloned().fold(0.0f32, f32::max);
+    for step in 0..steps {
+        let phase = period * step as f64 / steps as f64;
+        let on = comb_score(envelope, period, phase);
+        let between = comb_score(envelope, period, phase + period / 2.0);
+        if on <= 0.0 {
+            continue;
+        }
+        let contrast = on / between.max(1e-6);
+        let played = played_share(envelope, period, phase, strongest);
+        let score = contrast * played;
+        if score > best {
+            best = score;
+        }
+    }
+    best
+}
+
+/// Share of a grid's points that carry a real onset, 0 … 1.
+fn played_share(envelope: &[f32], period: f64, phase: f64, strongest: f32) -> f64 {
+    if strongest <= 0.0 {
+        return 0.0;
+    }
+    let floor = strongest * 0.1;
+    let mut counted = 0usize;
+    let mut played = 0usize;
+    let mut position = phase;
+    let length = envelope.len() as f64;
+    while position < length && counted < 4_096 {
+        let from = (position - 0.5).max(0.0) as usize;
+        let to = ((position + 0.5) as usize + 1).min(envelope.len());
+        let here: f32 = envelope[from..to].iter().sum();
+        if here >= floor {
+            played += 1;
+        }
+        counted += 1;
+        position += period;
+    }
+    if counted == 0 {
+        0.0
+    } else {
+        played as f64 / counted as f64
+    }
 }
 
 /// The period the comb likes best around a hint, searched over ±0.6 % in steps of 0.02 %.
@@ -252,17 +356,15 @@ fn refine_period(envelope: &[f32], hint: f64) -> f64 {
     best.0
 }
 
-/// The tempo, read off the spectrum of the onset envelope.
+/// The strongest peaks of the onset spectrum, in BPM, between [`MIN_BPM`] and four times it.
 ///
-/// A beat pattern is periodic, so its envelope has energy at the beat frequency and at its harmonics.
-/// The *lowest* strong peak is the beat rate: a click on every beat gives that peak at the tempo, while
-/// the same track read at half speed would put it an octave lower, where there is nothing. Picking the
-/// lowest strong peak is what keeps a track at 174 from being reported as 87.
-fn tempo_from_spectrum(envelope: &[f32], per_second: f64) -> Option<(f64, f32)> {
-    // A power of two, long enough to separate 1 Hz from its neighbours: 8192 points is 44 s at the hop
-    // rate, and the envelope is usually shorter, which is only a little padding.
+/// Four times, not twice: a track built on sixteenths at 100 BPM has its strongest peak at 400, and the
+/// candidate walk needs to see it to find the 100 underneath.
+fn spectral_peaks(envelope: &[f32], per_second: f64) -> Vec<(f64, f32)> {
     let size = envelope.len().clamp(2_048, 16_384).next_power_of_two();
-    let mut spectrum = Spectrum::new(size)?;
+    let Some(mut spectrum) = Spectrum::new(size) else {
+        return Vec::new();
+    };
     let mut block = vec![0.0f32; size];
     let take = envelope.len().min(size);
     block[..take].copy_from_slice(&envelope[..take]);
@@ -270,61 +372,44 @@ fn tempo_from_spectrum(envelope: &[f32], per_second: f64) -> Option<(f64, f32)> 
     spectrum.magnitudes(&block, &mut magnitudes);
 
     let bin_hz = per_second / size as f64;
-    let lowest = (0.6 / bin_hz).ceil() as usize;
-    let highest = (3.6 / bin_hz).floor() as usize;
-    let band = &magnitudes[lowest.min(magnitudes.len())..highest.min(magnitudes.len())];
-    if band.is_empty() {
-        return None;
+    let lowest = (MIN_BPM / 60.0 / bin_hz).floor().max(2.0) as usize;
+    let highest = (MAX_BPM * 4.0 / 60.0 / bin_hz).ceil() as usize;
+    let highest = highest.min(magnitudes.len().saturating_sub(2));
+    if lowest + 2 >= highest {
+        return Vec::new();
     }
-    let strongest = band.iter().cloned().fold(0.0f32, f32::max);
+    let strongest = magnitudes[lowest..highest]
+        .iter()
+        .cloned()
+        .fold(0.0f32, f32::max);
     if strongest <= 0.0 {
-        return None;
+        return Vec::new();
     }
-    // The lowest peak that carries a real share of the band's strongest: the fundamental, unless the
-    // fundamental is only a rumble and the beat is the harmonic.
-    let mut chosen = None;
-    for bin in lowest + 1..highest.saturating_sub(1) {
+    let mut peaks: Vec<(f64, f32)> = Vec::new();
+    for bin in lowest + 1..highest {
         let value = magnitudes[bin];
-        if value < strongest * FUNDAMENTAL_SHARE {
+        if value < strongest * PEAK_SHARE {
             continue;
         }
         if value >= magnitudes[bin - 1] && value >= magnitudes[bin + 1] {
-            chosen = Some(bin);
-            break;
+            // Parabolic fit, so a peak between two bins is not rounded to the bin.
+            let (left, centre, right) = (
+                f64::from(magnitudes[bin - 1]),
+                f64::from(magnitudes[bin]),
+                f64::from(magnitudes[bin + 1]),
+            );
+            let denominator = left - 2.0 * centre + right;
+            let offset = if denominator.abs() > f64::EPSILON {
+                (0.5 * (left - right) / denominator).clamp(-0.5, 0.5)
+            } else {
+                0.0
+            };
+            peaks.push(((bin as f64 + offset) * bin_hz * 60.0, value / strongest));
         }
     }
-    let bin = chosen?;
-    // Parabolic fit over the peak and its neighbours: 8192 points give a bin coarse enough that
-    // rounding alone would cost a whole tenth of a BPM.
-    let (left, centre, right) = (
-        f64::from(magnitudes[bin - 1]),
-        f64::from(magnitudes[bin]),
-        f64::from(magnitudes[bin + 1]),
-    );
-    let denominator = left - 2.0 * centre + right;
-    let offset = if denominator.abs() > f64::EPSILON {
-        (0.5 * (left - right) / denominator).clamp(-0.5, 0.5)
-    } else {
-        0.0
-    };
-    let hertz = (bin as f64 + offset) * bin_hz;
-    let bpm = hertz * 60.0;
-    if !(MIN_BPM..=MAX_BPM).contains(&bpm) {
-        return None;
-    }
-    // How much the band stands out: a held note has no beat, and its band is flat noise.
-    let mut sorted = band.to_vec();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let median = f64::from(sorted[sorted.len() / 2]);
-    let confidence = if f64::from(strongest) > median {
-        (1.0 - median / f64::from(strongest)).clamp(0.0, 1.0) as f32
-    } else {
-        0.0
-    };
-    if confidence < MIN_CONFIDENCE {
-        return None;
-    }
-    Some((bpm, confidence))
+    peaks.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    peaks.truncate(16);
+    peaks
 }
 
 /// The phase of the grid, in hops: where inside one period the beats start.
@@ -368,17 +453,20 @@ fn best_phase_and_score(envelope: &[f32], period: f64) -> (f64, f64) {
     best
 }
 
-/// Share of the envelope's energy that lands on the grid of `period` at `phase`, 0 … 1.
+/// The share of the envelope's energy that lands on the grid, and how many beats carry any of it.
 ///
-/// A metronome puts everything on the grid; a rubato line puts a fraction there by coincidence.
-fn explained_share(envelope: &[f32], period: f64, phase: f64) -> f64 {
+/// A metronome puts everything on the grid; a rubato line puts a fraction there by coincidence; a held
+/// note puts one bump on one beat and nothing anywhere else. The count is what tells the last two apart.
+fn explained_share(envelope: &[f32], period: f64, phase: f64) -> (f64, usize) {
     let total: f64 = envelope.iter().map(|value| f64::from(*value)).sum();
     if total <= 0.0 {
-        return 0.0;
+        return (0.0, 0);
     }
+    let strongest = envelope.iter().cloned().fold(0.0f32, f32::max);
     // Half a hop either side of each grid point: the flux of one onset spans a couple of hops, and a
     // grid that hits the onset exactly would otherwise be punished for the smear it created.
     let mut on_grid = 0.0f64;
+    let mut beats = 0usize;
     let mut position = phase;
     let length = envelope.len() as f64;
     let mut last = f64::NEG_INFINITY;
@@ -386,14 +474,20 @@ fn explained_share(envelope: &[f32], period: f64, phase: f64) -> f64 {
         let from = (position - 0.5).max(0.0) as usize;
         let to = ((position + 0.5) as usize + 1).min(envelope.len());
         if from as f64 > last {
+            let mut here = 0.0f32;
             for value in &envelope[from..to] {
-                on_grid += f64::from(*value);
+                here += *value;
+            }
+            on_grid += f64::from(here);
+            // A beat that carries a tenth of the loudest onset is a beat somebody played.
+            if here >= strongest * 0.1 {
+                beats += 1;
             }
             last = to as f64;
         }
         position += period;
     }
-    (on_grid / total).clamp(0.0, 1.0)
+    ((on_grid / total).clamp(0.0, 1.0), beats)
 }
 
 /// Mean onset strength on the grid of `period` hops starting at `phase`.

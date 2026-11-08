@@ -178,3 +178,51 @@ fn a_track_with_no_beat_anywhere_is_still_refused() {
     let samples = rubato_intro(180.0);
     assert!(dj_analysis::tempo::detect(&samples, RATE).is_none());
 }
+
+/// A track built on triplets: a beat click every 450 ms, and two quieter clicks between them, which is
+/// what put a 400 BPM peak in the spectrum of a 133 BPM track.
+fn triplet_track(bpm: f64, offset: usize, seconds: f64) -> Vec<f32> {
+    let frames = (RATE * seconds) as usize;
+    let mut samples = vec![0.0f32; frames];
+    let beat = RATE * 60.0 / bpm;
+    let mut position = offset as f64;
+    while (position as usize) + 256 < frames {
+        // The beat itself: loud.
+        let start = position as usize;
+        for i in 0..192 {
+            let decay = 1.0 - i as f32 / 192.0;
+            samples[start + i] = decay * 0.8 * if i % 2 == 0 { 1.0 } else { -1.0 };
+        }
+        // Two triplet subdivisions: quieter, so the beat is still the loudest thing on the grid.
+        for third in 1..3 {
+            let at = (position + beat * f64::from(third) / 3.0) as usize;
+            if at + 128 < frames {
+                for i in 0..96 {
+                    let decay = 1.0 - i as f32 / 96.0;
+                    samples[at + i] = decay * 0.25 * if i % 2 == 0 { 1.0 } else { -1.0 };
+                }
+            }
+        }
+        position += beat;
+    }
+    samples
+}
+
+#[test]
+fn the_beat_is_not_mistaken_for_its_triplets() {
+    // Measured on a real track: "Shadow Rhythm — Deep Resonance — Treblo" runs at 133,3 BPM with a
+    // triplet arpeggio whose spectrum peaks at 400 BPM (three times the tempo). A detector that takes
+    // the lowest strong peak, or the fastest grid that hits every onset, lands on a multiple; the beat
+    // is the grid the *loud* hits land on.
+    for bpm in [133.3f64, 100.0] {
+        let samples = triplet_track(bpm, 4_000, 30.0);
+        let tempo = dj_analysis::tempo::detect(&samples, RATE).expect("a tempo");
+        assert!(
+            (tempo.bpm - bpm).abs() < 1.0,
+            "measured {} BPM instead of {bpm}",
+            tempo.bpm
+        );
+        let error = off_the_grid(&tempo, 4_000);
+        assert!(error <= 20.0, "the grid is {error:.1} ms off the beat");
+    }
+}
