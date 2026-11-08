@@ -401,3 +401,83 @@ fn the_detent_is_deeper_than_the_cut_before_it() {
         }
     }
 }
+
+/// The worst jump between neighbouring samples over a stream, and the material's own worst jump.
+fn worst_step(
+    eq: &mut ChannelEq,
+    hertz: f64,
+    blocks: usize,
+    change_at: usize,
+    gains: EqGains,
+) -> (f64, f64) {
+    const BLOCK: usize = 256;
+    eq.reset();
+    let mut previous = 0.0f32;
+    let mut ours = 0.0f64;
+    let mut natural = 0.0f64;
+    let mut frame = 0usize;
+    for block in 0..blocks {
+        if block == change_at {
+            eq.set_gains(gains);
+        }
+        let mut buffer = vec![0.0f32; BLOCK * 2];
+        for pair in buffer.chunks_exact_mut(2) {
+            let value = (std::f64::consts::TAU * hertz * frame as f64 / RATE).sin() as f32 * 0.5;
+            pair[0] = value;
+            pair[1] = value;
+            frame += 1;
+        }
+        eq.process(&mut buffer);
+        for pair in buffer.chunks_exact(2) {
+            ours = ours.max(f64::from((pair[0] - previous).abs()));
+            previous = pair[0];
+        }
+        // The sine's own step at this frequency, which is what "no click" has to look like.
+        let step = std::f64::consts::TAU * hertz / RATE;
+        natural = natural.max(0.5 * step.abs());
+    }
+    (ours, natural)
+}
+
+#[test]
+fn a_band_gain_change_does_not_click() {
+    // A knob move is a gain change, and a gain change applied in one sample is a step in the waveform:
+    // measured at 58 times the material's own step on a 60 Hz tone, which is exactly the tick a hand
+    // hears while scrolling. The gain has to travel, not jump.
+    for (band, hertz) in [
+        (EqBand::Low, 60.0),
+        (EqBand::Low, 40.0),
+        (EqBand::Mid, 1_000.0),
+    ] {
+        let mut eq = ChannelEq::new(RATE);
+        // Started away from zero, so the filters are running: this is the step of the gain itself, not
+        // the wake-up of a bypassed split.
+        let mut before = EqGains::FLAT;
+        before.set_band(band, -3.0);
+        eq.set_gains(before);
+        let mut after = EqGains::FLAT;
+        after.set_band(band, -12.0);
+        let (ours, natural) = worst_step(&mut eq, hertz, 40, 20, after);
+        assert!(
+            ours <= natural * 3.0,
+            "{band:?} at {hertz:.0} Hz jumps {ours:.5} against the material's own {natural:.5} \
+             ({:.0}x): that is a click",
+            ours / natural
+        );
+    }
+}
+
+#[test]
+fn coming_back_from_flat_does_not_click() {
+    // Flat is a bypass, so the filters did not run; a knob that moves off zero must not reveal a stale
+    // state as a step (measured 51 times the material's own).
+    let mut eq = ChannelEq::new(RATE);
+    let mut moved = EqGains::FLAT;
+    moved.set_band(EqBand::Low, -0.25);
+    let (ours, natural) = worst_step(&mut eq, 60.0, 60, 20, moved);
+    assert!(
+        ours <= natural * 3.0,
+        "leaving flat jumps {ours:.5} against the material's own {natural:.5} ({:.0}x)",
+        ours / natural
+    );
+}

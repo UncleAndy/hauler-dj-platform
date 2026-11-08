@@ -91,11 +91,14 @@ impl Isolator {
         self.gains.iter().all(|gain| *gain == 1.0)
     }
 
-    /// Filter one interleaved stereo block in place. A bypass changes nothing, bit for bit.
+    /// Filter one interleaved stereo block in place. At unity the signal comes back bit for bit.
+    ///
+    /// The block always goes through the split, even when every band stands at unity: the splitter is
+    /// what writes the dry sample back in that case, and skipping the call instead would leave its
+    /// state from whenever it last ran. The first block after a knob moved then starts from a stale
+    /// state, which measures as a step of fifty times the material's own — the click a hand hears when
+    /// it turns a knob off zero.
     pub fn process(&mut self, frames: &mut [f32]) {
-        if self.is_bypassed() {
-            return;
-        }
         self.inner.process(frames);
     }
 

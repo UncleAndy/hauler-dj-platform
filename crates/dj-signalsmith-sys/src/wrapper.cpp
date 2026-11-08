@@ -80,6 +80,10 @@ struct ResampleHandle {
 struct IsolatorHandle {
     IsolatorHandle(int channels, double sample_rate, double low_hz, double high_hz)
         : channels(channels) {
+        glideSamples = sample_rate > 0.0 ? static_cast<int>(sample_rate * 0.005) : 240;
+        if (glideSamples < 1) {
+            glideSamples = 1;
+        }
         const double q = 0.7071067811865476; // sqrt(0.5): two of these make a Linkwitz-Riley fourth order
         const double low = low_hz / sample_rate;
         const double high = high_hz / sample_rate;
@@ -109,8 +113,24 @@ struct IsolatorHandle {
     }
 
     int channels;
-    // Linear gains: 1 is unity, 0 removes the band, above 1 is a boost.
+    // Linear gains: 1 is unity, 0 removes the band, above 1 is a boost. `gains` is where a knob points,
+    // `reached` is where the multiplier currently stands: a gain applied in one sample is a step in the
+    // waveform, and a step is a tick in the middle of a track.
     float gains[3] = {1.0f, 1.0f, 1.0f};
+    float reached[3] = {1.0f, 1.0f, 1.0f};
+    float glide[3] = {0.0f, 0.0f, 0.0f};
+    int glideLeft = 0;
+    // How much of the split is in the output, 0…1. At unity the split is not heard at all — but it is
+    // not the same waveform as the dry signal: a Linkwitz-Riley pair sums to an allpass, so the sum is
+    // the dry signal turned by tens of degrees. Switching between the two in one sample is a step of
+    // fifty times the material's own, so the split is faded in and out instead.
+    float wet = 0.0f;
+    float wetStep = 0.0f;
+    int wetLeft = 0;
+    float wetTarget = 0.0f;
+    // Five milliseconds: long enough that a scroll notch is a slope rather than an edge, short enough
+    // that a hand still feels the knob answer it.
+    int glideSamples = 240;
     signalsmith::filters::BiquadStatic<float> lowLowpass[2][2] = {};
     signalsmith::filters::BiquadStatic<float> lowHighpass[2][2] = {};
     signalsmith::filters::BiquadStatic<float> midLowpass[2][2] = {};
@@ -320,20 +340,57 @@ void dj_isolator_free(void *raw)
 
 void dj_isolator_reset(void *raw)
 {
-    if (auto *handle = static_cast<IsolatorHandle *>(raw)) {
-        handle->reset();
+    auto *handle = static_cast<IsolatorHandle *>(raw);
+    if (handle == nullptr) {
+        return;
     }
+    handle->reset();
+    // A reset is a new track: the multiplier starts where the knobs point, with nothing to travel.
+    for (int band = 0; band < 3; ++band) {
+        handle->reached[band] = handle->gains[band];
+        handle->glide[band] = 0.0f;
+    }
+    handle->glideLeft = 0;
+    handle->wet = handle->wetTarget;
+    handle->wetStep = 0.0f;
+    handle->wetLeft = 0;
 }
 
 // Linear gain per band: 1 is unity, 0 removes the band. A negative or broken gain is silence for that
-// band rather than a sign flip in the mix.
+// band rather than a sign flip in the mix. The change is travelled to over a few milliseconds rather
+// than applied at once.
 void dj_isolator_set_gains(void *raw, float low, float mid, float high)
 {
-    if (auto *handle = static_cast<IsolatorHandle *>(raw)) {
-        const float wanted[3] = {low, mid, high};
-        for (int band = 0; band < 3; ++band) {
-            handle->gains[band] = wanted[band] > 0.0f && wanted[band] <= 64.0f ? wanted[band] : 0.0f;
+    auto *handle = static_cast<IsolatorHandle *>(raw);
+    if (handle == nullptr) {
+        return;
+    }
+    const float wanted[3] = {low, mid, high};
+    bool changed = false;
+    for (int band = 0; band < 3; ++band) {
+        const float value = wanted[band] > 0.0f && wanted[band] <= 64.0f ? wanted[band] : 0.0f;
+        if (value != handle->gains[band]) {
+            handle->gains[band] = value;
+            changed = true;
         }
+    }
+    if (!changed) {
+        return;
+    }
+    // The glide starts from wherever the multiplier stands, so a second notch mid-glide bends the
+    // slope instead of jumping onto a new one.
+    for (int band = 0; band < 3; ++band) {
+        handle->glide[band] = (handle->gains[band] - handle->reached[band]) /
+                              static_cast<float>(handle->glideSamples);
+    }
+    handle->glideLeft = handle->glideSamples;
+    const bool unity = handle->gains[0] == 1.0f && handle->gains[1] == 1.0f &&
+                       handle->gains[2] == 1.0f;
+    const float wantedWet = unity ? 0.0f : 1.0f;
+    if (wantedWet != handle->wetTarget) {
+        handle->wetTarget = wantedWet;
+        handle->wetStep = (wantedWet - handle->wet) / static_cast<float>(handle->glideSamples);
+        handle->wetLeft = handle->glideSamples;
     }
 }
 
@@ -343,15 +400,34 @@ void dj_isolator_process(void *raw, float *interleaved, int frames)
     if (handle == nullptr || frames <= 0) {
         return;
     }
-    const float low = handle->gains[0];
-    const float mid = handle->gains[1];
-    const float high = handle->gains[2];
-    if (low == 1.0f && mid == 1.0f && high == 1.0f) {
-        // Unity on every band: not a filter at all, and the signal comes back bit for bit.
-        return;
-    }
     const int channels = handle->channels < 2 ? handle->channels : 2;
+    // The chains always run, even while every band stands at unity: a splitter that stops while it is
+    // bypassed holds a state from whenever it last ran, and the first sample after it is switched back
+    // in is a step (measured at 51 times the material's own). What the bypass saves is the write, not
+    // the arithmetic: at unity the dry sample goes out, so the signal still comes back bit for bit.
     for (int frame = 0; frame < frames; ++frame) {
+        if (handle->glideLeft > 0) {
+            for (int band = 0; band < 3; ++band) {
+                handle->reached[band] += handle->glide[band];
+            }
+            handle->glideLeft -= 1;
+            if (handle->glideLeft == 0) {
+                for (int band = 0; band < 3; ++band) {
+                    handle->reached[band] = handle->gains[band];
+                }
+            }
+        }
+        if (handle->wetLeft > 0) {
+            handle->wet += handle->wetStep;
+            handle->wetLeft -= 1;
+            if (handle->wetLeft == 0) {
+                handle->wet = handle->wetTarget;
+            }
+        }
+        const float wet = handle->wet;
+        const float low = handle->reached[0];
+        const float mid = handle->reached[1];
+        const float high = handle->reached[2];
         for (int channel = 0; channel < channels; ++channel) {
             const size_t index = static_cast<size_t>(frame) * 2 + static_cast<size_t>(channel);
             const float dry = interleaved[index];
@@ -365,9 +441,10 @@ void dj_isolator_process(void *raw, float *interleaved, int frames)
             const float upper = IsolatorHandle::through(handle->lowHighpass[channel], dry);
             const float midBand = IsolatorHandle::through(handle->midLowpass[channel], upper);
             const float highBand = IsolatorHandle::through(handle->midHighpass[channel], upper);
-            // Every chain runs on every frame, whether or not its band is removed: one that only runs
-            // while it is used starts from cold, and a cold filter is a click.
-            interleaved[index] = lowBand * low + midBand * mid + highBand * high;
+            const float sum = lowBand * low + midBand * mid + highBand * high;
+            // At a wet of zero this is exactly the dry sample, bit for bit: nothing is multiplied by
+            // an almost-one and nothing drifts.
+            interleaved[index] = dry + (sum - dry) * wet;
         }
     }
 }
