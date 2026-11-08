@@ -60,6 +60,9 @@ class UiSettings : public QObject
     Q_PROPERTY(QString gainCurve READ gainCurve NOTIFY changed)
     // How much of the straight rate the knob keeps at unity: 1.0 is the straight law, 0.5 is half.
     Q_PROPERTY(double gainCurveMiddle READ gainCurveMiddle NOTIFY changed)
+    // The same law for the channel faders, with its own setting: a fader is ridden all set, so it wants
+    // a gentler curve than a knob that is set once and left alone.
+    Q_PROPERTY(double faderCurveMiddle READ faderCurveMiddle NOTIFY changed)
 
 public:
     explicit UiSettings(QObject *parent = nullptr);
@@ -127,10 +130,16 @@ public:
     bool setGainCurve(const QString &kind);
     bool setGainCurveMiddle(double middle);
 
+    double faderCurveMiddle() const { return m_faderCurve.middle(); }
+    bool setFaderCurveMiddle(double middle);
+
     /// Position 0…1 of a level knob (unity to the end) as a share of its range.
     Q_INVOKABLE double gainCurveValue(double position) const;
     /// The position that lands on a share of the range — what the pointer is drawn from.
     Q_INVOKABLE double gainCurvePosition(double share) const;
+    /// The same two directions for a channel fader: unity at 1, silence at 0.
+    Q_INVOKABLE double faderCurveValue(double share) const;
+    Q_INVOKABLE double faderCurvePosition(double value) const;
 
     // Set from the command line; an invalid colour is refused and the default kept.
     bool setWaveformOutsideColor(const QString &color);
@@ -148,7 +157,10 @@ private:
     // Sixteen percent: the owner's default. Wide enough for a long blend, narrow enough that the
     // handle still lands where the hand aims.
     double m_pitchRangePercent = 16.0;
-    GainCurve m_gainCurve;
+    // Chosen by ear, not by arithmetic: the owner tried the range and kept 0.1 for the knobs — around
+    // unity a knob is a fifth of the straight rate — and 0.5 for the faders, which are ridden.
+    GainCurve m_gainCurve{0.1};
+    GainCurve m_faderCurve{0.5};
     // One bar per pixel: the waveform is a continuous curve, and two-pixel bars halve the
     // horizontal detail for nothing.
     int m_waveformBarWidth = 1;

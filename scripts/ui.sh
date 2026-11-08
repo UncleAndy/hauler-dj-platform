@@ -198,6 +198,9 @@ case "${1:-}" in
     # existed — a switch nobody can verify is a switch that lies.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --gain-curve cubic --gain-curve-check
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --gain-curve linear --gain-curve-check
+    # The faders have their own middle, and a setting nobody exercises is a setting that can rot.
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --fader-curve-middle 1 \
+        --gain-curve-check
     # The channel EQ, end to end: three knobs per channel must reach the deck they name, come back in
     # the snapshot already applied, and show the engine's number rather than a local model.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --eq-check

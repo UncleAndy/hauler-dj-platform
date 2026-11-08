@@ -124,10 +124,13 @@ bool UiSettings::setGainCurve(const QString &kind)
         return true;
     }
     GainCurve wanted = m_gainCurve;
-    if (!wanted.configure(kind, m_gainCurve.middle())) {
+    GainCurve faders = m_faderCurve;
+    if (!wanted.configure(kind, m_gainCurve.middle())
+        || !faders.configure(kind, m_faderCurve.middle())) {
         return false;
     }
     m_gainCurve = wanted;
+    m_faderCurve = faders;
     emit changed();
     return true;
 }
@@ -149,4 +152,25 @@ double UiSettings::gainCurveValue(double position) const
 double UiSettings::gainCurvePosition(double share) const
 {
     return m_gainCurve.position(share);
+}
+
+bool UiSettings::setFaderCurveMiddle(double middle)
+{
+    if (!m_faderCurve.configure(m_faderCurve.kind(), middle)) {
+        return false;
+    }
+    emit changed();
+    return true;
+}
+
+double UiSettings::faderCurveValue(double share) const
+{
+    // A fader's range is the same shape as a knob's, only upside down: 1 is unity, 0 is silence, so the
+    // travel is measured from unity down.
+    return 1.0 - m_faderCurve.value(1.0 - share);
+}
+
+double UiSettings::faderCurvePosition(double value) const
+{
+    return 1.0 - m_faderCurve.position(1.0 - value);
 }

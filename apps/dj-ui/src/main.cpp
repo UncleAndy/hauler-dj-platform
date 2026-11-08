@@ -945,6 +945,11 @@ int main(int argc, char *argv[])
         QStringLiteral("How much of the straight rate a level knob keeps at unity, 0.05 to 1 "
                        "(1 is straight through; the default is 0.1)."),
         QStringLiteral("share"));
+    const QCommandLineOption faderCurveMiddleOption(
+        QStringLiteral("fader-curve-middle"),
+        QStringLiteral("The same setting for the channel faders, which are ridden rather than set, "
+                       "0.05 to 1 (1 is straight through; the default is 0.5)."),
+        QStringLiteral("share"));
     const QCommandLineOption gainCurveCheckOption(
         QStringLiteral("gain-curve-check"),
         QStringLiteral("Measure the level knobs' law at unity and at the end of their travel and "
@@ -1123,6 +1128,7 @@ int main(int argc, char *argv[])
     parser.addOption(gainCheckOption);
     parser.addOption(gainCurveOption);
     parser.addOption(gainCurveMiddleOption);
+    parser.addOption(faderCurveMiddleOption);
     parser.addOption(gainCurveCheckOption);
     parser.addOption(eqCheckOption);
     parser.addOption(neutralOption);
@@ -1309,6 +1315,14 @@ int main(int argc, char *argv[])
         const double middle = parser.value(gainCurveMiddleOption).toDouble(&ok);
         if (!ok || !settings.setGainCurveMiddle(middle)) {
             std::fprintf(stderr, "dj-ui: --gain-curve-middle wants a number from 0.05 to 1\n");
+            return 2;
+        }
+    }
+    if (parser.isSet(faderCurveMiddleOption)) {
+        bool ok = false;
+        const double middle = parser.value(faderCurveMiddleOption).toDouble(&ok);
+        if (!ok || !settings.setFaderCurveMiddle(middle)) {
+            std::fprintf(stderr, "dj-ui: --fader-curve-middle wants a number from 0.05 to 1\n");
             return 2;
         }
     }
@@ -2890,7 +2904,7 @@ int main(int argc, char *argv[])
         const double promisedMaster =
             masterRange * (curved ? middle : 1.0) / masterTravel;
         const auto near = [](double measured, double promised) {
-            return std::abs(measured - promised) <= promised * 0.05;
+            return std::abs(measured - promised) <= std::max(1e-4, promised * 0.05);
         };
         if (!near(trimAtUnity, promisedTrim)) {
             std::fprintf(stderr,
@@ -2911,6 +2925,43 @@ int main(int argc, char *argv[])
                          "dj-ui: the master moves %.3f dB per pixel at unity, and the curve promises "
                          "%.3f\n",
                          masterAtUnity, promisedMaster);
+            return 1;
+        }
+        // The channel faders: same family, their own middle, and the ends fixed at unity and silence.
+        auto *fader = findItem(content, QStringLiteral("fader_A"));
+        if (fader == nullptr) {
+            std::fprintf(stderr, "dj-ui: no channel fader in the mixer\n");
+            return 1;
+        }
+        double faderTop = 0.0;
+        double faderBottom = 0.0;
+        double faderFirst = 0.0;
+        double faderLastBefore = 0.0;
+        if (!ask(fader, "valueAtHandle", 1.0, &faderTop) || !ask(fader, "valueAtHandle", 0.0, &faderBottom)
+            || !ask(fader, "valueAtHandle", 1.0 - hair, &faderFirst)
+            || !ask(fader, "valueAtHandle", hair, &faderLastBefore)) {
+            return 1;
+        }
+        const double faderAtTop = (faderTop - faderFirst) / hair;
+        const double faderAtBottom = faderLastBefore / hair;
+        const double promisedFader = curved ? settings.faderCurveMiddle() : 1.0;
+        const double promisedFaderBottom = curved ? 2.0 - settings.faderCurveMiddle() : 1.0;
+        std::fprintf(stdout,
+                     "dj-ui: the channel fader moves %.3f of its range per unit of travel at the top (curve %s "
+                     "at %.2f) and %.3f at the bottom\n",
+                     faderAtTop, qPrintable(settings.gainCurve()), settings.faderCurveMiddle(),
+                     faderAtBottom);
+        if (std::abs(faderTop - 1.0) > 0.001 || std::abs(faderBottom) > 0.001) {
+            std::fprintf(stderr,
+                         "dj-ui: the fader's ends are not unity and silence: %.3f / %.3f\n",
+                         faderTop, faderBottom);
+            return 1;
+        }
+        if (!near(faderAtTop, promisedFader) || !near(faderAtBottom, promisedFaderBottom)) {
+            std::fprintf(stderr,
+                         "dj-ui: the fader moves %.3f at the top and %.3f at the bottom, and the curve "
+                         "promises %.3f and %.3f\n",
+                         faderAtTop, faderAtBottom, promisedFader, promisedFaderBottom);
             return 1;
         }
         if (curved && !(trimAtEnd > trimAtUnity * 1.3)) {

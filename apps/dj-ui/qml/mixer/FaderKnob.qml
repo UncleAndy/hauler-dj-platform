@@ -4,6 +4,10 @@
 // and it does not boost — 1.0 is the top of the scale, 0.0 is silence. The gain is a separate knob at
 // the top of the strip, because a trim correction and a fader throw must never write one number.
 //
+// Its law is the same curve as a knob's, with its own middle (`--fader-curve-middle`, 0,5 by default):
+// a fader is ridden, so it keeps half the straight rate at the top rather than a fifth, and it is the
+// bottom of the travel that pays for it.
+//
 // The pointer lives inside the meter's rectangle instead of beside it: a strip is narrow, and a
 // separate column for the fader cost the meter a quarter of its width. The handle follows the hand
 // while the button is down, because a control that waits for a round trip through the engine reads as
@@ -20,36 +24,54 @@ Item {
     objectName: "fader_" + deckId
 
     readonly property real fraction: Math.max(0.0, Math.min(1.0, position))
+    // Where the handle stands for that value: the law is not straight, so a value is not a position.
+    readonly property real handleFraction: UiSettings.faderCurvePosition(knob.fraction)
     // The pointer travels inside the meter, not on its frame: at unity it would otherwise be drawn on
     // the top edge, half of it clipped, and a fader whose line cannot be seen at rest reads as dead.
     readonly property real inset: 3
     // Where the handle is drawn, from the top.
     readonly property real handleY: knob.inset
                                     + (height - 2 * knob.inset)
-                                      * (1.0 - (knob.dragging ? knob.dragged : knob.fraction))
+                                      * (1.0 - (knob.dragging ? knob.draggedHandle
+                                                              : knob.handleFraction))
 
     // What the last gesture asked for, so a check can tell a dead fader from a refused command.
     property real lastY: -1
     property real lastPosition: -1
     property bool dragging: false
+    // Where the hand put the handle, and the value that position is worth.
     property real dragged: 0.0
+    property real draggedHandle: 1.0
 
     // Wheel: one notch is five percent of the throw, from the value the fader currently shows.
     signal scrolled(int notches)
 
     function set(y) {
         const travel = Math.max(1.0, height - 2 * knob.inset);
-        const share = 1.0 - Math.max(0.0, Math.min(1.0, (y - knob.inset) / travel));
+        const where = 1.0 - Math.max(0.0, Math.min(1.0, (y - knob.inset) / travel));
+        const value = UiSettings.faderCurveValue(where);
         knob.lastY = y;
-        knob.lastPosition = share;
-        knob.dragged = share;
-        Bridge.setChannelFader(knob.deckId, share);
+        knob.lastPosition = value;
+        knob.dragged = value;
+        knob.draggedHandle = where;
+        Bridge.setChannelFader(knob.deckId, value);
+    }
+
+    /// The value a handle position is worth — the law, away from the widget, so a check can measure it.
+    function valueAtHandle(where) {
+        return UiSettings.faderCurveValue(where);
+    }
+
+    /// The handle position a value stands at.
+    function handleOfValue(value) {
+        return UiSettings.faderCurvePosition(value);
     }
 
     // A double click puts the fader back at the top, where a channel stands when it is open.
     function reset() {
         knob.lastPosition = 1.0;
         knob.dragged = 1.0;
+        knob.draggedHandle = 1.0;
         Bridge.setChannelFader(knob.deckId, 1.0);
     }
 

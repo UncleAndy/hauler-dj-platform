@@ -3,9 +3,9 @@
 #include <algorithm>
 #include <cmath>
 
-GainCurve::GainCurve()
+GainCurve::GainCurve(double middle)
 {
-    configure(QStringLiteral("cubic"), 0.1);
+    configure(QStringLiteral("cubic"), middle);
 }
 
 bool GainCurve::configure(const QString &kind, double middle)
