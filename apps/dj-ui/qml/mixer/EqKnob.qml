@@ -1,8 +1,9 @@
 // One band of a channel's three-band EQ (A14, DJP-MIX-002).
 //
 // Round like the master knob and the same size as it: a band control is the same class of control as
-// the master gain, and a smaller cap reads as a lesser one. The value is a band gain in decibels: -26
-// at the foot, +26 at the top, unity at the top dead centre. The lit arc runs from unity to the
+// the master gain, and a smaller cap reads as a lesser one. The value is a band gain in decibels: +6 at
+// the top, -26 at the end of the ordinary cut, unity at the top dead centre — and past the cut, a
+// detent where the band is removed rather than cut. The lit arc runs from unity to the
 // knob's angle, so a cut and a boost are told apart by which way the light goes instead of by reading
 // a number across a booth.
 //
@@ -36,10 +37,18 @@ Item {
     // 135 degrees of travel, the cut compressed into 26 dB and the boost into 6.
     readonly property real boostDb: 6.0
     readonly property real cutDb: 26.0
+    // The last six degrees of the cut travel are a detent, and they are not another decibel: there the
+    // band is removed by the isolator, not cut by a shelf. A shelf deep enough to silence a band also
+    // guts the middle (measured: -32 dB at 1 kHz), so the hand has to cross a line into the kill
+    // instead of sliding into it.
+    readonly property real killDb: -120.0
+    readonly property real detentDegrees: 6.0
+    // Where the ordinary cut ends: below this angle the band is killed.
+    readonly property real cutDegrees: 135.0 - knob.detentDegrees
+    readonly property bool killed: knob.db <= knob.killDb + 1.0
     // What the knob shows: the hand's number while it is being dragged, the engine's otherwise.
     readonly property real db: knob.dragging ? knob.dragged : knob.value
-    readonly property real angle: knob.db >= 0.0 ? 135.0 * knob.db / knob.boostDb
-                                                 : 135.0 * knob.db / knob.cutDb
+    readonly property real angle: knob.angleOf(knob.db)
     readonly property real unityAngle: 0.0
 
     property bool dragging: false
@@ -56,21 +65,30 @@ Item {
     // crawl.
     readonly property real degPerNotch: 13.5
 
-    /// The angle the pointer stands at for a band gain.
+    /// The angle the pointer stands at for a band gain. A killed band stands against the stop.
     function angleOf(decibels) {
-        return decibels >= 0.0 ? 135.0 * decibels / knob.boostDb : 135.0 * decibels / knob.cutDb;
+        if (decibels <= knob.killDb + 1.0) {
+            return -135.0;
+        }
+        return decibels >= 0.0 ? 135.0 * decibels / knob.boostDb
+                               : knob.cutDegrees * decibels / knob.cutDb;
     }
 
-    /// The band gain the pointer's angle means, clamped to the ends of the travel.
+    /// The band gain the pointer's angle means, clamped to the ends of the travel: the last degrees of
+    /// the cut are the detent, and the whole detent is one value — the kill.
     function dbOf(angle) {
         const clamped = Math.max(-135.0, Math.min(135.0, angle));
-        return clamped >= 0.0 ? clamped / 135.0 * knob.boostDb : clamped / 135.0 * knob.cutDb;
+        if (clamped <= -knob.cutDegrees) {
+            return knob.killDb;
+        }
+        return clamped >= 0.0 ? clamped / 135.0 * knob.boostDb
+                              : knob.cutDb * clamped / knob.cutDegrees;
     }
     // What the last gesture asked for, so a check can tell a dead knob from a refused command.
     property real lastDb: -1.0
 
     function ask(decibels) {
-        const wanted = Math.max(-knob.cutDb, Math.min(knob.boostDb, decibels));
+        const wanted = Math.max(knob.killDb, Math.min(knob.boostDb, decibels));
         knob.dragged = wanted;
         knob.lastDb = wanted;
         Bridge.setChannelEq(knob.deckId, knob.band, wanted);
@@ -89,8 +107,9 @@ Item {
             radius: width / 2
             color: UiSettings.themeBackground
             border.width: 1
-            border.color: Math.abs(knob.db) < 0.01 ? UiSettings.themeBorder
-                                                   : UiSettings.themeAccentDim
+            border.color: knob.killed ? UiSettings.themeAccent
+                                      : (Math.abs(knob.db) < 0.01 ? UiSettings.themeBorder
+                                                                  : UiSettings.themeAccentDim)
         }
 
         // From unity to where the knob stands: a boost lights to the right, a cut to the left.
@@ -149,7 +168,9 @@ Item {
         anchors.top: face.bottom
         anchors.horizontalCenter: parent.horizontalCenter
         verticalAlignment: Text.AlignVCenter
-        color: Math.abs(knob.db) < 0.01 ? UiSettings.themeTextDim : UiSettings.themeText
+        color: knob.killed ? UiSettings.themeAccent
+                           : (Math.abs(knob.db) < 0.01 ? UiSettings.themeTextDim
+                                                       : UiSettings.themeText)
         font.pixelSize: 8
     }
 

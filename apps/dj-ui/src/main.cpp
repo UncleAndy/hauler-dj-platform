@@ -2989,6 +2989,103 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: the band knob turns at different rates up and down\n");
             return 1;
         }
+        // The foot of the knob is a detent, and it is not another decibel: turn the hand far past the
+        // end of the cut and the band has to arrive at the engine killed, not at the deepest cut. A
+        // knob that only reached -26 would leave an isolator that nothing can reach.
+        if (eqLowA != nullptr) {
+            const auto eqOfA = [&](const QString &band) {
+                const QVariantList published =
+                    bridge->snapshot().value(QStringLiteral("decks")).toList();
+                for (const QVariant &entry : published) {
+                    const QVariantMap deck = entry.toMap();
+                    if (deck.value(QStringLiteral("deck")).toString() != QStringLiteral("A")) {
+                        continue;
+                    }
+                    const QVariantMap eq = deck.value(QStringLiteral("eq")).toMap();
+                    return eq.value(band + QStringLiteral("_db")).toDouble();
+                }
+                return 0.0;
+            };
+            const auto dragTo = [&](double pixels) {
+                const QPointF grab =
+                    eqLowA->mapToScene(QPointF(eqLowA->width() / 2.0, eqLowA->height() / 2.0));
+                const auto send = [&](QEvent::Type type, const QPointF &at) {
+                    QMouseEvent event(type, at, window->mapToGlobal(at.toPoint()), Qt::LeftButton,
+                                      Qt::LeftButton, Qt::NoModifier);
+                    QCoreApplication::sendEvent(window, &event);
+                    QCoreApplication::processEvents();
+                };
+                // In steps, like a hand: one jump of two hundred pixels leaves the knob's own area and
+                // the move is delivered somewhere else, which reads as a knob that never turned.
+                send(QEvent::MouseButtonPress, grab);
+                pump();
+                const int steps = std::max(1, static_cast<int>(std::ceil(std::abs(pixels) / 10.0)));
+                const double step = pixels / static_cast<double>(steps);
+                for (int index = 1; index <= steps; ++index) {
+                    send(QEvent::MouseMove, grab + QPointF(0, step * index));
+                }
+                send(QEvent::MouseButtonRelease, grab + QPointF(0, step * steps));
+                pump();
+            };
+            // The round trip through the engine is what makes the kill real: wait for it rather than
+            // reading a snapshot that has not caught up.
+            const auto waitForEq = [&](double wanted) {
+                QElapsedTimer waiting;
+                waiting.start();
+                while (waiting.elapsed() < 3000) {
+                    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                    if (std::abs(eqOfA(QStringLiteral("low")) - wanted) < 0.5) {
+                        return true;
+                    }
+                    QThread::msleep(20);
+                }
+                return false;
+            };
+            dragTo(200.0);
+            (void)waitForEq(-120.0);
+            const double asked = eqLowA->property("db").toDouble();
+            const bool killed = eqLowA->property("killed").toBool();
+            const double published = eqOfA(QStringLiteral("low"));
+            std::fprintf(stdout,
+                         "dj-ui: the low band's detent asks for %.1f dB, the knob calls it %s, the "
+                         "engine published %.1f dB\n",
+                         asked, killed ? "killed" : "not killed", published);
+            if (!killed || asked > -119.0) {
+                std::fprintf(stderr, "dj-ui: the end of the cut travel is not a detent\n");
+                return 1;
+            }
+            if (published > -119.0) {
+                std::fprintf(stderr,
+                             "dj-ui: the detent sent %.1f dB, so the isolator is unreachable\n",
+                             published);
+                return 1;
+            }
+            // Back to the ordinary cut: a detent that swallows the end of the travel cannot be the only
+            // thing the knob knows, and the deepest cut has to stay a cut.
+            dragTo(-8.0);
+            QElapsedTimer backing;
+            backing.start();
+            while (backing.elapsed() < 3000) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                if (eqOfA(QStringLiteral("low")) > -119.0) {
+                    break;
+                }
+                QThread::msleep(20);
+            }
+            const double cut = eqOfA(QStringLiteral("low"));
+            std::fprintf(stdout, "dj-ui: one detent back the low band is at %.1f dB\n", cut);
+            if (cut <= -119.0) {
+                std::fprintf(stderr, "dj-ui: the knob cannot leave the detent\n");
+                return 1;
+            }
+            if (cut < -26.5 || cut > -5.0) {
+                std::fprintf(stderr,
+                             "dj-ui: eight pixels back from the detent is %.1f dB, which is neither "
+                             "the ordinary cut nor a way out of the kill\n",
+                             cut);
+                return 1;
+            }
+        }
         // The gesture above left deck A's low band where the hand dropped it; the checks below want a flat
         // channel, so put the knob and the deck back before measuring anything else.
         bridge->setChannelGain(QStringLiteral("A"), 1.0);
