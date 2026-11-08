@@ -945,6 +945,11 @@ int main(int argc, char *argv[])
         QStringLiteral("How much of the straight rate a level knob keeps at unity, 0.05 to 1 "
                        "(1 is straight through; the default is 0.1)."),
         QStringLiteral("share"));
+    const QCommandLineOption faderCurveOption(
+        QStringLiteral("fader-curve"),
+        QStringLiteral("Law of the channel faders: linear, cubic (soft around the top) or logarithmic "
+                       "(B-taper, the default: a quarter of the throw is about ten decibels)."),
+        QStringLiteral("kind"));
     const QCommandLineOption faderCurveMiddleOption(
         QStringLiteral("fader-curve-middle"),
         QStringLiteral("The same setting for the channel faders, which are ridden rather than set, "
@@ -1128,6 +1133,7 @@ int main(int argc, char *argv[])
     parser.addOption(gainCheckOption);
     parser.addOption(gainCurveOption);
     parser.addOption(gainCurveMiddleOption);
+    parser.addOption(faderCurveOption);
     parser.addOption(faderCurveMiddleOption);
     parser.addOption(gainCurveCheckOption);
     parser.addOption(eqCheckOption);
@@ -1317,6 +1323,12 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: --gain-curve-middle wants a number from 0.05 to 1\n");
             return 2;
         }
+    }
+    if (parser.isSet(faderCurveOption)
+        && !settings.setFaderCurve(parser.value(faderCurveOption).trimmed())) {
+        std::fprintf(stderr, "dj-ui: %s is not a fader curve (linear, cubic or logarithmic)\n",
+                     qPrintable(parser.value(faderCurveOption)));
+        return 2;
     }
     if (parser.isSet(faderCurveMiddleOption)) {
         bool ok = false;
@@ -2944,12 +2956,15 @@ int main(int argc, char *argv[])
         }
         const double faderAtTop = (faderTop - faderFirst) / hair;
         const double faderAtBottom = faderLastBefore / hair;
-        const double promisedFader = curved ? settings.faderCurveMiddle() : 1.0;
-        const double promisedFaderBottom = curved ? 2.0 - settings.faderCurveMiddle() : 1.0;
+        // The fader's own shape, not the knobs': the two are configured apart, and a check that reads the
+        // wrong one passes for the wrong reason.
+        const bool faderCubic = settings.faderCurve() == QStringLiteral("cubic");
+        const double promisedFader = faderCubic ? settings.faderCurveMiddle() : 1.0;
+        const double promisedFaderBottom = faderCubic ? 2.0 - settings.faderCurveMiddle() : 1.0;
         std::fprintf(stdout,
-                     "dj-ui: the channel fader moves %.3f of its range per unit of travel at the top (curve %s "
-                     "at %.2f) and %.3f at the bottom\n",
-                     faderAtTop, qPrintable(settings.gainCurve()), settings.faderCurveMiddle(),
+                     "dj-ui: the channel fader moves %.3f of its range per unit of travel at the top "
+                     "(curve %s at %.2f) and %.3f at the bottom\n",
+                     faderAtTop, qPrintable(settings.faderCurve()), settings.faderCurveMiddle(),
                      faderAtBottom);
         if (std::abs(faderTop - 1.0) > 0.001 || std::abs(faderBottom) > 0.001) {
             std::fprintf(stderr,
@@ -2957,7 +2972,41 @@ int main(int argc, char *argv[])
                          faderTop, faderBottom);
             return 1;
         }
-        if (!near(faderAtTop, promisedFader) || !near(faderAtBottom, promisedFaderBottom)) {
+        const bool logarithmic = settings.faderCurve() == QStringLiteral("logarithmic");
+        if (logarithmic) {
+            // A B-taper is a promise about decibels, not about slopes: a quarter of the throw takes the
+            // level down about ten decibels and half of it about eighteen, which is what makes the top
+            // third of a fader the fine one.
+            double quarter = 0.0;
+            double half = 0.0;
+            if (!ask(fader, "valueAtHandle", 0.75, &quarter) || !ask(fader, "valueAtHandle", 0.5, &half)) {
+                return 1;
+            }
+            const double quarterDb = 20.0 * std::log10(std::max(quarter, 1e-9));
+            const double halfDb = 20.0 * std::log10(std::max(half, 1e-9));
+            std::fprintf(stdout,
+                         "dj-ui: the fader at a quarter of the throw is %.1f dB, at half %.1f dB, and "
+                         "it moves %.2f times as fast at the top as at the bottom\n",
+                         quarterDb, halfDb, faderAtBottom > 0.0 ? faderAtTop / faderAtBottom : 0.0);
+            if (quarterDb > -8.0 || quarterDb < -14.0) {
+                std::fprintf(stderr,
+                             "dj-ui: a quarter of the fader's throw takes only %.1f dB, so the top is not "
+                             "the fine part\n",
+                             quarterDb);
+                return 1;
+            }
+            if (halfDb > -14.0 || halfDb < -24.0) {
+                std::fprintf(stderr, "dj-ui: half the throw takes %.1f dB\n", halfDb);
+                return 1;
+            }
+            if (!(faderAtTop > faderAtBottom * 3.0)) {
+                std::fprintf(stderr,
+                             "dj-ui: the fader is not steeper at the top (%.3f against %.3f per unit of "
+                             "travel)\n",
+                             faderAtTop, faderAtBottom);
+                return 1;
+            }
+        } else if (!near(faderAtTop, promisedFader) || !near(faderAtBottom, promisedFaderBottom)) {
             std::fprintf(stderr,
                          "dj-ui: the fader moves %.3f at the top and %.3f at the bottom, and the curve "
                          "promises %.3f and %.3f\n",

@@ -124,13 +124,10 @@ bool UiSettings::setGainCurve(const QString &kind)
         return true;
     }
     GainCurve wanted = m_gainCurve;
-    GainCurve faders = m_faderCurve;
-    if (!wanted.configure(kind, m_gainCurve.middle())
-        || !faders.configure(kind, m_faderCurve.middle())) {
+    if (!wanted.configure(kind, m_gainCurve.middle())) {
         return false;
     }
     m_gainCurve = wanted;
-    m_faderCurve = faders;
     emit changed();
     return true;
 }
@@ -152,6 +149,15 @@ double UiSettings::gainCurveValue(double position) const
 double UiSettings::gainCurvePosition(double share) const
 {
     return m_gainCurve.position(share);
+}
+
+bool UiSettings::setFaderCurve(const QString &kind)
+{
+    if (!m_faderCurve.configure(kind, m_faderCurve.middle())) {
+        return false;
+    }
+    emit changed();
+    return true;
 }
 
 bool UiSettings::setFaderCurveMiddle(double middle)
