@@ -324,17 +324,15 @@ fn run(argv: &[String]) -> Result<(), String> {
     // Cue and loop edits become files here, on a thread of their own (DJP-DATA-006). The audio
     // callback only sends; a disk call inside it is the one thing the RT contract forbids.
     let store = dj_library::Store::with_default_mirror();
-    let (meta_edits, meta_edits_rx) = std::sync::mpsc::channel::<dj_engine::MetaEdit>();
-    {
-        let store = store.clone();
-        std::thread::spawn(move || {
-            while let Ok(edit) = meta_edits_rx.recv() {
-                if let Err(message) = dj_engine::meta::write_edit(&store, volume(), root(), &edit) {
-                    eprintln!("dj-engine: {message}");
-                }
-            }
-        });
-    }
+    // The writer owns the queue and is dropped before the process leaves, so an edit answered just
+    // before the shutdown still reaches the disk (A13).
+    // Kept alive until this function returns: dropping the writer closes the queue and waits for
+    // the last edit, so an edit answered just before the shutdown still reaches the disk (A13).
+    let (_meta_writer, meta_edits) = dj_engine::meta::MetaWriter::spawn(
+        store.clone(),
+        volume().to_string(),
+        root().to_path_buf(),
+    );
 
     let (graph_loads, graph_loads_rx) = std::sync::mpsc::channel::<GraphLoad>();
     let (deck_updates, deck_updates_rx) = std::sync::mpsc::channel::<DeckUpdate>();

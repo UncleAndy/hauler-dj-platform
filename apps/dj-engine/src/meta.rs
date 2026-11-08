@@ -4,12 +4,78 @@
 //! so a reload looks like a reload. When the user moves a cue or sets a loop, the change is sent to
 //! this module from the graph and written here — never in the callback, which must not touch a file.
 
-use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Sender};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use dj_library::{Cue, Store, TrackMeta, fingerprint};
 
 use crate::{MetaEdit, PreparedTrack};
+
+/// How long the shutdown waits for the last edit to reach the disk before saying it gave up.
+const SHUTDOWN_WAIT: Duration = Duration::from_secs(2);
+
+/// The thread that turns deck edits into files (DJP-DATA-006).
+///
+/// The audio callback may not write a file, so edits are queued and written here, in order. Queued
+/// means "not yet stored", and the process leaves as soon as the run loop stops — so the queue is
+/// closed and the thread awaited on the way out. A cue the DJ set and the engine forgot is the one
+/// failure this module exists to prevent.
+pub struct MetaWriter {
+    /// Our own sender: dropping it closes the queue, which is what ends the thread.
+    queue: Option<Sender<MetaEdit>>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl MetaWriter {
+    /// Start the writer for a store, a volume and a music root.
+    ///
+    /// The returned sender goes to whoever publishes edits; the writer itself must outlive it and
+    /// is dropped last, so the queue is closed after the graph is gone.
+    pub fn spawn(store: Store, volume: String, root: PathBuf) -> (Self, Sender<MetaEdit>) {
+        let (queue, receiver) = mpsc::channel::<MetaEdit>();
+        let handoff = queue.clone();
+        let thread = thread::Builder::new()
+            .name("dj-meta".to_string())
+            .spawn(move || {
+                while let Ok(edit) = receiver.recv() {
+                    if let Err(message) = write_edit(&store, &volume, &root, &edit) {
+                        eprintln!("dj-engine: {message}");
+                    }
+                }
+            })
+            .ok();
+        (
+            Self {
+                queue: Some(queue),
+                thread,
+            },
+            handoff,
+        )
+    }
+}
+
+impl Drop for MetaWriter {
+    fn drop(&mut self) {
+        // Closing our side is what ends the queue: the thread finishes what is already in it.
+        drop(self.queue.take());
+        let Some(thread) = self.thread.take() else {
+            return;
+        };
+        let deadline = Instant::now() + SHUTDOWN_WAIT;
+        while !thread.is_finished() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(2));
+        }
+        if thread.is_finished() {
+            let _ = thread.join();
+        } else {
+            // A writer still running means another sender lives somewhere we do not control.
+            // Saying so beats hanging the exit or pretending the edit was stored.
+            eprintln!("dj-engine: the metadata writer is still busy; the last edit may be lost");
+        }
+    }
+}
 
 /// Fill a prepared track with what its file remembered.
 ///

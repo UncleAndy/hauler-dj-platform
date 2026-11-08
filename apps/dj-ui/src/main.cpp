@@ -23,7 +23,11 @@
 #include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <QElapsedTimer>
+#include <QFile>
+#include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QKeyEvent>
 #include <QEventLoop>
 #include <QGuiApplication>
@@ -1752,6 +1756,48 @@ int main(int argc, char *argv[])
             // A loop that is only active lives in memory; what a restart must bring back is the pad it was
             // saved into (DJP-DECK-004), so the check stores it there too.
             bridge->setPadLoop(QStringLiteral("A"), 6);
+            // The check is about a file, not about memory: the engine writes queued edits on a thread
+            // of its own, and this process is taken down the moment the check returns. So wait for the
+            // file to hold the edit — otherwise a restart proves nothing and the last edit can die
+            // with the process, which is exactly how this check used to fail now and then.
+            const QString sidecar =
+                QFileInfo(fixture).absolutePath() + QStringLiteral("/.djmeta/") +
+                QFileInfo(fixture).fileName() + QStringLiteral(".json");
+            const bool stored = waitFor(
+                [&]() {
+                    QFile file(sidecar);
+                    if (!file.open(QIODevice::ReadOnly)) {
+                        return false;
+                    }
+                    const QJsonObject meta = QJsonDocument::fromJson(file.readAll()).object();
+                    bool cueStored = false;
+                    const QJsonArray cues = meta.value(QStringLiteral("cues")).toArray();
+                    for (const QJsonValue &value : cues) {
+                        const QJsonObject storedCue = value.toObject();
+                        cueStored = cueStored ||
+                                    (storedCue.value(QStringLiteral("slot")).toInt() == 2 &&
+                                     storedCue.value(QStringLiteral("frame")).toVariant().toULongLong() ==
+                                         48000);
+                    }
+                    bool loopStored = false;
+                    const QJsonArray loops = meta.value(QStringLiteral("loops")).toArray();
+                    for (const QJsonValue &value : loops) {
+                        const QJsonObject storedLoop = value.toObject();
+                        loopStored = loopStored ||
+                                     (storedLoop.value(QStringLiteral("slot")).toInt() == 6 &&
+                                      storedLoop.value(QStringLiteral("start")).toVariant().toULongLong() ==
+                                          96000 &&
+                                      storedLoop.value(QStringLiteral("end")).toVariant().toULongLong() ==
+                                          144000);
+                    }
+                    return cueStored && loopStored;
+                },
+                3000);
+            if (!stored) {
+                std::fprintf(stderr, "dj-ui: the cue never reached %s\n", qPrintable(sidecar));
+                return 1;
+            }
+            std::fprintf(stdout, "dj-ui: the cue and the pad loop are in %s\n", qPrintable(sidecar));
         }
 
         quint64 cue = 0;
