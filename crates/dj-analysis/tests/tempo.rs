@@ -52,16 +52,16 @@ fn the_grid_lands_on_the_clicks() {
     // The grid is periodic, so the property is not "the first beat equals the offset" but "some beat
     // falls on every click". Offsets that are not round milliseconds are the interesting ones: the grid
     // has to follow the audio, not the analysis block.
-    // The bar is what the measurements support, not what would be nice: 1 … 27 ms over this range, so
-    // anything up to 30 ms is within what the detector promises. A slower tempo is worse, which is why
-    // the editor has a manual shift (DJP-SYNC-003).
+    // The bar is what the measurements support, not what would be nice: the comb's period refinement
+    // brought the worst case from 27 ms down to 4 ms over this range, so 15 ms leaves room for a
+    // different machine without hiding a regression.
     for bpm in [72.0f64, 90.0, 100.0, 120.0, 128.0, 140.0, 174.0] {
         for offset in [0usize, 1_234, 4_800, 11_111] {
             let samples = click_track(bpm, offset, 20.0);
             let tempo = dj_analysis::tempo::detect(&samples, RATE).expect("a tempo");
             let error = off_the_grid(&tempo, offset as u64);
             assert!(
-                error <= 30.0,
+                error <= 15.0,
                 "{bpm} BPM, clicks at {offset}: the nearest beat is {error:.1} ms away"
             );
         }
@@ -125,5 +125,56 @@ fn a_tone_has_no_tempo() {
             (phase.sin() * 0.4) as f32
         })
         .collect();
+    assert!(dj_analysis::tempo::detect(&samples, RATE).is_none());
+}
+
+/// A track that opens with something that has no beat at all: sparse, uneven hits for `intro` seconds.
+fn rubato_intro(seconds: f64) -> Vec<f32> {
+    let frames = (RATE * seconds) as usize;
+    let mut samples = vec![0.0f32; frames];
+    // Deliberately uneven, and with no short cycle: a linear congruential sequence, so no window can
+    // find a period the intro does not have.
+    let mut position = 1_000usize;
+    let mut state = 12_345u64;
+    while position + 256 < frames {
+        for i in 0..192 {
+            let decay = 1.0 - i as f32 / 192.0;
+            samples[position + i] = decay * 0.5 * if i % 2 == 0 { 1.0 } else { -1.0 };
+        }
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        let step = 6_000 + (state >> 33) as usize % 12_000;
+        position += step;
+    }
+    samples
+}
+
+#[test]
+fn an_intro_without_a_beat_does_not_hide_the_tempo() {
+    // The report that started this test: a track whose intro cannot give a count was left without a
+    // tempo, because one look at the whole file saw the intro and not the beat. Windows fix that — the
+    // intro gets a vote, not the deciding one.
+    let mut samples = rubato_intro(30.0);
+    let music = click_track(128.0, 0, 60.0);
+    let music_start = samples.len();
+    samples.extend(music);
+    let tempo = dj_analysis::tempo::detect(&samples, RATE).expect("a tempo behind the intro");
+    assert!(
+        (tempo.bpm - 128.0).abs() < 0.5,
+        "measured {} BPM instead of 128",
+        tempo.bpm
+    );
+    // And the grid still lands on the clicks, not on the intro.
+    let period = RATE * 60.0 / tempo.bpm;
+    let position = (music_start as f64 - tempo.first_beat_frame as f64) / period;
+    let error = (position - position.round()).abs() * period / RATE * 1000.0;
+    assert!(error <= 30.0, "the grid is {error:.1} ms off the clicks");
+}
+
+#[test]
+fn a_track_with_no_beat_anywhere_is_still_refused() {
+    // Three minutes of rubato: the detector must keep saying "no", not pick the strongest of the noise.
+    let samples = rubato_intro(180.0);
     assert!(dj_analysis::tempo::detect(&samples, RATE).is_none());
 }
