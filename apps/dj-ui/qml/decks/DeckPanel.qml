@@ -128,6 +128,18 @@ Pane {
     }
     readonly property var loop: panel.deck.loop_region !== undefined ? panel.deck.loop_region : null
 
+    /// Which bar of the four-bar square the play head is in. A grid shifted by exactly one bar leaves
+    /// every bar line where it was — the lines are periodic — so the count is what tells the DJ that the
+    /// shift happened at all.
+    readonly property string barInSquare: {
+        const beat = panel.deck.beat;
+        if (beat === undefined || beat === null) {
+            return "";
+        }
+        const bar = Math.floor(beat / 4);
+        return "bar " + ((((bar % 4) + 4) % 4) + 1) + "/4";
+    }
+
     // One envelope per deck, shared by the zoomed strip and the overview: loading into A can never
     // repaint B, and the two strips cannot disagree about how long the track is.
     WaveformEnvelope { id: envelope }
@@ -429,6 +441,13 @@ Pane {
                     visible: panel.localBpm > 0
                     text: panel.localBpm > 0 ? panel.localBpm.toFixed(1) + " BPM" : ""
                     color: UiSettings.themeAccent
+                    font.pixelSize: 10
+                }
+                Label {
+                    objectName: "bar_" + panel.deckId
+                    visible: panel.localBpm > 0
+                    text: panel.barInSquare
+                    color: UiSettings.themeTextDim
                     font.pixelSize: 10
                 }
                 Label {

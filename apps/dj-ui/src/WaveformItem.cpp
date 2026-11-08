@@ -185,6 +185,7 @@ void WaveformItem::setBeats(const QVariantList &value)
         BeatMark mark;
         mark.ratio = map.value(QStringLiteral("ratio"), -1.0).toDouble();
         mark.bar = map.value(QStringLiteral("bar"), false).toBool();
+        mark.square = map.value(QStringLiteral("square"), false).toBool();
         m_beats.append(mark);
     }
     QQuickPaintedItem::update();

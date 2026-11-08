@@ -28,6 +28,10 @@ struct BeatMark
     double ratio = -1.0;
     /// Every fourth beat is a bar: the beat a DJ counts to four on, and the one worth a thicker line.
     bool bar = false;
+    /// Every sixteenth beat starts a square of four bars. Without it a shifted grid looks untouched:
+    /// moving the whole grid by exactly one bar lands every bar line on the line before it, and only the
+    /// start of the square tells the DJ which bar is the first one.
+    bool square = false;
 };
 
 /// What the last paint actually drew: the check reads these numbers instead of believing the strip.
@@ -35,9 +39,13 @@ struct WaveformStats
 {
     int beats = 0;
     int bars = 0;
+    int squares = 0;
     int anchors = 0;
     /// Distance between two neighbouring beats on screen, in pixels: 0 when fewer than two are visible.
     double beatSpacing = 0.0;
+    /// Where the first visible square starts, as a fraction of the track: the number that moves when the
+    /// grid is shifted by a bar, and the one the strip's check reads.
+    double firstSquare = -1.0;
 };
 
 /// A loop stored on a pad: drawn as a pair of edge marks along the bottom of the strip, so a loop that

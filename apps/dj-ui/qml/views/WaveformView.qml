@@ -83,7 +83,13 @@ Item {
             let beat = segment.beat;
             while (frame < until && marks.length < limit) {
                 if (frame >= 0 && frame <= total) {
-                    marks.push({ "ratio": frame / total, "bar": beat % 4 === 0 });
+                    marks.push({
+                        "ratio": frame / total,
+                        "bar": beat % 4 === 0,
+                        // Four bars to a square: the count a DJ phrases in, and the only mark that moves
+                        // when the grid is shifted by exactly one bar.
+                        "square": beat % 16 === 0
+                    });
                 }
                 frame += period;
                 beat += 1;

@@ -90,15 +90,24 @@ WaveformStats paintWaveform(QPainter &painter, const Waveform &waveform,
             if (x < area.left() || x > area.right()) {
                 continue;
             }
-            if (beat.bar) {
+            if (beat.square) {
+                // A square of four bars is where a phrase starts: the one line a DJ counts from, and the
+                // one that proves a one-bar shift moved something.
+                painter.fillRect(QRect(x, area.top(), 3, height), style.marker);
+                painter.fillRect(QRect(x, area.top() + height, 7, 2), style.marker);
+                ++stats.squares;
+                if (stats.firstSquare < 0.0) {
+                    stats.firstSquare = beat.ratio;
+                }
+            } else if (beat.bar) {
                 painter.fillRect(QRect(x, area.top(), 2, height), barColour);
                 ++stats.bars;
             } else {
                 painter.fillRect(QRect(x, area.top() + height / 8, 1, height - height / 4), beatColour);
                 ++stats.beats;
             }
-            if (stats.beats + stats.bars <= 2) {
-                if (stats.beats + stats.bars == 1) {
+            if (stats.beats + stats.bars + stats.squares <= 2) {
+                if (stats.beats + stats.bars + stats.squares == 1) {
                     firstBeatX = x;
                 } else {
                     secondBeatX = x;

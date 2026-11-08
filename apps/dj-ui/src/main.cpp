@@ -3410,8 +3410,17 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: the deck never moved to the middle of the track\n");
             return 1;
         }
-        QMetaObject::invokeMethod(view, "zoomBy", Q_ARG(QVariant, QVariant(0.1)));
-        QCoreApplication::processEvents();
+        // The whole track, whatever the zoom the settings were left at: a strip that shows a quarter of
+        // the track has fewer beats than the check counts, and a quarter of a picture is not a verdict.
+        for (int press = 0; press < 12 && strip->property("span").toDouble() < 0.99; ++press) {
+            QMetaObject::invokeMethod(view, "zoomBy", Q_ARG(QVariant, QVariant(0.1)));
+            QCoreApplication::processEvents();
+        }
+        if (strip->property("span").toDouble() < 0.99) {
+            std::fprintf(stderr, "dj-ui: the strip would not zoom out to the whole track (span %.3f)\n",
+                         strip->property("span").toDouble());
+            return 1;
+        }
 
         const auto drawnBeats = [&]() { return strip->property("drawnBeats").toInt(); };
         const auto drawnBars = [&]() { return strip->property("drawnBars").toInt(); };
@@ -3446,6 +3455,63 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: anchors appeared on a track with one tempo\n");
             return 1;
         }
+
+        // A shift by one bar leaves every bar line where it was — the lines are periodic — so the strip
+        // has to show the start of the four-bar square and the count, or a working shift looks like a
+        // dead button.
+        const auto squares = [&]() { return strip->property("drawnSquares").toInt(); };
+        const auto firstSquare = [&]() { return strip->property("firstSquare").toDouble(); };
+        const auto barLabel = [&]() {
+            auto *label = findItem(window->contentItem(), QStringLiteral("bar_A"));
+            return label != nullptr ? label->property("text").toString() : QString();
+        };
+        if (!waitFor([&]() { return squares() >= 1 && firstSquare() >= 0.0; }, 5000)) {
+            std::fprintf(stderr, "dj-ui: the strip marked no square of four bars (squares %d)\n",
+                         squares());
+            return 1;
+        }
+        const double periodRatio = (rate * 60.0 / bpm) / total;
+        const double squareBefore = firstSquare();
+        const QString labelBefore = barLabel();
+        if (labelBefore.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: the deck does not say which bar of the square it is in\n");
+            return 1;
+        }
+        auto *barRight = findItem(window->contentItem(), QStringLiteral("gridBarRight_A"));
+        auto *barLeft = findItem(window->contentItem(), QStringLiteral("gridBarLeft_A"));
+        if (barRight == nullptr || barLeft == nullptr) {
+            std::fprintf(stderr, "dj-ui: there is no bar button to press\n");
+            return 1;
+        }
+        QMetaObject::invokeMethod(barRight, "clicked");
+        if (!waitFor([&]() { return std::abs(firstSquare() - (squareBefore + 4.0 * periodRatio)) < 0.002; },
+                     5000)) {
+            std::fprintf(stderr,
+                         "dj-ui: a bar shift moved the square start to %.4f, not to %.4f\n",
+                         firstSquare(), squareBefore + 4.0 * periodRatio);
+            return 1;
+        }
+        if (!waitFor([&]() { return barLabel() != labelBefore; }, 5000)) {
+            std::fprintf(stderr, "dj-ui: the bar count still says %s after a bar shift\n",
+                         qPrintable(labelBefore));
+            return 1;
+        }
+        const QString labelShifted = barLabel();
+        QMetaObject::invokeMethod(barLeft, "clicked");
+        if (!waitFor(
+                [&]() {
+                    return std::abs(firstSquare() - squareBefore) < 0.002 && barLabel() == labelBefore;
+                },
+                5000)) {
+            std::fprintf(stderr, "dj-ui: the square did not come back (start %.4f, count %s)\n",
+                         firstSquare(), qPrintable(barLabel()));
+            return 1;
+        }
+        std::fprintf(stdout,
+                     "dj-ui: the strip marks the square: start %.4f -> %.4f on a bar shift, count %s -> "
+                     "%s\n",
+                     squareBefore, squareBefore + 4.0 * periodRatio, qPrintable(labelBefore),
+                     qPrintable(labelShifted));
 
         // Half the tempo and the lines move with the grid: this is the proof that they are the grid and
         // not a decoration of the waveform.

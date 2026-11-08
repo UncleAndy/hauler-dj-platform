@@ -35,6 +35,8 @@ class WaveformItem : public QQuickPaintedItem
     // numbers it handed in.
     Q_PROPERTY(int drawnBeats READ drawnBeats NOTIFY appearanceChanged)
     Q_PROPERTY(int drawnBars READ drawnBars NOTIFY appearanceChanged)
+    Q_PROPERTY(int drawnSquares READ drawnSquares NOTIFY appearanceChanged)
+    Q_PROPERTY(double firstSquare READ firstSquare NOTIFY appearanceChanged)
     Q_PROPERTY(int drawnAnchors READ drawnAnchors NOTIFY appearanceChanged)
     Q_PROPERTY(double beatSpacing READ beatSpacing NOTIFY appearanceChanged)
     Q_PROPERTY(bool coloured READ coloured WRITE setColoured NOTIFY appearanceChanged)
@@ -82,6 +84,8 @@ public:
     void setGridAnchors(const QVariantList &value);
     int drawnBeats() const { return m_stats.beats; }
     int drawnBars() const { return m_stats.bars; }
+    int drawnSquares() const { return m_stats.squares; }
+    double firstSquare() const { return m_stats.firstSquare; }
     int drawnAnchors() const { return m_stats.anchors; }
     double beatSpacing() const { return m_stats.beatSpacing; }
     void setLoopTo(double value);
