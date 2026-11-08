@@ -1,0 +1,15 @@
+[package]
+name = "dj-stretch-sys"
+description = "Signalsmith Stretch time-stretching, vendored and wrapped for the deck's key lock."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+build = "build.rs"
+links = "dj_stretch"
+
+# A C ABI cannot be declared without `unsafe`, and the workspace denies it. Every unsafe block here
+# carries a SAFETY comment; the crate is deliberately excluded from the workspace lint set, exactly as
+# `dj-testkit` is for its allocator wrapper.
+[dependencies]

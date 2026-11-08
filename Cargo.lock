@@ -313,6 +313,7 @@ dependencies = [
  "dj-codec",
  "dj-domain",
  "dj-dsp",
+ "dj-stretch-sys",
 ]
 
 [[package]]
@@ -409,6 +410,10 @@ dependencies = [
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "dj-stretch-sys"
+version = "0.1.0"
 
 [[package]]
 name = "dj-testkit"

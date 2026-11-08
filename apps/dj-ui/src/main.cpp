@@ -4162,6 +4162,32 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: deck A has no pitch fader\n");
             return 1;
         }
+        // The material measurement below needs something on the deck: load what --load names and wait
+        // for the attach, the same way the other checks do.
+        {
+            const QString track = parser.value(loadOption);
+            if (!track.isEmpty()) {
+                bridge->load(QStringLiteral("A"), track);
+                pump(120);
+                QElapsedTimer ready;
+                ready.start();
+                while (ready.elapsed() < 15000) {
+                    bool attached = false;
+                    for (const QVariant &entry :
+                         bridge->snapshot().value(QStringLiteral("decks")).toList()) {
+                        const QVariantMap map = entry.toMap();
+                        if (map.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                            attached = map.value(QStringLiteral("remaining_frames")).toDouble() > 0.0;
+                        }
+                    }
+                    if (attached) {
+                        break;
+                    }
+                    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                    QThread::msleep(20);
+                }
+            }
+        }
         pump(20);
         const double perPixel = pitch->property("ratioPerPixel").toDouble();
         if (!(perPixel > 0.0)) {
@@ -4194,6 +4220,66 @@ int main(int argc, char *argv[])
         if (playing <= 1.0 || std::abs(other - 1.0) > 1e-9) {
             std::fprintf(stderr, "dj-ui: the pitch moved the wrong deck or the wrong way\n");
             return 1;
+        }
+
+        // The number in the snapshot is a promise; the material has to move at that rate. Play the deck
+        // and compare how far the source went with how much time passed — the check that would have
+        // caught a fader whose value never reached the sound.
+        {
+            const auto frameOf = [&] {
+                for (const QVariant &entry : bridge->snapshot().value(QStringLiteral("decks")).toList()) {
+                    const QVariantMap map = entry.toMap();
+                    if (map.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                        return map.value(QStringLiteral("source_frame")).toDouble();
+                    }
+                }
+                return -1.0;
+            };
+            bridge->play(QStringLiteral("A"), true);
+            // A deck that is still loading accepts Play and does nothing; wait for material to move
+            // rather than measuring the load.
+            const double before = frameOf();
+            QElapsedTimer start;
+            start.start();
+            while (start.elapsed() < 4000 && !(frameOf() > before + 100.0)) {
+                pump(2);
+            }
+            if (!(frameOf() > before + 100.0)) {
+                QString state;
+                for (const QVariant &entry : bridge->snapshot().value(QStringLiteral("decks")).toList()) {
+                    const QVariantMap map = entry.toMap();
+                    if (map.value(QStringLiteral("deck")).toString() != QStringLiteral("A")) {
+                        continue;
+                    }
+                    state = QStringLiteral("load %1, playing %2, frame %3, remaining %4")
+                                .arg(QJsonDocument::fromVariant(map.value(QStringLiteral("load")))
+                                         .toJson(QJsonDocument::Compact),
+                                     map.value(QStringLiteral("playing")).toBool() ? "yes" : "no")
+                                .arg(map.value(QStringLiteral("source_frame")).toDouble(), 0, 'f', 0)
+                                .arg(map.value(QStringLiteral("remaining_frames")).toDouble(), 0, 'f', 0);
+                }
+                std::fprintf(stderr, "dj-ui: the deck did not start playing at all (%s)\n",
+                             qPrintable(state));
+                return 1;
+            }
+            QElapsedTimer window;
+            window.start();
+            const double from = frameOf();
+            // Long enough that the snapshot's 20 Hz publishing is a small part of the window.
+            pump(240);
+            const double elapsed = window.elapsed() / 1000.0;
+            const double to = frameOf();
+            bridge->play(QStringLiteral("A"), false);
+            const double heard = (to - from) / (elapsed * 48000.0);
+            std::fprintf(stdout,
+                         "dj-ui: the deck consumed %.3f seconds of the file per second at %.4f\n",
+                         heard, playing);
+            if (elapsed < 0.5 || std::abs(heard - playing) > 0.06) {
+                std::fprintf(stderr,
+                             "dj-ui: the fader says %.3f but the material moved at %.3f\n",
+                             playing, heard);
+                return 1;
+            }
         }
 
         // The same gesture back down, and a double click to the file's own speed.

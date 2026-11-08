@@ -242,18 +242,10 @@ pub struct Deck {
     /// Whether the tempo moves without the pitch. On by default: a DJ changing speed expects the key
     /// of the track to stay where the producer put it, not to slide with the fader (DJP-DECK-008).
     keylock: bool,
-    /// The WSOLA stage that does that: it reads windows of the source and hands out hops.
+    /// The key-lock stage: the vendored spectral stretcher, running at the device's rate.
     stretcher: Stretcher,
-    /// Source frames pulled for the stretcher, interleaved stereo.
+    /// Material at the device's rate, held back so the stretcher can be fed ahead of the output.
     stretch_in: Vec<f32>,
-    /// Hop the stretcher just produced, interleaved stereo.
-    hop_out: Vec<f32>,
-    /// Stretched material at the file's rate, before conversion to the device's rate.
-    stretch_out: Vec<f32>,
-    /// Frames of `stretch_out` that hold real material.
-    stretch_frames: usize,
-    /// Where between two stretched frames the next output frame sits, 0.0 … 1.0.
-    stretch_phase: f64,
 }
 
 impl std::fmt::Debug for Deck {
@@ -303,12 +295,8 @@ impl Deck {
             scratch_frames: 0,
             phase: 0.0,
             keylock: true,
-            stretcher: Stretcher::new(),
+            stretcher: Stretcher::new(EQ_SAMPLE_RATE),
             stretch_in: vec![0.0; MAX_TEMPO_BLOCK_FRAMES * 2],
-            hop_out: vec![0.0; stretch::HOP * 2],
-            stretch_out: vec![0.0; MAX_TEMPO_BLOCK_FRAMES * 2],
-            stretch_frames: 0,
-            stretch_phase: 0.0,
         }
     }
 
@@ -320,6 +308,8 @@ impl Deck {
         }
         self.output_rate = rate;
         self.rate_ratio = self.source_rate_of_current() / f64::from(rate);
+        // The stretcher works on material already at the device's rate, so it follows the device.
+        self.stretcher = Stretcher::new(f64::from(rate));
     }
 
     /// The current source's rate, or the deck's own rate when nothing is attached.
@@ -392,8 +382,6 @@ impl Deck {
         // The stretcher's windows belong to the old playhead as well: keeping them would repeat the
         // material that was already heard.
         self.stretcher.reset();
-        self.stretch_frames = 0;
-        self.stretch_phase = 0.0;
     }
 
     /// Which deck this is.
@@ -403,7 +391,31 @@ impl Deck {
 
     /// Source position of the next frame to render.
     pub fn position(&self) -> u64 {
+        // With key lock the stretcher holds a short history before its output appears: the clock and
+        // the loop marker describe what is heard, not what has already been read.
+        if self.keylock && (self.tempo_ratio - 1.0).abs() > 1e-9 {
+            self.position
+                .saturating_sub(self.stretcher.latency() as u64)
+        } else {
+            self.position
+        }
+    }
+
+    /// Source position that has been read, without the key-lock delay taken off.
+    ///
+    /// The playhead a listener hears is [`Deck::position`]; this one is what the source has given up, and
+    /// it is what a test means when it asks how much material a block consumed.
+    pub fn read_position(&self) -> u64 {
         self.position
+    }
+
+    /// Frames the key-lock stage delays its output by, zero when it is not in the path.
+    pub fn keylock_latency(&self) -> usize {
+        if self.keylock && (self.tempo_ratio - 1.0).abs() > 1e-9 {
+            self.stretcher.latency()
+        } else {
+            0
+        }
     }
 
     /// Preparation state.
@@ -1060,74 +1072,41 @@ impl Deck {
         self.scratch = scratch;
     }
 
-    /// Key lock: the tempo moves and the pitch does not (DJP-DECK-008).
+    /// Key lock: the tempo moves, the pitch does not (DJP-DECK-008).
     ///
-    /// Two stages, because they answer two questions. First WSOLA, which changes how long the material
-    /// lasts without resampling it, so the pitch stays where the file put it. Then the file's rate is
-    /// converted to the device's, exactly as the plain rate stage does. The stretcher's cost is one
-    /// correlation search per 512 frames, so this stays inside the block budget.
+    /// Two stages, in the order that keeps the stretcher's buffers fixed for the life of the deck: the
+    /// file is resampled to the device's rate first (the same stage the vinyl path uses), then the
+    /// spectral stretcher plays that material at the requested tempo. `frames` of output need about
+    /// `frames * tempo` of device-rate material, and the library infers the ratio from the two lengths.
+    ///
+    /// A block larger than the staging buffer is played in pieces: falling back to the vinyl path for
+    /// a big block would change the pitch of exactly the callers the library stage was added for.
     fn render_keylocked(&mut self, out: &mut [f32]) {
         let frames = out.len() / 2;
         if frames == 0 {
             return;
         }
-        let wanted = ((frames as f64) * self.rate_ratio).ceil() as usize + 2;
-        let capacity = self.stretch_out.len() / 2;
-        if wanted > capacity {
-            // Not a block the engine renders, but the fallback must still play at the right tempo: an
-            // unreachable branch that silently plays at another speed is worse than a lost pitch.
-            self.render_at_tempo(out, self.tempo_ratio * self.rate_ratio);
-            return;
-        }
+        let capacity = self.stretch_in.len() / 2;
+        // Output frames one piece can fill, leaving room for the two frames the resampler reads ahead.
+        let piece = (((capacity.saturating_sub(4)) as f64) / self.tempo_ratio)
+            .floor()
+            .max(1.0) as usize;
 
-        let ratio = self.tempo_ratio;
-        let mut stretcher = std::mem::take(&mut self.stretcher);
-        let mut hop = std::mem::take(&mut self.hop_out);
-        let mut have = self.stretch_frames.min(capacity);
-        while have < wanted {
-            let need = stretcher.needs(ratio);
-            if need > 0 {
-                let take = need.min(self.stretch_in.len() / 2);
-                let mut staging = std::mem::take(&mut self.stretch_in);
-                self.pull(&mut staging[..take * 2]);
-                self.stretch_in = staging;
-                stretcher.push(&self.stretch_in[..take * 2]);
-            }
-            let produced = stretcher.hop(&mut hop, ratio);
-            if produced == 0 {
-                // The source has nothing left: what `out` already holds is silence, which is the truth.
-                break;
-            }
-            let copy = produced.min(capacity - have);
-            self.stretch_out[have * 2..(have + copy) * 2].copy_from_slice(&hop[..copy * 2]);
-            have += copy;
+        let mut done = 0usize;
+        while done < frames {
+            let take = (frames - done).min(piece);
+            let wanted = ((take as f64) * self.tempo_ratio).ceil() as usize + 2;
+            let wanted = wanted.min(capacity);
+            let mut staging = std::mem::take(&mut self.stretch_in);
+            // Device-rate material for this piece, from the loop-aware source.
+            self.render_at_tempo_chunk(&mut staging[..wanted * 2], self.rate_ratio);
+            self.stretcher.process(
+                &staging[..wanted * 2],
+                &mut out[done * 2..(done + take) * 2],
+            );
+            self.stretch_in = staging;
+            done += take;
         }
-        self.stretcher = stretcher;
-        self.hop_out = hop;
-
-        // The file's rate against the device's, on the stretched material.
-        let step = self.rate_ratio;
-        let mut position = self.stretch_phase;
-        for index in 0..frames {
-            let frame = position as usize;
-            if frame + 1 >= have {
-                break;
-            }
-            let fraction = (position - frame as f64) as f32;
-            let left = frame * 2;
-            let right = left + 2;
-            out[index * 2] =
-                self.stretch_out[left] * (1.0 - fraction) + self.stretch_out[right] * fraction;
-            out[index * 2 + 1] = self.stretch_out[left + 1] * (1.0 - fraction)
-                + self.stretch_out[right + 1] * fraction;
-            position += step;
-        }
-
-        let consumed = (position as usize).min(have);
-        let rest = have - consumed;
-        self.stretch_out.copy_within(consumed * 2..have * 2, 0);
-        self.stretch_frames = rest;
-        self.stretch_phase = position - consumed as f64;
     }
 
     /// Fill `out` from the source, honouring the loop and the end of the file. No gain, no EQ, no

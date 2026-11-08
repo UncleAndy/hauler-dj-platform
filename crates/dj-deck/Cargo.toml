@@ -13,6 +13,9 @@ dj-domain = { path = "../dj-domain" }
 # The channel's three-band EQ sits on the deck: a deck reaches the mixer already gain-staged and
 # equalised, which is the order the mixer's own contract names (DJP-ARCH-006).
 dj-dsp = { path = "../dj-dsp" }
+# Key lock: the tempo moves and the pitch does not (DJP-DECK-008). The vendored library does the
+# stretching; this crate only decides when and at which rate.
+dj-stretch-sys = { path = "../dj-stretch-sys" }
 
 [lints]
 workspace = true

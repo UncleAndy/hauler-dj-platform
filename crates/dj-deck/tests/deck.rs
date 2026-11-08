@@ -1052,8 +1052,9 @@ fn a_stretched_tone_stays_clean() {
             deck.render(&mut block);
             all.extend_from_slice(&block);
         }
-        // Skip the priming hop, which plays the material as it is.
-        let measured = purity(&all[2400 * 2..], 440.0);
+        // The stretcher's own delay is silence by design: skip it before measuring.
+        let skip = deck.keylock_latency() + 2400;
+        let measured = purity(&all[skip * 2..], 440.0);
         assert!(
             measured > 0.99,
             "at {ratio} only {measured:.3} of the energy stayed at the tone"
@@ -1063,53 +1064,87 @@ fn a_stretched_tone_stays_clean() {
 
 #[test]
 fn the_pitch_stays_where_the_file_put_it_when_the_tempo_moves() {
-    // Key lock is the default (DJP-DECK-008): the deck plays faster, the note stays the note. Measured
-    // rather than assumed — the same tone, eight per cent faster, must cross zero as often as before.
-    let mut plain = tone_deck(480_000);
-    plain.play();
-    let mut reference = vec![0.0f32; 9600];
-    plain.render(&mut reference);
-    let baseline = crossings(&reference);
-
+    // Key lock is the default (DJP-DECK-008): the deck plays faster, the note stays the note.
+    //
+    // Measured by where the energy sits, not by counting zero crossings: a stretched tone carries a
+    // little high-frequency residue across zero, and the count reads that as extra pitch. Energy at
+    // 440 Hz versus energy at 475 Hz (what the pitch *would* be without key lock) separates them.
     let mut fast = tone_deck(480_000);
     assert!(fast.keylock(), "a fresh deck locks the key");
     fast.set_tempo(1.08);
     fast.play();
-    let mut moved = vec![0.0f32; 9600];
+    // Skip the delay and the fade-in that follows it: both are transitions, not the tone's shape.
+    let skip = fast.keylock_latency() + 2400;
+    let mut warmup = vec![0.0f32; skip * 2];
+    fast.render(&mut warmup);
+    let before = fast.read_position();
+    let mut moved = vec![0.0f32; 4800 * 2];
     fast.render(&mut moved);
-    let held = crossings(&moved);
+    let window = &moved[..];
 
-    let ratio = held as f64 / baseline as f64;
+    let at_original = purity(window, 440.0);
+    let at_moved = purity(window, 440.0 * 1.08);
     assert!(
-        (ratio - 1.0).abs() < 0.05,
-        "key lock kept the pitch at {ratio:.3} times the original ({baseline} -> {held})"
+        at_original > 0.9,
+        "the tone is not at 440 Hz any more: {at_original:.3} of the energy"
     );
-    // And the material still moves: 4800 frames of output cover about 5184 frames of source. The
-    // stretcher reads a window ahead, so the read position leads the sound by up to one window.
-    let played = fast.position() as f64;
     assert!(
-        played > 5184.0 - 300.0 && played < 5184.0 + 2500.0,
-        "4800 frames at 1.08 moved the playhead to {played}"
+        at_moved < at_original * 0.2,
+        "the pitch moved with the tempo: {at_moved:.3} of the energy sits at 475 Hz"
+    );
+
+    // And the material still moves: 4800 frames of output cover about 5184 frames of source. The
+    // stretcher works on device-rate material and holds a short history, so the *heard* position
+    // trails the read position by that history; both are checked, because reading the right amount
+    // and playing it late is a different bug.
+    let read = (fast.read_position() - before) as f64;
+    assert!(
+        (read - 5184.0).abs() < 400.0,
+        "4800 frames at 1.08 read {read} frames of source"
+    );
+    let latency = fast.keylock_latency() as f64;
+    let heard = fast.position() as f64;
+    let all_read = fast.read_position() as f64;
+    assert!(
+        latency > 0.0 && (all_read - heard - latency).abs() < 2.0,
+        "the heard position {heard} is not the read position {all_read} minus the delay {latency}"
+    );
+}
+
+#[test]
+fn a_block_larger_than_the_staging_still_locks_the_key() {
+    // The staging buffer holds 8192 frames; a larger block is played in pieces. The pitch has to stay
+    // put for that caller too — a fallback to the vinyl path would move it, silently.
+    let mut deck = tone_deck(480_000);
+    deck.set_tempo(1.08);
+    deck.play();
+    let skip = deck.keylock_latency() + 2400;
+    let mut warmup = vec![0.0f32; skip * 2];
+    deck.render(&mut warmup);
+    let mut block = vec![0.0f32; 40_000 * 2];
+    deck.render(&mut block);
+    let at_original = purity(&block, 440.0);
+    assert!(
+        at_original > 0.9,
+        "a 40000-frame block lost the key: {at_original:.3} of the energy at 440 Hz"
     );
 }
 
 #[test]
 fn a_block_larger_than_the_scratch_still_plays_at_the_tempo() {
-    // The engine renders 256 frames, so a larger block only arrives from a caller of the library — and
-    // there the size maths has to hold: at 1.08 a full scratch of output frames asks for more source
-    // frames than the scratch holds.
+    // The vinyl path chunks large blocks too: at 1.08 the source frames for a full scratch do not fit
+    // in it, and the size maths has to divide by the step.
     let mut deck = deck_with_ramp(480_000);
     deck.set_keylock(false);
     deck.set_tempo(1.08);
     deck.play();
     let mut block = vec![0.0f32; 40_000 * 2];
     deck.render(&mut block);
-    let played = deck.position() as f64;
+    let played = deck.read_position() as f64;
     assert!(
         (played - 40_000.0 * 1.08).abs() < 4.0,
         "a 40000-frame block at 1.08 advanced the source to {played}"
     );
-    // And the material really is the file's, only faster: the last frame is the ramp at that position.
     let last = f64::from(block[block.len() - 2]);
     let expected = f64::from(ramp(43_199));
     assert!(
@@ -1144,8 +1179,10 @@ fn without_key_lock_the_pitch_follows_the_rate_as_on_a_turntable() {
 #[test]
 fn a_seek_drops_the_frames_carried_by_the_tempo_stage() {
     // Without this the first block after a seek would start with a fraction of the material from before
-    // it — an audible tick at every jump, and a picture that disagrees with the sound.
+    // it — an audible tick at every jump, and a picture that disagrees with the sound. This is the
+    // resampling stage's contract, so it is asked on the vinyl path.
     let mut deck = deck_with_ramp(48_000);
+    deck.set_keylock(false);
     deck.set_tempo(1.08);
     deck.play();
     let mut block = vec![0.0f32; 512];
@@ -1163,7 +1200,10 @@ fn a_seek_drops_the_frames_carried_by_the_tempo_stage() {
 
 #[test]
 fn a_loop_still_wraps_at_tempo() {
+    // The wrap belongs to the source, not to the stretcher: the vinyl path shows it without the
+    // key-lock delay moving the playhead the assertion reads.
     let mut deck = deck_with_ramp(48_000);
+    deck.set_keylock(false);
     deck.set_tempo(1.05);
     deck.set_loop(Some(FrameRange {
         start: SourceFrame(1000),
