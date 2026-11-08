@@ -553,6 +553,7 @@ fn a_snapshot_carries_everything_a_display_needs() {
         duration_frames: Some(44_100),
         bpm: Some(128.0),
         first_beat_frame: None,
+        grid: None,
         key: Some("8A".to_string()),
     };
     deck.attach(Box::new(RampSource::new(44_100)), Some(track));

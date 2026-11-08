@@ -59,7 +59,11 @@ fn the_loader_measures_the_grid_of_a_file() {
 
     let prepared = dj_engine::prepare_track(&track, RATE, 2.0, 1.0).expect("prepared");
     let grid = prepared.grid.expect("a measured grid");
-    assert!((grid.bpm - 128.0).abs() < 0.5, "measured {} BPM", grid.bpm);
+    assert!(
+        (grid.bpm() - 128.0).abs() < 0.5,
+        "measured {} BPM",
+        grid.bpm()
+    );
     let published = prepared
         .static_info
         .track
@@ -67,13 +71,18 @@ fn the_loader_measures_the_grid_of_a_file() {
         .expect("track description");
     assert_eq!(
         published.bpm,
-        Some(grid.bpm),
+        Some(grid.bpm()),
         "the snapshot carries the tempo"
     );
     assert_eq!(
         published.first_beat_frame,
-        Some(grid.first_beat_frame),
+        Some(grid.first_beat_frame()),
         "and the anchor the beat lines are drawn from"
+    );
+    assert_eq!(
+        published.grid.as_ref().map(|held| held.segments().len()),
+        Some(1),
+        "a track that holds its tempo is one segment"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -90,10 +99,7 @@ fn the_grid_is_stored_and_a_stored_grid_is_not_overwritten() {
         "vol",
         &dir,
         &track,
-        dj_engine::StoredGrid {
-            bpm: 128.0,
-            first_beat_frame: 4_800,
-        },
+        &dj_domain::BeatGrid::single(128.0, 4_800).expect("a grid"),
         false,
     )
     .expect("write");
@@ -110,10 +116,7 @@ fn the_grid_is_stored_and_a_stored_grid_is_not_overwritten() {
         "vol",
         &dir,
         &track,
-        dj_engine::StoredGrid {
-            bpm: 127.0,
-            first_beat_frame: 0,
-        },
+        &dj_domain::BeatGrid::single(127.0, 0).expect("a grid"),
         false,
     )
     .expect("second write");
@@ -130,11 +133,8 @@ fn a_measurement_the_dj_asked_for_replaces_the_stored_grid() {
     let track = dir.join("clicks.wav");
     write_click_track(&track, 16.0);
     let store = dj_library::Store::new(dir.join("mirror"));
-    let grid = dj_engine::StoredGrid {
-        bpm: 128.0,
-        first_beat_frame: 4_800,
-    };
-    dj_engine::meta::write_beatgrid(&store, "vol", &dir, &track, grid, false).expect("first");
+    let grid = dj_domain::BeatGrid::single(128.0, 4_800).expect("a grid");
+    dj_engine::meta::write_beatgrid(&store, "vol", &dir, &track, &grid, false).expect("first");
 
     // The button says: measure it again. That is the DJ overruling the file, so the answer lands even
     // though a grid is already there.
@@ -143,10 +143,7 @@ fn a_measurement_the_dj_asked_for_replaces_the_stored_grid() {
         "vol",
         &dir,
         &track,
-        dj_engine::StoredGrid {
-            bpm: 124.0,
-            first_beat_frame: 9_000,
-        },
+        &dj_domain::BeatGrid::single(124.0, 9_000).expect("a grid"),
         true,
     )
     .expect("replace");
@@ -173,10 +170,7 @@ fn a_stored_grid_comes_back_on_the_deck() {
         "vol",
         &dir,
         &track,
-        dj_engine::StoredGrid {
-            bpm: 128.25,
-            first_beat_frame: 5_000,
-        },
+        &dj_domain::BeatGrid::single(128.25, 5_000).expect("a grid"),
         false,
     )
     .expect("write");
@@ -187,11 +181,11 @@ fn a_stored_grid_comes_back_on_the_deck() {
     assert!(problem.is_none(), "unexpected problem: {problem:?}");
     let grid = prepared.grid.expect("a grid");
     assert!(
-        (grid.bpm - 128.25).abs() < 1e-9,
+        (grid.bpm() - 128.25).abs() < 1e-9,
         "stored tempo: {}",
-        grid.bpm
+        grid.bpm()
     );
-    assert_eq!(grid.first_beat_frame, 5_000);
+    assert_eq!(grid.first_beat_frame(), 5_000);
     let published = prepared
         .static_info
         .track

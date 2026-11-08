@@ -9,9 +9,10 @@ use std::sync::mpsc::{self, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use dj_domain::BeatGrid;
 use dj_library::{Cue, Store, TrackMeta, fingerprint};
 
-use crate::{MetaEdit, PreparedTrack, StoredGrid};
+use crate::{MetaEdit, PreparedTrack};
 
 /// How long the shutdown waits for the last edit to reach the disk before saying it gave up.
 const SHUTDOWN_WAIT: Duration = Duration::from_secs(2);
@@ -112,16 +113,31 @@ pub fn restore(
                 .collect();
             // A stored grid outranks the measurement: either the DJ moved it or the analysis was
             // locked, and both are decisions the detector may not overwrite (DJP-SYNC-003).
-            if let Some(grid) = loaded.meta.beatgrid.as_ref() {
-                prepared.grid = Some(StoredGrid {
-                    bpm: grid.bpm,
-                    first_beat_frame: grid.first_beat_frame,
-                });
-                if let Some(track) = prepared.track.as_mut() {
-                    track.bpm = Some(grid.bpm);
-                    track.first_beat_frame = Some(grid.first_beat_frame);
+            if let Some(stored) = loaded.meta.beatgrid.as_ref() {
+                // The file states a tempo and pins the rest with anchors; the grid is what the rest of
+                // the program speaks. A stored grid that cannot be a grid is ignored rather than trusted.
+                let rate = f64::from(prepared.static_info.source_rate);
+                let anchors: Vec<(u64, u64)> = stored
+                    .anchors
+                    .iter()
+                    .map(|anchor| (anchor.frame, anchor.beat))
+                    .collect();
+                let grid =
+                    BeatGrid::from_stored(stored.bpm, stored.first_beat_frame, &anchors, rate);
+                if let Some(grid) = grid {
+                    prepared.grid = Some(grid.clone());
+                    prepared.static_info.grid = Some(grid.clone());
+                    if let Some(track) = prepared.track.as_mut() {
+                        track.bpm = Some(grid.bpm());
+                        track.first_beat_frame = Some(grid.first_beat_frame());
+                        track.grid = Some(grid);
+                    }
+                    prepared.static_info.track = prepared.track.clone();
+                } else if let Some(track) = prepared.track.as_mut() {
+                    track.bpm = Some(stored.bpm);
+                    track.first_beat_frame = Some(stored.first_beat_frame);
+                    prepared.static_info.track = prepared.track.clone();
                 }
-                prepared.static_info.track = prepared.track.clone();
             }
             loaded.conflict.map(|(loser, winner)| {
                 format!(
@@ -146,10 +162,10 @@ pub fn write_beatgrid(
     volume: &str,
     root: &Path,
     path: &Path,
-    grid: StoredGrid,
+    grid: &BeatGrid,
     force: bool,
 ) -> Result<bool, String> {
-    if !grid.bpm.is_finite() || grid.bpm <= 0.0 {
+    if !grid.bpm().is_finite() || grid.bpm() <= 0.0 {
         return Ok(false);
     }
     let now_ms = SystemTime::now()
@@ -170,9 +186,13 @@ pub fn write_beatgrid(
         return Ok(false);
     }
     meta.beatgrid = Some(dj_library::BeatGrid {
-        bpm: grid.bpm,
-        first_beat_frame: grid.first_beat_frame,
-        anchors: Vec::new(),
+        bpm: grid.bpm(),
+        first_beat_frame: grid.first_beat_frame(),
+        anchors: grid
+            .stored_anchors()
+            .into_iter()
+            .map(|(frame, beat)| dj_library::Anchor { frame, beat })
+            .collect(),
     });
     if existed {
         meta.bump(now_ms);

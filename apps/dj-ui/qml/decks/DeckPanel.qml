@@ -58,6 +58,15 @@ Pane {
     /// True while the engine is measuring this deck's tempo again (B02).
     readonly property bool analyzing: panel.deck.analyzing === true
     readonly property var track: panel.deck.track !== undefined ? panel.deck.track : null
+    /// The tempo under the play head, falling back to the track's own number for a client that talks to
+    /// an engine which does not publish one (DJP-SYNC-003).
+    readonly property real localBpm: {
+        if (panel.deck.local_bpm !== undefined && panel.deck.local_bpm !== null) {
+            return panel.deck.local_bpm;
+        }
+        return panel.track !== null && panel.track.bpm !== undefined && panel.track.bpm !== null
+               ? panel.track.bpm : 0;
+    }
     readonly property var loop: panel.deck.loop_region !== undefined ? panel.deck.loop_region : null
 
     // One envelope per deck, shared by the zoomed strip and the overview: loading into A can never
@@ -354,12 +363,12 @@ Pane {
                 }
                 Label {
                     objectName: "bpm_" + panel.deckId
-                    // The measured tempo, one decimal. A grid nobody can see is a grid nobody trusts,
-                    // and the deck is where the DJ looks while the track is already playing (B02).
-                    visible: panel.track !== null && panel.track.bpm !== undefined
-                             && panel.track.bpm !== null
-                    text: panel.track !== null && panel.track.bpm
-                          ? panel.track.bpm.toFixed(1) + " BPM" : ""
+                    // The tempo under the play head, one decimal: on a track that holds one tempo this is
+                    // the measured number, and on a track that changes tempo it follows the play head
+                    // instead of lying about the whole file (B02, DJP-SYNC-003). A grid nobody can see is
+                    // a grid nobody trusts, and the deck is where the DJ looks while it is playing.
+                    visible: panel.localBpm > 0
+                    text: panel.localBpm > 0 ? panel.localBpm.toFixed(1) + " BPM" : ""
                     color: UiSettings.themeAccent
                     font.pixelSize: 10
                 }

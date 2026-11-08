@@ -377,18 +377,15 @@ fn run(argv: &[String]) -> Result<(), String> {
                                 *slot = update.static_info;
                             }
                         }
-                        Published::Grid {
-                            deck,
-                            bpm,
-                            first_beat_frame,
-                        } => {
-                            if let Some(track) = statics
-                                .iter_mut()
-                                .find(|entry| entry.deck == deck)
-                                .and_then(|slot| slot.track.as_mut())
+                        Published::Grid { deck, grid } => {
+                            if let Some(slot) = statics.iter_mut().find(|entry| entry.deck == deck)
                             {
-                                track.bpm = Some(bpm);
-                                track.first_beat_frame = Some(first_beat_frame);
+                                slot.grid = Some(*grid.clone());
+                                if let Some(track) = slot.track.as_mut() {
+                                    track.bpm = Some(grid.bpm());
+                                    track.first_beat_frame = Some(grid.first_beat_frame());
+                                    track.grid = Some(*grid);
+                                }
                             }
                         }
                         Published::Analyzing { deck, analyzing } => {
@@ -492,16 +489,18 @@ fn run(argv: &[String]) -> Result<(), String> {
                     Ok(Some(found)) => {
                         // An explicit request outranks what the file remembers: that is the whole
                         // point of the button — the stored grid was wrong.
-                        let grid = dj_engine::StoredGrid {
-                            bpm: found.bpm,
-                            first_beat_frame: found.first_beat_frame,
+                        let Some(grid) =
+                            dj_domain::BeatGrid::single(found.bpm, found.first_beat_frame)
+                        else {
+                            eprintln!("dj-engine: the measurement is not a grid");
+                            continue;
                         };
                         if let Err(message) = dj_engine::meta::write_beatgrid(
                             &store,
                             volume(),
                             root(),
                             &path,
-                            grid,
+                            &grid,
                             true,
                         ) {
                             eprintln!("dj-engine: {message}");
@@ -510,13 +509,11 @@ fn run(argv: &[String]) -> Result<(), String> {
                         // the description is what a client reads, and both have to change together.
                         let _ = published_to.send(Published::Grid {
                             deck,
-                            bpm: found.bpm,
-                            first_beat_frame: found.first_beat_frame,
+                            grid: Box::new(grid.clone()),
                         });
                         let _ = prepared.send(GraphLoad::SetGrid {
                             deck,
-                            bpm: found.bpm,
-                            first_beat_frame: found.first_beat_frame,
+                            grid: Box::new(grid),
                         });
                     }
                     Ok(None) => eprintln!(
@@ -561,6 +558,8 @@ fn run(argv: &[String]) -> Result<(), String> {
                         auto_gain: 1.0,
                         auto_gain_db: None,
                         analyzing: false,
+                        grid: None,
+                        source_rate: 0,
                     },
                 })));
                 let path = std::path::PathBuf::from(&request.path);
@@ -572,7 +571,7 @@ fn run(argv: &[String]) -> Result<(), String> {
                     }
                     // The grid is worth keeping: measuring it is a decode of the whole file, and the
                     // next load should not pay for it again. A stored grid is left alone by the write.
-                    if let Some(grid) = prepared.grid {
+                    if let Some(grid) = prepared.grid.as_ref() {
                         match dj_engine::meta::write_beatgrid(
                             &store,
                             volume(),
@@ -621,6 +620,8 @@ fn run(argv: &[String]) -> Result<(), String> {
                                 auto_gain: 1.0,
                                 auto_gain_db: None,
                                 analyzing: false,
+                                grid: None,
+                                source_rate: 0,
                             },
                         })));
                     }

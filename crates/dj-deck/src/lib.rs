@@ -12,8 +12,8 @@
 
 use dj_codec::Prefetcher;
 use dj_domain::{
-    DeckId, DeckLoad, DeckSnapshot, EqGains, FrameRange, HOTCUE_SLOTS, Levels, SourceFrame,
-    TrackMeta,
+    BeatGrid, DeckId, DeckLoad, DeckSnapshot, EqGains, FrameRange, HOTCUE_SLOTS, Levels,
+    SourceFrame, TrackMeta,
 };
 use dj_dsp::ChannelEq;
 use dj_signalsmith_sys::{DEFAULT_FALL_SECONDS, Interpolation, PeakDecay, Resampler};
@@ -229,6 +229,8 @@ pub struct Deck {
     cue_labels: [Option<String>; HOTCUE_SLOTS],
     cue_colors: [Option<String>; HOTCUE_SLOTS],
     track: Option<TrackMeta>,
+    /// The beat grid, in source frames: one segment per tempo (DJP-SYNC-003).
+    grid: Option<BeatGrid>,
     /// What the strip's meter shows: the peak, held and falling back over half a second.
     levels: Levels,
     /// One fall-back filter per channel of the strip, rebuilt when the device rate changes.
@@ -317,6 +319,7 @@ impl Deck {
             cue_labels: std::array::from_fn(|_| None),
             cue_colors: std::array::from_fn(|_| None),
             track: None,
+            grid: None,
             levels: Levels::SILENT,
             level_decay: [
                 PeakDecay::new(EQ_SAMPLE_RATE as u32, DEFAULT_FALL_SECONDS),
@@ -1450,19 +1453,27 @@ impl Deck {
     }
 
     /// Read-only state for displays and the UI (fields ordered by display priority, ADR-0006).
-    /// Replace the beat grid the deck publishes for its track (B02).
+    /// Whether a measurement is running over this deck's file (B02).
     ///
-    /// Called at a block boundary when the DJ asks for the tempo again: the measurement is what the
-    /// deck now shows, and the publisher will carry it on the next snapshot.
+    /// Called at a block boundary, never from the audio callback: the flag is display state.
     pub fn set_analyzing(&mut self, analyzing: bool) {
         self.analyzing = analyzing;
     }
 
-    pub fn set_beat_grid(&mut self, bpm: f64, first_beat_frame: u64) {
+    /// Replace the beat grid the deck publishes for its track (B02, DJP-SYNC-003).
+    ///
+    /// Called at a block boundary when the DJ asks for the tempo again: the measurement is what the
+    /// deck now shows, and the publisher will carry it on the next snapshot. The track keeps `bpm` and
+    /// `first_beat_frame` as the first segment, so a client that only knows one tempo still reads it.
+    pub fn set_beat_grid(&mut self, grid: BeatGrid) {
         if let Some(track) = self.track.as_mut() {
-            track.bpm = Some(bpm);
-            track.first_beat_frame = Some(first_beat_frame);
+            track.bpm = Some(grid.bpm());
+            track.first_beat_frame = Some(grid.first_beat_frame());
+            track.grid = Some(grid.clone());
         }
+        // Held by the deck as well: the grid is what the play head is measured against, and a deck that
+        // was handed one keeps it even when the file brought no metadata of its own.
+        self.grid = Some(grid);
     }
 
     pub fn snapshot(&self) -> DeckSnapshot {
@@ -1476,12 +1487,25 @@ impl Deck {
                 Some((heard as f32 / total as f32).clamp(0.0, 1.0))
             }
         });
+        // The grid is in source frames and so is the play head, so the beat is a straight read: the
+        // deck is the only place that knows both the file's rate and where it is playing.
+        let rate = self.source_rate_of_current();
+        let beat = self.grid.as_ref().map(|grid| grid.beat_at(heard, rate));
+        let local_bpm = self.grid.as_ref().map(|grid| grid.bpm_at(heard));
         DeckSnapshot {
             waveform: None,
             deck: self.id,
             load: self.load.clone(),
             playing: self.playing,
             analyzing: self.analyzing,
+            beat,
+            local_bpm,
+            // The file's own rate, not the deck's output rate: a 44.1 kHz track played through a
+            // 48 kHz engine keeps its beats in its own frames.
+            source_rate: self
+                .source
+                .as_ref()
+                .map_or(0, |source| source.sample_rate()),
             source_frame: SourceFrame(heard),
             remaining_frames: remaining,
             position_ratio: ratio,

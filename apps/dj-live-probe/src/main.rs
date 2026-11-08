@@ -264,6 +264,7 @@ fn run(argv: &[String]) -> Result<String, Error> {
                     duration_frames: info.frames,
                     bpm: None,
                     first_beat_frame: None,
+                    grid: None,
                     key: None,
                 }),
             );

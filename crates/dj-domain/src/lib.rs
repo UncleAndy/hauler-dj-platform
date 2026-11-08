@@ -16,6 +16,10 @@
 
 use serde::{Deserialize, Serialize};
 
+mod grid;
+
+pub use grid::{BeatGrid, BeatSegment};
+
 /// Version tag of the command protocol. Bump it on any incompatible change.
 pub const COMMAND_PROTOCOL: &str = "command-v1";
 /// Version tag of the state snapshot protocol. Bump it on any incompatible change.
@@ -678,6 +682,12 @@ pub struct TrackMeta {
     /// a build without a tempo detector reads the same as one from a file without a measured grid.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_beat_frame: Option<u64>,
+    /// The beat grid in full: one segment per tempo, so a track that changes tempo is described
+    /// honestly (DJP-SYNC-003). Absent when nothing was measured and nothing was edited, which reads
+    /// the same as a file without a grid; `bpm` and `first_beat_frame` stay as the first segment for
+    /// clients that only know a single tempo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grid: Option<BeatGrid>,
     /// Musical key, once analysis exists.
     pub key: Option<String>,
 }
@@ -708,6 +718,11 @@ impl Levels {
         held_left: 0.0,
         held_right: 0.0,
     };
+}
+
+/// Whether a count or a rate is zero, so a field that says nothing stays off the wire.
+fn is_zero(value: &u32) -> bool {
+    *value == 0
 }
 
 /// State of one deck in a snapshot.
@@ -753,6 +768,20 @@ pub struct DeckSnapshot {
     /// engine never says a measurement is running.
     #[serde(default)]
     pub analyzing: bool,
+    /// Sample rate of the source material, so a client can turn frames into seconds and beats into
+    /// lines on the wave (DJP-SYNC-003). Defaulted to zero: a client that knows nothing about beats is
+    /// not a protocol error.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub source_rate: u32,
+    /// Where the play head is in beats: `12.5` is halfway between the twelfth and thirteenth beat of
+    /// the grid (DJP-SYNC-003). Defaulted and omitted when the track has no grid, so a client that
+    /// knows nothing about beats is not a protocol error.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub beat: Option<f64>,
+    /// The tempo under the play head. Differs from `track.bpm` only on a track that changes tempo, and
+    /// it is the number the deck shows and sync has to follow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_bpm: Option<f64>,
     /// Current output peaks.
     pub levels: Levels,
     /// Waveform envelope, once the deck has one.

@@ -150,6 +150,9 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
             load: DeckLoad::Ready,
             playing: true,
             analyzing: false,
+            beat: None,
+            local_bpm: None,
+            source_rate: 44_100,
             source_frame: SourceFrame(4_800),
             remaining_frames: Some(120_000),
             position_ratio: Some(0.0384),
@@ -159,6 +162,7 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
                 duration_frames: Some(124_800),
                 bpm: Some(128.0),
                 first_beat_frame: None,
+                grid: None,
                 key: Some("8A".to_string()),
             }),
             loop_region: None,
@@ -245,6 +249,7 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
             // A measurement under way is published so the deck can say so; defaulted, so a snapshot
             // from a build without the button still reads.
             r#""analyzing":false,"#,
+            r#""source_rate":44100,"#,
             r#""levels":{"peak_left":0.5,"peak_right":0.25,"held_left":0.4,"held_right":0.2},"#,
             r#""linear_gain":1.0,"#,
             r#""auto_gain":1.0,"auto_gain_db":-3.5,"tempo_ratio":1.0,"fader":0.85,"#,
@@ -289,6 +294,7 @@ fn a_measured_grid_travels_with_the_track() {
         duration_frames: Some(124_800),
         bpm: Some(128.0),
         first_beat_frame: Some(4_800),
+        grid: dj_domain::BeatGrid::single(128.0, 4_800),
         key: None,
     };
     let json = serde_json::to_string(&measured).unwrap_or_default();

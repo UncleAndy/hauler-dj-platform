@@ -26,6 +26,45 @@ use std::sync::mpsc::Sender;
 #[global_allocator]
 static ALLOCATOR: dj_testkit::rt::CountingAllocator = dj_testkit::rt::CountingAllocator;
 
+/// A deck whose material claims its own rate, which is what a 44.1 kHz file does in a 48 kHz engine.
+fn deck_with_tone_at(id: DeckId, source_rate: u32) -> Deck {
+    struct Tone(u32);
+    impl dj_deck::DeckSource for Tone {
+        fn sample_rate(&self) -> u32 {
+            self.0
+        }
+        fn frames(&self) -> Option<u64> {
+            Some(960_000)
+        }
+        fn read(&mut self, out: &mut [f32]) -> Result<usize, String> {
+            let take = out.len() / 2;
+            out[..take * 2].fill(0.25);
+            Ok(take)
+        }
+        fn seek(&mut self, frame: u64) -> Result<u64, String> {
+            Ok(frame)
+        }
+    }
+    let mut deck = Deck::new(id);
+    // The grid travels with the track's metadata on the wire, so a deck that is to publish beats needs
+    // a track; the title and the artist are not what this test is about.
+    deck.attach(
+        Box::new(Tone(source_rate)),
+        Some(dj_domain::TrackMeta {
+            title: String::from("Tone"),
+            artist: String::new(),
+            duration_frames: Some(960_000),
+            bpm: None,
+            first_beat_frame: None,
+            grid: None,
+            key: None,
+        }),
+    );
+    deck.set_blocking(false);
+    deck.set_gain(1.0);
+    deck
+}
+
 fn deck_with_tone(id: DeckId, rate: u32) -> Deck {
     struct Tone;
     impl dj_deck::DeckSource for Tone {
@@ -344,6 +383,81 @@ fn publishing_a_block_does_not_allocate() {
         "publish must not allocate inside the render path"
     );
     let _ = (&mut decks, &mut mixer);
+}
+
+#[test]
+fn the_published_tempo_and_beat_follow_the_play_head() {
+    // A cut mid-track: 120 BPM for the first eight beats, 128 after. The wire carries the tempo under
+    // the play head, not one number for the whole file, and the beat count keeps running across the
+    // cut — the second stretch is beats 8 onward, not a grid of its own starting at zero.
+    let mut deck = deck_with_tone_at(DeckId::A, 48_000);
+    let grid = dj_domain::BeatGrid::from_segments(vec![
+        dj_domain::BeatSegment {
+            frame: 0,
+            beat: 0,
+            bpm: 120.0,
+        },
+        dj_domain::BeatSegment {
+            frame: 192_000,
+            beat: 8,
+            bpm: 128.0,
+        },
+    ])
+    .expect("a grid");
+    deck.set_beat_grid(grid);
+    let decks = vec![deck];
+    let mixer = mixer_for(48_000);
+    let statics = vec![DeckStatic::from_snapshot(&decks[0].snapshot())];
+    let cells = StateCells::new();
+
+    cells.publish(&decks, &mixer, 0);
+    let start = cells.read(&statics, 48_000, 0, 1).decks[0].clone();
+    assert_eq!(start.local_bpm, Some(120.0), "the first stretch");
+    assert_eq!(
+        start.track.as_ref().and_then(|track| track.bpm),
+        Some(120.0)
+    );
+
+    // Eight beats of 120 BPM and one of 128: 192 000 + 22 500 frames.
+    let decks = {
+        let mut deck = decks.into_iter().next().expect("a deck");
+        deck.seek(192_000 + 22_500);
+        vec![deck]
+    };
+    cells.publish(&decks, &mixer, 0);
+    let after = cells.read(&statics, 48_000, 0, 2).decks[0].clone();
+    assert_eq!(after.local_bpm, Some(128.0), "the stretch after the cut");
+    let beat = after.beat.expect("a beat");
+    assert!(
+        (beat - 9.0).abs() < 1e-6,
+        "the beat count runs on: {beat} instead of 9"
+    );
+}
+
+#[test]
+fn a_grid_is_read_in_the_track_own_rate_not_the_engine_one() {
+    // A 44.1 kHz file in a 48 kHz engine: the grid is in the file's frames, so a beat is 22 050 frames
+    // of it, not 24 000. Reading it at the engine's rate would put the play head a beat out by the
+    // middle of the track, and nothing else in the program would notice.
+    let mut deck = deck_with_tone_at(DeckId::A, 44_100);
+    deck.set_beat_grid(dj_domain::BeatGrid::single(120.0, 0).expect("a grid"));
+    let decks = vec![deck];
+    let mixer = mixer_for(48_000);
+    let statics = vec![DeckStatic::from_snapshot(&decks[0].snapshot())];
+    let cells = StateCells::new();
+    let decks = {
+        let mut deck = decks.into_iter().next().expect("a deck");
+        deck.seek(44_100); // one second in: two beats at 120
+        vec![deck]
+    };
+    cells.publish(&decks, &mixer, 0);
+    let deck = cells.read(&statics, 48_000, 0, 1).decks[0].clone();
+    assert_eq!(deck.source_rate, 44_100);
+    let beat = deck.beat.expect("a beat");
+    assert!(
+        (beat - 2.0).abs() < 1e-6,
+        "one second of 44.1 kHz material is two beats: {beat}"
+    );
 }
 
 #[test]
@@ -980,6 +1094,8 @@ fn prepared_with(
             auto_gain: 1.0,
             auto_gain_db: None,
             analyzing: false,
+            grid: None,
+            source_rate: 48_000,
         },
         path: Some(std::path::PathBuf::from("/tmp/dj-engine-cue-test.wav")),
         cues,

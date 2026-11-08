@@ -241,6 +241,7 @@ pub fn render(scenario: &MixScenario, cache: Option<&mut PcmCache>) -> Result<Mi
             duration_frames: info.frames,
             bpm: None,
             first_beat_frame: None,
+            grid: None,
             key: None,
         };
 

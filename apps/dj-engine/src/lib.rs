@@ -14,8 +14,8 @@ use dj_codec::{PrefetchConfig, Prefetcher};
 use dj_deck::{Deck, DeckSource};
 use dj_domain::CommandId;
 use dj_domain::{
-    Ack, AckStatus, CueAction, DeckId, DeckLoad, DeckSnapshot, DjCommand, EqGains, FrameRange,
-    Levels, RejectReason, ScheduledCommand, Snapshot, SourceFrame, TrackMeta,
+    Ack, AckStatus, BeatGrid, CueAction, DeckId, DeckLoad, DeckSnapshot, DjCommand, EqGains,
+    FrameRange, Levels, RejectReason, ScheduledCommand, Snapshot, SourceFrame, TrackMeta,
 };
 use dj_mixer::{ChannelSettings, CrossAssign, CrossfaderCurve, Mixer};
 
@@ -337,6 +337,10 @@ pub struct DeckStatic {
     pub auto_gain_db: Option<f32>,
     /// True while the tempo of this deck's file is being measured again (B02).
     pub analyzing: bool,
+    /// The beat grid in source frames, one segment per tempo (DJP-SYNC-003).
+    pub grid: Option<BeatGrid>,
+    /// Sample rate of the source material: the timebase the grid is expressed in.
+    pub source_rate: u32,
 }
 
 impl DeckStatic {
@@ -360,6 +364,8 @@ impl DeckStatic {
             auto_gain: snapshot.auto_gain,
             auto_gain_db: snapshot.auto_gain_db,
             analyzing: snapshot.analyzing,
+            grid: snapshot.track.as_ref().and_then(|track| track.grid.clone()),
+            source_rate: snapshot.source_rate,
         }
     }
 }
@@ -708,10 +714,25 @@ impl StateCells {
             };
             let loop_start = cells.loop_start.load(Ordering::Relaxed);
             let loop_end = cells.loop_end.load(Ordering::Relaxed);
+            // Where the play head is in beats, and the tempo there: a track that changes tempo has no
+            // single number to show, and a client must not have to guess which segment it is looking at.
+            let (beat, local_bpm) = match fixed.grid.as_ref() {
+                Some(grid) if attached && fixed.source_rate > 0 => {
+                    let grid_rate = f64::from(fixed.source_rate);
+                    (
+                        Some(grid.beat_at(frame, grid_rate)),
+                        Some(grid.bpm_at(frame)),
+                    )
+                }
+                _ => (None, None),
+            };
             decks.push(DeckSnapshot {
                 deck: fixed.deck,
                 load,
                 playing: cells.playing.load(Ordering::Relaxed),
+                beat,
+                local_bpm,
+                source_rate: fixed.source_rate,
                 source_frame: SourceFrame(frame),
                 remaining_frames: total.map(|total| total.saturating_sub(frame)),
                 position_ratio: total
@@ -843,10 +864,8 @@ pub enum GraphLoad {
     SetGrid {
         /// Target deck.
         deck: DeckId,
-        /// Beats per minute the measurement found.
-        bpm: f64,
-        /// Frame of the first beat.
-        first_beat_frame: u64,
+        /// The grid, in source frames. Boxed: a grid of segments outweighs the other variants.
+        grid: Box<BeatGrid>,
     },
 }
 
@@ -864,8 +883,9 @@ pub struct PreparedTrack {
     pub path: Option<std::path::PathBuf>,
     /// Cues recorded for this file, restored at attach.
     pub cues: Vec<(u8, u64)>,
-    /// Beat grid from the analysis, replaced by the stored one when the file carries it.
-    pub grid: Option<StoredGrid>,
+    /// Beat grid from the analysis, in source frames, replaced by the stored one when the file
+    /// carries it (DJP-SYNC-003).
+    pub grid: Option<BeatGrid>,
     /// Names and colours of those cues, restored at attach (DJP-DECK-003).
     pub cue_meta: Vec<(u8, Option<String>, Option<String>)>,
     /// Loops stored on pads, restored at attach (DJP-DECK-004).
@@ -897,16 +917,6 @@ pub struct MetaEdit {
 
 /// A beat grid: the tempo and where its first beat sits (B02, DJP-SYNC-003).
 ///
-/// The grid is stored beside the music, because measuring it is a decode of the whole file and the DJ
-/// corrects what the measurement gets wrong: a stored grid is a decision and outranks a fresh one.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct StoredGrid {
-    /// Beats per minute.
-    pub bpm: f64,
-    /// Frame of the first beat.
-    pub first_beat_frame: u64,
-}
-
 /// What the loader tells the publisher, so the UI can show `Loading` and `Failed`.
 #[derive(Debug, Clone)]
 pub struct DeckUpdate {
@@ -930,10 +940,8 @@ pub enum Published {
     Grid {
         /// Deck whose grid was replaced.
         deck: DeckId,
-        /// Beats per minute the measurement found.
-        bpm: f64,
-        /// Frame of the first beat.
-        first_beat_frame: u64,
+        /// The grid the measurement produced.
+        grid: Box<BeatGrid>,
     },
     /// A measurement started or finished (B02): the deck says so while it runs.
     Analyzing {
@@ -1033,6 +1041,7 @@ pub fn prepare_track(
         duration_frames: info.frames,
         bpm: None,
         first_beat_frame: None,
+        grid: None,
         key: None,
     };
     let mut static_info = DeckStatic {
@@ -1044,6 +1053,8 @@ pub fn prepare_track(
         auto_gain: 1.0, // the loader fills it in below: this function knows samples, not levels
         auto_gain_db: None,
         analyzing: false,
+        grid: None, // filled in below, once the tempo is measured
+        source_rate: info.sample_rate,
     };
     // Loudness is measured here, on the loader thread: it is a full decode of the file, and the audio
     // callback must never see it. A file that cannot be measured opens at unity and says nothing.
@@ -1055,13 +1066,19 @@ pub fn prepare_track(
     let auto_gain_db = measured.map(|loudness| 20.0 * loudness.gain.max(1e-6).log10());
     // Tempo is measured here too: another full decode, on the thread that already owns one, and the
     // audio callback never sees it. A file whose tempo cannot be measured plays without a grid.
-    let tempo = dj_analysis::tempo::analyse(path).ok().flatten();
+    // The measurement is expressed in the file's own frames — the decoder reads at the file's rate and
+    // so does the deck, so a 44.1 kHz track keeps its grid in 44.1 kHz frames whatever the device runs at.
+    let measured_tempo = dj_analysis::tempo::analyse(path).ok().flatten();
+    let measured_grid =
+        measured_tempo.and_then(|found| BeatGrid::single(found.bpm, found.first_beat_frame));
     let mut track = track;
-    if let Some(found) = tempo {
-        track.bpm = Some(found.bpm);
-        track.first_beat_frame = Some(found.first_beat_frame);
+    if let Some(grid) = measured_grid.clone() {
+        track.bpm = Some(grid.bpm());
+        track.first_beat_frame = Some(grid.first_beat_frame());
+        track.grid = Some(grid);
     }
     static_info.track = Some(track.clone());
+    static_info.grid = track.grid.clone();
     // The published deck description carries the correction too: the shell reads the snapshot, and a
     // snapshot that says "1.0" about a trimmed track hides the only place the number could be seen.
     static_info.auto_gain = auto_gain;
@@ -1071,10 +1088,7 @@ pub fn prepare_track(
         deck: DeckId::A,
         source: Box::new(prefetcher),
         track: Some(track),
-        grid: tempo.map(|found| StoredGrid {
-            bpm: found.bpm,
-            first_beat_frame: found.first_beat_frame,
-        }),
+        grid: measured_grid,
         static_info,
         path: Some(path.to_path_buf()),
         // What the file remembers is read by the caller: this function knows samples, not sessions.
@@ -1294,13 +1308,9 @@ impl EngineGraph {
                         self.decks[index].set_analyzing(analyzing);
                     }
                 }
-                GraphLoad::SetGrid {
-                    deck,
-                    bpm,
-                    first_beat_frame,
-                } => {
+                GraphLoad::SetGrid { deck, grid } => {
                     if let Some(index) = self.decks.iter().position(|held| held.id() == deck) {
-                        self.decks[index].set_beat_grid(bpm, first_beat_frame);
+                        self.decks[index].set_beat_grid(*grid);
                     }
                 }
                 GraphLoad::Clear { deck } => {
