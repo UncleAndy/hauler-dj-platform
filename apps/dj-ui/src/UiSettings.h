@@ -49,6 +49,10 @@ class UiSettings : public QObject
     Q_PROPERTY(QString waveformLowColor READ waveformLowColor NOTIFY changed)
     Q_PROPERTY(QString waveformMidColor READ waveformMidColor NOTIFY changed)
     Q_PROPERTY(QString waveformHighColor READ waveformHighColor NOTIFY changed)
+    // Throw of the pitch fader, in percent either side of the file's own speed. A setting, not a
+    // constant: 8 % is the trained-hands range for matching two tracks, 16 % is what a long blend or a
+    // big tempo gap needs, and the owner asked for 16 as the default.
+    Q_PROPERTY(double pitchRangePercent READ pitchRangePercent NOTIFY changed)
 
 public:
     explicit UiSettings(QObject *parent = nullptr);
@@ -86,6 +90,7 @@ public:
     double waveformZoom() const { return m_waveformZoom; }
     int frameInterval() const { return qMax(1, 1000 / qMax(1, m_frameHz)); }
     int waveformBarWidth() const { return m_waveformBarWidth; }
+    double pitchRangePercent() const { return m_pitchRangePercent; }
     int waveformBarGap() const { return m_waveformBarGap; }
 
     // Both must stay positive; a zero width would leave nothing to draw.
@@ -107,6 +112,9 @@ public:
     // "coloured" or "plain"; anything else is refused.
     bool setWaveformStyle(const QString &style);
 
+    // 1..50 percent; false when outside, because a throw nobody can aim with is not a setting.
+    bool setPitchRangePercent(double percent);
+
     // Set from the command line; an invalid colour is refused and the default kept.
     bool setWaveformOutsideColor(const QString &color);
 
@@ -120,6 +128,9 @@ private:
     int m_frameHz = 20;
     // Ten times: the whole track on the overview strip, a tenth of it under the playhead.
     double m_waveformZoom = 10.0;
+    // Sixteen percent: the owner's default. Wide enough for a long blend, narrow enough that the
+    // handle still lands where the hand aims.
+    double m_pitchRangePercent = 16.0;
     // One bar per pixel: the waveform is a continuous curve, and two-pixel bars halve the
     // horizontal detail for nothing.
     int m_waveformBarWidth = 1;

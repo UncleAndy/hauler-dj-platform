@@ -4195,16 +4195,74 @@ int main(int argc, char *argv[])
             return 1;
         }
 
-        const QPointF grab = pitch->mapToScene(QPointF(pitch->width() / 2.0,
-                                                       pitch->height() / 2.0));
+        // The point is recomputed for every gesture: loading a track changes the deck's layout (the
+        // level correction appears beside the clock), and a point captured before that lands somewhere
+        // else on the fader.
+        const auto grabPoint = [&] {
+            return pitch->mapToScene(
+                QPointF(pitch->width() / 2.0, pitch->height() / 2.0));
+        };
+        const QPointF grab = grabPoint();
         const auto send = [&](QEvent::Type type, const QPointF &at) {
-            QMouseEvent event(type, at, window->mapToGlobal(at.toPoint()), Qt::LeftButton,
-                              Qt::LeftButton, Qt::NoModifier);
+            // A release carries no button: with `LeftButton` in the buttons mask the mouse area never
+            // sees the drag end, and the next press is measured from a stale position.
+            const Qt::MouseButtons buttons =
+                type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton;
+            QMouseEvent event(type, at, window->mapToGlobal(at.toPoint()), Qt::LeftButton, buttons,
+                              Qt::NoModifier);
             QCoreApplication::sendEvent(window, &event);
             QCoreApplication::processEvents();
         };
-        send(QEvent::MouseButtonPress, grab);
-        send(QEvent::MouseMove, grab - QPointF(0, 10));
+        // The throw is a setting: ±16 % by default, and the whole travel of the fader is that range.
+        // Checked both ways — the fader's own numbers, and a real drag whose expected rate is computed
+        // from them — because a fader can show a range it cannot reach.
+        {
+            const double rangePercent = pitch->property("rangePercent").toDouble();
+            const double minimum = pitch->property("minimum").toDouble();
+            const double maximum = pitch->property("maximum").toDouble();
+            const double perPixelNow = pitch->property("ratioPerPixel").toDouble();
+            const double inset = pitch->property("inset").toDouble();
+            std::fprintf(stdout, "dj-ui: the pitch throw is ±%.1f %% (%.3f … %.3f)\n",
+                         rangePercent, minimum, maximum);
+            if (std::abs(rangePercent - 16.0) > 1e-6 || std::abs(minimum - 0.84) > 1e-6
+                || std::abs(maximum - 1.16) > 1e-6) {
+                std::fprintf(stderr, "dj-ui: the throw is %.1f %% (%.3f … %.3f), not ±16 %%\n",
+                             rangePercent, minimum, maximum);
+                return 1;
+            }
+            // The travel is the range: when the fader has been laid out, its pixels must cover the
+            // whole throw. A collapsed layout (height 0) says nothing either way, so it is not asked.
+            if (pitch->height() > 100.0) {
+                const double travel = (pitch->height() - 2.0 * inset) * perPixelNow;
+                if (std::abs(travel - (maximum - minimum)) > 0.002) {
+                    std::fprintf(stderr,
+                                 "dj-ui: the fader's travel covers %.4f, but the range is %.4f\n",
+                                 travel, maximum - minimum);
+                    return 1;
+                }
+            }
+        }
+
+        // Let the release's own events drain before resetting: a move still queued would otherwise
+        // re-send the old rate on top of the reset.
+        pump(40);
+        // Back to the file's own speed, so the next gesture starts from a known place. The fader reads
+        // its position from the engine's snapshot, so the reset has to make the round trip.
+        QMetaObject::invokeMethod(pitch, "ask", Q_ARG(QVariant, QVariant(1.0)));
+        {
+            QElapsedTimer settle;
+            settle.start();
+            while (settle.elapsed() < 2000 && std::abs(tempoOf("A") - 1.0) > 1e-6) {
+                pump(2);
+            }
+            std::fprintf(stdout, "dj-ui: after the reset the fader reads %.4f (engine %.4f)\n",
+                         pitch->property("ratio").toDouble(), tempoOf("A"));
+        }
+
+        // Ten pixels up from unity, on the same fader: the middle of the throw still moves by the hand.
+        const QPointF centre = grabPoint();
+        send(QEvent::MouseButtonPress, centre);
+        send(QEvent::MouseMove, centre - QPointF(0, 10));
         pump(30);
         const double asked = pitch->property("lastRatio").toDouble();
         const double playing = tempoOf("A");

@@ -85,6 +85,19 @@ bool UiSettings::setWaveformZoom(double factor)
     return true;
 }
 
+bool UiSettings::setPitchRangePercent(double percent)
+{
+    if (!(percent >= 1.0 && percent <= 50.0)) {
+        return false;
+    }
+    if (qFuzzyCompare(m_pitchRangePercent, percent)) {
+        return true;
+    }
+    m_pitchRangePercent = percent;
+    emit changed();
+    return true;
+}
+
 bool UiSettings::setWaveformBarWidth(int width)
 {
     if (width <= 0 || width > 32) {

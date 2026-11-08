@@ -1,8 +1,8 @@
 // The pitch fader: how fast this deck plays (DJP-DECK-002).
 //
 // A tempo change is a rate, not a level, so zero stands in the middle: "faster" and "slower" are read
-// from which way the handle sits off centre, not from a number. The pitch follows the rate, as on a
-// turntable — holding the pitch while the rate changes is key lock, which is DJP-DECK-008 and not this.
+// from which way the handle sits off centre, not from a number. The key stays where the file put it —
+// key lock is on by default (DJP-DECK-008) — so the fader moves the material and not the pitch.
 import QtQuick
 import QtQuick.Controls
 
@@ -15,8 +15,10 @@ Item {
 
     objectName: "pitch_" + deckId
 
-    /// ±8 % about the file's own speed.
-    readonly property real range: 0.08
+    /// The throw in percent either side of the file's own speed: a setting (`UiSettings`), overridable
+    /// per deck. The owner's default is ±16 %; the settings store will drive it when it arrives.
+    property real rangePercent: UiSettings.pitchRangePercent
+    readonly property real range: fader.rangePercent / 100.0
     readonly property real minimum: 1.0 - fader.range
     readonly property real maximum: 1.0 + fader.range
     readonly property real shown: fader.dragging ? fader.dragged : fader.ratio
@@ -91,10 +93,13 @@ Item {
         anchors.fill: parent
         cursorShape: Qt.SizeVerCursor
         onPressed: function (mouse) {
-            fader.dragging = true;
+            // The gesture starts from the rate the engine is playing, not from the last drag's value:
+            // setting `dragging` first makes `shown` report the stale `dragged`, so a second gesture
+            // used to begin where the previous one ended instead of where the deck actually is.
+            fader.pressRatio = fader.ratio;
             fader.pressY = mouse.y;
-            fader.pressRatio = fader.shown;
             fader.dragged = fader.pressRatio;
+            fader.dragging = true;
         }
         onPositionChanged: function (mouse) {
             if (!fader.dragging) {
