@@ -9,6 +9,7 @@ authors.workspace = true
 
 [dependencies]
 dj-domain = { path = "../dj-domain" }
+dj-signalsmith-sys = { path = "../dj-signalsmith-sys" }
 
 [dev-dependencies]
 dj-testkit = { path = "../dj-testkit" }

@@ -21,6 +21,7 @@ ALSA) допустимы только через динамическую лин
 | serde / serde_json | 1.0.x | MIT OR Apache-2.0 | статическая линковка (Rust) | уведомление | нет данных | в сборке (`apps/dj-audio-probe`) |
 | Signalsmith Stretch (`signalsmith-stretch.h`, vendored) | 1.3.2 | MIT (© 2022 Geraint Luff / Signalsmith Audio Ltd.) | заголовочная C++11-библиотека, статическая линковка в `dj-stretch-sys` | сохранить текст MIT и уведомление (`crates/dj-stretch-sys/vendor/LICENSE.txt`) | в README заявлен патентно-чистый метод (ADC22 «Four Ways To Write A Pitch-Shifter»); собственных патентных оговорок нет | в сборке (key lock, DJP-DECK-008) |
 | Signalsmith Linear (`approx.h`, `fft.h`, `linear.h`, `stft.h`, vendored) | 0.6.6 | MIT (© 2025 Signalsmith Audio) | заголовочная C++11-библиотека (FFT и STFT под Stretch), статическая линковка | сохранить текст MIT (`crates/dj-stretch-sys/vendor/signalsmith-linear/LICENSE.txt`) | нет данных | в сборке (транзитивно, только через Stretch) |
+| Signalsmith DSP (`envelopes.h`, `common.h`, vendored) | 1.7.0 | MIT (© 2021 Geraint Luff / Signalsmith Audio Ltd.) | заголовочная C++11-библиотека, статическая линковка в `dj-signalsmith-sys` | сохранить текст MIT (`crates/dj-signalsmith-sys/vendor/signalsmith-dsp/LICENSE.txt`) | нет данных | в сборке: баллистика метров (`PeakDecayLinear`) для микшера и деки |
 
 ## Запланированы (ещё не зависимость)
 
@@ -46,7 +47,7 @@ ALSA) допустимы только через динамическую лин
 | Signalsmith Basics: `dynamics.h` | там же | MIT | гейт тишины деки, экспандер, мягкая динамика мастера |
 | Signalsmith Basics: `analyser.h` | там же | MIT | спектр для UI (Bark-полосы, `spectrumHz`/`spectrumEnergy`), потокобезопасные метры |
 | Signalsmith Basics: `reverb.h`, `chorus.h`, `freq-shifter.h`, `crunch.h` | там же | MIT | будущая FX-секция (beat FX); `freq-shifter` опирается на `githilbert-iir` |
-| Signalsmith DSP (`filters.h`, `delay.h`, `rates.h`, `envelopes.h`, `curves.h`, `spectral.h`, `windows.h`) | 1.7.0 | MIT | биквады с расчётом Вицанека (EQ, настоящий isolator), интерполированные задержки (ресемплер темпа, скраб), Кайзер-синк (44,1 → 48), баллистика метров, законы кривых |
+| Signalsmith DSP (`filters.h`, `delay.h`, `rates.h`, `curves.h`, `spectral.h`, `windows.h` — `envelopes.h` уже в сборке) | 1.7.0 | MIT | биквады с расчётом Вицанека (EQ, настоящий isolator), интерполированные задержки (ресемплер темпа, скраб), Кайзер-синк (44,1 → 48), законы кривых |
 | Signalsmith FFT | repo | MIT (в README) | самостоятельный FFT, если понадобится без Stretch |
 | Signalsmith Pitch Tracker | 2026 (repo) | MIT | оценка тональности трека, детект вокала (монофонический — на миксе врёт) |
 | Signalsmith IIR Hilbert (`githilbert-iir`) | 2024 | **0BSD** | сдвиг частоты, ширина стерео, фазовое вращение |

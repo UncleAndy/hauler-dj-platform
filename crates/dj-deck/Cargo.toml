@@ -16,6 +16,8 @@ dj-dsp = { path = "../dj-dsp" }
 # Key lock: the tempo moves and the pitch does not (DJP-DECK-008). The vendored library does the
 # stretching; this crate only decides when and at which rate.
 dj-stretch-sys = { path = "../dj-stretch-sys" }
+# Meter ballistics: the channel strip's bar rises to the peak and falls back at a steady rate.
+dj-signalsmith-sys = { path = "../dj-signalsmith-sys" }
 
 [lints]
 workspace = true

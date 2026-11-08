@@ -269,6 +269,8 @@ pub fn snapshot(
         master: dj_domain::Levels {
             peak_left: mixer.meters().master.peak,
             peak_right: mixer.meters().master.peak,
+            held_left: mixer.meters().master.held,
+            held_right: mixer.meters().master.held,
         },
         master_gain: mixer.master_gain(),
         decks: decks
@@ -370,6 +372,8 @@ struct DeckCells {
     tempo: AtomicU64,
     peak_left: AtomicU32,
     peak_right: AtomicU32,
+    held_left: AtomicU32,
+    held_right: AtomicU32,
     loop_start: AtomicU64,
     loop_end: AtomicU64,
     hotcues: [AtomicU64; HOTCUE_SLOTS],
@@ -392,6 +396,8 @@ impl DeckCells {
             tempo: AtomicU64::new(1.0f64.to_bits()),
             peak_left: AtomicU32::new(0),
             peak_right: AtomicU32::new(0),
+            held_left: AtomicU32::new(0),
+            held_right: AtomicU32::new(0),
             loop_start: AtomicU64::new(EMPTY),
             loop_end: AtomicU64::new(EMPTY),
             hotcues: std::array::from_fn(|_| AtomicU64::new(EMPTY)),
@@ -434,6 +440,7 @@ pub struct StateCells {
     crossfader: AtomicU32,
     curve: AtomicU8,
     master_peak: AtomicU32,
+    master_held: AtomicU32,
     master_gain: AtomicU32,
     count: AtomicUsize,
     decks: [DeckCells; MAX_DECKS],
@@ -594,6 +601,7 @@ impl StateCells {
             crossfader: AtomicU32::new(0.5f32.to_bits()),
             curve: AtomicU8::new(curve_index(CrossfaderCurve::default())),
             master_peak: AtomicU32::new(0),
+            master_held: AtomicU32::new(0),
             master_gain: AtomicU32::new(1.0f32.to_bits()),
             count: AtomicUsize::new(0),
             decks: std::array::from_fn(|_| DeckCells::new()),
@@ -610,6 +618,8 @@ impl StateCells {
             .store(mixer.crossfader().to_bits(), Ordering::Relaxed);
         self.curve
             .store(curve_index(mixer.curve()), Ordering::Relaxed);
+        self.master_held
+            .store(mixer.meters().master.held.to_bits(), Ordering::Relaxed);
         self.master_peak
             .store(mixer.meters().master.peak.to_bits(), Ordering::Relaxed);
         self.master_gain
@@ -632,6 +642,12 @@ impl StateCells {
             cells
                 .peak_right
                 .store(levels.peak_right.to_bits(), Ordering::Relaxed);
+            cells
+                .held_left
+                .store(levels.held_left.to_bits(), Ordering::Relaxed);
+            cells
+                .held_right
+                .store(levels.held_right.to_bits(), Ordering::Relaxed);
             match deck.loop_region() {
                 Some(region) => {
                     cells.loop_start.store(region.start.0, Ordering::Relaxed);
@@ -742,6 +758,8 @@ impl StateCells {
                 levels: Levels {
                     peak_left: f32::from_bits(cells.peak_left.load(Ordering::Relaxed)),
                     peak_right: f32::from_bits(cells.peak_right.load(Ordering::Relaxed)),
+                    held_left: f32::from_bits(cells.held_left.load(Ordering::Relaxed)),
+                    held_right: f32::from_bits(cells.held_right.load(Ordering::Relaxed)),
                 },
                 linear_gain: f32::from_bits(cells.gain.load(Ordering::Relaxed)),
                 auto_gain: fixed.auto_gain,
@@ -766,6 +784,8 @@ impl StateCells {
             master: dj_domain::Levels {
                 peak_left: f32::from_bits(self.master_peak.load(Ordering::Relaxed)),
                 peak_right: f32::from_bits(self.master_peak.load(Ordering::Relaxed)),
+                held_left: f32::from_bits(self.master_held.load(Ordering::Relaxed)),
+                held_right: f32::from_bits(self.master_held.load(Ordering::Relaxed)),
             },
             master_gain: f32::from_bits(self.master_gain.load(Ordering::Relaxed)),
             decks,

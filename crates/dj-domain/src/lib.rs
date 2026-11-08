@@ -673,6 +673,15 @@ pub struct Levels {
     pub peak_left: f32,
     /// Right channel peak.
     pub peak_right: f32,
+    /// Left bar value: the peak held and falling back, which is what a meter shows.
+    ///
+    /// Defaulted, so a snapshot from a build without ballistics still reads: a client that knows
+    /// nothing about the fall back is not a protocol error.
+    #[serde(default)]
+    pub held_left: f32,
+    /// Right bar value.
+    #[serde(default)]
+    pub held_right: f32,
 }
 
 impl Levels {
@@ -680,6 +689,8 @@ impl Levels {
     pub const SILENT: Levels = Levels {
         peak_left: 0.0,
         peak_right: 0.0,
+        held_left: 0.0,
+        held_right: 0.0,
     };
 }
 

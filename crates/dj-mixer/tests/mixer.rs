@@ -282,6 +282,45 @@ fn meters_report_peak_and_rms_of_the_channel() {
 }
 
 #[test]
+fn a_meter_holds_its_peak_and_decays_after_the_signal_stops() {
+    // A meter that flickers at the block rate is a counter, not a meter. The bar jumps to the peak and
+    // falls back over about half a second, so a block of silence still carries a value.
+    let mut mixer = Mixer::new(1);
+    mixer.prepare(48_000, 128);
+    mixer.set_channel(0, settings(CrossAssign::Thru, 1.0));
+
+    mixer.begin_block(128);
+    let loud = dc_block(128, 0.5);
+    mixer.mix_channel(0, &loud);
+    mixer.finish_block();
+    let at_peak = mixer.meters().channels[0];
+    assert!((at_peak.peak - 0.5).abs() < 1e-6, "peak {}", at_peak.peak);
+    assert!(
+        (at_peak.held - 0.5).abs() < 1e-3,
+        "the meter did not rise to the peak: held {}",
+        at_peak.held
+    );
+
+    // A quarter of a second of silence: 94 blocks of 128 frames.
+    for _ in 0..94 {
+        mixer.begin_block(128);
+        mixer.mix_channel(0, &dc_block(128, 0.0));
+        mixer.finish_block();
+    }
+    let after = mixer.meters().channels[0];
+    assert!(
+        after.peak < 1e-6,
+        "the block peak must stay per block: {}",
+        after.peak
+    );
+    assert!(
+        (0.15..0.35).contains(&after.held),
+        "half a second of decay should be near half the peak, got {}",
+        after.held
+    );
+}
+
+#[test]
 fn trim_is_a_decibel_gain() {
     let mut mixer = Mixer::new(1);
     mixer.prepare(48_000, 64);

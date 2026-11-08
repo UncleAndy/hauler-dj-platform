@@ -25,6 +25,8 @@ pub enum CrossAssign {
 /// Crossfader law, defined by the protocol so a client can name the one in force.
 pub use dj_domain::CrossfaderCurve;
 
+use dj_signalsmith_sys::{DEFAULT_FALL_SECONDS, PeakDecay};
+
 /// One channel strip's settings.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ChannelSettings {
@@ -56,6 +58,12 @@ pub struct Meter {
     pub peak: f32,
     /// Root-mean-square of the block.
     pub rms: f32,
+    /// What the bar shows: the block peak held and falling back over half a second.
+    ///
+    /// A meter that jumps to zero between blocks is a counter, not a meter — the eye cannot read a
+    /// value that lives for four milliseconds. `peak` stays per block for tests and for clipping;
+    /// `held` is the value that belongs on screen.
+    pub held: f32,
 }
 
 /// Metering and clip accounting for one rendered block.
@@ -99,6 +107,10 @@ pub struct Mixer {
     master_gain: f32,
     cue_gain: f32,
     limiter: Limiter,
+    /// One fall-back filter per metered signal: the channels, the master and the cue bus.
+    channel_decay: Vec<PeakDecay>,
+    master_decay: PeakDecay,
+    cue_decay: PeakDecay,
     meters: Meters,
 }
 
@@ -129,6 +141,11 @@ impl Mixer {
             master_gain: 1.0,
             cue_gain: 1.0,
             limiter: Limiter::default(),
+            channel_decay: (0..channels.max(1))
+                .map(|_| PeakDecay::new(48_000, DEFAULT_FALL_SECONDS))
+                .collect(),
+            master_decay: PeakDecay::new(48_000, DEFAULT_FALL_SECONDS),
+            cue_decay: PeakDecay::new(48_000, DEFAULT_FALL_SECONDS),
             meters: Meters {
                 channels: vec![Meter::default(); channels.max(1)],
                 master: Meter::default(),
@@ -148,6 +165,11 @@ impl Mixer {
         self.cue = vec![0.0; max_block_frames * 2];
         self.reference = vec![0.0; max_block_frames * 2];
         self.limiter = Limiter::default();
+        self.channel_decay = (0..self.channels.len())
+            .map(|_| PeakDecay::new(self.sample_rate, DEFAULT_FALL_SECONDS))
+            .collect();
+        self.master_decay = PeakDecay::new(self.sample_rate, DEFAULT_FALL_SECONDS);
+        self.cue_decay = PeakDecay::new(self.sample_rate, DEFAULT_FALL_SECONDS);
         self.meters.channels = vec![Meter::default(); self.channels.len()];
         self.meters.non_finite_samples = 0;
         self.meters.clipped_samples = 0;
@@ -239,7 +261,9 @@ impl Mixer {
         self.cue[..frames * 2].fill(0.0);
         self.meters.clipped_samples = 0;
         for meter in &mut self.meters.channels {
-            *meter = Meter::default();
+            // The bar keeps its value across the block boundary: only the per-block numbers start over.
+            meter.peak = 0.0;
+            meter.rms = 0.0;
         }
     }
 
@@ -291,6 +315,9 @@ impl Mixer {
         }
 
         meter.rms = (sum_squares / (frames * 2) as f64).sqrt() as f32;
+        if let Some(decay) = self.channel_decay.get_mut(index) {
+            meter.held = decay.block(meter.peak, frames);
+        }
         if let Some(slot) = self.meters.channels.get_mut(index) {
             *slot = meter;
         }
@@ -314,8 +341,18 @@ impl Mixer {
         }
         let reduction = self.limiter.process(&mut self.master[..frames * 2]);
 
-        self.meters.master = measure(&self.master[..frames * 2]);
-        self.meters.cue = measure(&self.cue[..frames * 2]);
+        let (peak, rms) = analyse(&self.master[..frames * 2]);
+        self.meters.master = Meter {
+            peak,
+            rms,
+            held: self.master_decay.block(peak, frames),
+        };
+        let (peak, rms) = analyse(&self.cue[..frames * 2]);
+        self.meters.cue = Meter {
+            peak,
+            rms,
+            held: self.cue_decay.block(peak, frames),
+        };
         self.meters.limiter_gain = reduction;
         if pre_peak > 1.0 && self.meters.clipped_samples == 0 {
             // Gain can push an otherwise legal channel over full scale.
@@ -381,7 +418,8 @@ pub fn db_to_gain(db: f32) -> f32 {
     10f32.powf(db / 20.0)
 }
 
-fn measure(block: &[f32]) -> Meter {
+/// Peak and RMS of one block, without the bar's fall back.
+fn analyse(block: &[f32]) -> (f32, f32) {
     let mut peak = 0.0f32;
     let mut sum_squares = 0.0f64;
     for sample in block {
@@ -393,7 +431,7 @@ fn measure(block: &[f32]) -> Meter {
     } else {
         (sum_squares / block.len() as f64).sqrt() as f32
     };
-    Meter { peak, rms }
+    (peak, rms)
 }
 
 /// Peak limiter without lookahead.

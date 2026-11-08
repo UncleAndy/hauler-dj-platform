@@ -190,6 +190,8 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
             levels: Levels {
                 peak_left: 0.5,
                 peak_right: 0.25,
+                held_left: 0.4,
+                held_right: 0.2,
             },
             linear_gain: 1.0,
             auto_gain: 1.0,
@@ -208,7 +210,8 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
         concat!(
             r#"{"protocol":"state-v1","revision":3,"epoch":1,"audio_clock_samples":4800,"#,
             r#""sample_rate":48000,"crossfader":0.25,"crossfader_curve":"smooth","#,
-            r#""master":{"peak_left":0.0,"peak_right":0.0},"master_gain":1.0,"#,
+            r#""master":{"peak_left":0.0,"peak_right":0.0,"held_left":0.0,"held_right":0.0},"#,
+            r#""master_gain":1.0,"#,
             r#""decks":[{"deck":"A","#,
             r#""load":"Ready","playing":true,"source_frame":4800,"remaining_frames":120000,"#,
             r#""position_ratio":0.0384,"track":{"title":"Track","artist":"Artist","#,
@@ -218,7 +221,7 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
             r#""active_loops":[],"#,
             r#""cue_labels":["drop",null,null,null,null,null,null,null],"#,
             r##""cue_colors":["#5fb85f",null,null,null,null,null,null,null],"##,
-            r#""levels":{"peak_left":0.5,"peak_right":0.25},"#,
+            r#""levels":{"peak_left":0.5,"peak_right":0.25,"held_left":0.4,"held_right":0.2},"#,
             r#""linear_gain":1.0,"#,
             r#""auto_gain":1.0,"auto_gain_db":-3.5,"tempo_ratio":1.0,"fader":0.85,"#,
             r#""eq":{"low_db":3.0,"mid_db":-4.5,"high_db":0.0}}]}"#

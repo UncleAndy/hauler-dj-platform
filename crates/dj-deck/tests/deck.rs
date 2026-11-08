@@ -1312,6 +1312,46 @@ fn a_loop_still_wraps_at_tempo() {
 }
 
 #[test]
+fn the_strip_keeps_a_bar_value_after_the_sound_stops() {
+    // The strip's meter is read at the frame rate, not the block rate: a value that lives for four
+    // milliseconds is a counter, not a meter. The deck publishes the peak of the block and the bar
+    // value that falls back over about half a second.
+    let mut deck = tone_deck(480_000);
+    deck.play();
+    let mut block = vec![0.0f32; 4800]; // 2400 frames: 50 ms
+    for _ in 0..12 {
+        deck.render(&mut block);
+    }
+    let loud = deck.levels();
+    assert!(
+        loud.peak_left > 0.05,
+        "the tone should register: {}",
+        loud.peak_left
+    );
+    assert!(
+        (loud.held_left - loud.peak_left).abs() < 1e-3,
+        "the bar rises to the peak: held {} peak {}",
+        loud.held_left,
+        loud.peak_left
+    );
+
+    deck.pause();
+    for _ in 0..40 {
+        deck.render(&mut block);
+    }
+    let quiet = deck.levels();
+    assert_eq!(quiet.peak_left, 0.0, "a paused deck has no block peak");
+    assert!(
+        quiet.held_left > 0.0,
+        "the bar must keep falling, not vanish between blocks"
+    );
+    assert!(
+        quiet.held_left < loud.held_left,
+        "the bar never falls upward"
+    );
+}
+
+#[test]
 fn a_pad_keeps_its_name_and_its_colour_separately() {
     // Renaming a pad must not wipe the colour the DJ chose for it, and the other way round: the two
     // halves are set independently and an absent half means "leave it alone" (DJP-DECK-003).

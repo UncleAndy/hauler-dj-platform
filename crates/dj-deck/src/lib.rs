@@ -16,6 +16,7 @@ use dj_domain::{
     TrackMeta,
 };
 use dj_dsp::ChannelEq;
+use dj_signalsmith_sys::{DEFAULT_FALL_SECONDS, PeakDecay};
 
 mod stretch;
 
@@ -213,7 +214,10 @@ pub struct Deck {
     cue_labels: [Option<String>; HOTCUE_SLOTS],
     cue_colors: [Option<String>; HOTCUE_SLOTS],
     track: Option<TrackMeta>,
+    /// What the strip's meter shows: the peak, held and falling back over half a second.
     levels: Levels,
+    /// One fall-back filter per channel of the strip, rebuilt when the device rate changes.
+    level_decay: [PeakDecay; 2],
     stats: DeckStats,
     /// Whether rendering may wait for the prefetch window.
     blocking: bool,
@@ -295,6 +299,10 @@ impl Deck {
             cue_colors: std::array::from_fn(|_| None),
             track: None,
             levels: Levels::SILENT,
+            level_decay: [
+                PeakDecay::new(EQ_SAMPLE_RATE as u32, DEFAULT_FALL_SECONDS),
+                PeakDecay::new(EQ_SAMPLE_RATE as u32, DEFAULT_FALL_SECONDS),
+            ],
             stats: DeckStats::default(),
             blocking: true,
             loop_config: LoopConfig::default(),
@@ -324,6 +332,11 @@ impl Deck {
         self.rate_ratio = self.source_rate_of_current() / f64::from(rate);
         // The stretcher works on material already at the device's rate, so it follows the device.
         self.stretcher = Stretcher::new(f64::from(rate));
+        // The meter falls back in seconds, so its filter is built in frames of the device's rate.
+        self.level_decay = [
+            PeakDecay::new(rate, DEFAULT_FALL_SECONDS),
+            PeakDecay::new(rate, DEFAULT_FALL_SECONDS),
+        ];
     }
 
     /// The current source's rate, or the deck's own rate when nothing is attached.
@@ -1051,7 +1064,9 @@ impl Deck {
     pub fn render(&mut self, out: &mut [f32]) {
         out.fill(0.0);
         if !self.playing || self.source.is_none() {
-            self.levels = Levels::SILENT;
+            // Silent, but the bar does not snap to zero: it falls back at its own speed, so a pause
+            // reads as a fade rather than a glitch on the strip.
+            self.levels = decay_to_silence(&mut self.level_decay, out.len() / 2);
             self.drop_pending();
             return;
         }
@@ -1090,7 +1105,7 @@ impl Deck {
         // Trim first, then the EQ: that is the order of a channel strip, and the order the mixer's
         // contract names when it says a deck arrives already gain-staged and equalised.
         self.eq.process(out);
-        self.levels = measure_levels(out);
+        self.levels = measure_levels(out, &mut self.level_decay);
     }
 
     /// Play `out` at the deck's tempo: pull more or less source material than the block holds and
@@ -1433,15 +1448,37 @@ impl Deck {
     }
 }
 
-fn measure_levels(block: &[f32]) -> Levels {
+/// Let the meter fall for `frames` of silence and report what is left.
+fn decay_to_silence(decay: &mut [PeakDecay; 2], frames: usize) -> Levels {
+    let held_left = decay[0].block(0.0, frames);
+    let held_right = decay[1].block(0.0, frames);
+    Levels {
+        peak_left: 0.0,
+        peak_right: 0.0,
+        held_left,
+        held_right,
+    }
+}
+
+/// Peak per block and the bar's held value per channel.
+///
+/// The peak is what the block contains; the held value is what the eye reads — the peak, then a
+/// fall back over `DEFAULT_FALL_SECONDS`. Two numbers, because a bar that follows the peak only
+/// flickers at the block rate.
+fn measure_levels(block: &[f32], decay: &mut [PeakDecay; 2]) -> Levels {
     let mut left = 0.0f32;
     let mut right = 0.0f32;
     for pair in block.chunks_exact(2) {
         left = left.max(pair[0].abs());
         right = right.max(pair[1].abs());
     }
+    let frames = block.len() / 2;
+    let held_left = decay[0].block(left.min(1.0), frames);
+    let held_right = decay[1].block(right.min(1.0), frames);
     Levels {
         peak_left: left.min(1.0),
         peak_right: right.min(1.0),
+        held_left: held_left.min(1.0),
+        held_right: held_right.min(1.0),
     }
 }

@@ -21,6 +21,7 @@
 | `dj-session` | media | A08 | R0 | DJP-ENV-006; DJP-SET-002, -003 |
 | `dj-bridge` | ui | A06 | R0 | DJP-ARCH-004; DJP-UI-001, -002 | — **реализовано в A06 (часть 1)**: кадры с длиной, рукопожатие `command-v1`, снапшоты, отказ чужому протоколу, замена протухшего сокета
 | `dj-controller-core` | hardware | A09 | R0 | DJP-CTRL-001, -002, -004 |
+| `dj-signalsmith-sys` | audio-core | A04 (B04) | R0 | Метры с баллистикой: вендоренные `signalsmith-dsp/envelopes.h` (MIT) за C ABI; бар поднимается к пику и спадает за полсекунды. Каждый новый потребитель добавляет свою функцию, а не общий доступ ко всем заголовкам |
 | `dj-stretch-sys` | audio-core | A03 (B04) | R0 | DJP-DECK-008 — **реализовано**: key lock через вендоренную MIT-библиотеку Signalsmith Stretch (спектральный фазовый вокодер), обёрнутую C ABI; `vendor/` хранит копию и лицензии (THIRD_PARTY.md) |
 | `dj-testkit` | qa | A11 | R0 | DJP-NFR-001 — `rt::CountingAllocator`/`RtScope` уже в A01; фикстуры и остальная инструментация — A11 |
 

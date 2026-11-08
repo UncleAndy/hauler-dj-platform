@@ -1,0 +1,15 @@
+[package]
+name = "dj-signalsmith-sys"
+description = "Signalsmith DSP, vendored and wrapped: the meter ballistics the mixer and the deck draw with."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+build = "build.rs"
+links = "dj_signalsmith"
+
+# A C ABI cannot be declared without `unsafe`, and the workspace denies it. Every unsafe block here
+# carries a SAFETY comment; the crate is deliberately not in the workspace lint set, exactly as
+# `dj-stretch-sys` and `dj-testkit` are not.
+[dependencies]

@@ -19,10 +19,15 @@ Pane {
     readonly property int half: Math.floor(order.length / 2)
     readonly property var leftStrips: order.slice(0, half)
     readonly property var rightStrips: order.slice(half)
-    // What the engine published for the master bus.
-    readonly property real masterPeak: Bridge.snapshot.master !== undefined
-                                       ? Math.max(Bridge.snapshot.master.peak_left,
-                                                  Bridge.snapshot.master.peak_right) : 0.0
+    // What the engine published for the master bus: the bar's held value when the engine sends one
+    // (the peak falls back over half a second), the raw block peak from an older engine.
+    readonly property real masterPeak: {
+        const master = Bridge.snapshot.master;
+        if (master === undefined) return 0.0;
+        if (master.held_left !== undefined)
+            return Math.max(master.held_left, master.held_right);
+        return Math.max(master.peak_left, master.peak_right);
+    }
     readonly property real masterGain: Bridge.snapshot.master_gain !== undefined
                                        ? Bridge.snapshot.master_gain : 1.0
 
@@ -216,9 +221,15 @@ Pane {
             required property string modelData
             objectName: "strip_" + modelData
             readonly property var deck: mixer.deckOf(strip.modelData)
+            // The bar's value: held and falling back. An engine that only publishes peaks still
+            // draws, so the shell works against an older process.
             readonly property real peak: strip.deck !== null && strip.deck.levels !== undefined
-                                         ? Math.max(strip.deck.levels.peak_left,
-                                                    strip.deck.levels.peak_right) : 0.0
+                                         ? (strip.deck.levels.held_left !== undefined
+                                            ? Math.max(strip.deck.levels.held_left,
+                                                       strip.deck.levels.held_right)
+                                            : Math.max(strip.deck.levels.peak_left,
+                                                       strip.deck.levels.peak_right))
+                                         : 0.0
             readonly property real gain: strip.deck !== null
                                          && strip.deck.linear_gain !== undefined
                                          ? strip.deck.linear_gain : 1.0

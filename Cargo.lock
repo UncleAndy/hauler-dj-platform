@@ -313,6 +313,7 @@ dependencies = [
  "dj-codec",
  "dj-domain",
  "dj-dsp",
+ "dj-signalsmith-sys",
  "dj-stretch-sys",
 ]
 
@@ -400,6 +401,7 @@ name = "dj-mixer"
 version = "0.1.0"
 dependencies = [
  "dj-domain",
+ "dj-signalsmith-sys",
  "dj-testkit",
 ]
 
@@ -410,6 +412,10 @@ dependencies = [
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "dj-signalsmith-sys"
+version = "0.1.0"
 
 [[package]]
 name = "dj-stretch-sys"
