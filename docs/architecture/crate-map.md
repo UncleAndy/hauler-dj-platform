@@ -39,14 +39,16 @@
 
 | Крейт | Владелец | Когда |
 |---|---|---|
-| `dj-sync` | audio-core | M2 (DJP-SYNC-001…006) |
+| `dj-sync` | audio-core | M2–R2 (DJP-SYNC-001…006) — master clock, сетка, `TempoSource`, подгонка фазы |
 | `dj-time-stretch` | dsp | M2 (DJP-DECK-008) |
 | `dj-fx` | dsp | M4 (DJP-FX-001…004) |
 | `dj-stems` | ml | M5 (DJP-STEM-*) |
 | `dj-remix` | ml | M5 (DJP-REMIX-*) |
 | `dj-pattern` | ml | M5 |
 | `dj-hid` | hardware | A09 (транспорт hidraw / IOHIDManager / Windows HID, ADR-0006) |
-| `dj-midi` | hardware | A09 (транспорт ALSA-seq / CoreMIDI / WinMM, DJP-CTRL-002) |
+| `dj-midi` | hardware | A09 (транспорт ALSA-seq / CoreMIDI / WinMM, DJP-CTRL-002); на нём же MIDI Clock (`C18`) и
+MIDI-триггеры ритма (`D16`) — отправка из non-RT потока, время события из beat timeline |
+| `dj-ext` | audio-core | R3 (DJP-SYNC-010/011 — предложены) — non-RT мосты наружу: OSC-мост (`D17`), Pro DJ Link read-only (`D18`); аудиопоток сюда не входит |
 | `dj-display` | hardware | A09+ (состояние/события экрана и трейт рендера, ADR-0006) |
 | `dj-controller-s4mk3` | hardware | M3 (DJP-CTRL-003…007); драйвер пишется по `docs/hardware/s4mk3/protocol-notes.md` |
 | `dj-recording` | dsp | M2 (DJP-MIX-005) |
