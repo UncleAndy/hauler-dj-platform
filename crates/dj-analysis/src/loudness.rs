@@ -33,27 +33,47 @@ const GATE_BELOW_LOUDEST_DB: f32 = 20.0;
 pub struct Loudness {
     /// Gated RMS of the whole file, in dBFS. `None` when the file is silent.
     pub rms_db: Option<f32>,
-    /// Linear gain that brings the file to [`TARGET_RMS_DB`], clamped to the correction limit.
+    /// The correction the file asks for, in decibels, before the share is taken.
+    pub correction_db: f32,
+    /// Linear gain the channel opens with: the correction at the share in force.
     pub gain: f32,
 }
 
 /// Measure a file and work out the gain its channel should open with.
-pub fn analyse(path: &Path) -> Result<Loudness, MediaError> {
+///
+/// `share` is how much of the correction to apply, 0…1, and it comes from the settings
+/// (`dj-config`'s `AnalysisSettings`): a full correction lands the RMS on the target and takes the peaks
+/// with it, which is what puts the meters in the red on material whose RMS says it should not.
+pub fn analyse(path: &Path, share: f32) -> Result<Loudness, MediaError> {
     let rms_db = rms_db(path)?;
+    let correction_db = rms_db.map_or(0.0, correction_for);
     Ok(Loudness {
         rms_db,
-        gain: rms_db.map_or(1.0, gain_for),
+        correction_db,
+        gain: gain_for(correction_db, share),
     })
 }
 
-/// The gain that brings `rms_db` to the target, clamped so a broken measurement cannot mute a track
+/// The correction `rms_db` asks for, in decibels, clamped so a broken measurement cannot mute a track
 /// or push it into the limiter.
-pub fn gain_for(rms_db: f32) -> f32 {
+pub fn correction_for(rms_db: f32) -> f32 {
     if !rms_db.is_finite() {
+        return 0.0;
+    }
+    (TARGET_RMS_DB - rms_db).clamp(-MAX_CORRECTION_DB, MAX_CORRECTION_DB)
+}
+
+/// The linear gain of a correction applied at `share`, where 1,0 is the whole of it and 0,0 is none.
+pub fn gain_for(correction_db: f32, share: f32) -> f32 {
+    if !correction_db.is_finite() {
         return 1.0;
     }
-    let correction = (TARGET_RMS_DB - rms_db).clamp(-MAX_CORRECTION_DB, MAX_CORRECTION_DB);
-    10f32.powf(correction / 20.0)
+    let share = if share.is_finite() {
+        share.clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    10f32.powf(correction_db * share / 20.0)
 }
 
 /// Gated RMS of a file, in dBFS.
@@ -121,27 +141,53 @@ mod tests {
 
     #[test]
     fn a_loud_file_is_turned_down_and_a_quiet_one_up() {
+        let whole = 1.0;
         assert!(
-            (gain_for(TARGET_RMS_DB) - 1.0).abs() < 1e-6,
+            (gain_for(correction_for(TARGET_RMS_DB), whole) - 1.0).abs() < 1e-6,
             "unity is the target"
         );
-        let loud = gain_for(-3.0);
+        let loud = gain_for(correction_for(-3.0), whole);
         assert!((loud - 0.355).abs() < 0.01, "a -3 dBFS track got {loud}");
-        let quiet = gain_for(-24.0);
+        let quiet = gain_for(correction_for(-24.0), whole);
         assert!((quiet - 3.981).abs() < 0.05, "a -24 dBFS track got {quiet}");
         assert_eq!(
-            gain_for(f32::NAN),
+            gain_for(correction_for(f32::NAN), whole),
             1.0,
             "a broken measurement must not attenuate"
         );
     }
 
     #[test]
+    fn the_correction_is_applied_at_the_share_asked_for() {
+        // A file eight decibels low asks for a +7,67 dB lift, and a full one takes its peaks into the
+        // limiter: at nine tenths the file opens 0,77 dB lower, which is the difference between a red
+        // meter and a matching one.
+        let correction = correction_for(-19.67);
+        assert!((correction - 7.67).abs() < 0.01, "{correction}");
+        let full = 20.0 * gain_for(correction, 1.0).log10();
+        let share = 20.0 * gain_for(correction, 0.9).log10();
+        assert!((full - 7.67).abs() < 0.01, "{full}");
+        assert!(
+            (share - 7.67 * 0.9).abs() < 0.01,
+            "the share of the correction is {share} dB"
+        );
+        assert!(
+            (20.0 * gain_for(correction, 0.0).log10()).abs() < 1e-6,
+            "no share is no correction"
+        );
+        // A share outside the range is clamped, not obeyed: a settings file cannot invert a gain.
+        assert!((gain_for(correction, 2.0) - gain_for(correction, 1.0)).abs() < 1e-6);
+        assert!((gain_for(correction, -1.0) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
     fn the_correction_is_capped_in_both_directions() {
         // A silent file measured at -80 dBFS must not get a 68 dB lift, and a clipped one must not be
         // attenuated by 20: the auto-gain trims a track, it does not remaster it.
-        assert!(gain_for(-80.0) <= 10f32.powf(MAX_CORRECTION_DB / 20.0) + 1e-4);
-        assert!(gain_for(0.0) >= 10f32.powf(-MAX_CORRECTION_DB / 20.0) - 1e-4);
+        assert!(
+            gain_for(correction_for(-80.0), 1.0) <= 10f32.powf(MAX_CORRECTION_DB / 20.0) + 1e-4
+        );
+        assert!(gain_for(correction_for(0.0), 1.0) >= 10f32.powf(-MAX_CORRECTION_DB / 20.0) - 1e-4);
     }
 
     #[test]

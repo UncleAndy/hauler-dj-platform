@@ -641,7 +641,7 @@ fn a_prepared_track_is_attached_at_a_block_boundary_and_plays() {
     std::fs::create_dir_all(&dir).unwrap_or_else(|err| panic!("{err}"));
     let path = tone_wav(&dir, "tone", 2.0);
 
-    let prepared = prepare_track(&path, 48_000, 2.0).unwrap_or_else(|err| panic!("{err}"));
+    let prepared = prepare_track(&path, 48_000, 2.0, 1.0).unwrap_or_else(|err| panic!("{err}"));
     assert!(prepared.track.is_some(), "the loader describes the track");
     assert_eq!(
         prepared.static_info.load,
@@ -1377,12 +1377,46 @@ fn a_fader_that_is_not_a_number_is_refused() {
 }
 
 #[test]
+fn the_correction_is_applied_at_the_share_the_settings_ask_for() {
+    // The owner's report: with the whole correction in force the meters sat in the red on material whose
+    // RMS said it should not. The share is what keeps the peaks out of the limiter, so the number the
+    // deck runs on has to be the shared one and not the measured one.
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav");
+    let full = match prepare_track(&path, 48_000, 2.0, 1.0) {
+        Ok(track) => track,
+        Err(message) => panic!("the fixture did not prepare: {message}"),
+    };
+    let shared = match prepare_track(&path, 48_000, 2.0, 0.9) {
+        Ok(track) => track,
+        Err(message) => panic!("the fixture did not prepare: {message}"),
+    };
+    let full_db = full.auto_gain_db.expect("the loader measured nothing");
+    let shared_db = shared.auto_gain_db.expect("the loader measured nothing");
+    assert!(full_db > 5.0, "the drum loop asks for {full_db} dB");
+    assert!(
+        (shared_db - full_db * 0.9).abs() < 0.02,
+        "the share gave {shared_db} dB where nine tenths of {full_db} dB was asked for"
+    );
+    // And the gain the samples see is the same number, in linear terms.
+    let expected = 10f32.powf(shared_db / 20.0);
+    assert!(
+        (shared.auto_gain - expected).abs() < 0.01,
+        "the deck runs at {} and the published correction says {expected}",
+        shared.auto_gain
+    );
+    // A share of zero is no correction at all: the file opens at unity, not muted.
+    let none = prepare_track(&path, 48_000, 2.0, 0.0).expect("the fixture did not prepare");
+    assert!((none.auto_gain - 1.0).abs() < 1e-6, "{}", none.auto_gain);
+}
+
+#[test]
 fn a_track_opens_at_the_level_the_loader_measured() {
     // Auto-gain, end to end: the number the loader computed has to reach the deck's own gain at attach,
     // because that is what the GAIN knob and the snapshot report.
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav");
-    let mut prepared = match prepare_track(&path, 48_000, 2.0) {
+    let mut prepared = match prepare_track(&path, 48_000, 2.0, 1.0) {
         Ok(track) => track,
         Err(message) => panic!("the fixture did not prepare: {message}"),
     };
@@ -1437,7 +1471,7 @@ fn a_forty_four_one_file_plays_for_its_recorded_length() {
     // device time must consume one second of the file.
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../crates/dj-codec/tests/fixtures/audio/tone-1s-44100-cbr.mp3");
-    let mut prepared = match prepare_track(&path, 48_000, 2.0) {
+    let mut prepared = match prepare_track(&path, 48_000, 2.0, 1.0) {
         Ok(track) => track,
         Err(message) => panic!("the fixture did not prepare: {message}"),
     };

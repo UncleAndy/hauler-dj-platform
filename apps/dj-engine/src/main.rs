@@ -42,6 +42,7 @@ dj-engine — the audio engine process
 
 Usage:
   dj-engine [--socket PATH] [--null-sink] [--device SUBSTR] [--block N] [--rate HZ]
+            [--auto-gain-share 0..1]
             [--seconds S] [--autoplay] [--state-hz N] [--crossfader-curve LAW]
   dj-engine [--socket PATH] --stop      ask a running engine to shut down
 
@@ -150,6 +151,9 @@ fn run(argv: &[String]) -> Result<(), String> {
     let mut state_hz = defaults.display.state_hz;
     // Every law is a choice, not a constant: the default is the DJ one, and a person can ask for any.
     let mut crossfader_curve = dj_mixer::CrossfaderCurve::default();
+    // How much of the measured level correction a deck applies. Nine tenths is the default because a
+    // full one puts peaks in the limiter; the flag is here so that is a choice, not a constant.
+    let mut auto_gain_share = defaults.analysis.share();
 
     let mut index = 0;
     while index < argv.len() {
@@ -188,6 +192,16 @@ fn run(argv: &[String]) -> Result<(), String> {
                     return Err("--state-hz must be 1..=120 snapshots a second".to_string());
                 }
                 state_hz = parsed;
+                index += 2;
+            }
+            "--auto-gain-share" => {
+                let parsed: f32 = value(1)?
+                    .parse()
+                    .map_err(|_| "--auto-gain-share expects a number")?;
+                if !(0.0..=1.0).contains(&parsed) {
+                    return Err("--auto-gain-share must be 0..=1".to_string());
+                }
+                auto_gain_share = parsed;
                 index += 2;
             }
             "--crossfader-curve" => {
@@ -444,7 +458,7 @@ fn run(argv: &[String]) -> Result<(), String> {
                     },
                 });
                 let path = std::path::PathBuf::from(&request.path);
-                match prepare_track(&path, rate, 2.0).map(|mut prepared| {
+                match prepare_track(&path, rate, 2.0, auto_gain_share).map(|mut prepared| {
                     if let Some(problem) =
                         dj_engine::meta::restore(&mut prepared, &store, volume(), root())
                     {

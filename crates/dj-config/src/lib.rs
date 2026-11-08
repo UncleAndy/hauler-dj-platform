@@ -35,6 +35,8 @@ pub struct Config {
     pub realtime: RealtimeSettings,
     /// How often the picture is refreshed.
     pub display: DisplaySettings,
+    /// Level matching of the files a deck opens.
+    pub analysis: AnalysisSettings,
 }
 
 impl Default for Config {
@@ -47,6 +49,41 @@ impl Default for Config {
             diagnostics: DiagnosticsSettings::default(),
             realtime: RealtimeSettings::default(),
             display: DisplaySettings::default(),
+            analysis: AnalysisSettings::default(),
+        }
+    }
+}
+
+/// How much of the measured level correction is applied, unless someone asks for another share.
+pub const DEFAULT_AUTO_GAIN_SHARE: f32 = 0.9;
+
+/// Level matching of the files a deck opens.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AnalysisSettings {
+    /// Share of the measured correction that is applied, 0…1.
+    ///
+    /// A file is trimmed to its target RMS, and a full correction takes its peaks along: the meters go
+    /// red on material whose RMS says it should not. Nine tenths keeps tracks matcheable by ear and out
+    /// of the limiter; 1,0 is the full correction, 0,0 is none.
+    pub auto_gain_share: f32,
+}
+
+impl AnalysisSettings {
+    /// The share in force, clamped: a settings file cannot invert or exaggerate a gain.
+    pub fn share(&self) -> f32 {
+        if self.auto_gain_share.is_finite() {
+            self.auto_gain_share.clamp(0.0, 1.0)
+        } else {
+            DEFAULT_AUTO_GAIN_SHARE
+        }
+    }
+}
+
+impl Default for AnalysisSettings {
+    fn default() -> Self {
+        Self {
+            auto_gain_share: DEFAULT_AUTO_GAIN_SHARE,
         }
     }
 }

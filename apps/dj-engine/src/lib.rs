@@ -940,6 +940,7 @@ pub fn prepare_track(
     path: &std::path::Path,
     rate: u32,
     window_seconds: f64,
+    auto_gain_share: f32,
 ) -> Result<PreparedTrack, String> {
     let config = PrefetchConfig::for_sample_rate(rate, window_seconds);
     let mut prefetcher = Prefetcher::open(path, config).map_err(|err| err.to_string())?;
@@ -971,11 +972,12 @@ pub fn prepare_track(
     };
     // Loudness is measured here, on the loader thread: it is a full decode of the file, and the audio
     // callback must never see it. A file that cannot be measured opens at unity and says nothing.
-    let measured = dj_analysis::loudness::analyse(path).ok();
+    let measured = dj_analysis::loudness::analyse(path, auto_gain_share).ok();
     let auto_gain = measured.map_or(1.0, |loudness| loudness.gain);
-    let auto_gain_db = measured
-        .and_then(|loudness| loudness.rms_db)
-        .map(|rms_db| dj_analysis::loudness::TARGET_RMS_DB - rms_db);
+    // The published number is the correction in force, not the one the file asked for: a snapshot that
+    // shows the full correction while the deck runs on a share of it hides the only place it is visible.
+    let auto_gain_db =
+        measured.map(|loudness| loudness.correction_db * auto_gain_share.clamp(0.0, 1.0));
     // The published deck description carries the correction too: the shell reads the snapshot, and a
     // snapshot that says "1.0" about a trimmed track hides the only place the number could be seen.
     let mut static_info = static_info;
