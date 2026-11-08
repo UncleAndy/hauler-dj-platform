@@ -117,3 +117,36 @@ bool UiSettings::setWaveformBarGap(int gap)
     emit changed();
     return true;
 }
+
+bool UiSettings::setGainCurve(const QString &kind)
+{
+    if (kind == m_gainCurve.kind()) {
+        return true;
+    }
+    GainCurve wanted = m_gainCurve;
+    if (!wanted.configure(kind, m_gainCurve.middle())) {
+        return false;
+    }
+    m_gainCurve = wanted;
+    emit changed();
+    return true;
+}
+
+bool UiSettings::setGainCurveMiddle(double middle)
+{
+    if (!m_gainCurve.configure(m_gainCurve.kind(), middle)) {
+        return false;
+    }
+    emit changed();
+    return true;
+}
+
+double UiSettings::gainCurveValue(double position) const
+{
+    return m_gainCurve.value(position);
+}
+
+double UiSettings::gainCurvePosition(double share) const
+{
+    return m_gainCurve.position(share);
+}

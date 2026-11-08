@@ -33,9 +33,9 @@ Item {
     property real draggedDb: 0.0
     property real pressDb: 0.0
     property real pressY: 0.0
-    // Decibels per pixel of drag: the same both ways, and a press does not move the value — a level knob
-    // that jumps to wherever the pointer landed is a level jump in the room.
-    readonly property real dbPerPixel: 0.5
+    // Pixels of hand from unity to silence: sixty decibels at half a decibel per pixel. The curve then
+    // decides how those pixels are spent — less around unity, more near the bottom.
+    readonly property real travelPixels: 120.0
     // What the last gesture asked for, so a check can tell a dead knob from a refused command.
     property real lastDb: 1.0
 
@@ -43,6 +43,16 @@ Item {
         const share = (Math.max(knob.floorDb, Math.min(0.0, decibels)) - knob.floorDb)
                       / (0.0 - knob.floorDb);
         return -135.0 + 225.0 * share;
+    }
+
+    /// The decibels the hand reaches by dragging `pixels` from `fromDb`: down is louder, up is quieter,
+    /// and the knob keeps its own speed both ways because the travel is the same both ways.
+    function dbForPixels(pixels, fromDb) {
+        const range = -knob.floorDb;
+        const from = Math.min(1.0, Math.max(0.0, -fromDb / range));
+        const before = UiSettings.gainCurvePosition(from);
+        const position = Math.min(1.0, Math.max(0.0, before + pixels / knob.travelPixels));
+        return -range * UiSettings.gainCurveValue(position);
     }
 
     function ask(decibels) {
@@ -127,7 +137,7 @@ Item {
         }
         onPositionChanged: function (mouse) {
             if (knob.dragging) {
-                knob.ask(knob.pressDb + (knob.pressY - mouse.y) * knob.dbPerPixel);
+                knob.ask(knob.dbForPixels(knob.pressY - mouse.y, knob.pressDb));
             }
         }
         onReleased: knob.dragging = false

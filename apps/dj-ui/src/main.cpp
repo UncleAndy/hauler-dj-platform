@@ -935,6 +935,20 @@ int main(int argc, char *argv[])
         QStringLiteral("window-check"),
         QStringLiteral("With --session-file: restore the remembered window shape, toggle it with F11 "
                        "and require the file to follow."));
+    const QCommandLineOption gainCurveOption(
+        QStringLiteral("gain-curve"),
+        QStringLiteral("Law of the level knobs: linear (straight through) or cubic (soft around unity, "
+                       "the default)."),
+        QStringLiteral("kind"));
+    const QCommandLineOption gainCurveMiddleOption(
+        QStringLiteral("gain-curve-middle"),
+        QStringLiteral("How much of the straight rate a level knob keeps at unity, 0.05 to 1 "
+                       "(1 is straight through; the default is 0.5)."),
+        QStringLiteral("share"));
+    const QCommandLineOption gainCurveCheckOption(
+        QStringLiteral("gain-curve-check"),
+        QStringLiteral("Measure the level knobs' law at unity and at the end of their travel and "
+                       "require the configured curve to be in force."));
     const QCommandLineOption eqCheckOption(
         QStringLiteral("eq-check"),
         QStringLiteral("With --connect: send three band gains to one deck and require the snapshot "
@@ -1107,6 +1121,9 @@ int main(int argc, char *argv[])
     parser.addOption(connectOption);
     parser.addOption(selfCheckOption);
     parser.addOption(gainCheckOption);
+    parser.addOption(gainCurveOption);
+    parser.addOption(gainCurveMiddleOption);
+    parser.addOption(gainCurveCheckOption);
     parser.addOption(eqCheckOption);
     parser.addOption(neutralOption);
     parser.addOption(pitchOption);
@@ -1281,6 +1298,20 @@ int main(int argc, char *argv[])
         return 2;
     }
 
+    if (parser.isSet(gainCurveOption)
+        && !settings.setGainCurve(parser.value(gainCurveOption).trimmed())) {
+        std::fprintf(stderr, "dj-ui: %s is not a gain curve (linear or cubic)\n",
+                     qPrintable(parser.value(gainCurveOption)));
+        return 2;
+    }
+    if (parser.isSet(gainCurveMiddleOption)) {
+        bool ok = false;
+        const double middle = parser.value(gainCurveMiddleOption).toDouble(&ok);
+        if (!ok || !settings.setGainCurveMiddle(middle)) {
+            std::fprintf(stderr, "dj-ui: --gain-curve-middle wants a number from 0.05 to 1\n");
+            return 2;
+        }
+    }
     qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "UiSettings", &settings);
     // Not "Layout": that name belongs to QtQuick.Layouts' attached property.
     qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "LayoutState", &layout);
@@ -2757,6 +2788,129 @@ int main(int argc, char *argv[])
             return 1;
         }
         std::fprintf(stdout, "dj-ui: the wheel trims the gain and leaves the fader where it was\n");
+        return 0;
+    }
+
+    if (parser.isSet(gainCurveCheckOption)) {
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        // The knobs are drawn at the size a person sees: the law is measured in pixels of hand.
+        window->resize(1366, 768);
+        window->show();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+        QEventLoop settle;
+        QTimer::singleShot(200, &settle, &QEventLoop::quit);
+        settle.exec();
+        QQuickItem *content = window->contentItem();
+        auto *trim = findItem(content, QStringLiteral("trim_A"));
+        auto *master = findItem(content, QStringLiteral("masterKnob"));
+        if (trim == nullptr || master == nullptr) {
+            std::fprintf(stderr, "dj-ui: no level knobs in the mixer\n");
+            return 1;
+        }
+        // Both knobs answer the same questions, which is what makes one check enough.
+        // A QML function takes and returns `QVariant`, not `double`, whatever it is written as.
+        const auto ask = [&](QQuickItem *knob, const char *name, double argument, double *out) {
+            QVariant answer;
+            if (!QMetaObject::invokeMethod(knob, name, Q_RETURN_ARG(QVariant, answer),
+                                           Q_ARG(QVariant, QVariant(argument)))) {
+                std::fprintf(stderr, "dj-ui: the knob does not answer %s\n", name);
+                return false;
+            }
+            *out = answer.toDouble();
+            return true;
+        };
+        const double capSide = trim->property("capSide").toDouble();
+        const double degreesPerPixel = 270.0 / capSide;
+        // The trim: ends exact, then one pixel of hand at unity and one pixel at the end of the cut.
+        double unity = 0.0;
+        double bottom = 0.0;
+        double top = 0.0;
+        double nearUnity = 0.0;
+        double nearEnd = 0.0;
+        double beforeEnd = 0.0;
+        if (!ask(trim, "dbOf", 0.0, &unity) || !ask(trim, "dbOf", -135.0, &bottom)
+            || !ask(trim, "dbOf", 135.0, &top)
+            || !ask(trim, "dbOf", -degreesPerPixel, &nearUnity)
+            || !ask(trim, "dbOf", -135.0 + degreesPerPixel, &beforeEnd)
+            || !ask(trim, "dbOf", -135.0, &nearEnd)) {
+            return 1;
+        }
+        const double perPixel = std::abs(nearUnity);
+        const double perPixelAtEnd = std::abs(nearEnd - beforeEnd);
+        // The master drags from wherever the hand pressed, so its law takes two arguments.
+        const auto drag = [&](double pixels, double fromDb, double *out) {
+            QVariant answer;
+            if (!QMetaObject::invokeMethod(master, "dbForPixels", Q_RETURN_ARG(QVariant, answer),
+                                           Q_ARG(QVariant, QVariant(pixels)),
+                                           Q_ARG(QVariant, QVariant(fromDb)))) {
+                std::fprintf(stderr, "dj-ui: the master does not answer dbForPixels\n");
+                return false;
+            }
+            *out = answer.toDouble();
+            return true;
+        };
+        double masterNearUnity = 0.0;
+        double masterLow = 0.0;
+        double masterNearEnd = 0.0;
+        double masterJustBefore = 0.0;
+        if (!drag(1.0, 0.0, &masterNearUnity) || !drag(119.0, 0.0, &masterJustBefore)
+            || !drag(120.0, 0.0, &masterNearEnd)) {
+            return 1;
+        }
+        // The last pixel of the travel is where the curve is steepest, which is the point of it.
+        const double smallest = std::abs(masterNearEnd - masterJustBefore);
+        (void)masterLow;
+        std::fprintf(stdout,
+                     "dj-ui: the gain curve is %s at %.2f; the trim moves %.2f dB per pixel at unity "
+                     "and %.2f dB at the end of the cut; the master moves %.2f dB per pixel at unity "
+                     "and %.2f dB at the bottom\n",
+                     qPrintable(settings.gainCurve()), settings.gainCurveMiddle(), perPixel,
+                     perPixelAtEnd, std::abs(masterNearUnity), smallest);
+        if (std::abs(unity) > 0.01 || std::abs(bottom + 40.0) > 0.01 || std::abs(top - 6.0) > 0.01) {
+            std::fprintf(stderr,
+                         "dj-ui: the ends of the trim are not where they were: %.2f / %.2f / %.2f\n",
+                         unity, bottom, top);
+            return 1;
+        }
+        if (settings.gainCurve() == QStringLiteral("cubic")) {
+            // Half the straight rate around unity (2,67 dB per pixel on the trim, 0,5 on the master),
+            // and plainly faster at the end — which is what makes the middle usable.
+            if (perPixel < 1.0 || perPixel > 2.0) {
+                std::fprintf(stderr,
+                             "dj-ui: the trim moves %.2f dB per pixel at unity, which is neither soft "
+                             "nor straight\n",
+                             perPixel);
+                return 1;
+            }
+            if (perPixelAtEnd < perPixel * 1.3) {
+                std::fprintf(stderr,
+                             "dj-ui: the end of the trim is not faster than its middle (%.2f against "
+                             "%.2f dB per pixel)\n",
+                             perPixelAtEnd, perPixel);
+                return 1;
+            }
+            if (std::abs(masterNearUnity) > 0.35) {
+                std::fprintf(stderr, "dj-ui: the master moves %.2f dB on its first pixel\n",
+                             std::abs(masterNearUnity));
+                return 1;
+            }
+        } else {
+            // The straight law, to the numbers the old knobs had: a knob that only pretends to be
+            // linear is worse than either.
+            if (std::abs(perPixel - 2.67) > 0.05 || std::abs(masterNearUnity + 0.5) > 0.05) {
+                std::fprintf(stderr,
+                             "dj-ui: linear means 2,67 dB per pixel on the trim and 0,5 on the master, "
+                             "measured %.2f and %.2f\n",
+                             perPixel, std::abs(masterNearUnity));
+                return 1;
+            }
+        }
+        std::fprintf(stdout, "dj-ui: the level knobs follow the %s curve\n",
+                     qPrintable(settings.gainCurve()));
         return 0;
     }
 

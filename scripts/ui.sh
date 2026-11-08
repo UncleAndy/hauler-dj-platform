@@ -193,6 +193,11 @@ case "${1:-}" in
     # The channel gain, end to end: the UI's command must reach the deck it names and come back
     # in the snapshot. A knob that turns but changes nothing is the failure this catches.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --gain-check
+    # The law of the level knobs, both ways round: the curved law has to be soft around unity and steeper
+    # at the end, and the straight law has to be exactly the numbers the knobs had before the curve
+    # existed — a switch nobody can verify is a switch that lies.
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --gain-curve cubic --gain-curve-check
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --gain-curve linear --gain-curve-check
     # The channel EQ, end to end: three knobs per channel must reach the deck they name, come back in
     # the snapshot already applied, and show the engine's number rather than a local model.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --eq-check

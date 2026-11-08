@@ -18,6 +18,8 @@ qt_add_executable(dj-ui
     src/Scenarios.h
     src/UiSettings.cpp
     src/UiSettings.h
+    src/GainCurve.cpp
+    src/GainCurve.h
     src/LayoutSettings.cpp
     src/LayoutSettings.h
     src/SessionState.cpp
@@ -47,6 +49,11 @@ qt_add_qml_module(dj-ui
         qml/mixer/PitchFader.qml
         qml/mixer/RefusalButton.qml
 )
+
+# The knob's law is one of Signalsmith's curve primitives (`crates/dj-signalsmith-sys/vendor`), the same
+# vendored copy the audio side builds against — one licence record, one version.
+target_include_directories(dj-ui PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../crates/dj-signalsmith-sys/vendor)
 
 target_link_libraries(dj-ui PRIVATE Qt6::Quick Qt6::Network)
 

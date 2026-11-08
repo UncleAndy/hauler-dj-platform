@@ -7,6 +7,8 @@
 #include <QObject>
 #include <QString>
 
+#include "GainCurve.h"
+
 class UiSettings : public QObject
 {
     Q_OBJECT
@@ -53,6 +55,11 @@ class UiSettings : public QObject
     // constant: 8 % is the trained-hands range for matching two tracks, 16 % is what a long blend or a
     // big tempo gap needs, and the owner asked for 16 as the default.
     Q_PROPERTY(double pitchRangePercent READ pitchRangePercent NOTIFY changed)
+    // The law of the level knobs: "linear" is straight through, "cubic" spends less travel around unity
+    // and more near the ends. A setting because the right shape is a matter of the hand, not of maths.
+    Q_PROPERTY(QString gainCurve READ gainCurve NOTIFY changed)
+    // How much of the straight rate the knob keeps at unity: 1.0 is the straight law, 0.5 is half.
+    Q_PROPERTY(double gainCurveMiddle READ gainCurveMiddle NOTIFY changed)
 
 public:
     explicit UiSettings(QObject *parent = nullptr);
@@ -115,6 +122,16 @@ public:
     // 1..50 percent; false when outside, because a throw nobody can aim with is not a setting.
     bool setPitchRangePercent(double percent);
 
+    QString gainCurve() const { return m_gainCurve.kind(); }
+    double gainCurveMiddle() const { return m_gainCurve.middle(); }
+    bool setGainCurve(const QString &kind);
+    bool setGainCurveMiddle(double middle);
+
+    /// Position 0…1 of a level knob (unity to the end) as a share of its range.
+    Q_INVOKABLE double gainCurveValue(double position) const;
+    /// The position that lands on a share of the range — what the pointer is drawn from.
+    Q_INVOKABLE double gainCurvePosition(double share) const;
+
     // Set from the command line; an invalid colour is refused and the default kept.
     bool setWaveformOutsideColor(const QString &color);
 
@@ -131,6 +148,7 @@ private:
     // Sixteen percent: the owner's default. Wide enough for a long blend, narrow enough that the
     // handle still lands where the hand aims.
     double m_pitchRangePercent = 16.0;
+    GainCurve m_gainCurve;
     // One bar per pixel: the waveform is a continuous curve, and two-pixel bars halve the
     // horizontal detail for nothing.
     int m_waveformBarWidth = 1;

@@ -30,9 +30,7 @@ Item {
     readonly property int maximumDb: 6
     readonly property real db: gain > 0.0 ? 20.0 * Math.log(gain) / Math.LN10 : minimumDb
     // Zero up: 135 degrees each way, the cut compressed into 40 dB and the boost into 6.
-    readonly property real angle: db >= 0.0
-                                   ? 135.0 * db / maximumDb
-                                   : 135.0 * db / (-minimumDb)
+    readonly property real angle: knob.angleOf(knob.db)
     readonly property real unityAngle: 0.0
 
     property bool dragging: false
@@ -47,17 +45,21 @@ Item {
     // pointer cannot step evenly in angle and unevenly in decibels at the same time.
     readonly property real degPerNotch: 13.5
 
-    /// The angle the pointer stands at for a gain.
+    /// The angle the pointer stands at for a gain. The curve says how much of the range a share of the
+    /// travel is worth, so the pointer and the hand agree about where the knob is.
     function angleOf(decibels) {
-        return decibels >= 0.0 ? 135.0 * decibels / knob.maximumDb
-                               : 135.0 * decibels / (-knob.minimumDb);
+        const range = decibels >= 0.0 ? knob.maximumDb : -knob.minimumDb;
+        const share = Math.min(1.0, Math.abs(decibels) / range);
+        const position = UiSettings.gainCurvePosition(share);
+        return decibels >= 0.0 ? 135.0 * position : -135.0 * position;
     }
 
     /// The gain the pointer's angle means, clamped to the ends of the travel.
     function dbOf(angle) {
         const clamped = Math.max(-135.0, Math.min(135.0, angle));
-        return clamped >= 0.0 ? clamped / 135.0 * knob.maximumDb
-                              : clamped / 135.0 * (-knob.minimumDb);
+        const range = clamped >= 0.0 ? knob.maximumDb : -knob.minimumDb;
+        const share = UiSettings.gainCurveValue(Math.abs(clamped) / 135.0);
+        return clamped >= 0.0 ? share * range : -share * range;
     }
     // What the last gesture asked for, so a check can tell a dead knob from a refused command.
     property real lastDb: -1.0
