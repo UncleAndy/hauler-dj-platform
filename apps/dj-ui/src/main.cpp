@@ -919,6 +919,10 @@ int main(int argc, char *argv[])
         QStringLiteral("Close the window after this many milliseconds: the shutdown path, exercised "
                        "instead of described."),
         QStringLiteral("ms"));
+    const QCommandLineOption gridReconnectOption(
+        QStringLiteral("grid-reconnect-check"),
+        QStringLiteral("With --connect only: the deck is already loaded, as it is for a client that "
+                       "reconnects to a running engine, and every grid button must still work."));
     const QCommandLineOption tapOption(
         QStringLiteral("tap-check"),
         QStringLiteral("With --connect and --load: require the tapped grid to be put on the taps — the "
@@ -1175,6 +1179,7 @@ int main(int argc, char *argv[])
     parser.addOption(windowCheckOption);
     parser.addOption(curveCheckOption);
     parser.addOption(masterCheckOption);
+    parser.addOption(gridReconnectOption);
     parser.addOption(tapOption);
     parser.addOption(gridLinesOption);
     parser.addOption(gridCheckOption);
@@ -3334,6 +3339,96 @@ int main(int argc, char *argv[])
         return 0;
     }
 
+    if (parser.isSet(gridReconnectOption)) {
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        const auto waitFor = [](const std::function<bool()> &ready, int budget) {
+            QElapsedTimer timer;
+            timer.start();
+            while (timer.elapsed() < budget) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                if (ready()) {
+                    return true;
+                }
+                QThread::msleep(10);
+            }
+            return ready();
+        };
+        bridge->connectToEngine(parser.value(connectOption));
+        if (!waitFor([&]() { return bridge->isConnected(); }, 3000)) {
+            std::fprintf(stderr, "dj-ui: no engine\n");
+            return 1;
+        }
+        // No load here: this client must find the deck as the previous one left it. That is the whole
+        // point — a load is what used to tell the engine its tempo base, and a reconnected client never
+        // loads anything.
+        const auto deckA = [&]() {
+            const QVariantList decks = bridge->snapshot().value(QStringLiteral("decks")).toList();
+            for (const QVariant &entry : decks) {
+                const QVariantMap deck = entry.toMap();
+                if (deck.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                    return deck;
+                }
+            }
+            return QVariantMap();
+        };
+        const auto segments = [&]() {
+            return deckA()
+                .value(QStringLiteral("track"))
+                .toMap()
+                .value(QStringLiteral("grid"))
+                .toMap()
+                .value(QStringLiteral("segments"))
+                .toList();
+        };
+        if (!waitFor([&]() { return !segments().isEmpty(); }, 10000)) {
+            std::fprintf(stderr, "dj-ui: the deck holds no grid; load one before this check\n");
+            return 1;
+        }
+        const QVariantMap first = segments().first().toMap();
+        const double rate = deckA().value(QStringLiteral("source_rate")).toDouble();
+        const double bpm = first.value(QStringLiteral("bpm")).toDouble();
+        if (rate <= 0.0 || bpm <= 0.0) {
+            std::fprintf(stderr, "dj-ui: the deck published no rate or no tempo\n");
+            return 1;
+        }
+        const qint64 start = std::llround(first.value(QStringLiteral("frame")).toDouble());
+        const qint64 beat = std::llround(rate * 60.0 / bpm);
+        auto *strip = findItem(window->contentItem(), QStringLiteral("waveStrip_A"));
+        auto *right = findItem(window->contentItem(), QStringLiteral("gridBeatRight_A"));
+        auto *left = findItem(window->contentItem(), QStringLiteral("gridBeatLeft_A"));
+        if (strip == nullptr || right == nullptr || left == nullptr) {
+            std::fprintf(stderr, "dj-ui: the deck has no grid buttons to press\n");
+            return 1;
+        }
+        const auto firstFrame = [&]() {
+            const QVariantList list = segments();
+            return list.isEmpty() ? -1.0 : list.first().toMap().value(QStringLiteral("frame")).toDouble();
+        };
+        QMetaObject::invokeMethod(right, "clicked");
+        if (!waitFor([&]() { return std::llround(firstFrame()) == start + beat; }, 5000)) {
+            std::fprintf(stderr,
+                         "dj-ui: on a reconnected client the grid stayed at %.0f instead of moving to "
+                         "%lld\n",
+                         firstFrame(), static_cast<long long>(start + beat));
+            return 1;
+        }
+        QMetaObject::invokeMethod(left, "clicked");
+        if (!waitFor([&]() { return std::llround(firstFrame()) == start; }, 5000)) {
+            std::fprintf(stderr, "dj-ui: the grid did not come back on a reconnected client (%.0f)\n",
+                         firstFrame());
+            return 1;
+        }
+        std::fprintf(stdout,
+                     "dj-ui: the grid moves on a reconnected client: %lld -> %lld and back at %.2f "
+                     "BPM\n",
+                     static_cast<long long>(start), static_cast<long long>(start + beat), bpm);
+        return 0;
+    }
+
     if (parser.isSet(tapOption)) {
         auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
         if (window == nullptr) {
@@ -3380,8 +3475,16 @@ int main(int argc, char *argv[])
                 .toMap();
         };
         bridge->load(QStringLiteral("A"), fixture);
-        if (!waitFor([&]() { return !grid().value(QStringLiteral("segments")).toList().isEmpty(); },
-                     20000)) {
+        const QString wantName = QFileInfo(fixture).fileName();
+        const auto loadArrived = [&]() {
+            const QString held = deckA().value(QStringLiteral("path")).toString();
+            return !held.isEmpty() && held.endsWith(wantName);
+        };
+        if (!waitFor(
+                [&]() {
+                    return loadArrived() && !grid().value(QStringLiteral("segments")).toList().isEmpty();
+                },
+                20000)) {
             std::fprintf(stderr, "dj-ui: the deck published no grid to tap onto\n");
             return 1;
         }
@@ -3528,6 +3631,11 @@ int main(int argc, char *argv[])
             return QVariantMap();
         };
         bridge->load(QStringLiteral("A"), fixture);
+        const QString wantName = QFileInfo(fixture).fileName();
+        const auto loadArrived = [&]() {
+            const QString held = deckA().value(QStringLiteral("path")).toString();
+            return !held.isEmpty() && held.endsWith(wantName);
+        };
         const auto gridOf = [&]() {
             return deckA()
                 .value(QStringLiteral("track"))
@@ -3537,7 +3645,7 @@ int main(int argc, char *argv[])
                 .value(QStringLiteral("segments"))
                 .toList();
         };
-        if (!waitFor([&]() { return !gridOf().isEmpty(); }, 20000)) {
+        if (!waitFor([&]() { return loadArrived() && !gridOf().isEmpty(); }, 20000)) {
             std::fprintf(stderr, "dj-ui: the deck published no grid\n");
             return 1;
         }
@@ -3889,7 +3997,14 @@ int main(int argc, char *argv[])
         };
 
         bridge->load(QStringLiteral("A"), fixture);
-        if (!waitFor([&]() { return firstBeat() >= 0 && tempoNow() > 0.0; }, 20000)) {
+        // The deck keeps the previous track until the new one is ready, grid and all: waiting for "a
+        // grid" means editing the file the previous run left behind.
+        const QString wantName = QFileInfo(fixture).fileName();
+        const auto loadArrived = [&]() {
+            const QString held = deckA().value(QStringLiteral("path")).toString();
+            return !held.isEmpty() && held.endsWith(wantName);
+        };
+        if (!waitFor([&]() { return loadArrived() && firstBeat() >= 0 && tempoNow() > 0.0; }, 20000)) {
             std::fprintf(stderr, "dj-ui: the deck published no grid to edit\n");
             return 1;
         }

@@ -1096,6 +1096,7 @@ fn prepared_with(
             analyzing: false,
             grid: None,
             source_rate: 48_000,
+            path: Some("/tmp/dj-engine-cue-test.wav".to_string()),
         },
         path: Some(std::path::PathBuf::from("/tmp/dj-engine-cue-test.wav")),
         cues,

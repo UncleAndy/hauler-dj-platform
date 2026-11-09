@@ -236,6 +236,9 @@ case "${1:-}" in
     printf '\x01' | dd of="$tap_file" bs=1 seek=1044 conv=notrunc status=none
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --grid-check --load "$grid_file"
+    # A client that reconnects to the running engine never loads the track, so nothing tells the engine
+    # its tempo base: the buttons have to work on the deck as they find it.
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --grid-reconnect-check
     # The grid has to be visible on the strip, not only in the snapshot: beat lines, a bar every fourth,
     # and a spacing that follows the tempo — the same file, so the second run starts from a locked grid.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \

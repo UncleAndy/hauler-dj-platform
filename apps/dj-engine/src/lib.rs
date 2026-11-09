@@ -342,6 +342,9 @@ pub struct DeckStatic {
     pub grid: Option<BeatGrid>,
     /// Sample rate of the source material: the timebase the grid is expressed in.
     pub source_rate: u32,
+    /// The file the deck holds, as it was opened. A client that reconnects does not load anything and
+    /// therefore does not know this path; the engine does, and an edit can name the deck alone.
+    pub path: Option<String>,
 }
 
 impl DeckStatic {
@@ -367,6 +370,8 @@ impl DeckStatic {
             analyzing: snapshot.analyzing,
             grid: snapshot.track.as_ref().and_then(|track| track.grid.clone()),
             source_rate: snapshot.source_rate,
+            // The snapshot says nothing about the file it came from: only a load knows that.
+            path: None,
         }
     }
 }
@@ -734,6 +739,7 @@ impl StateCells {
                 beat,
                 local_bpm,
                 source_rate: fixed.source_rate,
+                path: if attached { fixed.path.clone() } else { None },
                 source_frame: SourceFrame(frame),
                 remaining_frames: total.map(|total| total.saturating_sub(frame)),
                 position_ratio: total
@@ -1087,6 +1093,7 @@ pub fn prepare_track(
         analyzing: false,
         grid: None, // filled in below, once the tempo is measured
         source_rate: info.sample_rate,
+        path: Some(path.display().to_string()),
     };
     // Loudness is measured here, on the loader thread: it is a full decode of the file, and the audio
     // callback must never see it. A file that cannot be measured opens at unity and says nothing.

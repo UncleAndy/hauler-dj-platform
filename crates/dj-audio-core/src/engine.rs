@@ -264,6 +264,8 @@ impl Engine {
                 beat: None,
                 local_bpm: None,
                 source_rate: 0,
+                // A generated tone has no file behind it.
+                path: None,
                 source_frame: SourceFrame(self.source_frame),
                 remaining_frames: None,
                 position_ratio: None,

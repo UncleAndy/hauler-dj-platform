@@ -1506,6 +1506,9 @@ impl Deck {
                 .source
                 .as_ref()
                 .map_or(0, |source| source.sample_rate()),
+            // The deck never knew which file it plays — the loader does, and the engine's own snapshot
+            // says so. A deck-level snapshot names nothing.
+            path: None,
             source_frame: SourceFrame(heard),
             remaining_frames: remaining,
             position_ratio: ratio,

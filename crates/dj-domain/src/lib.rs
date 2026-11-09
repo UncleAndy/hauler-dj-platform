@@ -809,6 +809,10 @@ pub struct DeckSnapshot {
     /// not a protocol error.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub source_rate: u32,
+    /// The file the deck holds. A client that reconnects, or one that wonders whether its own load has
+    /// arrived yet, reads it here instead of remembering what it asked for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
     /// Where the play head is in beats: `12.5` is halfway between the twelfth and thirteenth beat of
     /// the grid (DJP-SYNC-003). Defaulted and omitted when the track has no grid, so a client that
     /// knows nothing about beats is not a protocol error.

@@ -356,12 +356,11 @@ int BridgeClient::analyzeTempo(const QString &deck)
 
 int BridgeClient::sendGridEdit(const QString &deck, const QJsonValue &edit)
 {
-    // The engine writes the edit beside the file, so it needs the path — and only the client that
-    // loaded the track knows it. A deck this client did not fill has no grid to edit from here.
+    // The engine writes the edit beside the file and knows which file each deck holds. A client that
+    // reconnected to a running engine never loaded anything and has no path of its own: it sends the
+    // edit anyway, and the deck answers for the file. Refusing here made every grid button dead after
+    // the UI was restarted.
     const QString path = m_deckPaths.value(deck);
-    if (path.isEmpty()) {
-        return -1;
-    }
     QJsonObject payload;
     payload.insert(QStringLiteral("deck"), deck);
     payload.insert(QStringLiteral("path"), path);

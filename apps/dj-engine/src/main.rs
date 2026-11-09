@@ -328,6 +328,10 @@ fn run(argv: &[String]) -> Result<(), String> {
     // The source rate of each deck's file: the grid is expressed in it, and a shift past the start
     // rebases by whole squares, which is a number of frames that needs the rate.
     let rates: Arc<Mutex<Vec<u32>>> = Arc::new(Mutex::new(vec![0; dj_domain::DeckId::COUNT]));
+    // The file each deck holds. A reconnecting client never loaded anything and cannot name it, so the
+    // engine answers for the deck: an edit that names only the deck still knows what to write beside.
+    let paths: Arc<Mutex<Vec<Option<String>>>> =
+        Arc::new(Mutex::new(vec![None; dj_domain::DeckId::COUNT]));
     // Loads never enter the audio callback: clients hand them to a loader thread, which hands a
     // prepared source back to the graph and a new description to the publisher.
     let (load_requests, load_requests_rx) = std::sync::mpsc::channel::<LoadRequest>();
@@ -368,6 +372,7 @@ fn run(argv: &[String]) -> Result<(), String> {
         let subscribers = Arc::clone(&subscribers);
         let grids = Arc::clone(&grids);
         let rates = Arc::clone(&rates);
+        let paths = Arc::clone(&paths);
         // The state rate is a parameter (display.state_hz): twenty snapshots a second is the
         // default, and raising it trades IPC for less projection between snapshots.
         let publish_every = Duration::from_micros(1_000_000 / u64::from(state_hz));
@@ -420,6 +425,23 @@ fn run(argv: &[String]) -> Result<(), String> {
                             {
                                 slot.analyzing = analyzing;
                             }
+                        }
+                    }
+                }
+                // The tempo base of every deck, refreshed from what the decks say rather than from
+                // load events: a client that reconnects to an engine whose decks are already loaded
+                // sends no load, and an editor with no rate refuses every shift — the buttons look dead.
+                if let Ok(mut held) = rates.lock() {
+                    for entry in &statics {
+                        if let Some(slot) = held.get_mut(entry.deck.index()) {
+                            *slot = entry.source_rate;
+                        }
+                    }
+                }
+                if let Ok(mut held) = paths.lock() {
+                    for entry in &statics {
+                        if let Some(slot) = held.get_mut(entry.deck.index()) {
+                            *slot = entry.path.clone();
                         }
                     }
                 }
@@ -583,6 +605,7 @@ fn run(argv: &[String]) -> Result<(), String> {
         let store = store.clone();
         let grids = Arc::clone(&grids);
         let rates = Arc::clone(&rates);
+        let paths = Arc::clone(&paths);
         std::thread::spawn(move || {
             while let Ok(request) = grid_edits_rx.recv() {
                 let deck = request.deck;
@@ -614,7 +637,15 @@ fn run(argv: &[String]) -> Result<(), String> {
                 {
                     *slot = Some(edited.clone());
                 }
-                let path = std::path::PathBuf::from(&request.path);
+                // The deck's own file first: a client that reconnected knows no path at all, and an
+                // edit that named the wrong file would write the grid beside the wrong track.
+                let path = std::path::PathBuf::from(
+                    paths
+                        .lock()
+                        .ok()
+                        .and_then(|held| held.get(deck.index()).cloned().flatten())
+                        .unwrap_or_else(|| request.path.clone()),
+                );
                 if let Err(message) =
                     dj_engine::meta::write_beatgrid(&store, volume(), root(), &path, &edited, true)
                 {
@@ -652,6 +683,7 @@ fn run(argv: &[String]) -> Result<(), String> {
                         analyzing: false,
                         grid: None,
                         source_rate: 0,
+                        path: Some(request.path.clone()),
                     },
                 })));
                 let path = std::path::PathBuf::from(&request.path);
@@ -714,6 +746,7 @@ fn run(argv: &[String]) -> Result<(), String> {
                                 analyzing: false,
                                 grid: None,
                                 source_rate: 0,
+                                path: None,
                             },
                         })));
                     }
