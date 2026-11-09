@@ -1118,7 +1118,7 @@ pub fn prepare_track(
                 bpm: segment.bpm,
             })
             .collect();
-        BeatGrid::from_segments(segments)
+        BeatGrid::from_segments(segments).map(|grid| grid.with_beats_per_bar(found.metre))
     });
     let mut track = track;
     if let Some(grid) = measured_grid.clone() {

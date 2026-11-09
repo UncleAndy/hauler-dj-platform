@@ -548,7 +548,9 @@ fn run(argv: &[String]) -> Result<(), String> {
                                 bpm: segment.bpm,
                             })
                             .collect();
-                        let Some(grid) = dj_domain::BeatGrid::from_segments(segments) else {
+                        let Some(grid) = dj_domain::BeatGrid::from_segments(segments)
+                            .map(|grid| grid.with_beats_per_bar(found.metre))
+                        else {
                             eprintln!("dj-engine: the measurement is not a grid");
                             continue;
                         };

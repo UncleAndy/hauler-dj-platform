@@ -185,14 +185,14 @@ fn retiming_keeps_the_shape_of_a_track_with_two_tempos() {
 #[test]
 fn what_a_file_holds_becomes_a_grid() {
     // A file with one tempo and no anchors: exactly the old pair.
-    let stored = BeatGrid::from_stored(120.0, 12_000, &[], RATE).expect("a grid");
+    let stored = BeatGrid::from_stored(120.0, 12_000, &[], RATE, 4).expect("a grid");
     assert!(stored.is_single());
     assert!((stored.bpm() - 120.0).abs() < 1e-9);
 
     // A file with one anchor: the stretch before it gets the tempo that makes the grid pass through
     // both points, the last stretch keeps the stated tempo.
     let anchors = [(0u64, 0u64), (190_000, 8)];
-    let stored = BeatGrid::from_stored(120.0, 0, &[anchors[1]], RATE).expect("a grid");
+    let stored = BeatGrid::from_stored(120.0, 0, &[anchors[1]], RATE, 4).expect("a grid");
     assert_eq!(stored.segments().len(), 2);
     let first = stored.segments()[0];
     let expected = 8.0 * 60.0 * RATE / 190_000.0;
@@ -207,4 +207,46 @@ fn what_a_file_holds_becomes_a_grid() {
 
     // And the way back: what is stored is the first segment plus the anchors.
     assert_eq!(stored.stored_anchors(), vec![(190_000, 8)]);
+}
+
+#[test]
+fn a_waltz_keeps_its_three_beat_bar_through_a_shift_and_through_the_file() {
+    // A bar is measured, not assumed: three beats make a square of twelve, not sixteen, and a shift that
+    // rebases by whole squares has to rebase by these twelve or the bars move under the DJ's hand.
+    let grid = BeatGrid::from_segments(vec![BeatSegment {
+        frame: 12_000,
+        beat: 0,
+        bpm: 120.0,
+    }])
+    .expect("a grid")
+    .with_beats_per_bar(3);
+    assert_eq!(grid.beats_per_bar(), 3);
+    assert_eq!(grid.square_beats(), 12, "four bars of three");
+
+    let moved = grid.shifted(-12_001, RATE).expect("a shift past the start");
+    assert_eq!(
+        moved.beats_per_bar(),
+        3,
+        "a shift does not re-count the bar"
+    );
+    assert_eq!(
+        moved.segments()[0].beat % 12,
+        0,
+        "the anchor was rebased by a square of three-beat bars"
+    );
+
+    // The file states it too, and a file that does not is read as four: the metre is new, the files are
+    // not, and a stored grid without it was drawn in four.
+    let json = serde_json::to_string(&grid).expect("json");
+    let back: BeatGrid = serde_json::from_str(&json).expect("json back");
+    assert_eq!(back.beats_per_bar(), 3);
+    let old: BeatGrid =
+        serde_json::from_str(r#"{"segments":[{"frame":12000,"beat":0,"bpm":120.0}]}"#)
+            .expect("an old grid");
+    assert_eq!(
+        old.beats_per_bar(),
+        4,
+        "a file written before the metre was measured"
+    );
+    assert_eq!(old.square_beats(), 16);
 }

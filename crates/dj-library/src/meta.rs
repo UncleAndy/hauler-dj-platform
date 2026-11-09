@@ -66,6 +66,15 @@ pub struct BeatGrid {
     pub first_beat_frame: u64,
     #[serde(default)]
     pub anchors: Vec<Anchor>,
+    /// Beats in a bar, as the measurement counted them. A file written before this was measured keeps
+    /// its four, which is what those files were drawn with.
+    #[serde(default = "four_beats_to_the_bar")]
+    pub beats_per_bar: u8,
+}
+
+/// A bar of four beats: what every grid without a measurement behind it is.
+fn four_beats_to_the_bar() -> u8 {
+    4
 }
 
 /// A stored loop.

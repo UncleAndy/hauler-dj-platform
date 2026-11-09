@@ -29,6 +29,18 @@ pub struct BeatSegment {
 pub struct BeatGrid {
     /// Segments, sorted by frame and by beat. Never empty.
     segments: Vec<BeatSegment>,
+    /// Beats in a bar, as the measurement counted them.
+    ///
+    /// A bar is what four of them make a square of, and what the strip counts in. It is measured from
+    /// the accents of the low band, which is the only band that has them (DJP-MEDIA-006); a file that
+    /// does not say, and every file written before this was measured, is read as four.
+    #[serde(default = "four_beats_to_the_bar")]
+    beats_per_bar: u8,
+}
+
+/// A bar of four beats: the assumption of every grid that has no measurement behind it.
+fn four_beats_to_the_bar() -> u8 {
+    4
 }
 
 /// A frame scaled away from an anchor, refusing a negative or absurd result.
@@ -66,6 +78,11 @@ impl BeatGrid {
         if segments.is_empty() {
             return None;
         }
+        Self::rebuilt(segments, four_beats_to_the_bar())
+    }
+
+    /// A grid built from segments and a bar length, both already checked for shape.
+    fn rebuilt(segments: Vec<BeatSegment>, beats_per_bar: u8) -> Option<Self> {
         let mut previous: Option<BeatSegment> = None;
         for segment in &segments {
             if !segment.bpm.is_finite() || segment.bpm <= 0.0 {
@@ -78,7 +95,32 @@ impl BeatGrid {
             }
             previous = Some(*segment);
         }
-        Some(Self { segments })
+        Some(Self {
+            segments,
+            beats_per_bar: if (2..=8).contains(&beats_per_bar) {
+                beats_per_bar
+            } else {
+                four_beats_to_the_bar()
+            },
+        })
+    }
+
+    /// Beats in a bar: four unless the measurement counted otherwise.
+    pub fn beats_per_bar(&self) -> u8 {
+        self.beats_per_bar
+    }
+
+    /// Beats in one square: four bars, as the DJ counts them.
+    pub fn square_beats(&self) -> u64 {
+        4 * u64::from(self.beats_per_bar)
+    }
+
+    /// The same grid counted in another bar length, for a track the measurement found in three.
+    pub fn with_beats_per_bar(mut self, beats: u8) -> Self {
+        if (2..=8).contains(&beats) {
+            self.beats_per_bar = beats;
+        }
+        self
     }
 
     /// The segments, in track order.
@@ -108,8 +150,8 @@ impl BeatGrid {
 
     /// Frames in one square of four bars: the period a grid repeats with, so the amount the anchor may
     /// be moved by without changing a single line.
-    fn square_frames(segment: &BeatSegment, rate: f64) -> f64 {
-        16.0 * Self::frames_per_beat(segment, rate)
+    fn square_frames(&self, segment: &BeatSegment, rate: f64) -> f64 {
+        self.square_beats() as f64 * Self::frames_per_beat(segment, rate)
     }
 
     /// The segment a frame falls in, or the first one when the frame is before the grid starts.
@@ -186,18 +228,19 @@ impl BeatGrid {
         // Whole squares that keep the anchor inside the file after the shift: one square is sixteen
         // beats, which is also four bars, so rebasing never changes which line is a bar or a square.
         let below = -(first.frame as f64 + frames as f64);
+        let square = self.square_beats() as f64 * per_beat;
         let squares = if below > 0.0 {
-            (below / (16.0 * per_beat)).ceil()
+            (below / square).ceil()
         } else {
             0.0
         };
         if !squares.is_finite() || squares < 0.0 {
             return None;
         }
-        let beat_lift = u64::try_from(squares as u128 * 16u128).ok()?;
+        let beat_lift = u64::try_from(squares as u128 * u128::from(self.square_beats())).ok()?;
         let mut moved: Vec<BeatSegment> = Vec::with_capacity(self.segments.len());
         for segment in &self.segments {
-            let lift = squares * Self::square_frames(segment, rate);
+            let lift = squares * self.square_frames(segment, rate);
             let target = segment.frame as f64 + frames as f64 + lift;
             if !target.is_finite() || target < 0.0 || target > u64::MAX as f64 {
                 return None;
@@ -208,7 +251,7 @@ impl BeatGrid {
                 bpm: segment.bpm,
             });
         }
-        Self::from_segments(moved)
+        Self::rebuilt(moved, self.beats_per_bar)
     }
 
     /// The same grid read at a new tempo, with every beat where the music puts it.
@@ -230,7 +273,7 @@ impl BeatGrid {
                 bpm: segment.bpm * bpm / first.bpm,
             });
         }
-        Self::from_segments(retimed)
+        Self::rebuilt(retimed, self.beats_per_bar)
     }
 
     /// The grid as it is stored beside the music: the first segment becomes `bpm` and
@@ -253,6 +296,7 @@ impl BeatGrid {
         first_beat_frame: u64,
         anchors: &[(u64, u64)],
         rate: f64,
+        beats_per_bar: u8,
     ) -> Option<Self> {
         let mut segments = vec![BeatSegment {
             frame: first_beat_frame,
@@ -282,6 +326,6 @@ impl BeatGrid {
             };
             segments[index].bpm = length;
         }
-        Self::from_segments(segments)
+        Self::rebuilt(segments, beats_per_bar)
     }
 }

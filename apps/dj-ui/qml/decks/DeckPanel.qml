@@ -180,6 +180,13 @@ Pane {
     }
     readonly property var loop: panel.deck.loop_region !== undefined ? panel.deck.loop_region : null
 
+    /// Beats in a bar, as the measurement counted them: four for almost everything, three for a waltz.
+    readonly property int beatsPerBar: {
+        const grid = panel.track !== null && panel.track !== undefined ? panel.track.grid : null;
+        const beats = grid !== undefined && grid !== null ? grid.beats_per_bar : undefined;
+        return beats !== undefined && beats !== null && beats > 0 ? beats : 4;
+    }
+
     /// Which bar of the four-bar square the play head is in. A grid shifted by exactly one bar leaves
     /// every bar line where it was — the lines are periodic — so the count is what tells the DJ that the
     /// shift happened at all.
@@ -188,8 +195,8 @@ Pane {
         if (beat === undefined || beat === null) {
             return "";
         }
-        const bar = Math.floor(beat / 4);
-        return "bar " + ((((bar % 4) + 4) % 4) + 1) + "/4";
+        const bar = Math.floor(beat / panel.beatsPerBar);
+        return "bar " + ((((bar % 4) + 4) % 4) + 1) + "/" + panel.beatsPerBar;
     }
 
     // One envelope per deck, shared by the zoomed strip and the overview: loading into A can never

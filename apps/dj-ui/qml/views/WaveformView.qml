@@ -58,6 +58,18 @@ Item {
                                        && view.deckState.source_rate > 0
                                        ? view.deckState.source_rate : 48000
 
+    /// Beats in a bar, as the measurement counted them: four unless the music counts otherwise.
+    ///
+    /// A waltz is counted in three, and a square of "four bars" is twelve beats there, not sixteen. The
+    /// grid carries the number; a deck with no grid, or a grid from a file written before the metre was
+    /// measured, is drawn in four.
+    readonly property int beatsPerBar: {
+        const track = view.deckState !== undefined && view.deckState !== null ? view.deckState.track : null;
+        const grid = track !== undefined && track !== null ? track.grid : null;
+        const beats = grid !== undefined && grid !== null ? grid.beats_per_bar : undefined;
+        return beats !== undefined && beats !== null && beats > 0 ? beats : 4;
+    }
+
     /// The grid as fractions of the track: one entry per beat, a bar every fourth beat. The strip paints
     /// in fractions and this is the only place that knows both the frames and the length of the track.
     readonly property var beatMarks: {
@@ -93,10 +105,10 @@ Item {
                 if (frame >= 0 && frame <= total) {
                     marks.push({
                         "ratio": frame / total,
-                        "bar": beat % 4 === 0,
+                        "bar": beat % view.beatsPerBar === 0,
                         // Four bars to a square: the count a DJ phrases in, and the only mark that moves
                         // when the grid is shifted by exactly one bar.
-                        "square": beat % 16 === 0
+                        "square": beat % (4 * view.beatsPerBar) === 0
                     });
                 }
                 frame += period;

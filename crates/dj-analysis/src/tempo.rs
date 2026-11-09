@@ -121,6 +121,10 @@ pub struct Tempo {
     /// How sure the measurement is, 0 … 1: the share of the onset energy the weakest segment's grid
     /// explains. The weakest, not the average: a track is only as measurable as its least measurable part.
     pub confidence: f32,
+    /// Beats in a bar: three or four, as the kick band counted them, or [`DEFAULT_METRE`] when the band
+    /// has no accent to count by. A bar is a pattern of accents; the full spectrum throws them away, so
+    /// a track whose accents are not in the kick band is counted in four and left at that.
+    pub metre: u8,
 }
 
 impl Tempo {
@@ -196,9 +200,18 @@ fn remove_the_running_mean(flux: Vec<f32>, window: usize) -> Vec<f32> {
 }
 
 /// Detect the tempo and the first beat of a mono signal.
+///
+/// Two bands, two questions. The full spectrum says where the onsets are, which is the tempo and
+/// nothing else: on dense percussion it cannot tell a beat from a group of three sixteenths, because
+/// both grids land on onsets. The band below [`KICK_HZ`] says where the bar is, and a bar is what
+/// separates a beat from its subdivisions and tells which beat of it is the first.
 pub fn detect(mono: &[f32], rate: f64) -> Option<Tempo> {
     let envelope = onset_envelope(mono)?;
-    detect_in_envelope(&envelope, rate)
+    let mut tempo = detect_in_envelope(&envelope, rate)?;
+    if let Some(kick) = kick_envelope(mono, rate) {
+        on_the_bar(&kick, rate, &mut tempo);
+    }
+    Some(tempo)
 }
 
 /// The same, for an envelope someone already has: the analysis decodes the file once and works on it.
@@ -285,6 +298,7 @@ fn single_tempo(
             beat: 0,
         }],
         confidence: explained as f32,
+        metre: DEFAULT_METRE,
     })
 }
 
@@ -444,6 +458,7 @@ fn grid_of_stretches(
     Some(Tempo {
         segments,
         confidence: confidence as f32,
+        metre: DEFAULT_METRE,
     })
 }
 
@@ -821,6 +836,327 @@ fn comb_score(envelope: &[f32], period: f64, phase: f64) -> f64 {
     } else {
         sum / counted as f64
     }
+}
+
+/// Beats in a bar when the kick band has nothing to count by.
+pub const DEFAULT_METRE: u8 = 4;
+
+/// Top of the band the kick lives in, in hertz.
+///
+/// The beat of most music a DJ plays is carried by the kick and the bass, and everything above that
+/// marks the subdivisions. Measured on a track the full spectrum read as 133,41 BPM while the music is
+/// four-four at 100: below 150 Hz the bar folds cleanly at 100 and not at 133,41 — the kick band is
+/// flat at 133,41 (contrast 1,48) and puts the kick on one and three at 100 (2,87). Its sixteenths are
+/// above this band, which is why the band can tell the two apart at all.
+const KICK_HZ: f64 = 150.0;
+
+/// How strongly the kick has to favour one beat of the bar before the grid is turned to it.
+///
+/// A click track, a pad and an aperiodic line put as much on every beat as on every other (1,0); a
+/// four-four with the kick on one and three measures 2,1 … 3,0 and its intro 2,5 … 3,0. Nothing between
+/// 1,25 and 2,0 was measured on real music, so the gate sits in the empty part of the range.
+const KICK_METRE_MIN: f64 = 1.25;
+
+/// How far an accent period may be from a whole number of beats and still count as one, as a fraction
+/// of that number. Two percent of four beats is 24 ms at 100 BPM: wider than the measurement error of a
+/// hop and far narrower than the third of a beat that separates a beat from three sixteenths.
+const BAR_TOLERANCE: f64 = 0.02;
+
+/// How much more kick the beat positions have to carry than the average point of the band before the
+/// grid counts as carrying the kick at all. Measured: 2,5 … 4,0 on electronic music whose beat is the
+/// kick; 0,9 … 1,2 on a grid that only meets it by arithmetic.
+const KICK_ON_BEATS: f64 = 1.4;
+
+/// The metres the bar is measured against, in beats. Four first: when the band cannot tell them apart
+/// the more common one is the better guess, and the gate above is what decides whether it can.
+const METRES: [u8; 2] = [4, 3];
+
+/// The onset envelope of the kick band: flux below [`KICK_HZ`], weighted by the magnitude it reaches.
+///
+/// Weighted, unlike [`onset_envelope`]: the rise of a kick is wide and slow, and weighting it by the
+/// level it reaches favours the boom over the rumble under it. Same blocks and hops as the full
+/// envelope, so a frame means the same thing in both.
+pub fn kick_envelope(mono: &[f32], rate: f64) -> Option<Vec<f32>> {
+    let mut spectrum = Spectrum::new(BLOCK)?;
+    let bins = BLOCK / 2;
+    let hz_per_bin = rate / BLOCK as f64;
+    let low_to = ((KICK_HZ / hz_per_bin).round() as usize).clamp(1, bins - 1);
+    let mut magnitudes = vec![0.0f32; bins];
+    let mut previous = vec![0.0f32; bins];
+    let mut block = vec![0.0f32; BLOCK];
+    let mut flux = Vec::with_capacity(mono.len() / HOP + 1);
+    let mut start = 0;
+    while start + BLOCK <= mono.len() {
+        block.copy_from_slice(&mono[start..start + BLOCK]);
+        spectrum.magnitudes(&block, &mut magnitudes);
+        let mut sum = 0.0f32;
+        for bin in 1..low_to {
+            sum += (magnitudes[bin] - previous[bin]).max(0.0) * magnitudes[bin];
+        }
+        flux.push(sum);
+        previous.copy_from_slice(&magnitudes);
+        start += HOP;
+    }
+    if flux.len() < 64 {
+        return None;
+    }
+    Some(remove_the_running_mean(flux, 94))
+}
+
+/// Where the bar is, as the kick band sees it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BarGuess {
+    /// Beats in a bar: one of [`METRES`].
+    pub metre: u8,
+    /// Which beat of the bar carries the kick, counted from the first beat of the grid.
+    pub downbeat: usize,
+    /// The loudest beat's mean over the bar's mean: 1,0 is a bar with no accent in it.
+    pub contrast: f64,
+    /// The kick band's mean on the beats over its mean everywhere: how much of the band the grid
+    /// actually carries. A grid that is not the beat of this music catches the kick now and then, by
+    /// arithmetical accident, and this is what tells the accident from the beat.
+    pub on_the_beats: f64,
+}
+
+/// How well an envelope repeats after `lag` hops, as a correlation of 0 … 1.
+///
+/// A bar of music comes back: the kick of this bar falls where the kick of the last one did. A lag that
+/// is not a bar — a beat and a half, say — cuts across the pattern and correlates with nothing.
+fn repeat_after(envelope: &[f32], lag: f64) -> f64 {
+    let hops = lag.round();
+    if !hops.is_finite() || hops < 1.0 || hops as usize >= envelope.len() {
+        return 0.0;
+    }
+    let lag = hops as usize;
+    let mut cross = 0.0;
+    let mut left = 0.0;
+    let mut right = 0.0;
+    for index in 0..envelope.len() - lag {
+        let a = f64::from(envelope[index]);
+        let b = f64::from(envelope[index + lag]);
+        cross += a * b;
+        left += a * a;
+        right += b * b;
+    }
+    if left <= 0.0 || right <= 0.0 {
+        return 0.0;
+    }
+    cross / (left * right).sqrt()
+}
+
+/// The accent periods of the kick band: the lags it repeats after, strongest first.
+///
+/// This is the measurement the whole bar rests on, and it is the one the full spectrum cannot make: the
+/// accents of a bar are a pattern in the low band, and the spectrum of the onset envelope keeps the
+/// energy while throwing the pattern away. A track whose every sixteenth has an onset — which is what
+/// dense percussion is — has a beat that explains as many onsets as a grid of three sixteenths, and that
+/// ambiguity is what put a 4/4 at 100 BPM one third of a bar off in the first place.
+///
+/// The band does not say which of its periods is the bar: a kick on one and three repeats every two
+/// beats as well as every four, and a bar of three repeats every six if two bars are played alike. It
+/// says the list, and the grid then has to divide one of them by a whole number of beats.
+fn accent_lags(kick: &[f32], per_second: f64) -> Vec<(f64, f64)> {
+    // A bar is between a third of a second (a fast bar) and four seconds (a slow one). Under a third of
+    // a second there is no bar a DJ grid needs; over four, a track would be under fifteen bars a minute.
+    let shortest = (0.3 * per_second).round().max(1.0) as usize;
+    let longest = ((4.0 * per_second).round() as usize).min(kick.len().saturating_sub(1));
+    if longest <= shortest + 2 {
+        return Vec::new();
+    }
+    let mut points = Vec::with_capacity(longest - shortest + 1);
+    for lag in shortest..=longest {
+        points.push((lag as f64 / per_second, repeat_after(kick, lag as f64)));
+    }
+    // Local maxima only: a plateau of nearly equal lags is one accent period, not twenty.
+    let mut peaks: Vec<(f64, f64)> = Vec::new();
+    for index in 1..points.len().saturating_sub(1) {
+        let (lag, value) = points[index];
+        if value >= points[index - 1].1 && value > points[index + 1].1 && value > 0.0 {
+            peaks.push((lag, value));
+        }
+    }
+    peaks.sort_by(|a, b| b.1.total_cmp(&a.1));
+    peaks.truncate(5);
+    peaks
+}
+
+/// The metre an accent period gives a beat, if it gives one: it has to be a whole number of beats.
+///
+/// Three beats in the bar is a waltz and is counted in three. Two, four and eight are a four-beat bar
+/// heard with an accent on every second beat, or two bars played alike. Five and seven are neither, and
+/// a lag that is not a whole number of beats is not the bar of this grid at all.
+fn metre_of(lag: f64, period: f64) -> Option<u8> {
+    if !(period.is_finite() && period > 0.0) {
+        return None;
+    }
+    let ratio = lag / period;
+    let beats = ratio.round();
+    if !(2.0..=8.0).contains(&beats) || (ratio - beats).abs() / beats > BAR_TOLERANCE {
+        return None;
+    }
+    match beats as u8 {
+        3 | 6 => Some(3),
+        2 | 4 | 8 => Some(4),
+        _ => None,
+    }
+}
+
+/// Place the beats on the kicks and fold them into a bar of `metre` beats, returning the phase and it.
+///
+/// The phase is searched over one whole period in six hundred steps: the beat has to sit on the kick,
+/// and where in the period it sits is the one thing a comb can settle exactly. The bar is the fold of
+/// those beats — the loudest of them over the average one is the accent, and its slot is the downbeat.
+fn bar_of_kick(kick: &[f32], period_hops: f64, metre: u8) -> Option<(f64, BarGuess)> {
+    if !(period_hops.is_finite() && period_hops >= 1.0) {
+        return None;
+    }
+    let end = kick.len() as f64 - 1.0;
+    let everywhere: f64 =
+        kick.iter().map(|value| f64::from(*value)).sum::<f64>() / kick.len() as f64;
+    if everywhere <= 0.0 {
+        return None;
+    }
+    let mut phase = 0.0;
+    let mut best = f64::NEG_INFINITY;
+    let mut beats = 0usize;
+    for step in 0..600 {
+        let guess = step as f64 * period_hops / 600.0;
+        let mut sum = 0.0;
+        let mut count = 0usize;
+        let mut position = guess;
+        while position < end {
+            sum += f64::from(kick[position.round() as usize]);
+            count += 1;
+            position += period_hops;
+        }
+        if sum > best {
+            best = sum;
+            beats = count.max(1);
+            phase = guess;
+        }
+    }
+    let slots = metre as usize;
+    let mut sums = vec![0.0f64; slots];
+    let mut counts = vec![0usize; slots];
+    let mut position = phase;
+    let mut index = 0usize;
+    while position < end {
+        let at = position.round() as usize;
+        if at < kick.len() {
+            sums[index % slots] += f64::from(kick[at]);
+            counts[index % slots] += 1;
+        }
+        position += period_hops;
+        index += 1;
+    }
+    // Two bars of beats is the least that can show an accent in every slot of the bar.
+    if index < 2 * slots {
+        return None;
+    }
+    let means: Vec<f64> = sums
+        .iter()
+        .zip(counts.iter())
+        .map(|(sum, count)| if *count > 0 { sum / *count as f64 } else { 0.0 })
+        .collect();
+    let average = means.iter().sum::<f64>() / slots as f64;
+    if average <= 0.0 {
+        return None;
+    }
+    let peak = means.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let downbeat = means
+        .iter()
+        .position(|value| (*value - peak).abs() < f64::EPSILON)
+        .unwrap_or(0);
+    Some((
+        phase,
+        BarGuess {
+            metre,
+            downbeat,
+            contrast: peak / average,
+            on_the_beats: best / beats as f64 / everywhere,
+        },
+    ))
+}
+
+/// The tempo, the phase and the bar the kick band agrees with.
+///
+/// The spectrum's own answer is kept whenever the accents divide by it: a track whose grid is right is
+/// not moved because another reading also has a bar. Only when no accent period is a whole number of
+/// its beats is the grid wrong in principle — a beat that lands a bar and a third apart from the accents
+/// is a subdivision of them, not their beat — and then the answer is the tempo an accent period implies,
+/// the strongest period first.
+fn bar_tempo_of(kick: &[f32], per_second: f64, bpm: f64) -> Option<(f64, f64, BarGuess)> {
+    let lags = accent_lags(kick, per_second);
+    let own_period = 60.0 / bpm;
+    if let Some(metre) = lags.iter().find_map(|(lag, _)| metre_of(*lag, own_period)) {
+        let (phase, bar) = bar_of_kick(kick, per_second * own_period, metre)?;
+        return Some((bpm, phase, bar));
+    }
+    let mut best: Option<(f64, f64, BarGuess, f64)> = None;
+    for (lag, strength) in lags.iter().take(3) {
+        for metre in METRES {
+            let period = *lag / f64::from(metre);
+            let candidate = 60.0 / period;
+            if !(MIN_BPM..=MAX_BPM).contains(&candidate) {
+                continue;
+            }
+            let Some((phase, bar)) = bar_of_kick(kick, period * per_second, metre) else {
+                continue;
+            };
+            if bar.on_the_beats < KICK_ON_BEATS {
+                continue;
+            }
+            if best
+                .as_ref()
+                .is_none_or(|(_, _, _, score)| *strength > *score)
+            {
+                best = Some((candidate, phase, bar, *strength));
+            }
+        }
+    }
+    best.map(|(bpm, phase, bar, _)| (bpm, phase, bar))
+}
+
+/// Turn the grid onto the bar: the beat the kick band calls the first, and the metre it counts in.
+///
+/// Two questions the full spectrum cannot answer. It cannot tell a beat from a group of three of them:
+/// dense percussion accents every third sixteenth as well, so a grid of three sixteenths explains as
+/// many onsets as the beat does and the tempo comes out four thirds of the music's. And it cannot say
+/// which beat of the bar is the first, because that is a pattern of accents, and the spectrum keeps the
+/// energy while throwing the pattern away. The kick band has both, so both are asked of it — and taken
+/// only when it is clear about them, because a grid moved on a guess is worse than a grid left alone.
+fn on_the_bar(kick: &[f32], rate: f64, tempo: &mut Tempo) {
+    // A track with several tempos has a bar per stretch, and turning all of them by the first one's
+    // accent is a claim the measurement does not make. Such a track keeps its answer as it is.
+    if !tempo.is_single() {
+        return;
+    }
+    let per_second = rate / HOP as f64;
+    let Some(segment) = tempo.segments.first().copied() else {
+        return;
+    };
+    let Some((bpm, phase, bar)) = bar_tempo_of(kick, per_second, segment.bpm) else {
+        return;
+    };
+    // The band has to be on the grid and the bar has to have an accent in it. A kick band that carries
+    // nothing at the beats is a track whose beat is not a kick — a pad, a string line, a snare-led
+    // pattern — and such a track keeps the answer the spectrum gave it, downbeat and all.
+    if bar.on_the_beats < KICK_ON_BEATS || bar.contrast < KICK_METRE_MIN {
+        return;
+    }
+    let period = per_second * 60.0 / bpm;
+    let beat = phase + bar.downbeat as f64 * period;
+    // Half a block, as in `single_tempo`: the block that saw the onset starts a hop before it.
+    let first = (beat * HOP as f64 + BLOCK as f64 / 2.0).round();
+    if !first.is_finite() || first < 0.0 || first > u64::MAX as f64 {
+        return;
+    }
+    tempo.segments = vec![TempoSegment {
+        bpm,
+        first_beat_frame: first as u64,
+        beat: 0,
+    }];
+    tempo.metre = bar.metre;
 }
 
 /// Read the head of a file as mono and measure its tempo.

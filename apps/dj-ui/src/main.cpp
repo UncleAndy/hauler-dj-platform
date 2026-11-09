@@ -3794,6 +3794,38 @@ int main(int argc, char *argv[])
             return 1;
         }
         const double periodRatio = (rate * 60.0 / bpm) / total;
+        // The count is read at the play head, so the check puts the play head where it meant to have it.
+        // Two reasons, both measured. A playing deck walks into the next bar while the check waits
+        // seconds for a shift. And a deck stopped the way a CDJ stops comes back to its cue point, which
+        // may be before the grid altogether — a count read there belongs to a bar that is not in the
+        // track. One beat past the middle: the strip centres on the play head, and the middle keeps the
+        // window on the whole track, while a beat past it keeps the count off a bar boundary.
+        bridge->play(QStringLiteral("A"), false);
+        const qint64 beatFrames = std::llround(rate * 60.0 / bpm);
+        const auto parked = static_cast<qulonglong>(std::llround(total / 2.0) + beatFrames);
+        const auto frameNow = [&]() {
+            return deckA().value(QStringLiteral("source_frame")).toDouble();
+        };
+        bool standing = false;
+        for (int attempt = 0; attempt < 4 && !standing; ++attempt) {
+            bridge->seek(QStringLiteral("A"), parked);
+            QElapsedTimer settle;
+            settle.start();
+            while (settle.elapsed() < 1500) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                if (std::abs(frameNow() - static_cast<double>(parked)) < 200.0) {
+                    standing = true;
+                    break;
+                }
+                QThread::msleep(20);
+            }
+        }
+        if (!standing) {
+            std::fprintf(stderr,
+                         "dj-ui: the deck would not stand on beat 9,5 (frame %.0f, wanted %llu)\n",
+                         frameNow(), static_cast<unsigned long long>(parked));
+            return 1;
+        }
         const double squareBefore = firstSquare();
         const QString labelBefore = barLabel();
         if (labelBefore.isEmpty()) {
@@ -3817,11 +3849,31 @@ int main(int argc, char *argv[])
         QMetaObject::invokeMethod(barLeft, "clicked");
         if (!waitFor(
                 [&]() {
-                    return std::abs(firstSquare() - squareBefore) < 0.002 && barLabel() == labelBefore;
+                    return std::abs(firstSquare() - squareBefore) < 0.002 &&
+                           barLabel() == labelBefore &&
+                           std::abs(frameNow() - static_cast<double>(parked)) < 200.0;
                 },
                 5000)) {
-            std::fprintf(stderr, "dj-ui: the square did not come back (start %.4f, count %s)\n",
-                         firstSquare(), qPrintable(barLabel()));
+            std::fprintf(stderr,
+                         "dj-ui: the square did not come back (start %.4f -> %.4f, count %s -> %s, "
+                         "beat %.3f, play head %.0f, drawn %d beats %d bars %d squares, window %.3f "
+                         "+ %.3f, anchor %.0f, metre %d)\n",
+                         squareBefore, firstSquare(), qPrintable(labelBefore),
+                         qPrintable(barLabel()),
+                         deckA().value(QStringLiteral("beat")).toDouble(), frameNow(), drawnBeats(),
+                         drawnBars(), strip->property("drawnSquares").toInt(),
+                         strip->property("windowStart").toDouble(),
+                         strip->property("span").toDouble(),
+                         gridOf().isEmpty()
+                             ? -1.0
+                             : gridOf().first().toMap().value(QStringLiteral("frame")).toDouble(),
+                         deckA()
+                             .value(QStringLiteral("track"))
+                             .toMap()
+                             .value(QStringLiteral("grid"))
+                             .toMap()
+                             .value(QStringLiteral("beats_per_bar"))
+                             .toInt());
             return 1;
         }
         // The count follows the grid too: four beats are a bar, so four presses of the beat button must

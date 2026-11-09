@@ -122,8 +122,13 @@ pub fn restore(
                     .iter()
                     .map(|anchor| (anchor.frame, anchor.beat))
                     .collect();
-                let grid =
-                    BeatGrid::from_stored(stored.bpm, stored.first_beat_frame, &anchors, rate);
+                let grid = BeatGrid::from_stored(
+                    stored.bpm,
+                    stored.first_beat_frame,
+                    &anchors,
+                    rate,
+                    stored.beats_per_bar,
+                );
                 if let Some(grid) = grid {
                     prepared.grid = Some(grid.clone());
                     prepared.static_info.grid = Some(grid.clone());
@@ -195,6 +200,7 @@ pub fn write_beatgrid(
     meta.beatgrid = Some(dj_library::BeatGrid {
         bpm: grid.bpm(),
         first_beat_frame: grid.first_beat_frame(),
+        beats_per_bar: grid.beats_per_bar(),
         anchors: grid
             .stored_anchors()
             .into_iter()

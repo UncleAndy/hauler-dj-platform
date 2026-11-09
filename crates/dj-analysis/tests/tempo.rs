@@ -28,6 +28,164 @@ fn click_track(bpm: f64, offset: usize, seconds: f64) -> Vec<f32> {
     samples
 }
 
+/// A kick: sixty hertz, a fifth of a second of decay. The band the bar is in.
+fn kick(samples: &mut [f32], at: usize, level: f32) {
+    let length = (RATE * 0.2) as usize;
+    for i in 0..length {
+        if at + i >= samples.len() {
+            break;
+        }
+        let decay = (1.0 - i as f32 / length as f32).powi(2);
+        let phase = std::f32::consts::TAU * 60.0 * i as f32 / RATE as f32;
+        samples[at + i] += level * decay * phase.sin();
+    }
+}
+
+/// A hat: two milliseconds of three kilohertz, decaying.
+///
+/// A tone, not a click of alternating samples: alternation at the sample rate is a tone at twenty-four
+/// kilohertz, and an FFT sees its edges leak all the way down into the band the kick is measured in.
+/// Real hats are high-passed; this one keeps its energy where a hat's belongs.
+fn hat(samples: &mut [f32], at: usize, level: f32) {
+    for i in 0..96 {
+        if at + i >= samples.len() {
+            break;
+        }
+        let decay = (1.0 - i as f32 / 96.0).powi(2);
+        let phase = std::f32::consts::TAU * 3_000.0 * i as f32 / RATE as f32;
+        samples[at + i] += level * decay * phase.sin();
+    }
+}
+
+/// Four-four: the kick on one and three, a hat on every sixteenth.
+///
+/// This is the shape of the track that was read as four thirds of its tempo. Dense percussion puts an
+/// onset on every subdivision, so a grid of three sixteenths explains as many onsets as the beat does,
+/// and the finer grid wins on the count. The kick band has nothing on the sixteenths, so the bar it
+/// folds with is the only honest measure of where the beat is.
+fn four_four(bpm: f64, offset: usize, seconds: f64) -> Vec<f32> {
+    let frames = (RATE * seconds) as usize;
+    let mut samples = vec![0.0f32; frames];
+    let beat = RATE * 60.0 / bpm;
+    let mut position = offset as f64;
+    let mut index = 0usize;
+    while (position as usize) + 512 < frames {
+        let at = position as usize;
+        // The kick on one and three, as four-four music puts it: an accent twice a bar, and nothing on
+        // the sixteenths, which is what makes the band able to name the bar.
+        if index.is_multiple_of(8) {
+            kick(&mut samples, at, 0.8);
+        }
+        hat(&mut samples, at, 0.3);
+        position += beat / 4.0;
+        index += 1;
+    }
+    samples
+}
+
+/// A chord stab: six hundred hertz, a tenth of a second. The middle of a waltz's bar.
+fn stab(samples: &mut [f32], at: usize, level: f32) {
+    for i in 0..(RATE * 0.1) as usize {
+        if at + i >= samples.len() {
+            break;
+        }
+        let decay = (1.0 - i as f32 / (RATE * 0.1) as f32).powi(2);
+        let phase = std::f32::consts::TAU * 600.0 * i as f32 / RATE as f32;
+        samples[at + i] += level * decay * phase.sin();
+    }
+}
+
+/// Three-four: the kick on one, a chord on two and three, a hat on every eighth.
+///
+/// A waltz, not a metronome: the kick alone says "one accent every beat and a half", which is as true of
+/// a beat and a half as of a bar of three, and a bar of three is only countable when something marks the
+/// other two beats.
+fn three_four(bpm: f64, offset: usize, seconds: f64) -> Vec<f32> {
+    let frames = (RATE * seconds) as usize;
+    let mut samples = vec![0.0f32; frames];
+    let beat = RATE * 60.0 / bpm;
+    let mut position = offset as f64;
+    let mut index = 0usize;
+    let mut bar = 0usize;
+    while (position as usize) + 512 < frames {
+        let at = position as usize;
+        if bar == 0 {
+            kick(&mut samples, at, 0.8);
+        } else {
+            stab(&mut samples, at, 0.5);
+        }
+        hat(&mut samples, at, 0.3);
+        position += beat;
+        index += 1;
+        bar = (bar + 1) % 3;
+    }
+    let _ = index;
+    samples
+}
+
+#[test]
+fn a_bar_of_four_beats_is_not_read_as_three_of_them() {
+    // The kick band says where the bar is; the full spectrum only says where the onsets are, and on
+    // dense percussion that is every third sixteenth as much as every fourth.
+    let samples = four_four(100.0, 4_800, 30.0);
+    let tempo = dj_analysis::tempo::detect(&samples, RATE).expect("a tempo");
+    assert!(
+        (tempo.bpm() - 100.0).abs() < 1.0,
+        "measured {} BPM instead of 100: the grid is a third of a bar off",
+        tempo.bpm()
+    );
+    assert_eq!(
+        tempo.metre, 4,
+        "the bar was counted in {} beats",
+        tempo.metre
+    );
+    let error = off_the_grid(&tempo, 4_800);
+    assert!(error <= 15.0, "the kick is {error:.1} ms off the grid");
+}
+
+#[test]
+fn the_first_beat_is_the_one_the_kick_lands_on() {
+    // A bar starts where the accent is. The grid may sit on any beat of the bar and still be a grid,
+    // but a square drawn from the wrong beat starts in the middle of the music.
+    // The track opens on a hat, two beats before the kick: the first beat of the grid is a beat of the
+    // audio, and the accent says which one is the bar's.
+    let beat = RATE * 60.0 / 100.0;
+    let mut samples = vec![0.0f32; (RATE * 30.0) as usize];
+    let mut position = 0.0f64;
+    let mut index = 0usize;
+    while (position as usize) + 512 < samples.len() {
+        let at = position as usize;
+        if index >= 2 && (index - 2).is_multiple_of(4) {
+            kick(&mut samples, at, 0.8);
+        }
+        hat(&mut samples, at, 0.3);
+        position += beat;
+        index += 1;
+    }
+    let tempo = dj_analysis::tempo::detect(&samples, RATE).expect("a tempo");
+    let error = off_the_grid(&tempo, (2.0 * beat) as u64);
+    assert!(
+        error <= 15.0,
+        "the first beat is {error:.1} ms off the kick that opens the bar"
+    );
+}
+
+#[test]
+fn a_bar_of_three_beats_is_counted_in_three() {
+    let samples = three_four(120.0, 4_800, 30.0);
+    let tempo = dj_analysis::tempo::detect(&samples, RATE).expect("a tempo");
+    assert!(
+        (tempo.bpm() - 120.0).abs() < 1.5,
+        "measured {} BPM instead of 120",
+        tempo.bpm()
+    );
+    assert_eq!(
+        tempo.metre, 3,
+        "the bar was counted in {} beats",
+        tempo.metre
+    );
+}
+
 #[test]
 fn a_click_track_at_128_bpm_is_measured() {
     let samples = click_track(128.0, 4_800, 20.0);
