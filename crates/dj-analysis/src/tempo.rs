@@ -209,7 +209,7 @@ pub fn detect(mono: &[f32], rate: f64) -> Option<Tempo> {
     let envelope = onset_envelope(mono)?;
     let mut tempo = detect_in_envelope(&envelope, rate)?;
     if let Some(kick) = kick_envelope(mono, rate) {
-        on_the_bar(&kick, rate, &mut tempo);
+        on_the_bar(&envelope, &kick, rate, &mut tempo);
     }
     Some(tempo)
 }
@@ -1001,12 +1001,14 @@ fn metre_of(lag: f64, period: f64) -> Option<u8> {
     }
 }
 
-/// Place the beats on the kicks and fold them into a bar of `metre` beats, returning the phase and it.
+/// The bar as the kick band sees it, at a beat the onsets chose.
 ///
-/// The phase is searched over one whole period in six hundred steps: the beat has to sit on the kick,
-/// and where in the period it sits is the one thing a comb can settle exactly. The bar is the fold of
-/// those beats — the loudest of them over the average one is the accent, and its slot is the downbeat.
-fn bar_of_kick(kick: &[f32], period_hops: f64, metre: u8) -> Option<(f64, BarGuess)> {
+/// The band is asked two things: which beat of the bar carries the accent, and how much of the band the
+/// beats carry at all. It is not asked where the beat is. In music where the bass plays against the beat
+/// the band's own maximum sits on the syncopation, and a grid that followed it landed a fifth of a beat
+/// off the music — measured on `Shadow Rhythm — Deep Resonance` (the grid scored 1,4 % of the best the
+/// onset envelope offers) and reproduced by `a_syncopated_kick_does_not_move_the_grid_off_the_beat`.
+fn bar_of_kick(kick: &[f32], period_hops: f64, metre: u8, phase: f64) -> Option<BarGuess> {
     if !(period_hops.is_finite() && period_hops >= 1.0) {
         return None;
     }
@@ -1016,24 +1018,16 @@ fn bar_of_kick(kick: &[f32], period_hops: f64, metre: u8) -> Option<(f64, BarGue
     if everywhere <= 0.0 {
         return None;
     }
-    let mut phase = 0.0;
-    let mut best = f64::NEG_INFINITY;
+    let mut on = 0.0f64;
     let mut beats = 0usize;
-    for step in 0..600 {
-        let guess = step as f64 * period_hops / 600.0;
-        let mut sum = 0.0;
-        let mut count = 0usize;
-        let mut position = guess;
-        while position < end {
-            sum += f64::from(kick[position.round() as usize]);
-            count += 1;
-            position += period_hops;
-        }
-        if sum > best {
-            best = sum;
-            beats = count.max(1);
-            phase = guess;
-        }
+    let mut position = phase;
+    while position < end {
+        on += f64::from(kick[position.round() as usize]);
+        beats += 1;
+        position += period_hops;
+    }
+    if beats == 0 {
+        return None;
     }
     let slots = metre as usize;
     let mut sums = vec![0.0f64; slots];
@@ -1067,15 +1061,12 @@ fn bar_of_kick(kick: &[f32], period_hops: f64, metre: u8) -> Option<(f64, BarGue
         .iter()
         .position(|value| (*value - peak).abs() < f64::EPSILON)
         .unwrap_or(0);
-    Some((
-        phase,
-        BarGuess {
-            metre,
-            downbeat,
-            contrast: peak / average,
-            on_the_beats: best / beats as f64 / everywhere,
-        },
-    ))
+    Some(BarGuess {
+        metre,
+        downbeat,
+        contrast: peak / average,
+        on_the_beats: on / beats as f64 / everywhere,
+    })
 }
 
 /// The tempo, the phase and the bar the kick band agrees with.
@@ -1085,11 +1076,19 @@ fn bar_of_kick(kick: &[f32], period_hops: f64, metre: u8) -> Option<(f64, BarGue
 /// its beats is the grid wrong in principle — a beat that lands a bar and a third apart from the accents
 /// is a subdivision of them, not their beat — and then the answer is the tempo an accent period implies,
 /// the strongest period first.
-fn bar_tempo_of(kick: &[f32], per_second: f64, bpm: f64) -> Option<(f64, f64, BarGuess)> {
+fn bar_tempo_of(
+    kick: &[f32],
+    onsets: &[f32],
+    per_second: f64,
+    bpm: f64,
+) -> Option<(f64, f64, BarGuess)> {
     let lags = accent_lags(kick, per_second);
     let own_period = 60.0 / bpm;
     if let Some(metre) = lags.iter().find_map(|(lag, _)| metre_of(*lag, own_period)) {
-        let (phase, bar) = bar_of_kick(kick, per_second * own_period, metre)?;
+        // The beat is where the onsets put it; the band only says which beat of the bar is the first.
+        let period_hops = per_second * own_period;
+        let phase = best_phase(onsets, period_hops);
+        let bar = bar_of_kick(kick, period_hops, metre, phase)?;
         return Some((bpm, phase, bar));
     }
     let mut best: Option<(f64, f64, BarGuess, f64)> = None;
@@ -1100,12 +1099,11 @@ fn bar_tempo_of(kick: &[f32], per_second: f64, bpm: f64) -> Option<(f64, f64, Ba
             if !(MIN_BPM..=MAX_BPM).contains(&candidate) {
                 continue;
             }
-            let Some((phase, bar)) = bar_of_kick(kick, period * per_second, metre) else {
+            let period_hops = period * per_second;
+            let phase = best_phase(onsets, period_hops);
+            let Some(bar) = bar_of_kick(kick, period_hops, metre, phase) else {
                 continue;
             };
-            if bar.on_the_beats < KICK_ON_BEATS {
-                continue;
-            }
             if best
                 .as_ref()
                 .is_none_or(|(_, _, _, score)| *strength > *score)
@@ -1125,7 +1123,7 @@ fn bar_tempo_of(kick: &[f32], per_second: f64, bpm: f64) -> Option<(f64, f64, Ba
 /// which beat of the bar is the first, because that is a pattern of accents, and the spectrum keeps the
 /// energy while throwing the pattern away. The kick band has both, so both are asked of it — and taken
 /// only when it is clear about them, because a grid moved on a guess is worse than a grid left alone.
-fn on_the_bar(kick: &[f32], rate: f64, tempo: &mut Tempo) {
+fn on_the_bar(onsets: &[f32], kick: &[f32], rate: f64, tempo: &mut Tempo) {
     // A track with several tempos has a bar per stretch, and turning all of them by the first one's
     // accent is a claim the measurement does not make. Such a track keeps its answer as it is.
     if !tempo.is_single() {
@@ -1135,17 +1133,20 @@ fn on_the_bar(kick: &[f32], rate: f64, tempo: &mut Tempo) {
     let Some(segment) = tempo.segments.first().copied() else {
         return;
     };
-    let Some((bpm, phase, bar)) = bar_tempo_of(kick, per_second, segment.bpm) else {
+    let Some((bpm, phase, bar)) = bar_tempo_of(kick, onsets, per_second, segment.bpm) else {
         return;
     };
-    // The band has to be on the grid and the bar has to have an accent in it. A kick band that carries
-    // nothing at the beats is a track whose beat is not a kick — a pad, a string line, a snare-led
-    // pattern — and such a track keeps the answer the spectrum gave it, downbeat and all.
-    if bar.on_the_beats < KICK_ON_BEATS || bar.contrast < KICK_METRE_MIN {
-        return;
-    }
+    // The band names the bar — which beat of it is the first — and it is believed only when it has an
+    // accent to show. A band with nothing on the beats is a track whose beat is not a kick: a pad, a
+    // string line, a snare-led pattern. Such a track starts its bars on the beat the onsets gave, a guess
+    // that changes nothing about where the beats are.
+    let downbeat = if bar.on_the_beats >= KICK_ON_BEATS && bar.contrast >= KICK_METRE_MIN {
+        bar.downbeat
+    } else {
+        0
+    };
     let period = per_second * 60.0 / bpm;
-    let beat = phase + bar.downbeat as f64 * period;
+    let beat = phase + downbeat as f64 * period;
     // Half a block, as in `single_tempo`: the block that saw the onset starts a hop before it.
     let first = (beat * HOP as f64 + BLOCK as f64 / 2.0).round();
     if !first.is_finite() || first < 0.0 || first > u64::MAX as f64 {

@@ -123,6 +123,50 @@ fn three_four(bpm: f64, offset: usize, seconds: f64) -> Vec<f32> {
     samples
 }
 
+/// Kick on every beat, a louder low hit four fifths of a beat later on every second beat.
+///
+/// A bass playing against the beat, and not the same way on every beat: the pattern repeats every bar,
+/// which is exactly what lets the kick band count a bar and believe it has found the beat. The beat
+/// itself carries the wideband content — a stab and a hat — while the band below 150 Hz is loudest on
+/// the syncopation. This is the shape of a track whose grid came out a fifth of a beat off: the low band
+/// was allowed to say where the beat is, and in this music the low band is not playing it.
+fn syncopated_kick(bpm: f64, offset: usize, seconds: f64) -> Vec<f32> {
+    let frames = (RATE * seconds) as usize;
+    let mut samples = vec![0.0f32; frames];
+    let beat = RATE * 60.0 / bpm;
+    let mut index = 0usize;
+    while (offset as f64 + index as f64 * beat + beat + 1024.0) < frames as f64 {
+        let at = offset + (index as f64 * beat) as usize;
+        kick(&mut samples, at, 0.2);
+        stab(&mut samples, at, 1.5);
+        hat(&mut samples, at, 1.0);
+        if index.is_multiple_of(2) {
+            let off = at + (beat * 0.8) as usize;
+            kick(&mut samples, off, 1.4);
+        }
+        index += 1;
+    }
+    samples
+}
+
+#[test]
+fn a_syncopated_kick_does_not_move_the_grid_off_the_beat() {
+    // The beat is where the onsets are: the kick band is the loudest thing in the low end but it plays
+    // against the beat, and a grid that follows it lands four fifths of a beat away.
+    let samples = syncopated_kick(120.0, 9_000, 40.0);
+    let tempo = dj_analysis::tempo::detect(&samples, RATE).expect("a tempo");
+    assert!(
+        (tempo.bpm() - 120.0).abs() < 0.5,
+        "measured {} BPM instead of 120",
+        tempo.bpm()
+    );
+    let error = off_the_grid(&tempo, 9_000);
+    assert!(
+        error <= 15.0,
+        "the nearest beat is {error:.1} ms away from the first beat"
+    );
+}
+
 #[test]
 fn a_bar_of_four_beats_is_not_read_as_three_of_them() {
     // The kick band says where the bar is; the full spectrum only says where the onsets are, and on
