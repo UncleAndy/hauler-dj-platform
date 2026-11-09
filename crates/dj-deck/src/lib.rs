@@ -282,6 +282,13 @@ pub struct Deck {
     stretcher: Stretcher,
     /// Material at the device's rate, held back so the stretcher can be fed ahead of the output.
     stretch_in: Vec<f32>,
+    /// The fraction of a frame the stretcher is owed from the previous piece.
+    ///
+    /// The library is told the tempo by two lengths: so many frames in, so many out. A whole number of
+    /// input frames per piece is therefore a ratio in disguise, and rounding it up every block at
+    /// 1,00 was a ratio of 258/256 — the deck ran 0,78 % fast and 13 cents sharp with the key locked.
+    /// The remainder is carried instead, so the average length is exactly `frames * tempo`.
+    stretch_carry: f64,
     /// Whether the stretcher is in the signal path. It goes in on the first tempo change and stays in
     /// until the playhead moves: flipping the path every time the fader crosses the file's own speed
     /// is what a listener hears as a click.
@@ -350,6 +357,7 @@ impl Deck {
             keylock: true,
             stretcher: Stretcher::new(EQ_SAMPLE_RATE),
             stretch_in: vec![0.0; MAX_TEMPO_BLOCK_FRAMES * 2],
+            stretch_carry: 0.0,
             keylock_engaged: false,
         }
     }
@@ -1273,8 +1281,12 @@ impl Deck {
         let mut done = 0usize;
         while done < frames {
             let take = (frames - done).min(piece);
-            let wanted = ((take as f64) * self.tempo_ratio).ceil() as usize + 2;
-            let wanted = wanted.min(capacity);
+            // No slack is added here: every frame of material the stretcher is handed is a frame it
+            // will play back sooner. The fraction is carried to the next piece instead.
+            let exact = (take as f64) * self.tempo_ratio + self.stretch_carry;
+            let frames_in = exact.floor().max(1.0) as usize;
+            self.stretch_carry = exact - frames_in as f64;
+            let wanted = frames_in.min(capacity);
             let mut staging = std::mem::take(&mut self.stretch_in);
             // Device-rate material for this piece, from the loop-aware source.
             self.render_at_tempo_chunk(&mut staging[..wanted * 2], self.rate_ratio);

@@ -1113,6 +1113,53 @@ fn purity(block: &[f32], hertz: f64) -> f64 {
 }
 
 #[test]
+fn at_the_files_own_speed_a_key_locked_deck_keeps_time() {
+    // The report from the booth: with the key locked, a track at 1.00 runs about 0,78 % fast — 13 cents.
+    // The cause is in the staging length, not in the stretcher: the deck asks for `frames * tempo` of
+    // material and adds two frames of slack, so the library is told 258 frames in for 256 out at a tempo
+    // of 1,00. Two frames per block is one part in 128, forever.
+    let mut deck = tone_deck(4_000_000);
+    deck.set_tempo(1.08);
+    deck.play();
+    let mut block = vec![0.0f32; 256 * 2];
+    for _ in 0..40 {
+        deck.render(&mut block);
+    }
+    deck.set_tempo(1.0);
+    // The rate glides to what the hand asked; let it arrive before the measurement starts.
+    for _ in 0..40 {
+        deck.render(&mut block);
+    }
+    for (blocks, allowed) in [(25u64, 1u64), (3125, 4)] {
+        let before = deck.position();
+        let rendered = blocks * 256;
+        for _ in 0..blocks {
+            deck.render(&mut block);
+        }
+        let moved = deck.position().saturating_sub(before);
+        assert!(
+            moved.abs_diff(rendered) <= allowed,
+            "at the file's own speed {rendered} frames out moved the deck {moved} frames of material: \
+             {:.4} % off",
+            (moved as f64 / rendered as f64 - 1.0) * 100.0
+        );
+    }
+    // And the sound at unity, with the stretcher still in the path, is the tone it was: a ratio of
+    // 258/256 also smeared the phase, not only the clock.
+    let mut all = Vec::new();
+    for _ in 0..188 {
+        deck.render(&mut block);
+        all.extend_from_slice(&block);
+    }
+    let skip = deck.keylock_latency();
+    let measured = purity(&all[skip * 2..], 440.0);
+    assert!(
+        measured > 0.99,
+        "at the file's own speed only {measured:.3} of the energy stayed at the tone"
+    );
+}
+
+#[test]
 fn a_stretched_tone_stays_clean() {
     // The report from the booth: "жужжание" at any speed other than 1.0. The pitch was right and the
     // window search was centred on the read pointer, which drifts away from the natural continuation by
