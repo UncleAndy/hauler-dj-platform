@@ -963,9 +963,9 @@ fn decide_level(envelope: &[f32], per_second: f64, bpm: f64) -> f64 {
         return bpm;
     }
     let mut best = (bpm, f64::NEG_INFINITY);
-    // Octaves only: three-halves and four-thirds are mistakes in the *measurement* of the tempo — a
-    // waltz counted in three, a bar whose accent falls every third beat — and they are corrected where
-    // they are made. A level is a choice between counting a beat and counting two of them.
+    // Octaves only. Four-thirds and three-halves are not levels: they are what a *metre* counted wrongly
+    // does to the tempo, and they are corrected where the metre is read — offering them here let a 90 BPM
+    // track be counted at 180 and left `Среди своих Stems` at 124,103 anyway.
     for multiple in [1.0, 2.0, 0.5] {
         let candidate = bpm * multiple;
         if !(LEVEL_MIN_BPM..=LEVEL_MAX_BPM).contains(&candidate) {
