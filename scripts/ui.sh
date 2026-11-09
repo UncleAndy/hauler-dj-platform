@@ -253,6 +253,13 @@ case "${1:-}" in
     metronome_file="$run_dir/metronome-track.wav"
     cp crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav "$metronome_file"
     # The button between the arrows: the grid is put where the play head is, and the file keeps it.
+    # A loop of the music: four beats of the grid, and the arrow moves it by a beat without shortening it.
+    # Its own copy of the fixture: the checks share one engine and one deck, and a check that loads the
+    # same file name as the next one leaves the next one reading the stale grid of the reload in flight.
+    loop_file="$run_dir/loop-track.wav"
+    cp crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav "$loop_file"
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
+        --loop-beats-check --load "$loop_file"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --grid-here-check --load "$metronome_file"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \

@@ -939,6 +939,10 @@ int main(int argc, char *argv[])
         QStringLiteral("grid-check"),
         QStringLiteral("With --connect and --load: move the grid, halve it, double it and type a tempo, "
                        "requiring the deck and the file to follow every edit."));
+    const QCommandLineOption loopBeatsOption(
+        QStringLiteral("loop-beats-check"),
+        QStringLiteral("Check that a loop of four beats is four beats of the grid, and that the arrows "
+                       "move it by a beat without shortening it (DJP-DECK-005)."));
     const QCommandLineOption gridHereOption(
         QStringLiteral("grid-here-check"),
         QStringLiteral("With --connect and --load: seek off the grid, press the button between the arrows, "
@@ -1192,6 +1196,7 @@ int main(int argc, char *argv[])
     parser.addOption(tapOption);
     parser.addOption(gridLinesOption);
     parser.addOption(gridCheckOption);
+    parser.addOption(loopBeatsOption);
     parser.addOption(gridHereOption);
     parser.addOption(tempoRecheckOption);
     parser.addOption(cueWriteOption);
@@ -3184,6 +3189,152 @@ int main(int argc, char *argv[])
             return 1;
         }
         std::fprintf(stdout, "dj-ui: the measured tempo reached the deck\n");
+        return 0;
+    }
+
+    if (parser.isSet(loopBeatsOption)) {
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        const QString fixture = parser.value(loadOption);
+        if (fixture.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: --loop-beats-check needs --load\n");
+            return 1;
+        }
+        bridge->connectToEngine(parser.value(connectOption));
+        const auto waitFor = [](const std::function<bool()> &ready, int budget) {
+            QElapsedTimer timer;
+            timer.start();
+            while (timer.elapsed() < budget) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                if (ready()) {
+                    return true;
+                }
+                QThread::msleep(10);
+            }
+            return ready();
+        };
+        if (!waitFor([&]() { return bridge->isConnected(); }, 3000)) {
+            std::fprintf(stderr, "dj-ui: no engine\n");
+            return 1;
+        }
+        const auto deckA = [&]() {
+            const QVariantList decks = bridge->snapshot().value(QStringLiteral("decks")).toList();
+            for (const QVariant &entry : decks) {
+                const QVariantMap deck = entry.toMap();
+                if (deck.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                    return deck;
+                }
+            }
+            return QVariantMap();
+        };
+        const auto gridFirstBeat = [&]() -> qint64 {
+            const QVariantList segments = deckA()
+                                              .value(QStringLiteral("track"))
+                                              .toMap()
+                                              .value(QStringLiteral("grid"))
+                                              .toMap()
+                                              .value(QStringLiteral("segments"))
+                                              .toList();
+            if (segments.isEmpty()) {
+                return -1;
+            }
+            return segments.first().toMap().value(QStringLiteral("frame")).toLongLong();
+        };
+        const auto loopRegion = [&]() {
+            return deckA().value(QStringLiteral("loop_region")).toMap();
+        };
+        const auto click = [&](const QString &name) {
+            auto *item = findItem(window->contentItem(), name);
+            if (item == nullptr) {
+                std::fprintf(stderr, "dj-ui: no %s to press\n", qPrintable(name));
+                return false;
+            }
+            QMetaObject::invokeMethod(item, "clicked");
+            QCoreApplication::processEvents();
+            return true;
+        };
+
+        bridge->load(QStringLiteral("A"), fixture);
+        const QString wantName = QFileInfo(fixture).fileName();
+        if (!waitFor(
+                [&]() {
+                    const QString held = deckA().value(QStringLiteral("path")).toString();
+                    return !held.isEmpty() && held.endsWith(wantName) && gridFirstBeat() >= 0;
+                },
+                20000)) {
+            std::fprintf(stderr, "dj-ui: the deck published no grid to loop by\n");
+            return 1;
+        }
+        // The grid's own numbers, not the deck's headline tempo: the loop is built from the segment the
+        // play head is in, and the check has to measure the same thing the deck did.
+        const QVariantList segments = deckA()
+                                          .value(QStringLiteral("track"))
+                                          .toMap()
+                                          .value(QStringLiteral("grid"))
+                                          .toMap()
+                                          .value(QStringLiteral("segments"))
+                                          .toList();
+        if (segments.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: the deck published no grid segments\n");
+            return 1;
+        }
+        const QVariantMap first = segments.first().toMap();
+        const qint64 rate = deckA().value(QStringLiteral("source_rate")).toLongLong();
+        const double bpm = first.value(QStringLiteral("bpm")).toDouble();
+        if (rate <= 0 || !(bpm > 0.0)) {
+            std::fprintf(stderr, "dj-ui: the deck published no rate or tempo\n");
+            return 1;
+        }
+        const double period = rate * 60.0 / bpm;
+        const auto four = static_cast<qint64>(std::llround(4.0 * period));
+        if (!click(QStringLiteral("loopSize_A_4"))) {
+            return 1;
+        }
+        const auto loopLength = [&]() -> qint64 {
+            const QVariantMap region = loopRegion();
+            if (region.isEmpty()) {
+                return -1;
+            }
+            return region.value(QStringLiteral("end")).toLongLong()
+                 - region.value(QStringLiteral("start")).toLongLong();
+        };
+        if (!waitFor([&]() { return std::llabs(loopLength() - four) <= 2; }, 5000)) {
+            std::fprintf(stderr, "dj-ui: a four beat loop came back %lld frames long, wanted %lld (start %s)\n",
+                         loopLength(), four, qPrintable(loopRegion().value(QStringLiteral("start")).toString()));
+            return 1;
+        }
+        const qint64 start = loopRegion().value(QStringLiteral("start")).toLongLong();
+        // The start has to be on a beat of the grid, not on the play head: that is the whole point.
+        const double where = std::fmod(static_cast<double>(start - gridFirstBeat()), period);
+        if (where > 2.0 && period - where > 2.0) {
+            std::fprintf(stderr, "dj-ui: the loop starts %.1f frames off the beat\n", where);
+            return 1;
+        }
+        if (!click(QStringLiteral("loopOn_A"))) {
+            return 1;
+        }
+        const auto beatStep = static_cast<qint64>(std::llround(period));
+        if (!waitFor(
+                [&]() {
+                    const qint64 moved = loopRegion().value(QStringLiteral("start")).toLongLong()
+                                       - start;
+                    return std::llabs(moved - beatStep) <= 2
+                        && std::llabs(loopLength() - four) <= 2;
+                },
+                5000)) {
+            std::fprintf(stderr, "dj-ui: the arrow moved the loop to frame %s, and it is %lld long\n",
+                         qPrintable(loopRegion().value(QStringLiteral("start")).toString()),
+                         loopLength());
+            return 1;
+        }
+        std::fprintf(stdout,
+                     "dj-ui: a four beat loop is %lld frames of the grid (a beat is %.1f), it starts on a "
+                     "beat at frame %lld, and one press of the arrow moved it %.1f frames without "
+                     "changing its length\n",
+                     four, period, start, static_cast<double>(beatStep));
         return 0;
     }
 

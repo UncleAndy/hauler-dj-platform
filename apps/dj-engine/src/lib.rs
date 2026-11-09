@@ -49,6 +49,8 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
         | DjCommand::SetLoopMode { deck, .. }
         | DjCommand::SeekFrames { deck, .. }
         | DjCommand::SetLoop { deck, .. }
+        | DjCommand::LoopBeats { deck, .. }
+        | DjCommand::LoopMove { deck, .. }
         | DjCommand::SetTempoRatio { deck, .. }
         | DjCommand::Metronome { deck, .. }
         | DjCommand::Eject { deck }
@@ -144,6 +146,38 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
                     }
                 }
             }
+            // A loop of a musical length (DJP-DECK-005): built from the grid, so the seam is on the bar
+            // rather than on the frame the hand happened to hit. The play head steps into the new loop
+            // when it is outside it — pressing "4" is a request to hear those four beats.
+            DjCommand::LoopBeats { beats, .. } => {
+                let at = target.position();
+                match target.loop_by_beats(at, *beats) {
+                    Some(region) => {
+                        if !region.contains(SourceFrame(target.position())) {
+                            target.seek(region.start.0);
+                        }
+                        Ack::applied(id, at)
+                    }
+                    None => Ack {
+                        command_id: id,
+                        status: AckStatus::Rejected(RejectReason::InvalidValue),
+                    },
+                }
+            }
+            // Moving the active loop keeps its length and takes the play head with it: a loop that moves
+            // out from under the sound is a jump, and a jump is not what was asked for.
+            DjCommand::LoopMove { beats, .. } => match target.move_loop(*beats) {
+                Some(region) => {
+                    if !region.contains(SourceFrame(target.position())) {
+                        target.seek(region.start.0);
+                    }
+                    Ack::applied(id, at)
+                }
+                None => Ack {
+                    command_id: id,
+                    status: AckStatus::Rejected(RejectReason::InvalidValue),
+                },
+            },
             // A load never runs in the callback; if it arrives here the routing broke, and a
             // rejection is better than an ack that claims work which did not happen.
             DjCommand::Load { .. } => Ack {

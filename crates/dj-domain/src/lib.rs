@@ -493,6 +493,28 @@ pub enum DjCommand {
         /// Loop region, or `None` to clear it.
         region: Option<FrameRange>,
     },
+    /// Put a loop of a musical length under the play head (DJP-DECK-005).
+    ///
+    /// A loop made by two presses is the frames between them: musical only if the hand was on the beat.
+    /// This one is built from the grid instead — the start snaps to the nearest beat and the end is
+    /// `beats` beats later, so the seam is where the bar is. Refused when the deck has no grid, when
+    /// `beats` is zero, or when the region would cross another loop.
+    LoopBeats {
+        /// Target deck.
+        deck: DeckId,
+        /// Length in beats: one, two, four, eight.
+        beats: u32,
+    },
+    /// Move the active loop by whole beats, keeping its length (DJP-DECK-005).
+    ///
+    /// The play head that stood inside the loop moves with it: a loop that is moved out from under the
+    /// sound is a jump, and the DJ asked for a loop, not for a jump.
+    LoopMove {
+        /// Target deck.
+        deck: DeckId,
+        /// Beats to move: positive is later in the track, negative is earlier.
+        beats: i32,
+    },
 }
 
 impl DjCommand {
@@ -510,6 +532,8 @@ impl DjCommand {
             | DjCommand::Cue { .. }
             | DjCommand::SeekFrames { .. }
             | DjCommand::SetLoop { .. }
+            | DjCommand::LoopBeats { .. }
+            | DjCommand::LoopMove { .. }
             | DjCommand::Load { .. }
             | DjCommand::AnalyzeTempo { .. }
             | DjCommand::EditGrid { .. }

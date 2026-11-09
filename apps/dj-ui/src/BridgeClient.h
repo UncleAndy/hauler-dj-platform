@@ -109,6 +109,10 @@ public:
     Q_INVOKABLE int halveGrid(const QString &deck);
     Q_INVOKABLE int seek(const QString &deck, qulonglong frame);
     Q_INVOKABLE int setLoop(const QString &deck, bool enabled, qulonglong start, qulonglong end);
+    /// A loop of `beats` beats on the deck's grid (DJP-DECK-005).
+    Q_INVOKABLE int loopBeats(const QString &deck, int beats);
+    /// Move the active loop by whole beats, keeping its length.
+    Q_INVOKABLE int moveLoop(const QString &deck, int beats);
     Q_INVOKABLE int setCrossfader(double position);
     Q_INVOKABLE int setChannelGain(const QString &deck, double gain);
     /// Playback rate of a deck: 1.0 is the file's own speed, and the pitch moves with it.

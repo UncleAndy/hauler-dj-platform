@@ -457,6 +457,26 @@ int BridgeClient::setLoop(const QString &deck, bool enabled, qulonglong start, q
     return sendCommand(deck, command);
 }
 
+int BridgeClient::loopBeats(const QString &deck, int beats)
+{
+    QJsonObject options;
+    options.insert(QStringLiteral("deck"), deck);
+    options.insert(QStringLiteral("beats"), beats);
+    QJsonObject command;
+    command.insert(QStringLiteral("LoopBeats"), options);
+    return sendCommand(deck, command);
+}
+
+int BridgeClient::moveLoop(const QString &deck, int beats)
+{
+    QJsonObject options;
+    options.insert(QStringLiteral("deck"), deck);
+    options.insert(QStringLiteral("beats"), beats);
+    QJsonObject command;
+    command.insert(QStringLiteral("LoopMove"), options);
+    return sendCommand(deck, command);
+}
+
 int BridgeClient::setCrossfader(double position)
 {
     QJsonObject options;

@@ -704,6 +704,60 @@ Pane {
             }
         }
 
+        // A loop of the music rather than of the hand: the sizes make a loop of whole beats and the arrows
+        // move it (DJP-DECK-005). Only a grid knows where a beat is, so without one the row is not there.
+        RowLayout {
+            objectName: "loopsize_" + panel.deckId
+            Layout.fillWidth: true
+            visible: panel.gridReady
+            spacing: 3
+            Label {
+                text: qsTr("Loop")
+                font.pixelSize: 10
+                color: UiSettings.themeTextDim
+            }
+            Repeater {
+                model: [1, 2, 4, 8]
+                Button {
+                    objectName: "loopSize_" + panel.deckId + "_" + modelData
+                    text: qsTr("%1").arg(modelData)
+                    font.pixelSize: 10
+                    Layout.preferredWidth: 26
+                    Layout.preferredHeight: 20
+                    enabled: panel.live
+                    focusPolicy: Qt.NoFocus
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Loop %1 beat(s) from the nearest beat").arg(modelData)
+                    onClicked: Bridge.loopBeats(panel.deckId, modelData)
+                }
+            }
+            Button {
+                objectName: "loopBack_" + panel.deckId
+                text: qsTr("‹")
+                font.pixelSize: 11
+                Layout.preferredWidth: 22
+                Layout.preferredHeight: 20
+                enabled: panel.live && panel.loop !== null
+                focusPolicy: Qt.NoFocus
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Move the loop one beat back")
+                onClicked: Bridge.moveLoop(panel.deckId, -1)
+            }
+            Button {
+                objectName: "loopOn_" + panel.deckId
+                text: qsTr("›")
+                font.pixelSize: 11
+                Layout.preferredWidth: 22
+                Layout.preferredHeight: 20
+                enabled: panel.live && panel.loop !== null
+                focusPolicy: Qt.NoFocus
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Move the loop one beat on")
+                onClicked: Bridge.moveLoop(panel.deckId, 1)
+            }
+            Item { Layout.fillWidth: true }
+        }
+
         // The grid editor: the measurement is a first answer, and this is where the DJ corrects it. Each
         // press is one edit, written into the track's metadata at once and locked against the next
         // automatic measurement (DJP-SYNC-003).

@@ -217,6 +217,8 @@ impl Engine {
             | DjCommand::SetLoopMode { .. }
             | DjCommand::SeekFrames { .. }
             | DjCommand::SetLoop { .. }
+            | DjCommand::LoopBeats { .. }
+            | DjCommand::LoopMove { .. }
             | DjCommand::Load { .. }
             | DjCommand::AnalyzeTempo { .. }
             | DjCommand::EditGrid { .. }

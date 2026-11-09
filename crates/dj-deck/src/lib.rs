@@ -752,6 +752,15 @@ impl Deck {
         {
             return Some(manual);
         }
+        self.pad_clash(region, ignore_pad)
+    }
+
+    /// The same check against the pads only.
+    ///
+    /// Moving a loop crosses the loop it is: the new region overlaps the old one by construction, and the
+    /// old one is not "another loop" — it is the one being moved. The active loop is therefore left out,
+    /// and the saved pads are not.
+    fn pad_clash(&self, region: FrameRange, ignore_pad: Option<usize>) -> Option<FrameRange> {
         for (slot, pad) in self.pad_loops.iter().enumerate() {
             if Some(slot) == ignore_pad {
                 continue;
@@ -783,10 +792,24 @@ impl Deck {
     /// activating a loop never moves the playhead by itself. Entering a loop at its beginning is the
     /// caller's job — the Loop button and a pad both seek to `start` after arming it.
     pub fn set_loop(&mut self, region: Option<FrameRange>) -> bool {
-        if let Some(region) = region
-            && self.loop_clash(region, None).is_some()
-        {
-            return false;
+        self.set_loop_with(region, false)
+    }
+
+    /// `set_loop`, with permission to replace the loop in force.
+    ///
+    /// Moving a loop puts the new region on top of the old one — that is what moving is — so the check
+    /// for a clash skips the active loop when the caller is the mover. Saved pads are still checked: a
+    /// moved loop must not land on one.
+    fn set_loop_with(&mut self, region: Option<FrameRange>, replacing_active: bool) -> bool {
+        if let Some(region) = region {
+            let clash = if replacing_active {
+                self.pad_clash(region, None)
+            } else {
+                self.loop_clash(region, None)
+            };
+            if clash.is_some() {
+                return false;
+            }
         }
         // Switching a loop off in the middle of it must not touch the sound at all. The playhead is
         // inside the captured copy while the decoder waits at the loop's end, so a seek back would be a
@@ -815,6 +838,63 @@ impl Deck {
             None => None,
         };
         true
+    }
+
+    /// Put a loop of `beats` beats under `at`, snapped to this deck's grid (DJP-DECK-005).
+    ///
+    /// The two-press loop is made of the frames between the presses, which is a loop only when the hand
+    /// was on the beat. This one is made of the music: the start goes to the nearest beat of the grid and
+    /// the end is that many beats later, so the seam falls where the bar does. Returns the region put in
+    /// force, or `None` when the deck has no grid, the length is zero, or another loop is in the way.
+    pub fn loop_by_beats(&mut self, at: u64, beats: u32) -> Option<FrameRange> {
+        if beats == 0 {
+            return None;
+        }
+        let grid = self.grid.clone()?;
+        let rate = self.source_rate_of_current();
+        // A play head before the first beat asks for a beat that sits before the file. Rounding that to
+        // frame zero would put the start off the grid — and a loop whose start is not on a beat is exactly
+        // what this command exists to avoid. The beat goes to the grid's first one instead.
+        let mut beat = grid.beat_at(at, rate).round();
+        if grid.frame_of_beat(beat, rate) < 0.0 {
+            beat = 0.0;
+        }
+        let start = grid.frame_of_beat(beat, rate);
+        let end = grid.frame_of_beat(beat + f64::from(beats), rate);
+        if !(start >= 0.0 && end.is_finite()) {
+            return None;
+        }
+        let region = FrameRange::new(start.round() as u64, end.round() as u64)?;
+        if self.set_loop(Some(region)) {
+            Some(region)
+        } else {
+            None
+        }
+    }
+
+    /// Move the active loop by `beats` beats, keeping its length (DJP-DECK-005).
+    ///
+    /// The length is kept in frames rather than recomputed from two coordinates: a loop that is moved ten
+    /// times must be the same loop at the end, not a slightly shorter one each time.
+    pub fn move_loop(&mut self, beats: i32) -> Option<FrameRange> {
+        if beats == 0 {
+            return None;
+        }
+        let current = self.loop_region?;
+        let grid = self.grid.clone()?;
+        let rate = self.source_rate_of_current();
+        let beat = grid.beat_at(current.start.0, rate).round();
+        let moved = grid.frame_of_beat(beat + f64::from(beats), rate);
+        if !(moved.is_finite() && moved >= 0.0) {
+            return None;
+        }
+        let start = moved.round() as u64;
+        let region = FrameRange::new(start, start + current.len())?;
+        if self.set_loop_with(Some(region), true) {
+            Some(region)
+        } else {
+            None
+        }
     }
 
     /// Capture policy in force.

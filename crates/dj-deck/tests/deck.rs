@@ -1,5 +1,8 @@
 //! Deck behaviour: transport, loop boundaries, hotcues, display state (A03).
 
+// A failing expectation in a test is a failure message; the workspace forbids them in library code.
+#![allow(clippy::expect_used)]
+
 use dj_codec::{PrefetchConfig, Prefetcher};
 use dj_deck::{Deck, DeckSource};
 use dj_domain::{DeckId, DeckLoad, FrameRange, SourceFrame, TrackMeta};
@@ -797,6 +800,95 @@ fn an_offline_deck_still_waits_for_a_seek() {
     assert_eq!(blocking.load(Ordering::Relaxed), 1);
     assert_eq!(deferred.load(Ordering::Relaxed), 0);
     assert_eq!(deck.position(), 1_000);
+}
+
+/// A deck at 48 kHz with a grid of 120 BPM: a beat is 24 000 frames, so every number below is exact.
+fn deck_on_a_grid(frames: u64) -> Deck {
+    let mut deck = tone_deck(frames);
+    deck.set_beat_grid(dj_domain::BeatGrid::single(120.0, 1_000).expect("a grid"));
+    deck
+}
+
+#[test]
+fn a_loop_of_four_beats_lands_on_the_grid_and_ends_four_beats_later() {
+    // DJP-DECK-005: the two-press loop is whatever the hand hit. A loop the DJ asks for by length is the
+    // music's: its start snaps to the nearest beat and its end is that many beats away, so the seam is
+    // where the bar is. 120 BPM at 48 kHz is 24 000 frames a beat, the first beat on frame 1 000.
+    let mut deck = deck_on_a_grid(4_000_000);
+    // 30 000 is 5 000 frames (a fifth of a beat) past the second beat: the loop must start on the beat,
+    // not where the play head stood.
+    let region = deck.loop_by_beats(30_000, 4).expect("a loop of four beats");
+    assert_eq!(region.start.0, 25_000, "the loop must start on a beat");
+    assert_eq!(
+        region.end.0, 121_000,
+        "four beats later, on the beat as well"
+    );
+    assert_eq!(region.len(), 4 * 24_000);
+    assert_eq!(deck.loop_region(), Some(region), "the loop is in force");
+    // The capture fills as the loop plays: a region that has never been heard has nothing to hold yet,
+    // and the play head has to be in it — that is why the engine seeks into a loop it has just made.
+    deck.seek(region.start.0);
+    deck.play();
+    let mut out = vec![0.0f32; 512];
+    for _ in 0..400 {
+        deck.render(&mut out);
+    }
+    assert!(deck.loop_is_buffered(), "a loop this short is captured");
+}
+
+#[test]
+fn a_loop_asked_for_by_length_is_refused_without_a_grid() {
+    // A grid is the only thing that knows where the beats are: without one a "four beat loop" has no
+    // meaning, and inventing frames for it would be a loop of nothing in particular.
+    let mut deck = tone_deck(4_000_000);
+    assert!(deck.beat_grid().is_none());
+    assert_eq!(deck.loop_by_beats(30_000, 4), None);
+    assert_eq!(deck.loop_region(), None);
+    assert_eq!(deck.loop_by_beats(30_000, 0), None);
+}
+
+#[test]
+fn moving_a_loop_keeps_its_length_and_stays_on_the_beats() {
+    // Ten moves of a loop must be the same loop, not one frame shorter each time: the length is kept in
+    // frames while the start travels by whole beats.
+    let mut deck = deck_on_a_grid(4_000_000);
+    let first = deck.loop_by_beats(30_000, 2).expect("a loop of two beats");
+    let length = first.len();
+    let mut start = first.start.0;
+    for _ in 0..10 {
+        let moved = deck.move_loop(2).expect("the loop moves");
+        assert_eq!(moved.len(), length, "ten moves must not shorten the loop");
+        assert_eq!(moved.start.0, start + 2 * 24_000, "two beats at a time");
+        assert_eq!(moved.end.0, moved.start.0 + length);
+        start = moved.start.0;
+    }
+    // Backwards as well, and the length survives that too. Ten moves back land on the first loop: the
+    // eleventh would start before the file, and that is a refusal, not a loop.
+    for _ in 0..10 {
+        let moved = deck.move_loop(-2).expect("the loop moves back");
+        assert_eq!(moved.len(), length);
+    }
+    assert_eq!(
+        deck.loop_region().map(|region| region.start.0),
+        Some(first.start.0)
+    );
+}
+
+#[test]
+fn a_loop_that_would_cross_another_one_is_not_put_in_force() {
+    // The deck refuses overlapping loops (they would wrap each other). A length loop is no exception:
+    // the refusal is the interface, not a silent no-op.
+    let mut deck = deck_on_a_grid(4_000_000);
+    deck.set_loop(Some(
+        dj_domain::FrameRange::new(200_000, 250_000).expect("a region"),
+    ));
+    let clash = deck.loop_by_beats(180_000, 4);
+    assert_eq!(clash, None, "a loop over another one must be refused");
+    // The old loop is still the one in force: a refusal changes nothing.
+    assert_eq!(
+        deck.loop_region().map(|region| region.start.0),
+        Some(200_000)
+    );
 }
 
 #[test]
