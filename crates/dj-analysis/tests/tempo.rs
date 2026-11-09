@@ -184,6 +184,75 @@ fn a_tempo_that_is_not_a_whole_number_of_hops_is_measured_where_it_is() {
 }
 
 #[test]
+fn a_beat_that_drifts_gets_a_grid_that_follows_it() {
+    // Two minutes of clicks that speed up from 124 to 125,6 BPM. One tempo cannot be right for that: a
+    // straight line drawn at the best single tempo is off by a tenth of a second at the ends. The grid in a
+    // file is a list of segments, so it can say where the beats are — this is DJP-SYNC-002.
+    let rate = RATE;
+    let samples = creeping_click_beat(&[124.0, 124.8, 125.6], 40.0);
+    let tempo = dj_analysis::tempo::detect(&samples, rate).expect("a tempo");
+    assert!(
+        tempo.segments.len() > 1,
+        "a grid of {} segment(s) cannot follow a beat that drifts",
+        tempo.segments.len()
+    );
+    // Where the grid says a beat is, read the way the deck reads it: the segment the frame falls in, and
+    // that segment's tempo from its own anchor.
+    let beat_at = |frame: f64| -> (f64, f64) {
+        let mut chosen = tempo.segments[0];
+        for segment in &tempo.segments {
+            if (segment.first_beat_frame as f64) <= frame {
+                chosen = *segment;
+            }
+        }
+        let period = rate * 60.0 / chosen.bpm;
+        (
+            chosen.beat as f64 + (frame - chosen.first_beat_frame as f64) / period,
+            period,
+        )
+    };
+    // Every click of the fixture, recomputed the way it was laid down.
+    let mut section = 0usize;
+    let mut section_end = rate * 40.0;
+    let mut position = 5_000.0f64;
+    let mut checked = 0;
+    while (position as usize) + 256 < samples.len() {
+        if position >= section_end && section + 1 < 3 {
+            section += 1;
+            section_end += rate * 40.0;
+        }
+        let (counted, period) = beat_at(position);
+        let off = (counted - counted.round()).abs() * period / rate * 1000.0;
+        // The cheap path: a segment per stretch of windows, so the grid is exact inside a stretch and up to
+        // a twelfth of a beat off where one stretch hands over to the next — a handover sits on a window
+        // boundary, not on the beat the tempo changed. One tempo for this track is 260 ms off at the ends;
+        // this is a sixth of that, and the honest ceiling of the cheap path (see GRID_TOLERANCE).
+        assert!(
+            off <= 40.0,
+            "click {checked} at frame {position:.0} ({} BPM section): the nearest beat is {off:.1} ms away",
+            [124.0, 124.8, 125.6][section]
+        );
+        checked += 1;
+        position += rate * 60.0 / [124.0, 124.8, 125.6][section];
+    }
+    assert!(checked > 200, "only {checked} clicks checked");
+}
+
+#[test]
+fn a_beat_that_holds_its_tempo_is_one_segment_still() {
+    // The file this writes has to be the file it wrote before the elastic grid existed: a steady track is
+    // one tempo and one anchor, not a list of them.
+    let samples = click_track(128.0, 4_800, 40.0);
+    let tempo = dj_analysis::tempo::detect(&samples, RATE).expect("a tempo");
+    assert_eq!(
+        tempo.segments.len(),
+        1,
+        "a steady beat came back as {} segments",
+        tempo.segments.len()
+    );
+}
+
+#[test]
 fn a_bar_of_four_beats_is_not_read_as_three_of_them() {
     // The kick band says where the bar is; the full spectrum only says where the onsets are, and on
     // dense percussion that is every third sixteenth as much as every fourth.
@@ -388,6 +457,31 @@ fn an_intro_without_a_beat_does_not_hide_the_tempo() {
     let position = (music_start as f64 - tempo.first_beat_frame() as f64) / period;
     let error = (position - position.round()).abs() * period / RATE * 1000.0;
     assert!(error <= 30.0, "the grid is {error:.1} ms off the clicks");
+}
+
+/// A beat that speeds up without a seam: every click is placed one period after the last, and the period
+/// is taken from the section the click falls in. This is what a band speeding up sounds like, and it is
+/// the case a grid of one tempo cannot describe — the last click is a tenth of a second off the line the
+/// first one implies.
+fn creeping_click_beat(sections: &[f64], seconds_each: f64) -> Vec<f32> {
+    let total = (RATE * seconds_each * sections.len() as f64) as usize;
+    let mut samples = vec![0.0f32; total];
+    let mut section = 0usize;
+    let mut section_end = RATE * seconds_each;
+    let mut position = 5_000.0f64;
+    while (position as usize) + 256 < total {
+        let start = position as usize;
+        for i in 0..192 {
+            let decay = 1.0 - i as f32 / 192.0;
+            samples[start + i] = decay * if i % 2 == 0 { 0.8 } else { -0.8 };
+        }
+        if position >= section_end && section + 1 < sections.len() {
+            section += 1;
+            section_end += RATE * seconds_each;
+        }
+        position += RATE * 60.0 / sections[section];
+    }
+    samples
 }
 
 /// A beat whose tempo creeps: a click track that speeds up a little in every section.

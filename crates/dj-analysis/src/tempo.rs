@@ -89,6 +89,21 @@ const CHANGE_MARGIN: f64 = 1.15;
 /// How far a window's answer may sit from another and still be the same tempo, as a fraction of it.
 const TEMPO_TOLERANCE: f64 = 0.03;
 
+/// How close two windows' tempos have to be to be the same *grid* (DJP-SYNC-002, the cheap path).
+///
+/// [`TEMPO_TOLERANCE`] asks "is this the same tempo a listener would name", and three percent is right for
+/// that: a track does not change tempo because a window was measured a little differently. A grid asks a
+/// sharper question — where is the beat two minutes from now — and a tenth of a percent per section is
+/// already a tenth of a beat by the end. So the drift pass reads each window with the comb and splits the track at four tenths of a percent.
+///
+/// TODO(DJP-SYNC-002): this is the cheap path to a grid that follows a drifting tempo — the segments are
+/// the existing stretch machinery with a finer merge, kept only when the whole grid explains the music
+/// better than one tempo does. It cannot follow a drift that has no steps (a window's own tempo estimate
+/// is biased by its edges: measured 128,58 BPM on a steady 128 BPM click track). If a grid that follows a
+/// continuous drift is wanted, it needs a local tempo estimate of its own — see the skill's
+/// `beatgrid-and-sync.md`, "Эластичная сетка": three designs and why each failed.
+const DRIFT_TOLERANCE: f64 = 0.004;
+
 /// How far from a whole octave a tempo may sit and still be the same beat read twice.
 const OCTAVE_TOLERANCE: f64 = 0.03;
 
@@ -224,13 +239,51 @@ pub fn detect(mono: &[f32], rate: f64) -> Option<Tempo> {
 pub fn detect_in_envelope(envelope: &[f32], rate: f64) -> Option<Tempo> {
     let per_second = rate / HOP as f64;
     let (bpm, clear) = choose_tempo(envelope, per_second)?;
-    let stretches = stretches_of(envelope, per_second, bpm);
+    let rigid = single_tempo(envelope, per_second, bpm, &clear);
+    // A track that changes tempo outright: the stretches are told apart with the tolerance a listener
+    // uses, and the first one that holds wins, as it always has.
+    let stretches = stretches_of(
+        envelope,
+        per_second,
+        bpm,
+        TEMPO_TOLERANCE,
+        CHANGE_WINDOWS,
+        false,
+    );
     if stretches.len() > 1
-        && let Some(changing) = grid_of_stretches(envelope, per_second, bpm, &stretches)
+        && let Some(changing) = grid_of_stretches(envelope, per_second, bpm, &stretches, true)
     {
         return Some(changing);
     }
-    single_tempo(envelope, per_second, bpm, &clear)
+    // A track that drifts: the same machinery with a tenth of a percent of tolerance, kept only when the
+    // whole grid explains the onsets better than one tempo does (DJP-SYNC-002, the cheap path — see
+    // [`GRID_TOLERANCE`] for what it cannot do).
+    if let Some(rigid) = &rigid {
+        let fine = stretches_of(envelope, per_second, bpm, DRIFT_TOLERANCE, 2, true);
+        if fine.len() > 1
+            && let Some(drifting) = grid_of_stretches(envelope, per_second, bpm, &fine, false)
+        {
+            let drift_score = grid_onset(
+                envelope,
+                &drifting.segments,
+                per_second,
+                envelope.len() as f64,
+            );
+            let rigid_score =
+                grid_onset(envelope, &rigid.segments, per_second, envelope.len() as f64);
+            // A drift goes one way: a track that speeds up does not slow down two stretches later. Windows
+            // of ordinary music differ by a fraction of a percent at random, and a grid cut up by that
+            // noise is worse than one tempo — so the grid is taken only when its tempo walks in one
+            // direction, and only when it explains the music by the margin.
+            if drifting.segments.len() >= 3
+                && drifts_one_way(&drifting.segments)
+                && drift_score > rigid_score * ELASTIC_MARGIN
+            {
+                return Some(drifting);
+            }
+        }
+    }
+    rigid
 }
 
 /// The grid of a track that holds one tempo: the old answer, unchanged.
@@ -321,11 +374,6 @@ struct Stretch {
     windows: usize,
 }
 
-/// Whether two tempos are the same beat, read the same way.
-fn same_tempo(a: f64, b: f64) -> bool {
-    a > 0.0 && b > 0.0 && ((a / b).log2()).abs() <= TEMPO_TOLERANCE
-}
-
 /// Fold a tempo onto the track's own when it is that tempo read an octave away, and leave it otherwise.
 ///
 /// A window can answer the beat, its double or its half: the score prefers the grid that is actually
@@ -352,7 +400,14 @@ fn snap_octave(bpm: f64, reference: f64) -> f64 {
 /// what the tempo is — the forty-second windows answered that — only whether the answer stays the same
 /// from one part of the track to the next. A reading shorter than [`CHANGE_WINDOWS`] windows is not a
 /// section, it is a fill or a line of speech, and it is folded back into its neighbour.
-fn stretches_of(envelope: &[f32], per_second: f64, dominant: f64) -> Vec<Stretch> {
+fn stretches_of(
+    envelope: &[f32],
+    per_second: f64,
+    dominant: f64,
+    tolerance: f64,
+    min_windows: usize,
+    fine: bool,
+) -> Vec<Stretch> {
     let window = (CHANGE_WINDOW_SECONDS * per_second) as usize;
     let hop = (CHANGE_HOP_SECONDS * per_second).max(1.0) as usize;
     if window < 64 || envelope.len() < window * (CHANGE_WINDOWS + 1) {
@@ -361,10 +416,20 @@ fn stretches_of(envelope: &[f32], per_second: f64, dominant: f64) -> Vec<Stretch
     let mut stretches: Vec<Stretch> = Vec::new();
     let mut start = 0;
     while start + window <= envelope.len() {
-        let reading = tempo_of_window(&envelope[start..start + window], per_second)
-            .map(|bpm| snap_octave(bpm, dominant));
+        // Two readings are possible: the spectrum's peaks, which name a tempo the way a listener would
+        // and are coarse by construction, and the comb's own period, which is fine enough to see a drift
+        // of a tenth of a percent but needs a hint to stay on the same level.
+        let span = &envelope[start..start + window];
+        let reading = if fine {
+            let period = local_period(span, per_second * 60.0 / dominant);
+            (period > 0.0).then(|| per_second * 60.0 / period)
+        } else {
+            tempo_of_window(span, per_second).map(|bpm| snap_octave(bpm, dominant))
+        };
         match (reading, stretches.last_mut()) {
-            (Some(bpm), Some(last)) if same_tempo(bpm, last.bpm) => {
+            (Some(bpm), Some(last))
+                if bpm > 0.0 && last.bpm > 0.0 && ((bpm / last.bpm).log2()).abs() <= tolerance =>
+            {
                 last.end = start + window;
                 last.windows += 1;
             }
@@ -380,12 +445,16 @@ fn stretches_of(envelope: &[f32], per_second: f64, dominant: f64) -> Vec<Stretch
         }
         start += hop;
     }
-    stretches.retain(|stretch| stretch.windows >= CHANGE_WINDOWS);
+    stretches.retain(|stretch| stretch.windows >= min_windows);
     // Whatever was dropped belongs to a neighbour: the spans are laid end to end, so the grid covers
     // the track instead of leaving stretches of it without one.
     for index in 0..stretches.len() {
         if index > 0 {
-            stretches[index].start = stretches[index - 1].end;
+            // A window that straddles a change is counted with the stretch it ends in, so the previous
+            // stretch's end is up to one window past the change. When the windows are read finely, the
+            // change is put back by one hop — the distance the straddling window was reading across.
+            let back = if fine { hop } else { 0 };
+            stretches[index].start = stretches[index - 1].end.saturating_sub(back);
         }
     }
     if let Some(last) = stretches.last_mut() {
@@ -400,6 +469,7 @@ fn grid_of_stretches(
     per_second: f64,
     dominant: f64,
     stretches: &[Stretch],
+    strict: bool,
 ) -> Option<Tempo> {
     let dominant_period = refine_period(envelope, per_second * 60.0 / dominant);
     let mut segments: Vec<TempoSegment> = Vec::new();
@@ -423,7 +493,7 @@ fn grid_of_stretches(
         // Nor is a stretch a change just because a short window said so: the track's own tempo has to
         // fail on it first. This is what keeps the triplets of an arpeggio from being read as a second
         // tempo — the beat still lands on them better than their own answer does.
-        if !segments.is_empty() && dominant_period > 0.0 {
+        if strict && !segments.is_empty() && dominant_period > 0.0 {
             let own = best_phase(span, dominant_period);
             let (track_share, _) = explained_share(span, dominant_period, own);
             if explained < track_share * CHANGE_MARGIN {
@@ -666,6 +736,104 @@ fn played_share(envelope: &[f32], period: f64, phase: f64, strongest: f32) -> f6
 }
 
 /// The period the comb likes best around a hint, searched over ±0.6 % in steps of 0.02 %.
+/// How much better a drifting grid has to explain the onsets before it replaces one tempo.
+///
+/// Measured: on a steady track the stretch machinery with a fine merge finds the same grid, so the two
+/// scores are equal and the rigid answer stands; on a track that drifts the fine grid is better by a
+/// quarter at least. Twenty percent is between.
+const ELASTIC_MARGIN: f64 = 1.2;
+
+/// The mean onset strength at the beats a grid implies, up to `end` (in hops).
+fn grid_onset(envelope: &[f32], segments: &[TempoSegment], per_second: f64, end: f64) -> f64 {
+    let mut sum = 0.0f64;
+    let mut counted = 0usize;
+    for (position, segment) in segments.iter().enumerate() {
+        if !(segment.bpm.is_finite() && segment.bpm > 0.0) {
+            return 0.0;
+        }
+        let period = per_second * 60.0 / segment.bpm;
+        let until = segments
+            .get(position + 1)
+            .map_or(end, |next| {
+                (next.first_beat_frame as f64 - BLOCK as f64 / 2.0) / HOP as f64
+            })
+            .min(end);
+        let mut hop = (segment.first_beat_frame as f64 - BLOCK as f64 / 2.0) / HOP as f64;
+        let mut guard = 0usize;
+        while hop < until && guard < 100_000 {
+            if let Some(value) = envelope.get(hop.round().max(0.0) as usize) {
+                sum += f64::from(*value);
+                counted += 1;
+            }
+            hop += period;
+            guard += 1;
+        }
+    }
+    if counted == 0 {
+        0.0
+    } else {
+        sum / counted as f64
+    }
+}
+
+/// Whether the segments' tempo walks in one direction from the first to the last.
+///
+/// A window's tempo estimate jitters by a fraction of a percent, and a track that holds its tempo would
+/// otherwise be cut into stretches by that jitter. A real drift — a band speeding up, a tape running down —
+/// has a direction.
+fn drifts_one_way(segments: &[TempoSegment]) -> bool {
+    let mut rising = 0usize;
+    let mut falling = 0usize;
+    for pair in segments.windows(2) {
+        if pair[1].bpm > pair[0].bpm {
+            rising += 1;
+        } else if pair[1].bpm < pair[0].bpm {
+            falling += 1;
+        }
+    }
+    rising == 0 || falling == 0
+}
+
+/// The period a stretch of the track plays, searched three percent either way.
+///
+/// [`refine_period`] searches six tenths of a percent, which is right for a track that holds its tempo and
+/// wrong for a window of one that does not: a stretch three percent slower than the track's own would be
+/// pinned at the edge of the band and described at a tempo it does not play. Coarse then fine, so the search
+/// costs about thirty periods rather than three hundred.
+fn local_period(envelope: &[f32], hint: f64) -> f64 {
+    if !hint.is_finite() || hint <= 1.0 {
+        return hint;
+    }
+    let coarse: Vec<f64> = (-10..=10)
+        .map(|step| hint * (1.0 + f64::from(step) * 0.003))
+        .collect();
+    let mut best = best_period(envelope, &coarse).unwrap_or((hint, f64::NEG_INFINITY));
+    let fine: Vec<f64> = (-5..=5)
+        .map(|step| best.0 * (1.0 + f64::from(step) * 0.0003))
+        .collect();
+    if let Some((period, score)) = best_period(envelope, &fine)
+        && score > best.1
+    {
+        best = (period, score);
+    }
+    best.0
+}
+
+/// The period among the candidates whose grid explains the most onsets, and that score.
+fn best_period(envelope: &[f32], candidates: &[f64]) -> Option<(f64, f64)> {
+    let mut best: Option<(f64, f64)> = None;
+    for period in candidates {
+        if !(period.is_finite() && *period > 1.0) {
+            continue;
+        }
+        let score = best_phase_and_score(envelope, *period).1;
+        if best.is_none_or(|(_, top)| score > top) {
+            best = Some((*period, score));
+        }
+    }
+    best
+}
+
 /// The period searched finely around a guess, kept only when it explains the music better.
 ///
 /// A tenth of a percent of period error walks a tenth of a beat across two minutes, and the comb is sharp
