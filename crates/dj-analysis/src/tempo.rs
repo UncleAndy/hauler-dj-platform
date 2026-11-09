@@ -236,6 +236,9 @@ pub fn detect(mono: &[f32], rate: f64) -> Option<Tempo> {
     // was counted on a lattice a hair out of place — and the shift was then written over by the settle.
     if let Some(band) = kick.as_deref() {
         align_the_bar(&mut tempo, band, per_second);
+        // And the reading itself: four thirds of the music's is a tempo the onsets support as well as the
+        // truth, and only the bar's accent tells them apart.
+        settle_four_the_third(&mut tempo, &envelope, band, per_second);
     }
     Some(tempo)
 }
@@ -1800,6 +1803,120 @@ fn snap_to_onsets(tempo: &mut Tempo, envelope: &[f32], per_second: f64) {
         first_beat_frame: first.round() as u64,
         beat: 0,
     }];
+}
+
+/// How much the first beat of the bar stands above the rest of it, in the kick band.
+///
+/// The mean kick on the bar's first slot over the mean of the other slots. A bar that is really counted
+/// the way the music plays it has an accent: the first beat carries the loudest hit of the four. A bar cut
+/// into the wrong number of beats has no accent at all — its slots all carry the same mixture — so this is
+/// a measure of whether the bar is counted right, not of how loud the track is.
+fn bar_contrast(kick: &[f32], period: f64, phase: f64, metre: usize) -> f64 {
+    if !(period.is_finite() && period >= 2.0) || metre < 2 {
+        return 0.0;
+    }
+    let reach = (period * 0.12).clamp(1.0, 8.0) as usize;
+    let mut sums = vec![0.0f64; metre];
+    let mut counts = vec![0usize; metre];
+    let mut beat = 0usize;
+    let mut position = phase.rem_euclid(period);
+    while position < kick.len() as f64 {
+        let at = position.round() as usize;
+        if at < kick.len() {
+            let from = at.saturating_sub(reach);
+            let to = (at + reach).min(kick.len().saturating_sub(1));
+            let loudest = kick[from..=to].iter().copied().fold(0.0f32, f32::max);
+            sums[beat % metre] += f64::from(loudest);
+            counts[beat % metre] += 1;
+        }
+        beat += 1;
+        position += period;
+    }
+    if beat < 2 * metre || counts.contains(&0) {
+        return 0.0;
+    }
+    let means: Vec<f64> = (0..metre)
+        .map(|slot| sums[slot] / counts[slot] as f64)
+        .collect();
+    let first = means[0];
+    let rest = means[1..].iter().sum::<f64>() / (metre - 1) as f64;
+    if rest <= 0.0 {
+        return 0.0;
+    }
+    first / rest
+}
+
+/// Whether the tempo is four thirds of the music's, decided by the bar's accent.
+///
+/// The same accent period divides into four beats of the music and into three of the answer: the tempo comes
+/// out four thirds of the truth, and the onsets fit that answer as well as they fit the truth — a grid of
+/// three quarter-notes catches the same hits as a grid of four, only spread differently. What does not fit
+/// is the bar: counted in four the first beat carries the accent, counted in three the accents fall on
+/// different slots and average out.
+///
+/// So the reading is asked twice — as it stands and at three quarters of it — and the bar's accent decides.
+/// Measured on `Среди своих Stems - Music.wav`: ours 124,103 BPM with an accent ratio near 1, the owner's
+/// 93,078 with 3,0. The margin is a third: an accent that stands only a little above the rest does not
+/// move a grid.
+fn settle_four_the_third(tempo: &mut Tempo, envelope: &[f32], kick: &[f32], per_second: f64) {
+    if !tempo.is_single() {
+        return;
+    }
+    let Some(segment) = tempo.segments.first().copied() else {
+        return;
+    };
+    let metre = usize::from(tempo.metre.clamp(2, 8));
+    let own_period = per_second * 60.0 / segment.bpm;
+    let own_phase = ((segment.first_beat_frame as f64 - BLOCK as f64 / 2.0) / HOP as f64)
+        .rem_euclid(own_period);
+    let own = bar_contrast(kick, own_period, own_phase, metre);
+    // Only when the bar we found has no accent to speak of: a bar that carries an accent is counted the way
+    // the music plays it, and looking further from there found accents that were not there — `One Love`
+    // went from 131 to 174,667 and `Endless Summer` from 130 to 173,334 on this rule.
+    if own >= 2.0 {
+        return;
+    }
+    let mut best = (own, segment.bpm, segment.first_beat_frame as f64);
+    // Downwards only: the mistake being corrected is a tempo measured four thirds too high, and offering
+    // the other direction as well let three tracks be counted at four thirds of themselves.
+    for multiple in [0.75f64] {
+        let candidate = segment.bpm * multiple;
+        if !(LEVEL_MIN_BPM..=LEVEL_MAX_BPM).contains(&candidate) {
+            continue;
+        }
+        let period = per_second * 60.0 / candidate;
+        let (phase, _) = best_phase_and_score(envelope, period);
+        let contrast = bar_contrast(kick, period, phase, metre);
+        if contrast > best.0 {
+            best = (contrast, candidate, phase * HOP as f64 + BLOCK as f64 / 2.0);
+        }
+    }
+    // The reading has to *have* an accent, not merely a bigger number than a bar with none: on `One Love`
+    // the four-thirds reading scored 0,96 against our 0,15, and 0,96 is still a bar with no accent in it.
+    // What the accent is worth is read off the scale of the measure itself — a bar counted right puts the
+    // first beat well above the rest, and only a real accent (over two) is worth moving a grid for.
+    if best.1 == segment.bpm || best.0 < 2.0 || best.0 <= own * 1.3 {
+        return;
+    }
+    // The new reading gets the same treatment as any other: its period settled over the whole track, its
+    // side of the beat decided, its bar put on the accent.
+    let mut moved = Tempo {
+        segments: vec![TempoSegment {
+            bpm: best.1,
+            first_beat_frame: best.2.round().max(0.0) as u64,
+            beat: 0,
+        }],
+        confidence: tempo.confidence,
+        metre: tempo.metre,
+    };
+    snap_to_onsets(&mut moved, envelope, per_second);
+    on_the_beat_side(&mut moved, kick, per_second);
+    align_the_bar(&mut moved, kick, per_second);
+    if let Some(segment) = moved.segments.first().copied()
+        && (segment.bpm / best.1 - 1.0).abs() < 0.01
+    {
+        *tempo = moved;
+    }
 }
 
 /// Move the grid so that its first beat is the first beat of the bar.
