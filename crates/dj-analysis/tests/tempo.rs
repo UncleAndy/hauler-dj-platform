@@ -222,6 +222,25 @@ fn a_tempo_that_is_not_a_whole_number_of_hops_is_measured_where_it_is() {
     );
 }
 
+/// Clicks whose tempo creeps continuously: each interval is laid down at the tempo the track has reached
+/// by then, so there is no seam anywhere for a stretch mechanism to find.
+fn gliding_click_beat(from_bpm: f64, to_bpm: f64, seconds: f64) -> Vec<f32> {
+    let total = (RATE * seconds) as usize;
+    let mut samples = vec![0.0f32; total];
+    let mut position = 5_000.0f64;
+    while (position as usize) + 256 < total {
+        let at = position / (RATE * seconds);
+        let bpm = from_bpm + (to_bpm - from_bpm) * at;
+        let start = position as usize;
+        for i in 0..192 {
+            let decay = 1.0 - i as f32 / 192.0;
+            samples[start + i] = decay * if i % 2 == 0 { 0.8 } else { -0.8 };
+        }
+        position += RATE * 60.0 / bpm;
+    }
+    samples
+}
+
 #[test]
 fn a_beat_that_drifts_gets_a_grid_that_follows_it() {
     // Two minutes of clicks that speed up from 124 to 125,6 BPM. One tempo cannot be right for that: a
@@ -255,6 +274,7 @@ fn a_beat_that_drifts_gets_a_grid_that_follows_it() {
     let mut section_end = rate * 40.0;
     let mut position = 5_000.0f64;
     let mut checked = 0;
+    let mut worst = 0.0f64;
     while (position as usize) + 256 < samples.len() {
         if position >= section_end && section + 1 < 3 {
             section += 1;
@@ -262,19 +282,70 @@ fn a_beat_that_drifts_gets_a_grid_that_follows_it() {
         }
         let (counted, period) = beat_at(position);
         let off = (counted - counted.round()).abs() * period / rate * 1000.0;
-        // The cheap path: a segment per stretch of windows, so the grid is exact inside a stretch and up to
-        // a twelfth of a beat off where one stretch hands over to the next — a handover sits on a window
-        // boundary, not on the beat the tempo changed. One tempo for this track is 260 ms off at the ends;
-        // this is a sixth of that, and the honest ceiling of the cheap path (see GRID_TOLERANCE).
+        // Fifteen milliseconds, a fortieth of a beat: the grid has to place the beat where the click is,
+        // not within the twelfth of a beat a segment-per-window handover costs. The threshold was written
+        // down before the work (DJP-SYNC-002 acceptance), and the cheap path fails it by design: its
+        // handovers sit on window boundaries, not on the beat the tempo changed.
         assert!(
-            off <= 40.0,
+            off <= 15.0,
             "click {checked} at frame {position:.0} ({} BPM section): the nearest beat is {off:.1} ms away",
             [124.0, 124.8, 125.6][section]
         );
+        worst = worst.max(off);
         checked += 1;
         position += rate * 60.0 / [124.0, 124.8, 125.6][section];
     }
     assert!(checked > 200, "only {checked} clicks checked");
+}
+
+#[test]
+fn a_beat_that_glides_gets_a_grid_that_follows_it() {
+    // The same drift with no steps at all: 124 to 125,6 BPM spread over two minutes, every interval laid
+    // down at the tempo reached by then. A stretch mechanism reads ten-second windows and its estimate is
+    // biased by their edges, so the cheap path cannot see this track at all; a grid that follows the beat
+    // from beat to beat can. Same acceptance as the step fixture: every click within 15 ms, and more than
+    // one segment so the answer says the tempo moved.
+    let rate = RATE;
+    let samples = gliding_click_beat(124.0, 125.6, 120.0);
+    let tempo = dj_analysis::tempo::detect(&samples, rate).expect("a tempo");
+    assert!(
+        tempo.segments.len() > 1,
+        "a grid of {} segment(s) cannot follow a beat that glides",
+        tempo.segments.len()
+    );
+    let beat_at = |frame: f64| -> (f64, f64) {
+        let mut chosen = tempo.segments[0];
+        for segment in &tempo.segments {
+            if (segment.first_beat_frame as f64) <= frame {
+                chosen = *segment;
+            }
+        }
+        let period = rate * 60.0 / chosen.bpm;
+        (
+            chosen.beat as f64 + (frame - chosen.first_beat_frame as f64) / period,
+            period,
+        )
+    };
+    let mut position = 5_000.0f64;
+    let mut worst = 0.0f64;
+    let mut checked = 0;
+    while (position as usize) + 256 < samples.len() {
+        let (counted, period) = beat_at(position);
+        let off = (counted - counted.round()).abs() * period / rate * 1000.0;
+        worst = worst.max(off);
+        assert!(
+            off <= 15.0,
+            "click {checked} at frame {position:.0}: the nearest beat is {off:.1} ms away"
+        );
+        checked += 1;
+        let at = position / (rate * 120.0);
+        let bpm = 124.0 + (125.6 - 124.0) * at;
+        position += rate * 60.0 / bpm;
+    }
+    assert!(
+        checked > 200,
+        "only {checked} clicks checked, worst {worst:.1} ms"
+    );
 }
 
 #[test]

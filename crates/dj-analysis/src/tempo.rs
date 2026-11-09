@@ -92,12 +92,11 @@ const TEMPO_TOLERANCE: f64 = 0.03;
 /// sharper question — where is the beat two minutes from now — and a tenth of a percent per section is
 /// already a tenth of a beat by the end. So the drift pass reads each window with the comb and splits the track at four tenths of a percent.
 ///
-/// TODO(DJP-SYNC-002): this is the cheap path to a grid that follows a drifting tempo — the segments are
-/// the existing stretch machinery with a finer merge, kept only when the whole grid explains the music
-/// better than one tempo does. It cannot follow a drift that has no steps (a window's own tempo estimate
-/// is biased by its edges: measured 128,58 BPM on a steady 128 BPM click track). If a grid that follows a
-/// continuous drift is wanted, it needs a local tempo estimate of its own — see the skill's
-/// `beatgrid-and-sync.md`, "Эластичная сетка": three designs and why each failed.
+/// This pass catches a tempo that changes in steps: the segments are the existing stretch machinery with a
+/// finer merge, kept only when the whole grid explains the music better than one tempo does. It cannot
+/// follow a drift with no steps (a window's own tempo estimate is biased by its edges: measured 128,58 BPM
+/// on a steady 128 BPM click track), which is what [`follow_the_beat`] is for — that walk reads the period
+/// from the intervals behind each beat, and it is tried first.
 const DRIFT_TOLERANCE: f64 = 0.004;
 
 /// How far from a whole octave a tempo may sit and still be the same beat read twice.
@@ -271,9 +270,37 @@ pub fn detect_in_envelope(envelope: &[f32], rate: f64) -> Option<Tempo> {
     {
         return carries_the_beat(envelope, per_second, changing);
     }
-    // A track that drifts: the same machinery with a tenth of a percent of tolerance, kept only when the
-    // whole grid explains the onsets better than one tempo does (DJP-SYNC-002, the cheap path — see
-    // [`GRID_TOLERANCE`] for what it cannot do).
+    // A track whose tempo moves smoothly: the beat is walked from beat to beat, so the period is read
+    // from the intervals behind the beat and not from a window that straddles the change (DJP-SYNC-002).
+    if let Some(rigid) = &rigid {
+        let period = per_second * 60.0 / rigid.bpm();
+        let walked = follow_the_beat(envelope, period);
+        let followed = stretches_of_followed(&walked, per_second);
+        if followed.len() > 1 && walked.len() >= FOLLOW_MIN_BEATS * 2 {
+            let grid = Tempo {
+                segments: followed,
+                confidence: rigid.confidence,
+                metre: rigid.metre,
+            };
+            let followed_score =
+                grid_onset(envelope, &grid.segments, per_second, envelope.len() as f64);
+            let rigid_score =
+                grid_onset(envelope, &rigid.segments, per_second, envelope.len() as f64);
+            let walked_span = match (grid.segments.first(), grid.segments.last()) {
+                (Some(first), Some(last)) => (last.bpm / first.bpm - 1.0).abs(),
+                _ => 0.0,
+            };
+            if walked_span >= MIN_DRIFT
+                && drifts_one_way(&grid.segments)
+                && same_level(&grid.segments, rigid.bpm())
+                && followed_score > rigid_score * ELASTIC_MARGIN
+            {
+                return carries_the_beat(envelope, per_second, grid);
+            }
+        }
+    }
+    // A track that drifts in steps: the stretch machinery with a tenth of a percent of tolerance, kept only
+    // when the whole grid explains the onsets better than one tempo does (see [`DRIFT_TOLERANCE`]).
     if let Some(rigid) = &rigid {
         let fine = stretches_of(envelope, per_second, bpm, DRIFT_TOLERANCE, 2, true);
         if fine.len() > 1
@@ -308,6 +335,226 @@ pub fn detect_in_envelope(envelope: &[f32], rate: f64) -> Option<Tempo> {
         }
     }
     rigid.and_then(|tempo| carries_the_beat(envelope, per_second, tempo))
+}
+
+/// How far from the beat the walk looks for its next beat, as a fraction of the period.
+///
+/// Wide enough for a tempo that moves by a few percent across the track, narrow enough that the next
+/// beat is never the one after it: a quarter of a period cannot reach either neighbour.
+const FOLLOW_WINDOW: f64 = 0.25;
+
+/// How many intervals the walk's own period is the median of.
+///
+/// One interval is the click's own jitter; eight is a tempo that has been the same for eight beats.
+const FOLLOW_HISTORY: usize = 8;
+
+/// What an onset pays for sitting away from where the last beats said the next one would be.
+///
+/// Without this the walk takes the loudest hit near the beat — which on real music is the backbeat, the
+/// snare, the loudest thing in the bar. With it, an onset four hundredths of a period off pays a tenth of
+/// its height, and the beat stays where the beat was going.
+const FOLLOW_PULL: f64 = 0.35;
+
+/// How loud an onset has to be, against the loudest in the track, for the walk to accept it as a beat.
+const FOLLOW_FLOOR: f32 = 0.12;
+
+/// Longest stretch, in beats, that one straight line may describe.
+///
+/// A glide curves: the line through two hundred beats of it is off by a tenth of a second at the ends, so
+/// the walk's beats are cut into stretches that a line fits to [`FOLLOW_RESIDUAL`].
+const FOLLOW_STRETCH: usize = 24;
+
+/// How far a beat may sit from the line that describes its stretch, in envelope frames.
+///
+/// One frame is 5,3 ms at 48 kHz: a beat that belongs to the stretch sits on it to within a frame, and a
+/// stretch whose beats do not is either short or not a stretch at all.
+const FOLLOW_RESIDUAL: f64 = 1.2;
+
+/// Shortest stretch a followed grid may have, in beats.
+///
+/// A stretch of three beats has a slope through three points and nothing to check it against: its tempo is
+/// noise, and a grid of noisy tempos is worse than the one tempo it replaced.
+const FOLLOW_MIN_BEATS: usize = 8;
+
+/// Walk the beat through the track, taking the period from the intervals behind it.
+///
+/// The stretch machinery reads windows, and a window's tempo is biased by its edges: the tempo that came
+/// and the tempo that went are both in it. A walk has no edges — each beat is found near where the last
+/// intervals said it would be, and the period behind it is the median of those intervals, so a tempo that
+/// creeps is followed as it creeps (DJP-SYNC-002).
+///
+/// Returns beat positions in envelope frames, in order. The walk starts from the loudest onset and goes
+/// both ways; it stops when the track runs out or when the next beat would be quieter than
+/// [`FOLLOW_FLOOR`] of the loudest.
+fn follow_the_beat(envelope: &[f32], period: f64) -> Vec<f64> {
+    if envelope.len() < 4 || !(period.is_finite() && period >= 2.0) {
+        return Vec::new();
+    }
+    let loudest = envelope.iter().fold(0.0f32, |best, value| best.max(*value));
+    if loudest <= 0.0 {
+        return Vec::new();
+    }
+    // The start: the loudest onset, which on any track with a kick is a beat and not a syncopation.
+    let start = envelope
+        .iter()
+        .enumerate()
+        .fold((0usize, 0.0f32), |best, (index, value)| {
+            if *value > best.1 {
+                (index, *value)
+            } else {
+                best
+            }
+        })
+        .0;
+
+    // One direction of the walk. `step` is +1 or −1 in beats; the beats are returned in walk order.
+    let walk = |step: i32| -> Vec<f64> {
+        let mut beats = vec![start as f64];
+        let mut intervals: Vec<f64> = Vec::new();
+        let mut local = period;
+        while let Some(&last) = beats.last() {
+            let predicted = last + step as f64 * local;
+            let reach = local * FOLLOW_WINDOW;
+            let from = ((predicted - reach).max(0.0)) as usize;
+            let to = ((predicted + reach) as usize).min(envelope.len().saturating_sub(1));
+            if from > to || to == 0 {
+                break;
+            }
+            let mut best: Option<(usize, f64)> = None;
+            for (frame, value) in envelope.iter().enumerate().take(to + 1).skip(from) {
+                let distance = (frame as f64 - predicted) / local;
+                let score =
+                    f64::from(*value) - FOLLOW_PULL * f64::from(loudest) * distance * distance;
+                if best.is_none_or(|(_, best_score)| score > best_score) {
+                    best = Some((frame, score));
+                }
+            }
+            let Some((frame, _)) = best else {
+                break;
+            };
+            if envelope[frame] < loudest * FOLLOW_FLOOR {
+                break;
+            }
+            let interval = (frame as f64 - last).abs();
+            if !(interval.is_finite() && interval > 0.0) {
+                break;
+            }
+            intervals.push(interval);
+            if intervals.len() > FOLLOW_HISTORY {
+                intervals.remove(0);
+            }
+            let mut sorted = intervals.clone();
+            sorted.sort_by(f64::total_cmp);
+            local = sorted[sorted.len() / 2];
+            beats.push(frame as f64);
+        }
+        beats
+    };
+
+    let forward = walk(1);
+    let mut backward = walk(-1);
+    // Both halves begin with the start beat: the backward walk carries it first, so it leaves before the join.
+    if backward.len() > 1 {
+        backward.remove(0);
+    }
+    backward.reverse();
+    backward.extend(forward);
+    backward
+}
+
+/// Cut the walked beats into stretches a straight line describes.
+///
+/// A stretch grows while one line stays within [`FOLLOW_RESIDUAL`] of every beat in it, and no further than
+/// [`FOLLOW_STRETCH`] beats; a stretch shorter than [`FOLLOW_MIN_BEATS`] is folded into its neighbour.
+/// Each stretch's tempo is the slope of its line, its anchor the line's value at its first beat.
+fn stretches_of_followed(beats: &[f64], per_second: f64) -> Vec<TempoSegment> {
+    if beats.len() < FOLLOW_MIN_BEATS * 2 {
+        return Vec::new();
+    }
+    // Straight line through beats `from..=to`: least squares on (beat index, frame).
+    let line = |from: usize, to: usize| -> (f64, f64) {
+        let count = (to - from + 1) as f64;
+        let mean_x = (from + to) as f64 / 2.0;
+        let mean_y = beats[from..=to].iter().sum::<f64>() / count;
+        let mut numerator = 0.0;
+        let mut denominator = 0.0;
+        for (offset, beat) in beats[from..=to].iter().enumerate() {
+            let dx = (from + offset) as f64 - mean_x;
+            numerator += dx * (beat - mean_y);
+            denominator += dx * dx;
+        }
+        let slope = if denominator > 0.0 {
+            numerator / denominator
+        } else {
+            0.0
+        };
+        let intercept = mean_y - slope * mean_x;
+        (slope, intercept)
+    };
+
+    let mut stretches: Vec<(usize, usize)> = Vec::new();
+    let mut from = 0usize;
+    while from < beats.len() {
+        let mut to = from + FOLLOW_MIN_BEATS - 1;
+        if to >= beats.len() {
+            break;
+        }
+        loop {
+            let next = to + 1;
+            if next >= beats.len() || next - from + 1 > FOLLOW_STRETCH {
+                break;
+            }
+            let (slope, intercept) = line(from, next);
+            let worst = beats[from..=next]
+                .iter()
+                .enumerate()
+                .map(|(offset, beat)| (beat - (slope * (from + offset) as f64 + intercept)).abs())
+                .fold(0.0f64, f64::max);
+            if worst > FOLLOW_RESIDUAL {
+                break;
+            }
+            to = next;
+        }
+        stretches.push((from, to));
+        from = to + 1;
+    }
+    if stretches.is_empty() {
+        return Vec::new();
+    }
+    // A short stretch at the end is folded into the one before it: the line through both is still a line
+    // within a frame, and a two-beat stretch says nothing about the tempo.
+    if let Some(last) = stretches.last().copied()
+        && last.1 - last.0 + 1 < FOLLOW_MIN_BEATS
+        && stretches.len() > 1
+    {
+        stretches.pop();
+        if let Some(previous) = stretches.last_mut() {
+            previous.1 = last.1;
+        }
+    }
+
+    let mut segments = Vec::with_capacity(stretches.len());
+    for (from, to) in stretches {
+        let (slope, intercept) = line(from, to);
+        if !(slope.is_finite() && slope > 0.0) {
+            return Vec::new();
+        }
+        let bpm = per_second * 60.0 / slope;
+        if !(MIN_BPM..=MAX_BPM).contains(&bpm) {
+            return Vec::new();
+        }
+        // The walk counts envelope hops; a segment's anchor is a sample frame, and the envelope's value at
+        // hop `h` describes the block centred on `h * HOP + BLOCK / 2` — the same conversion the stretch
+        // machinery is read through (`grid_onset`).
+        let first = slope * from as f64 + intercept;
+        let anchor = first * HOP as f64 + BLOCK as f64 / 2.0;
+        segments.push(TempoSegment {
+            bpm,
+            first_beat_frame: anchor.max(0.0).round() as u64,
+            beat: from as u64,
+        });
+    }
+    segments
 }
 
 /// Whether the grid's beats carry the music or sit between its hits.
