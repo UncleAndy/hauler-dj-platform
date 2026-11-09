@@ -44,6 +44,16 @@ pub enum GridEdit {
     /// Read the same grid half as fast: every second beat is the beat (the "½" of a double-time
     /// reading).
     Half,
+    /// Put a beat on this frame — the play head, where the DJ hears the beat they are looking at.
+    ///
+    /// A shift by however far the nearest beat of the grid is from that frame: the tempo and the counting
+    /// stay as they were, and the grid moves the shortest way onto the head. It is the button for a grid
+    /// that is right about the tempo and a few tens of milliseconds out of place at the play head, which is
+    /// the one mistake the ten-millisecond arrows take many presses to fix.
+    Here {
+        /// Frame of the track the beat has to land on.
+        frame: u64,
+    },
 }
 
 /// A deck as the engine sees it.

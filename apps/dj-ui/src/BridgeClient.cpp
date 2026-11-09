@@ -389,6 +389,15 @@ int BridgeClient::shiftGrid(const QString &deck, qlonglong frames)
     return sendGridEdit(deck, edit);
 }
 
+int BridgeClient::snapGrid(const QString &deck, qlonglong frame)
+{
+    QJsonObject inner;
+    inner.insert(QStringLiteral("frame"), QJsonValue::fromVariant(frame));
+    QJsonObject edit;
+    edit.insert(QStringLiteral("Here"), inner);
+    return sendGridEdit(deck, edit);
+}
+
 int BridgeClient::setGridTempo(const QString &deck, double bpm)
 {
     if (!(bpm > 0.0)) {

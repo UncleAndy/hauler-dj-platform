@@ -252,6 +252,9 @@ case "${1:-}" in
     # count is what the check reads. Its own copy of the fixture, so the grid it clicks is this track's.
     metronome_file="$run_dir/metronome-track.wav"
     cp crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav "$metronome_file"
+    # The button between the arrows: the grid is put where the play head is, and the file keeps it.
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
+        --grid-here-check --load "$metronome_file"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --metronome-check --load "$metronome_file"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --eq-check

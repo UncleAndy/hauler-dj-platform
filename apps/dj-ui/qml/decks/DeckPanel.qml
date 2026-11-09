@@ -86,6 +86,17 @@ Pane {
         Bridge.shiftGrid(panel.deckId, direction * beat);
     }
 
+    /// Put a beat of the grid on the play head. The two mistakes a grid makes are "a few milliseconds
+    /// out" and "started on the wrong beat"; this is the third — "right tempo, wrong place here" — and it
+    /// is answered by the head itself rather than by counting presses of the arrows.
+    function gridHere() {
+        const frame = panel.deck.source_frame !== undefined ? panel.deck.source_frame : -1;
+        if (frame < 0) {
+            return;
+        }
+        Bridge.snapGrid(panel.deckId, frame);
+    }
+
     /// One tap, kept with the place the music was at when it landed: a tap is a moment of the deck, not
     /// only a moment of the clock, and the grid has to be put where the DJ's hand said it is.
     function tap() {
@@ -744,6 +755,18 @@ Pane {
                 ToolTip.visible: hovered
                 ToolTip.text: qsTr("Move the grid 10 ms earlier")
                 onClicked: panel.shiftGrid(-1)
+            }
+            // Between the arrows: the grid is put where the play head is, by the head itself.
+            Button {
+                objectName: "gridHere_" + panel.deckId
+                text: qsTr("⌖")
+                font.pixelSize: 9
+                Layout.preferredWidth: 22
+                Layout.preferredHeight: 18
+                focusPolicy: Qt.NoFocus
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Put a beat of the grid under the play head")
+                onClicked: panel.gridHere()
             }
             Button {
                 objectName: "gridRight_" + panel.deckId

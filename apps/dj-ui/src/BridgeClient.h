@@ -100,6 +100,8 @@ public:
     Q_INVOKABLE int analyzeTempo(const QString &deck);
     /// Move the deck's grid by `frames` (positive is later). The DJ's ear is the authority here.
     Q_INVOKABLE int shiftGrid(const QString &deck, qlonglong frames);
+    /// Put a beat of the deck's grid exactly on `frame` — the play head.
+    Q_INVOKABLE int snapGrid(const QString &deck, qlonglong frame);
     /// Give the deck's track this tempo, keeping its first beat where it is.
     Q_INVOKABLE int setGridTempo(const QString &deck, double bpm);
     /// Read the same grid twice as fast, or half as fast: the half/double of a mis-read tempo.

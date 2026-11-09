@@ -956,6 +956,18 @@ pub fn edit_grid(grid: &BeatGrid, edit: &GridEdit, source_rate: u32) -> Option<B
         GridEdit::Tempo { bpm } => grid.retimed(*bpm),
         GridEdit::Double => grid.retimed(grid.bpm() * 2.0),
         GridEdit::Half => grid.retimed(grid.bpm() / 2.0),
+        // The nearest beat, moved onto the frame: the shift is what the grid already knows how to do, so
+        // the tempo, the numbering and the bar all stay where they are and only the place changes.
+        GridEdit::Here { frame } => {
+            let rate = f64::from(source_rate);
+            let beat = grid.beat_at(*frame, rate).round();
+            let at = grid.frame_of_beat(beat, rate);
+            let delta = *frame as f64 - at;
+            if !delta.is_finite() || delta.abs() > u64::MAX as f64 {
+                return None;
+            }
+            grid.shifted(delta.round() as i64, rate)
+        }
     }
 }
 

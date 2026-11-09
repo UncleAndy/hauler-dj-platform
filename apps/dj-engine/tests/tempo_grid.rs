@@ -52,6 +52,36 @@ fn write_click_track(path: &Path, seconds: f64) {
 }
 
 #[test]
+fn a_beat_goes_where_the_play_head_is() {
+    // The button between the arrows: the grid moves so that one of its beats sits exactly on the frame the
+    // DJ is listening at. The tempo, the counting and the bar stay as they were — only the place changes.
+    let grid = dj_domain::BeatGrid::single(120.0, 4_800)
+        .expect("a grid")
+        .with_beats_per_bar(4);
+    let period = f64::from(RATE) * 60.0 / grid.bpm();
+    let target = 4_800 + (period / 2.0) as u64 + 137;
+    let moved = dj_engine::edit_grid(&grid, &dj_domain::GridEdit::Here { frame: target }, RATE)
+        .expect("the grid takes the frame");
+    assert_eq!(
+        moved.bpm(),
+        grid.bpm(),
+        "the tempo is not the question here"
+    );
+    assert_eq!(moved.beats_per_bar(), grid.beats_per_bar(), "nor the bar");
+    let place = (target as f64 - moved.first_beat_frame() as f64) / period;
+    let error = (place - place.round()).abs() * period;
+    assert!(
+        error <= 1.0,
+        "the nearest beat is {error:.1} frames from the play head"
+    );
+    assert_ne!(
+        moved.first_beat_frame(),
+        grid.first_beat_frame(),
+        "the grid did not move"
+    );
+}
+
+#[test]
 fn the_loader_measures_the_grid_of_a_file() {
     let dir = scratch("measure");
     let track = dir.join("clicks.wav");

@@ -939,6 +939,10 @@ int main(int argc, char *argv[])
         QStringLiteral("grid-check"),
         QStringLiteral("With --connect and --load: move the grid, halve it, double it and type a tempo, "
                        "requiring the deck and the file to follow every edit."));
+    const QCommandLineOption gridHereOption(
+        QStringLiteral("grid-here-check"),
+        QStringLiteral("With --connect and --load: seek off the grid, press the button between the arrows, "
+                       "and require a beat of the grid to land on the play head — and to survive a reload."));
     const QCommandLineOption tempoRecheckOption(
         QStringLiteral("tempo-recheck"),
         QStringLiteral("With --connect and --load: require the deck's re-measure button to ask before "
@@ -1188,6 +1192,7 @@ int main(int argc, char *argv[])
     parser.addOption(tapOption);
     parser.addOption(gridLinesOption);
     parser.addOption(gridCheckOption);
+    parser.addOption(gridHereOption);
     parser.addOption(tempoRecheckOption);
     parser.addOption(cueWriteOption);
     parser.addOption(cueReadOption);
@@ -3179,6 +3184,146 @@ int main(int argc, char *argv[])
             return 1;
         }
         std::fprintf(stdout, "dj-ui: the measured tempo reached the deck\n");
+        return 0;
+    }
+
+    if (parser.isSet(gridHereOption)) {
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        const QString fixture = parser.value(loadOption);
+        if (fixture.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: --grid-here-check needs --load\n");
+            return 1;
+        }
+        bridge->connectToEngine(parser.value(connectOption));
+        const auto waitFor = [](const std::function<bool()> &ready, int budget) {
+            QElapsedTimer timer;
+            timer.start();
+            while (timer.elapsed() < budget) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                if (ready()) {
+                    return true;
+                }
+                QThread::msleep(10);
+            }
+            return ready();
+        };
+        if (!waitFor([&]() { return bridge->isConnected(); }, 3000)) {
+            std::fprintf(stderr, "dj-ui: no engine\n");
+            return 1;
+        }
+        const auto deckA = [&]() {
+            const QVariantList decks = bridge->snapshot().value(QStringLiteral("decks")).toList();
+            for (const QVariant &entry : decks) {
+                const QVariantMap deck = entry.toMap();
+                if (deck.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                    return deck;
+                }
+            }
+            return QVariantMap();
+        };
+        const auto firstBeat = [&]() -> qint64 {
+            const QVariantList segments = deckA()
+                                              .value(QStringLiteral("track"))
+                                              .toMap()
+                                              .value(QStringLiteral("grid"))
+                                              .toMap()
+                                              .value(QStringLiteral("segments"))
+                                              .toList();
+            if (segments.isEmpty()) {
+                return -1;
+            }
+            return segments.first().toMap().value(QStringLiteral("frame")).toLongLong();
+        };
+        const auto playHead = [&]() -> qint64 {
+            return deckA().value(QStringLiteral("source_frame")).toLongLong();
+        };
+        const auto click = [&](const QString &name) {
+            auto *item = findItem(window->contentItem(), name);
+            if (item == nullptr) {
+                std::fprintf(stderr, "dj-ui: no %s to press\n", qPrintable(name));
+                return false;
+            }
+            QMetaObject::invokeMethod(item, "clicked");
+            QCoreApplication::processEvents();
+            return true;
+        };
+
+        bridge->load(QStringLiteral("A"), fixture);
+        const QString wantName = QFileInfo(fixture).fileName();
+        if (!waitFor(
+                [&]() {
+                    const QString held = deckA().value(QStringLiteral("path")).toString();
+                    return !held.isEmpty() && held.endsWith(wantName) && firstBeat() >= 0;
+                },
+                20000)) {
+            std::fprintf(stderr, "dj-ui: the deck published no grid to put on the head\n");
+            return 1;
+        }
+        const qint64 rate = deckA().value(QStringLiteral("source_rate")).toLongLong();
+        const double bpm = deckA().value(QStringLiteral("local_bpm")).toDouble();
+        if (rate <= 0 || !(bpm > 0.0)) {
+            std::fprintf(stderr, "dj-ui: the deck published no rate or tempo\n");
+            return 1;
+        }
+        const double period = rate * 60.0 / bpm;
+        const qint64 before = firstBeat();
+        // Half a beat and a few frames past it: as far from a beat of the grid as the middle of the beat
+        // is, and not on a round number of frames either.
+        const qint64 target = before + static_cast<qint64>(period / 2.0) + 137;
+        // The track has to reach the frame the head is sent to: what is left of it is the deck's own word.
+        const qint64 left = deckA().value(QStringLiteral("remaining_frames")).toLongLong();
+        if (left > 0 && target > playHead() + left - 1) {
+            std::fprintf(stderr, "dj-ui: the fixture is too short for the check\n");
+            return 1;
+        }
+        bridge->seek(QStringLiteral("A"), target);
+        if (!waitFor([&]() { return std::llabs(playHead() - target) <= 2; }, 5000)) {
+            std::fprintf(stderr, "dj-ui: the play head did not reach frame %lld (%lld)\n", target,
+                         playHead());
+            return 1;
+        }
+        // The head has to be off the grid to begin with, or the check would prove nothing.
+        const auto offTheGrid = [&]() {
+            const double place = static_cast<double>(playHead() - firstBeat()) / period;
+            return std::fabs(place - std::round(place)) * period > 2.0;
+        };
+        if (!offTheGrid()) {
+            std::fprintf(stderr, "dj-ui: the play head started on a beat; nothing to prove\n");
+            return 1;
+        }
+        if (!click(QStringLiteral("gridHere_A"))) {
+            return 1;
+        }
+        if (!waitFor([&]() { return firstBeat() != before && !offTheGrid(); }, 5000)) {
+            std::fprintf(stderr,
+                         "dj-ui: the grid did not come to the play head (first beat %lld -> %lld, head "
+                         "%lld, period %.1f)\n",
+                         before, firstBeat(), playHead(), period);
+            return 1;
+        }
+        // Where a beat sits against the head, in frames: the button promises the beat *here*.
+        const double landed = static_cast<double>(playHead() - firstBeat()) / period;
+        const double error = std::fabs(landed - std::round(landed)) * period;
+        if (error > 2.0) {
+            std::fprintf(stderr, "dj-ui: a beat landed %.1f frames from the play head\n", error);
+            return 1;
+        }
+        const qint64 placed = firstBeat();
+        // The edit is the file's, not the session's: a reload has to bring the same grid back.
+        bridge->load(QStringLiteral("A"), fixture);
+        if (!waitFor([&]() { return std::llabs(firstBeat() - placed) <= 2; }, 20000)) {
+            std::fprintf(stderr, "dj-ui: the reload moved the grid (%lld -> %lld)\n", placed,
+                         firstBeat());
+            return 1;
+        }
+        std::fprintf(stdout,
+                     "dj-ui: the grid came to the play head: a beat landed %.1f frames from frame %lld "
+                     "and the file kept it across a reload\n",
+                     error, target);
         return 0;
     }
 
