@@ -3302,7 +3302,7 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: the button between the arrows has no mark of its own\n");
             return 1;
         }
-        if (mark->width() < 12.0 || mark->height() < 12.0) {
+        if (mark->width() < 8.0 || mark->height() < 8.0) {
             std::fprintf(stderr, "dj-ui: the mark on the button is %.1f by %.1f pixels\n",
                          mark->width(), mark->height());
             return 1;

@@ -778,28 +778,28 @@ Pane {
                 onClicked: panel.gridHere()
                 contentItem: Item {
                     objectName: "gridHereIcon_" + panel.deckId
-                    implicitWidth: 14
-                    implicitHeight: 14
+                    implicitWidth: 10
+                    implicitHeight: 10
                     Rectangle {
                         objectName: "gridHereRing_" + panel.deckId
                         anchors.centerIn: parent
-                        width: 13
-                        height: 13
+                        width: 9
+                        height: 9
                         radius: width / 2
                         color: "transparent"
-                        border.width: 1.2
+                        border.width: 1
                         border.color: gridHereButton.palette.buttonText
                     }
                     Rectangle {
                         anchors.centerIn: parent
-                        width: 17
-                        height: 1.2
+                        width: 11
+                        height: 1
                         color: gridHereButton.palette.buttonText
                     }
                     Rectangle {
                         anchors.centerIn: parent
-                        width: 1.2
-                        height: 17
+                        width: 1
+                        height: 11
                         color: gridHereButton.palette.buttonText
                     }
                 }
