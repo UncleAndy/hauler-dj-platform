@@ -247,6 +247,13 @@ case "${1:-}" in
     # and a grid put on the play head instead fails this by most of a beat.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --tap-check --load "$tap_file"
+    # The metronome: the button has to reach the engine, the state has to come back and light the
+    # button, and the click has to be played on the beats — a flag is not a click, so the engine's own
+    # count is what the check reads. Its own copy of the fixture, so the grid it clicks is this track's.
+    metronome_file="$run_dir/metronome-track.wav"
+    cp crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav "$metronome_file"
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
+        --metronome-check --load "$metronome_file"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --eq-check
     # A double click is the way back to neutral on every mouse-driven control, and each control has its
     # own neutral: a gain or a band goes flat, a fader opens, the master stands at three quarters of its

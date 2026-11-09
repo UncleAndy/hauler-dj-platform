@@ -408,6 +408,15 @@ impl Mixer {
         &self.master[..self.block_frames * 2]
     }
 
+    /// The master bus before the master gain and the limiter.
+    ///
+    /// A monitor signal — the metronome — is mixed here: it is heard where the music is heard, and the
+    /// limiter protects the sum instead of the DJ's ears having to protect the mix. Nothing else may
+    /// write here: the bus is the mixer's own sum.
+    pub fn master_bus(&mut self) -> &mut [f32] {
+        &mut self.master[..self.block_frames * 2]
+    }
+
     /// Cue bus of the last finished block.
     pub fn cue(&self) -> &[f32] {
         &self.cue[..self.block_frames * 2]

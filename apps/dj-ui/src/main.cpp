@@ -923,6 +923,10 @@ int main(int argc, char *argv[])
         QStringLiteral("grid-reconnect-check"),
         QStringLiteral("With --connect only: the deck is already loaded, as it is for a client that "
                        "reconnects to a running engine, and every grid button must still work."));
+    const QCommandLineOption metronomeOption(
+        QStringLiteral("metronome-check"),
+        QStringLiteral("With --connect and --load: require the deck's metronome button to reach the "
+                       "engine, the state to come back, and the click to be played on the beats."));
     const QCommandLineOption tapOption(
         QStringLiteral("tap-check"),
         QStringLiteral("With --connect and --load: require the tapped grid to be put on the taps — the "
@@ -1180,6 +1184,7 @@ int main(int argc, char *argv[])
     parser.addOption(curveCheckOption);
     parser.addOption(masterCheckOption);
     parser.addOption(gridReconnectOption);
+    parser.addOption(metronomeOption);
     parser.addOption(tapOption);
     parser.addOption(gridLinesOption);
     parser.addOption(gridCheckOption);
@@ -3589,6 +3594,119 @@ int main(int argc, char *argv[])
                      "dj-ui: the taps made the grid: %.2f BPM, first beat %.0f on the line through "
                      "four taps\n",
                      tempo(), firstBeat());
+        return 0;
+    }
+
+    if (parser.isSet(metronomeOption)) {
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        const QString fixture = parser.value(loadOption);
+        if (fixture.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: --metronome-check needs --load\n");
+            return 1;
+        }
+        const auto waitFor = [](const std::function<bool()> &ready, int budget) {
+            QElapsedTimer timer;
+            timer.start();
+            while (timer.elapsed() < budget) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                if (ready()) {
+                    return true;
+                }
+                QThread::msleep(10);
+            }
+            return ready();
+        };
+        bridge->connectToEngine(parser.value(connectOption));
+        if (!waitFor([&]() { return bridge->isConnected(); }, 3000)) {
+            std::fprintf(stderr, "dj-ui: no engine\n");
+            return 1;
+        }
+        const auto deckA = [&]() {
+            const QVariantList decks = bridge->snapshot().value(QStringLiteral("decks")).toList();
+            for (const QVariant &entry : decks) {
+                const QVariantMap deck = entry.toMap();
+                if (deck.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                    return deck;
+                }
+            }
+            return QVariantMap();
+        };
+        const auto flag = [&]() {
+            return deckA().value(QStringLiteral("metronome")).toBool();
+        };
+        const auto clicks = [&]() {
+            return deckA().value(QStringLiteral("clicks")).toULongLong();
+        };
+        const auto lit = [&]() {
+            auto *button = findItem(window->contentItem(), QStringLiteral("metronome_A"));
+            return button != nullptr && button->property("highlighted").toBool();
+        };
+        bridge->load(QStringLiteral("A"), fixture);
+        const QString wantName = QFileInfo(fixture).fileName();
+        if (!waitFor(
+                [&]() {
+                    const QString held = deckA().value(QStringLiteral("path")).toString();
+                    return !held.isEmpty() && held.endsWith(wantName)
+                           && !deckA()
+                                   .value(QStringLiteral("track"))
+                                   .toMap()
+                                   .value(QStringLiteral("grid"))
+                                   .toMap()
+                                   .value(QStringLiteral("segments"))
+                                   .toList()
+                                   .isEmpty();
+                },
+                20000)) {
+            std::fprintf(stderr, "dj-ui: the deck published no grid to click against\n");
+            return 1;
+        }
+        auto *button = findItem(window->contentItem(), QStringLiteral("metronome_A"));
+        if (button == nullptr) {
+            std::fprintf(stderr, "dj-ui: the deck has no metronome button\n");
+            return 1;
+        }
+        if (flag() || lit()) {
+            std::fprintf(stderr, "dj-ui: the metronome is already on before anyone pressed it\n");
+            return 1;
+        }
+        QMetaObject::invokeMethod(button, "clicked");
+        if (!waitFor([&]() { return flag() && lit(); }, 5000)) {
+            std::fprintf(stderr,
+                         "dj-ui: the metronome button did not reach the engine (state %d, lit %d)\n",
+                         int(flag()), int(lit()));
+            return 1;
+        }
+        // A flag is not a click: the deck has to play, and the engine has to count the clicks it played on
+        // the beats it crossed. The count is the one number a check can measure instead of hearing.
+        bridge->play(QStringLiteral("A"), true);
+        if (!waitFor([&]() { return clicks() >= 2; }, 8000)) {
+            std::fprintf(stderr,
+                         "dj-ui: the deck played but the metronome clicked %llu times\n",
+                         static_cast<unsigned long long>(clicks()));
+            return 1;
+        }
+        const unsigned long long played = clicks();
+        bridge->play(QStringLiteral("A"), false);
+        QMetaObject::invokeMethod(button, "clicked");
+        if (!waitFor([&]() { return !flag() && !lit(); }, 5000)) {
+            std::fprintf(stderr, "dj-ui: the metronome stayed on (state %d, lit %d)\n", int(flag()),
+                         int(lit()));
+            return 1;
+        }
+        const unsigned long long after = clicks();
+        QThread::msleep(400);
+        if (clicks() != after) {
+            std::fprintf(stderr, "dj-ui: the metronome kept clicking after it was switched off\n");
+            return 1;
+        }
+        std::fprintf(stdout,
+                     "dj-ui: the metronome clicks the grid: the button lit, the deck played %llu clicks "
+                     "on its beats, and switching it off stopped them\n",
+                     played);
         return 0;
     }
 

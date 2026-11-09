@@ -80,7 +80,10 @@ impl Engine {
             | DjCommand::SetPadLoop { .. }
             | DjCommand::SetLoopMode { .. }
             | DjCommand::SeekFrames { .. }
-            | DjCommand::SetLoop { .. } => Ack::rejected(scheduled.id, RejectReason::NotSupported),
+            | DjCommand::SetLoop { .. }
+            | DjCommand::Metronome { .. } => {
+                Ack::rejected(scheduled.id, RejectReason::NotSupported)
+            }
             _ => self.queue.push(scheduled),
         };
         self.push_ack(ack.clone());
@@ -217,6 +220,7 @@ impl Engine {
             | DjCommand::Load { .. }
             | DjCommand::AnalyzeTempo { .. }
             | DjCommand::EditGrid { .. }
+            | DjCommand::Metronome { .. }
             | DjCommand::Eject { .. } => {
                 Some(Ack::rejected(command_id, RejectReason::NotSupported))
             }
@@ -261,6 +265,9 @@ impl Engine {
                 load: dj_domain::DeckLoad::Ready,
                 playing: self.playing,
                 analyzing: false,
+                // The A01 renderer plays a tone it generated: it has no grid, so nothing clicks.
+                metronome: false,
+                clicks: 0,
                 beat: None,
                 local_bpm: None,
                 source_rate: 0,

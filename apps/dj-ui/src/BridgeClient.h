@@ -82,6 +82,8 @@ public:
 
     // Commands. Each returns the id it was given, so a caller can correlate the ack.
     Q_INVOKABLE int play(const QString &deck, bool enabled);
+    // The click on every beat of a deck's grid: a reference beside the mix, not part of it.
+    Q_INVOKABLE int metronome(const QString &deck, bool enabled);
     Q_INVOKABLE int cue(const QString &deck, const QString &action, int slot);
     // Prepare a file into a deck. Acknowledged as accepted, not applied: the deck is playable when
     // a snapshot reports `Ready` (ADR-0008).

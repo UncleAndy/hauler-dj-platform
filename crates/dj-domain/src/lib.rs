@@ -369,6 +369,17 @@ pub enum DjCommand {
         /// Target deck.
         deck: DeckId,
     },
+    /// The metronome: a click on every beat of this deck's grid (DJP-SYNC-003).
+    ///
+    /// A click is a reference, not part of the music. It follows the deck's own play head, so a paused
+    /// deck is silent and a track that changes tempo clicks in its own tempo — and it goes out beside
+    /// the mix on the master bus, because a reference nobody can hear beside the track is no use.
+    Metronome {
+        /// Target deck: whose grid the click follows.
+        deck: DeckId,
+        /// Whether the click sounds.
+        enabled: bool,
+    },
     /// Switch loop mode for a deck: on repeats every saved loop, off repeats none.
     SetLoopMode {
         /// Target deck.
@@ -482,6 +493,7 @@ impl DjCommand {
     pub fn is_critical(&self) -> bool {
         match self {
             DjCommand::Play { .. }
+            | DjCommand::Metronome { .. }
             | DjCommand::SetPadLoop { .. }
             | DjCommand::SetLoopMode { .. }
             | DjCommand::SetCueMeta { .. }
@@ -761,6 +773,16 @@ fn is_zero(value: &u32) -> bool {
     *value == 0
 }
 
+/// Whether a flag is false, so a switch that is off stays off the wire.
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+/// Whether a count of events is zero: a deck that has never clicked says nothing about clicks.
+fn is_zero_count(value: &u64) -> bool {
+    *value == 0
+}
+
 /// State of one deck in a snapshot.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeckSnapshot {
@@ -804,6 +826,18 @@ pub struct DeckSnapshot {
     /// engine never says a measurement is running.
     #[serde(default)]
     pub analyzing: bool,
+    /// True while the metronome clicks this deck's grid.
+    ///
+    /// Defaulted and omitted when off: a client that knows nothing about a click is not a protocol
+    /// error, and an engine that never clicks says nothing.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub metronome: bool,
+    /// Clicks the metronome has played for this deck since the engine started.
+    ///
+    /// The one number that shows the click reached the audio path and not only the state: a check
+    /// cannot hear, and "the flag is on" is not the same claim as "it clicks".
+    #[serde(default, skip_serializing_if = "is_zero_count")]
+    pub clicks: u64,
     /// Sample rate of the source material, so a client can turn frames into seconds and beats into
     /// lines on the wave (DJP-SYNC-003). Defaulted to zero: a client that knows nothing about beats is
     /// not a protocol error.

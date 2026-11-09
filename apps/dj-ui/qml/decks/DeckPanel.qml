@@ -180,6 +180,11 @@ Pane {
     }
     readonly property var loop: panel.deck.loop_region !== undefined ? panel.deck.loop_region : null
 
+    /// Whether this deck's metronome clicks its grid. The state is the engine's: the button draws it and
+    /// keeps no copy of its own, or a click the engine refused would still look lit.
+    readonly property bool metronome: panel.deck !== undefined && panel.deck !== null
+                                      && panel.deck.metronome === true
+
     /// Beats in a bar, as the measurement counted them: four for almost everything, three for a waltz.
     readonly property int beatsPerBar: {
         const grid = panel.track !== null && panel.track !== undefined ? panel.track.grid : null;
@@ -700,6 +705,22 @@ Pane {
             // A beat a press, on the outside of the ten-millisecond arrows: the two mistakes a grid makes
             // are "a few milliseconds late" and "started on the wrong beat", and they need different
             // buttons.
+            // The click, first in the row: it is the tool the ear judges everything after it with, and a
+            // grid compared against itself proves nothing. Only this deck's grid clicks, so two decks are
+            // compared one at a time.
+            Button {
+                objectName: "metronome_" + panel.deckId
+                text: qsTr("♪")
+                font.pixelSize: 9
+                Layout.preferredWidth: 24
+                Layout.preferredHeight: 18
+                focusPolicy: Qt.NoFocus
+                // Lit while it clicks: a reference the DJ cannot see is one they cannot trust.
+                highlighted: panel.metronome
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Click on every beat of this deck's grid")
+                onClicked: Bridge.metronome(panel.deckId, !panel.metronome)
+            }
             Button {
                 objectName: "gridBeatLeft_" + panel.deckId
                 text: qsTr("⇤")

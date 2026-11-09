@@ -309,6 +309,16 @@ int BridgeClient::play(const QString &deck, bool enabled)
     return sendCommand(deck, command);
 }
 
+int BridgeClient::metronome(const QString &deck, bool enabled)
+{
+    QJsonObject options;
+    options.insert(QStringLiteral("deck"), deck);
+    options.insert(QStringLiteral("enabled"), enabled);
+    QJsonObject command;
+    command.insert(QStringLiteral("Metronome"), options);
+    return sendCommand(deck, command);
+}
+
 int BridgeClient::cue(const QString &deck, const QString &action, int slot)
 {
     // The engine's CueAction is an externally tagged enum: Set(3) is {"Set": 3}.

@@ -21,6 +21,7 @@ use dj_domain::{
 use dj_mixer::{ChannelSettings, CrossAssign, CrossfaderCurve, Mixer};
 
 pub mod meta;
+pub mod metronome;
 
 /// What a pad carries besides its frame: a name and a colour, each optional.
 type CuePad = (Option<String>, Option<String>);
@@ -49,6 +50,7 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
         | DjCommand::SeekFrames { deck, .. }
         | DjCommand::SetLoop { deck, .. }
         | DjCommand::SetTempoRatio { deck, .. }
+        | DjCommand::Metronome { deck, .. }
         | DjCommand::Eject { deck }
         | DjCommand::Load { deck, .. } => Some(*deck),
         _ => None,
@@ -77,6 +79,12 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
             }
             DjCommand::SetLoopMode { enabled, .. } => {
                 target.set_loop_mode(*enabled);
+                Ack::applied(id, at)
+            }
+            // A click is a reference beside the music, so the decision lives on the deck and the
+            // generator lives beside the mix: the deck knows its grid, the graph knows the sample.
+            DjCommand::Metronome { enabled, .. } => {
+                target.set_metronome(*enabled);
                 Ack::applied(id, at)
             }
             DjCommand::SetPadLoop { slot, .. } => {
@@ -379,6 +387,10 @@ impl DeckStatic {
 /// Per-deck scalar state, published without a lock.
 struct DeckCells {
     playing: AtomicBool,
+    /// Whether the metronome clicks this deck's grid.
+    metronome: AtomicBool,
+    /// Clicks played since start: the proof that a click reached the audio path.
+    clicks: AtomicU64,
     // Whether a source is attached. This one belongs here, not in the static section: eject changes
     // it, and a snapshot that kept saying "Ready" kept a track on screen that was no longer in the
     // deck.
@@ -406,6 +418,8 @@ impl DeckCells {
     fn new() -> Self {
         Self {
             playing: AtomicBool::new(false),
+            metronome: AtomicBool::new(false),
+            clicks: AtomicU64::new(0),
             attached: AtomicBool::new(false),
             frame: AtomicU64::new(0),
             gain: AtomicU32::new(1.0f32.to_bits()),
@@ -649,6 +663,8 @@ impl StateCells {
         for (index, deck) in decks.iter().take(MAX_DECKS).enumerate() {
             let cells = &self.decks[index];
             cells.playing.store(deck.is_playing(), Ordering::Relaxed);
+            cells.metronome.store(deck.metronome(), Ordering::Relaxed);
+            cells.clicks.store(deck.clicks(), Ordering::Relaxed);
             cells.attached.store(deck.has_source(), Ordering::Relaxed);
             cells.frame.store(deck.position(), Ordering::Relaxed);
             cells.gain.store(deck.gain().to_bits(), Ordering::Relaxed);
@@ -736,6 +752,8 @@ impl StateCells {
                 deck: fixed.deck,
                 load,
                 playing: cells.playing.load(Ordering::Relaxed),
+                metronome: cells.metronome.load(Ordering::Relaxed),
+                clicks: cells.clicks.load(Ordering::Relaxed),
                 beat,
                 local_bpm,
                 source_rate: fixed.source_rate,
@@ -1176,6 +1194,8 @@ pub struct EngineGraph {
     meta: Option<std::sync::mpsc::Sender<MetaEdit>>,
     /// Path of the file on each deck, in deck order.
     paths: Vec<Option<std::path::PathBuf>>,
+    /// The metronome's click generator: four voices mixed into the master bus.
+    metronome: metronome::Metronome,
 }
 
 impl EngineGraph {
@@ -1190,6 +1210,7 @@ impl EngineGraph {
     ) -> Self {
         let block = block.max(1);
         let decks_len = decks.len();
+        let mixer_sample_rate = mixer.sample_rate();
         Self {
             decks,
             mixer,
@@ -1203,6 +1224,38 @@ impl EngineGraph {
             loads_applied: 0,
             meta: None,
             paths: vec![None; decks_len],
+            metronome: metronome::Metronome::new(mixer_sample_rate),
+        }
+    }
+
+    /// Fire a click on the beat every deck with a metronome crossed in this block, and mix the clicks
+    /// in flight into the master bus.
+    ///
+    /// The bus is taken before the master gain and the limiter: a reference played beside the music is
+    /// heard where the music is heard, and a loud mix does not clip because of it.
+    fn click_on_the_beat(&mut self, before: &[u64; MAX_DECKS], frames: usize) {
+        for (index, stood) in before.iter().enumerate().take(self.decks.len()) {
+            let deck = &self.decks[index];
+            if !deck.metronome() {
+                continue;
+            }
+            let Some(grid) = deck.beat_grid() else {
+                continue;
+            };
+            let rate = f64::from(deck.source_rate());
+            let Some((offset, accent)) =
+                metronome::beat_crossing(grid, rate, *stood, deck.position(), frames)
+            else {
+                continue;
+            };
+            if offset < frames {
+                self.decks[index].note_click();
+            }
+            self.metronome.fire(offset, accent);
+        }
+        if !self.metronome.is_idle() {
+            let master = self.mixer.master_bus();
+            self.metronome.mix(master, frames);
         }
     }
 
@@ -1479,11 +1532,16 @@ impl EngineGraph {
         }
 
         self.mixer.begin_block(frames);
-        for index in 0..self.decks.len() {
+        // Where each deck stood when the block began: the metronome is placed by the beat the deck
+        // crossed inside this block, and the crossing is only known from both ends of it.
+        let mut before = [0u64; MAX_DECKS];
+        for (index, stood) in before.iter_mut().enumerate().take(self.decks.len()) {
+            *stood = self.decks[index].position();
             let deck = &mut self.decks[index];
             deck.render(&mut self.scratch[..frames * 2]);
             self.mixer.mix_channel(index, &self.scratch[..frames * 2]);
         }
+        self.click_on_the_beat(&before, frames);
         self.mixer.finish_block();
 
         master[..frames * 2].copy_from_slice(&self.mixer.master()[..frames * 2]);

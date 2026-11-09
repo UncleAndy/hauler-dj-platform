@@ -27,6 +27,21 @@ fn a_transport_command_is_tagged_with_its_variant_name() {
 }
 
 #[test]
+fn a_clicking_deck_says_so_and_a_quiet_one_says_nothing() {
+    // The metronome travels as a flag and a count. A field that never reaches the wire would be a
+    // feature that exists only inside the engine, and the shell could not draw its button.
+    let command = DjCommand::Metronome {
+        deck: DeckId::B,
+        enabled: true,
+    };
+    assert_eq!(
+        serde_json::to_string(&command).unwrap_or_default(),
+        r#"{"Metronome":{"deck":"B","enabled":true}}"#
+    );
+    assert!(command.is_critical(), "a click is a decision, not a stream");
+}
+
+#[test]
 fn a_continuous_control_names_its_deck_and_units() {
     let gain = DjCommand::SetChannelGain {
         deck: DeckId::B,
@@ -150,6 +165,10 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
             load: DeckLoad::Ready,
             playing: true,
             analyzing: false,
+            // The click on the grid: off in this record, so the document says nothing about it, and the
+            // format stays the one an older client reads.
+            metronome: false,
+            clicks: 0,
             beat: None,
             local_bpm: None,
             source_rate: 44_100,
