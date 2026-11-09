@@ -757,16 +757,52 @@ Pane {
                 onClicked: panel.shiftGrid(-1)
             }
             // Between the arrows: the grid is put where the play head is, by the head itself.
+            // The mark is drawn, not typed: the glyph for a target — ⌖, ⊕ — is set as a dot in most fonts
+            // and at nine pixels it reads as one. A ring and a cross at thirteen pixels read as a target.
             Button {
+                id: gridHereButton
                 objectName: "gridHere_" + panel.deckId
-                text: qsTr("⌖")
-                font.pixelSize: 9
+                text: ""
                 Layout.preferredWidth: 22
                 Layout.preferredHeight: 18
+                // No padding: the mark is the whole button, and the eighteen pixels of its height are
+                // what makes it a target rather than a dot.
+                padding: 0
+                topPadding: 0
+                bottomPadding: 0
+                leftPadding: 0
+                rightPadding: 0
                 focusPolicy: Qt.NoFocus
                 ToolTip.visible: hovered
                 ToolTip.text: qsTr("Put a beat of the grid under the play head")
                 onClicked: panel.gridHere()
+                contentItem: Item {
+                    objectName: "gridHereIcon_" + panel.deckId
+                    implicitWidth: 14
+                    implicitHeight: 14
+                    Rectangle {
+                        objectName: "gridHereRing_" + panel.deckId
+                        anchors.centerIn: parent
+                        width: 13
+                        height: 13
+                        radius: width / 2
+                        color: "transparent"
+                        border.width: 1.2
+                        border.color: gridHereButton.palette.buttonText
+                    }
+                    Rectangle {
+                        anchors.centerIn: parent
+                        width: 17
+                        height: 1.2
+                        color: gridHereButton.palette.buttonText
+                    }
+                    Rectangle {
+                        anchors.centerIn: parent
+                        width: 1.2
+                        height: 17
+                        color: gridHereButton.palette.buttonText
+                    }
+                }
             }
             Button {
                 objectName: "gridRight_" + panel.deckId

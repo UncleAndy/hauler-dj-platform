@@ -3295,6 +3295,18 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: the play head started on a beat; nothing to prove\n");
             return 1;
         }
+        // The mark on the button has to be a mark: the glyph for a target is drawn as a dot in most fonts,
+        // and a dot is a button nobody presses. The ring is the mark, and it is measured, not assumed.
+        auto *mark = findItem(window->contentItem(), QStringLiteral("gridHereRing_A"));
+        if (mark == nullptr) {
+            std::fprintf(stderr, "dj-ui: the button between the arrows has no mark of its own\n");
+            return 1;
+        }
+        if (mark->width() < 12.0 || mark->height() < 12.0) {
+            std::fprintf(stderr, "dj-ui: the mark on the button is %.1f by %.1f pixels\n",
+                         mark->width(), mark->height());
+            return 1;
+        }
         if (!click(QStringLiteral("gridHere_A"))) {
             return 1;
         }
@@ -3321,9 +3333,10 @@ int main(int argc, char *argv[])
             return 1;
         }
         std::fprintf(stdout,
-                     "dj-ui: the grid came to the play head: a beat landed %.1f frames from frame %lld "
-                     "and the file kept it across a reload\n",
-                     error, target);
+                     "dj-ui: the grid came to the play head: a beat landed %.1f frames from frame %lld, "
+                     "the mark on the button is %.0f by %.0f pixels, and the file kept the grid across a "
+                     "reload\n",
+                     error, target, mark->width(), mark->height());
         return 0;
     }
 
