@@ -3397,6 +3397,20 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: the deck has no waveform strip\n");
             return 1;
         }
+        // The strip centres on the play head, and the play head is a fraction of the waveform it draws:
+        // a deck with no envelope has no window at all, and every beat it counts is a counting of zero.
+        if (!waitFor(
+                [&]() {
+                    return deckA()
+                               .value(QStringLiteral("waveform"))
+                               .toMap()
+                               .value(QStringLiteral("buckets"))
+                               .toInt() > 0;
+                },
+                20000)) {
+            std::fprintf(stderr, "dj-ui: the deck published no waveform to draw the grid on\n");
+            return 1;
+        }
         // Play from the middle and look at the whole track: a strip centred on the start shows half of
         // its window over the lead-in, and the beats there are not the track's.
         bridge->seek(QStringLiteral("A"), static_cast<qulonglong>(total / 2.0));
@@ -3419,6 +3433,35 @@ int main(int argc, char *argv[])
         if (strip->property("span").toDouble() < 0.99) {
             std::fprintf(stderr, "dj-ui: the strip would not zoom out to the whole track (span %.3f)\n",
                          strip->property("span").toDouble());
+            return 1;
+        }
+        // ...and centred on the middle of the track, so the whole window holds track and not lead-in. The
+        // strip is centred on the play head, so this is also the proof that the seek arrived — and a
+        // command that can be dropped while the deck settles is asked again instead of being believed
+        // once.
+        // The window has to be the whole track, not merely a window that starts at its beginning: a
+        // strip showing the second half passes "starts after zero" and counts half the beats.
+        const auto wholeTrack = [&]() {
+            const double from = strip->property("windowStart").toDouble();
+            const double span = strip->property("span").toDouble();
+            return from <= 0.02 && from + span >= 0.98;
+        };
+        bool centred = wholeTrack();
+        for (int attempt = 0; attempt < 3 && !centred; ++attempt) {
+            bridge->seek(QStringLiteral("A"), static_cast<qulonglong>(total / 2.0));
+            centred = waitFor(wholeTrack, 3000);
+        }
+        if (!centred) {
+            const QVariantMap wave = deckA().value(QStringLiteral("waveform")).toMap();
+            std::fprintf(stderr,
+                         "dj-ui: the strip did not follow the play head to the middle (from %.3f, head "
+                         "%.3f, span %.3f, frame %.0f, buckets %d, per bucket %.1f)\n",
+                         strip->property("windowStart").toDouble(),
+                         strip->property("playheadRatio").toDouble(),
+                         strip->property("span").toDouble(),
+                         deckA().value(QStringLiteral("source_frame")).toDouble(),
+                         wave.value(QStringLiteral("buckets")).toInt(),
+                         wave.value(QStringLiteral("frames_per_bucket")).toDouble());
             return 1;
         }
 
@@ -3477,26 +3520,20 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: the deck does not say which bar of the square it is in\n");
             return 1;
         }
-        auto *barRight = findItem(window->contentItem(), QStringLiteral("gridBarRight_A"));
-        auto *barLeft = findItem(window->contentItem(), QStringLiteral("gridBarLeft_A"));
+        auto *barRight = findItem(window->contentItem(), QStringLiteral("gridBeatRight_A"));
+        auto *barLeft = findItem(window->contentItem(), QStringLiteral("gridBeatLeft_A"));
         if (barRight == nullptr || barLeft == nullptr) {
             std::fprintf(stderr, "dj-ui: there is no bar button to press\n");
             return 1;
         }
         QMetaObject::invokeMethod(barRight, "clicked");
-        if (!waitFor([&]() { return std::abs(firstSquare() - (squareBefore + 4.0 * periodRatio)) < 0.002; },
+        if (!waitFor([&]() { return std::abs(firstSquare() - (squareBefore + periodRatio)) < 0.002; },
                      5000)) {
             std::fprintf(stderr,
-                         "dj-ui: a bar shift moved the square start to %.4f, not to %.4f\n",
-                         firstSquare(), squareBefore + 4.0 * periodRatio);
+                         "dj-ui: a beat shift moved the square start to %.4f, not to %.4f\n",
+                         firstSquare(), squareBefore + periodRatio);
             return 1;
         }
-        if (!waitFor([&]() { return barLabel() != labelBefore; }, 5000)) {
-            std::fprintf(stderr, "dj-ui: the bar count still says %s after a bar shift\n",
-                         qPrintable(labelBefore));
-            return 1;
-        }
-        const QString labelShifted = barLabel();
         QMetaObject::invokeMethod(barLeft, "clicked");
         if (!waitFor(
                 [&]() {
@@ -3507,10 +3544,35 @@ int main(int argc, char *argv[])
                          firstSquare(), qPrintable(barLabel()));
             return 1;
         }
+        // The count follows the grid too: four beats are a bar, so four presses of the beat button must
+        // move the count by exactly one bar, and four presses back must return it.
+        // One click per block: four clicks inside one block are one shift, not four, and four beats have
+        // to be four shifts.
+        for (int press = 0; press < 4; ++press) {
+            QMetaObject::invokeMethod(barRight, "clicked");
+            QCoreApplication::processEvents();
+            QThread::msleep(250);
+        }
+        if (!waitFor([&]() { return barLabel() != labelBefore; }, 5000)) {
+            std::fprintf(stderr, "dj-ui: the bar count still says %s after four beats\n",
+                         qPrintable(labelBefore));
+            return 1;
+        }
+        const QString labelShifted = barLabel();
+        for (int press = 0; press < 4; ++press) {
+            QMetaObject::invokeMethod(barLeft, "clicked");
+            QCoreApplication::processEvents();
+            QThread::msleep(250);
+        }
+        if (!waitFor([&]() { return barLabel() == labelBefore; }, 5000)) {
+            std::fprintf(stderr, "dj-ui: the bar count stuck at %s after coming back\n",
+                         qPrintable(barLabel()));
+            return 1;
+        }
         std::fprintf(stdout,
-                     "dj-ui: the strip marks the square: start %.4f -> %.4f on a bar shift, count %s -> "
-                     "%s\n",
-                     squareBefore, squareBefore + 4.0 * periodRatio, qPrintable(labelBefore),
+                     "dj-ui: the strip marks the square: start %.4f -> %.4f on a beat shift, count %s -> "
+                     "%s on a bar\n",
+                     squareBefore, squareBefore + periodRatio, qPrintable(labelBefore),
                      qPrintable(labelShifted));
 
         // Half the tempo and the lines move with the grid: this is the proof that they are the grid and
@@ -3633,23 +3695,23 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: the grid did not come back\n");
             return 1;
         }
-        // A bar a press: four beats of the tempo under the play head, and back again. A grid that is a
-        // bar out is the other mistake worth its own button.
-        const qint64 bar = std::llround(double(rate) * 60.0 / tempo * 4.0);
-        if (!click(QStringLiteral("gridBarRight_A"))) {
+        // A beat a press: one period of the tempo under the play head, and back again. A grid that starts
+        // on the wrong beat needs a beat, not the ten milliseconds of the arrows.
+        const qint64 beat = std::llround(double(rate) * 60.0 / tempo);
+        if (!click(QStringLiteral("gridBeatRight_A"))) {
             return 1;
         }
-        if (!waitFor([&]() { return firstBeat() == start + bar; }, 5000)) {
-            std::fprintf(stderr, "dj-ui: the bar shift moved the grid to %lld instead of %lld\n",
+        if (!waitFor([&]() { return firstBeat() == start + beat; }, 5000)) {
+            std::fprintf(stderr, "dj-ui: the beat shift moved the grid to %lld instead of %lld\n",
                          static_cast<long long>(firstBeat()),
-                         static_cast<long long>(start + bar));
+                         static_cast<long long>(start + beat));
             return 1;
         }
-        if (!click(QStringLiteral("gridBarLeft_A"))) {
+        if (!click(QStringLiteral("gridBeatLeft_A"))) {
             return 1;
         }
         if (!waitFor([&]() { return firstBeat() == start; }, 5000)) {
-            std::fprintf(stderr, "dj-ui: the bar shift back did not return the grid\n");
+            std::fprintf(stderr, "dj-ui: the beat shift back did not return the grid\n");
             return 1;
         }
 
@@ -3712,7 +3774,7 @@ int main(int argc, char *argv[])
         }
         const QJsonObject grid = stored().value(QStringLiteral("beatgrid")).toObject();
         std::fprintf(stdout,
-                     "dj-ui: the grid moved a bar and back, halved, doubled and took a typed tempo: "
+                     "dj-ui: the grid moved a beat and back, halved, doubled and took a typed tempo: "
                      "%.2f -> 128.00 BPM, "
                      "first beat %lld, file revision %d, locked\n",
                      tempo, static_cast<long long>(grid.value(QStringLiteral("first_beat_frame"))
