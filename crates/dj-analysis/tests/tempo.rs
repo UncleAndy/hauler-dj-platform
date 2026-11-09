@@ -28,6 +28,22 @@ fn click_track(bpm: f64, offset: usize, seconds: f64) -> Vec<f32> {
     samples
 }
 
+/// A kick on every beat, every `bar`-th of them louder: a four-on-the-floor bar with an accent.
+fn accented_kick_track(bpm: f64, seconds: f64, bar: usize) -> Vec<f32> {
+    let frames = (RATE * seconds) as usize;
+    let mut samples = vec![0.0f32; frames];
+    let period = RATE * 60.0 / bpm;
+    let mut position = 0.0f64;
+    let mut beat = 0usize;
+    while (position as usize) + 4_800 < frames {
+        let level = if beat.is_multiple_of(bar) { 0.95 } else { 0.45 };
+        kick(&mut samples, position as usize, level);
+        position += period;
+        beat += 1;
+    }
+    samples
+}
+
 /// A click every beat, every `bar`-th of them louder: the accent pattern of a four-on-the-floor record.
 ///
 /// The loudest periodicity in the spectrum of this is the bar and the half of it, which is how a house
@@ -664,6 +680,22 @@ fn the_grid_holds_the_click_for_four_minutes() {
         worst <= 10.0,
         "the grid drifts {worst:.1} ms from the click"
     );
+}
+
+#[test]
+fn the_bar_starts_on_the_beat_the_accent_is_on() {
+    // A kick every beat, every fourth one loud: the bar starts on the loud one, and the grid's first beat
+    // has to be one of those — a grid a beat or three beats late draws its bar lines across the music.
+    let samples = accented_kick_track(128.0, 120.0, 4);
+    let tempo = dj_analysis::tempo::detect(&samples, RATE).expect("a tempo");
+    let period = RATE * 60.0 / tempo.bpm();
+    let beats = tempo.first_beat_frame() as f64 / period;
+    let slot = beats.rem_euclid(4.0);
+    assert!(
+        !(0.05..=3.95).contains(&slot),
+        "the bar starts {slot:.2} beats after the accent"
+    );
+    assert_eq!(tempo.metre, 4, "the bar was counted in {}", tempo.metre);
 }
 
 #[test]

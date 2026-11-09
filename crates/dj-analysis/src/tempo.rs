@@ -231,6 +231,12 @@ pub fn detect(mono: &[f32], rate: f64) -> Option<Tempo> {
     // are the offbeat: on `Leash Broken` the settled grid sat exactly half a beat from the owner's, on the
     // offbeat eighths. The kick band is what says where the beat is, so the side is decided on it.
     on_the_beat_side(&mut tempo, kick.as_deref().unwrap_or(&envelope), per_second);
+    // The bar last of all: which beat of it is the first is a question about the accent, and the accent
+    // has to be counted on the beats the music actually plays. Measured before the period was settled, it
+    // was counted on a lattice a hair out of place — and the shift was then written over by the settle.
+    if let Some(band) = kick.as_deref() {
+        align_the_bar(&mut tempo, band, per_second);
+    }
     Some(tempo)
 }
 
@@ -1792,6 +1798,78 @@ fn snap_to_onsets(tempo: &mut Tempo, envelope: &[f32], per_second: f64) {
     tempo.segments = vec![TempoSegment {
         bpm,
         first_beat_frame: first.round() as u64,
+        beat: 0,
+    }];
+}
+
+/// Move the grid so that its first beat is the first beat of the bar.
+///
+/// A bar is a pattern of accents: the kick of the first beat is the loudest of the four, and that is what
+/// says where the bar starts. The question is asked of the kick band over the whole track — every beat is
+/// given the slot it holds in the bar, the slot with the loudest mean wins, and the grid is moved by whole
+/// beats onto it. Whole beats keep the lattice: the lines do not move, only which of them opens a bar.
+///
+/// Measured on the reference set: the loudest kick stands on the owner's first beat of the bar on all seven
+/// readable tracks, and before this the grid sat one beat late on five of them and three beats late on one.
+fn align_the_bar(tempo: &mut Tempo, kick: &[f32], per_second: f64) {
+    if !tempo.is_single() {
+        return;
+    }
+    let Some(segment) = tempo.segments.first().copied() else {
+        return;
+    };
+    let metre = usize::from(tempo.metre.clamp(2, 8));
+    let period = per_second * 60.0 / segment.bpm;
+    if !(period.is_finite() && period >= 2.0) {
+        return;
+    }
+    let phase =
+        ((segment.first_beat_frame as f64 - BLOCK as f64 / 2.0) / HOP as f64).rem_euclid(period);
+    let reach = (period * 0.12).clamp(1.0, 8.0) as usize;
+    let mut sums = vec![0.0f64; metre];
+    let mut counts = vec![0usize; metre];
+    let mut beat = 0usize;
+    let mut position = phase;
+    while position < kick.len() as f64 {
+        let at = position.round() as usize;
+        if at < kick.len() {
+            let from = at.saturating_sub(reach);
+            let to = (at + reach).min(kick.len().saturating_sub(1));
+            let loudest = kick[from..=to].iter().copied().fold(0.0f32, f32::max);
+            sums[beat % metre] += f64::from(loudest);
+            counts[beat % metre] += 1;
+        }
+        beat += 1;
+        position += period;
+    }
+    // Two bars of beats is the least that can show an accent in every slot.
+    if beat < 2 * metre || counts.contains(&0) {
+        return;
+    }
+    let mut best = 0usize;
+    let mut best_mean = f64::NEG_INFINITY;
+    for slot in 0..metre {
+        let mean = sums[slot] / counts[slot] as f64;
+        if mean > best_mean {
+            best_mean = mean;
+            best = slot;
+        }
+    }
+    if best == 0 || best_mean <= 0.0 {
+        return;
+    }
+    // The first beat of the bar is `best` beats after the one the grid calls its own: the anchor moves
+    // forward onto it — a later beat of the same lattice, so the lines stay where they are. Taking the
+    // sum back into the period would undo the move: it is the same lattice, but the anchor has to be a
+    // *named* beat for the bar to start there.
+    let first = phase + best as f64 * period;
+    let frames = first * HOP as f64 + BLOCK as f64 / 2.0;
+    if !(frames.is_finite() && frames >= 0.0) {
+        return;
+    }
+    tempo.segments = vec![TempoSegment {
+        bpm: segment.bpm,
+        first_beat_frame: frames.round() as u64,
         beat: 0,
     }];
 }
