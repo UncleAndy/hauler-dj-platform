@@ -9,6 +9,7 @@
 //! - Requirements: DJP-MEDIA-003, DJP-UI-004
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
+pub mod beat;
 pub mod cache;
 pub mod loudness;
 pub mod tempo;
