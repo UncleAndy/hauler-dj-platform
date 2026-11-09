@@ -699,6 +699,27 @@ fn the_bar_starts_on_the_beat_the_accent_is_on() {
 }
 
 #[test]
+fn a_dense_four_to_the_floor_is_not_counted_four_thirds_of_itself() {
+    // Sixteenths on every slot of the beat: a grid four thirds faster lands on them as well as the beat
+    // does, and a grid of half the tempo lands on every second kick. Measured on the reference set, no
+    // count of the onset evidence alone settles this — the DP's score per beat halves the tempo on all
+    // five four-to-the-floor tracks, its total score doubles two of the eight — so the level is decided
+    // by the share the grid carries, the prior over tempos and the accent the bar actually has
+    // (`decide_level`, `settle_four_the_third`). This test is that answer and stays a regression: a
+    // change that lets the four-thirds reading win breaks it.
+    for bpm in [100.0f64, 128.0] {
+        let samples = four_four(bpm, 0, 120.0);
+        let tempo = dj_analysis::tempo::detect(&samples, RATE).expect("a tempo");
+        assert!(
+            (tempo.bpm() - bpm).abs() < 0.2,
+            "measured {:.3} BPM instead of {bpm} (ratio {:.3})",
+            tempo.bpm(),
+            tempo.bpm() / bpm
+        );
+    }
+}
+
+#[test]
 fn a_track_with_no_beat_anywhere_is_still_refused() {
     // Three minutes of rubato: the detector must keep saying "no", not pick the strongest of the noise.
     let samples = rubato_intro(180.0);
