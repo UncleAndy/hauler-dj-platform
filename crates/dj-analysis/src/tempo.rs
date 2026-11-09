@@ -219,9 +219,18 @@ fn remove_the_running_mean(flux: Vec<f32>, window: usize) -> Vec<f32> {
 pub fn detect(mono: &[f32], rate: f64) -> Option<Tempo> {
     let envelope = onset_envelope(mono)?;
     let mut tempo = detect_in_envelope(&envelope, rate)?;
-    if let Some(kick) = kick_envelope(mono, rate) {
-        on_the_bar(&envelope, &kick, rate, &mut tempo);
+    let kick = kick_envelope(mono, rate);
+    if let Some(band) = kick.as_deref() {
+        on_the_bar(&envelope, band, rate, &mut tempo);
     }
+    // The last word belongs to the onsets the grid lands on: the level and the bar are choices, the
+    // period and the anchor are measurements, and a measurement is taken where the music is.
+    let per_second = rate / HOP as f64;
+    snap_to_onsets(&mut tempo, &envelope, per_second);
+    // Which side of the beat the grid ended up on. A full-spectrum envelope likes the hats, and the hats
+    // are the offbeat: on `Leash Broken` the settled grid sat exactly half a beat from the owner's, on the
+    // offbeat eighths. The kick band is what says where the beat is, so the side is decided on it.
+    on_the_beat_side(&mut tempo, kick.as_deref().unwrap_or(&envelope), per_second);
     Some(tempo)
 }
 
@@ -235,6 +244,8 @@ pub fn detect(mono: &[f32], rate: f64) -> Option<Tempo> {
 pub fn detect_in_envelope(envelope: &[f32], rate: f64) -> Option<Tempo> {
     let per_second = rate / HOP as f64;
     let (bpm, clear) = choose_tempo(envelope, per_second)?;
+    // The windows answer a periodicity; which beat it is, is a second question — see [`decide_level`].
+    let bpm = decide_level(envelope, per_second, bpm);
     let rigid = single_tempo(envelope, per_second, bpm, &clear);
     // A track that changes tempo outright: the stretches are told apart with the tolerance a listener
     // uses, and the first one that holds wins, as it always has.
@@ -249,7 +260,7 @@ pub fn detect_in_envelope(envelope: &[f32], rate: f64) -> Option<Tempo> {
     if stretches.len() > 1
         && let Some(changing) = grid_of_stretches(envelope, per_second, bpm, &stretches, true)
     {
-        return Some(changing);
+        return carries_the_beat(envelope, per_second, changing);
     }
     // A track that drifts: the same machinery with a tenth of a percent of tolerance, kept only when the
     // whole grid explains the onsets better than one tempo does (DJP-SYNC-002, the cheap path — see
@@ -283,11 +294,47 @@ pub fn detect_in_envelope(envelope: &[f32], rate: f64) -> Option<Tempo> {
                 && same_level(&drifting.segments, rigid.bpm())
                 && drift_score > rigid_score * ELASTIC_MARGIN
             {
-                return Some(drifting);
+                return carries_the_beat(envelope, per_second, drifting);
             }
         }
     }
-    rigid
+    rigid.and_then(|tempo| carries_the_beat(envelope, per_second, tempo))
+}
+
+/// Whether the grid's beats carry the music or sit between its hits.
+///
+/// A share of the onsets is not enough on its own: a rubato line, a pad and a wash of noise put something
+/// near every point of any grid fine enough, and the share of a fast grid rises until it passes the floor.
+/// What a beat has that those points do not is weight — the onsets on the beats are stronger than the ones
+/// halfway between them, because the music puts its hits there. Measured on the reference set, the weakest
+/// track of the seven came out at 1,28 and the strongest at 2,68; three minutes of rubato, which the detector
+/// must keep refusing, comes out at 1,00 to 1,05.
+const BEAT_CONTRAST_FLOOR: f64 = 1.2;
+
+fn carries_the_beat(envelope: &[f32], per_second: f64, tempo: Tempo) -> Option<Tempo> {
+    let mut ratios = Vec::new();
+    for segment in &tempo.segments {
+        let period = per_second * 60.0 / segment.bpm;
+        if !(period.is_finite() && period >= 2.0) {
+            continue;
+        }
+        // The same phase the level was chosen on: the grid's own anchor is a beat of that lattice, but
+        // the comb's phase is the one the measure was taken at, and two answers to one question would
+        // have the gate refusing grids the level decision accepted.
+        let (phase, _) = best_phase_and_score(envelope, period);
+        let (on, halfway) = beat_against_halfway(envelope, period, phase);
+        if on <= 0.0 {
+            continue;
+        }
+        // A grid with nothing between its beats — a click track, a bare kick — has no halfway energy to
+        // compare with: that is the strongest contrast there is, not a missing measurement.
+        ratios.push(if halfway > 0.0 { on / halfway } else { 3.0 });
+    }
+    if ratios.is_empty() {
+        return None;
+    }
+    let mean = ratios.iter().sum::<f64>() / ratios.len() as f64;
+    (mean >= BEAT_CONTRAST_FLOOR).then_some(tempo)
 }
 
 /// The grid of a track that holds one tempo: the old answer, unchanged.
@@ -870,6 +917,67 @@ fn drifts_one_way(segments: &[TempoSegment]) -> bool {
     rising == 0 || falling == 0
 }
 
+/// The range of tempos a DJ counts in.
+///
+/// A grid is a way of counting, and nobody counts a house record at 64: the music is at 128 and the coarser
+/// grid is half of it. The choice between a period and its double cannot be made from the onsets alone —
+/// four-on-the-floor puts a hit on every beat, so both grids land on hits — and it is not a property of the
+/// music, it is the way the music is counted. So the levels outside this range are not candidates at all,
+/// and the ones inside it are decided by their own measure. Measured on the reference set: without the
+/// range, `Emotions`, `Movin My Body`, `One Love` and `Endless Summer` all came back at half tempo (64,
+/// 63, 65,5, 65 BPM) with grids that fit the reference perfectly — every other beat of it.
+const LEVEL_MIN_BPM: f64 = 70.0;
+const LEVEL_MAX_BPM: f64 = 180.0;
+
+/// Which beat the tempo is: the rough answer or one of its relatives, scored over the whole track.
+///
+/// Three numbers per candidate: the share of the onsets its grid carries, the prior over tempos, and how
+/// much stronger the onsets on its beats are than the ones halfway between them. The share alone always
+/// prefers the finer grid — twice as many beats catch at least as many onsets — and the ratio alone cannot
+/// tell a four-on-the-floor beat from its double; the prior is what settles those, and it only has to
+/// settle them because the range has already thrown out the levels nobody counts in.
+/// The prior over the levels a track is counted in: where a DJ's tempos sit, tightly.
+///
+/// This is a narrower statement than [`tempo_prior`] and it is a different statement: that one settles
+/// which of two clusters a window heard, this one says that a record nobody counts at 180 is counted at 90.
+/// Half a tempo and twice a tempo are both possible descriptions of the same onsets; what makes one of them
+/// the beat is that a DJ would count it there. Measured on the reference set, a spread of a third of an
+/// octave around 120 counts every one of the seven tracks at the tempo its owner set — including
+/// `Leash Broken`, where the doubled grid carries two thirds more onsets and is still not the beat.
+fn level_prior(bpm: f64) -> f64 {
+    if bpm <= 0.0 {
+        return 0.0;
+    }
+    let octaves = (bpm / PREFERRED_BPM).log2() / 0.35;
+    (-0.5 * octaves * octaves).exp()
+}
+
+fn decide_level(envelope: &[f32], per_second: f64, bpm: f64) -> f64 {
+    if !(bpm.is_finite() && bpm > 0.0) {
+        return bpm;
+    }
+    let mut best = (bpm, f64::NEG_INFINITY);
+    // Octaves only: three-halves and four-thirds are mistakes in the *measurement* of the tempo — a
+    // waltz counted in three, a bar whose accent falls every third beat — and they are corrected where
+    // they are made. A level is a choice between counting a beat and counting two of them.
+    for multiple in [1.0, 2.0, 0.5] {
+        let candidate = bpm * multiple;
+        if !(LEVEL_MIN_BPM..=LEVEL_MAX_BPM).contains(&candidate) {
+            continue;
+        }
+        let period = per_second * 60.0 / candidate;
+        let (phase, _) = best_phase_and_score(envelope, period);
+        let (share, _) = explained_share(envelope, period, phase);
+        let (on, halfway) = beat_against_halfway(envelope, period, phase);
+        let contrast = (on / halfway.max(1e-6)).clamp(0.5, 2.0);
+        let score = share * level_prior(candidate) * contrast;
+        if score > best.1 {
+            best = (candidate, score);
+        }
+    }
+    best.0
+}
+
 /// The metrical level of the tempo: the rough answer and its relatives, scored over the whole track.
 ///
 /// The windows answer whichever periodicity they heard clearest, and that is not always the beat: on
@@ -1052,6 +1160,141 @@ fn best_phase(envelope: &[f32], period: f64) -> f64 {
 /// Searched in quarter-hop steps and then refined by a parabola through the best three, because the
 /// guess at whole hops alone would be worth ten milliseconds at a fast tempo — audible as a grid that
 /// sits behind the kick.
+/// The phase a grid of `period` hops sits on, and the score of that grid.
+pub fn best_phase_for(envelope: &[f32], period: f64) -> (f64, f64) {
+    best_phase_and_score(envelope, period)
+}
+
+/// The share of the onsets a grid carries, and how many of its beats carry any.
+pub fn share_for(envelope: &[f32], period: f64, phase: f64) -> (f64, usize) {
+    explained_share(envelope, period, phase)
+}
+
+/// How even the onsets on the beats are: the mean of the envelope over them, and the coefficient of
+/// variation of that mean.
+///
+/// A grid at the beat lands on hits of the same kind — the kick of every beat, the strum of every beat —
+/// and a grid at twice the beat alternates between the beat's hit and whatever sits between beats, so the
+/// strengths come out uneven. This is what tells 90 BPM from 180 on a track whose beat carries the weight.
+pub fn beat_evenness(envelope: &[f32], period: f64, phase: f64) -> (f64, f64) {
+    if !(period.is_finite() && period >= 2.0) {
+        return (0.0, 0.0);
+    }
+    let reach = (period * 0.12).clamp(1.0, 8.0) as usize;
+    let mut values: Vec<f64> = Vec::new();
+    let mut position = phase;
+    while position < envelope.len() as f64 {
+        let at = position.round() as usize;
+        let from = at.saturating_sub(reach);
+        let to = (at + reach).min(envelope.len().saturating_sub(1));
+        if from <= to {
+            let loudest = envelope[from..=to].iter().copied().fold(0.0f32, f32::max);
+            values.push(f64::from(loudest));
+        }
+        position += period;
+    }
+    if values.len() < 4 {
+        return (0.0, 0.0);
+    }
+    let mean = values.iter().sum::<f64>() / values.len() as f64;
+    if mean <= 0.0 {
+        return (0.0, 0.0);
+    }
+    let variance = values
+        .iter()
+        .map(|value| (value - mean) * (value - mean))
+        .sum::<f64>()
+        / values.len() as f64;
+    (mean, variance.sqrt() / mean)
+}
+
+/// The share of the beats that carry the pulse: the fraction whose kick-band onset is within a third of
+/// the loudest beat's.
+///
+/// A level that doubles the beat puts a hit on every other beat of it and nothing on the rest, so half of
+/// its beats carry no pulse — the grid describes a beat the track does not play. This is the measure that
+/// tells 90 BPM from 180 on a record whose subdivisions are as loud as its beat.
+pub fn pulse_duty(kick: &[f32], period: f64, phase: f64) -> f64 {
+    if !(period.is_finite() && period >= 2.0) {
+        return 0.0;
+    }
+    let reach = (period * 0.12).clamp(1.0, 8.0) as usize;
+    let mut values: Vec<f32> = Vec::new();
+    let mut position = phase;
+    while position < kick.len() as f64 {
+        let at = position.round() as usize;
+        let from = at.saturating_sub(reach);
+        let to = (at + reach).min(kick.len().saturating_sub(1));
+        if from <= to {
+            values.push(kick[from..=to].iter().copied().fold(0.0f32, f32::max));
+        }
+        position += period;
+    }
+    if values.len() < 4 {
+        return 0.0;
+    }
+    let loudest = values.iter().copied().fold(0.0f32, f32::max);
+    if loudest <= 0.0 {
+        return 0.0;
+    }
+    let carrying = values
+        .iter()
+        .filter(|value| **value >= loudest * 0.33)
+        .count();
+    carrying as f64 / values.len() as f64
+}
+
+/// How strong the onsets on the beats are against the ones halfway between them.
+///
+/// This is what tells a beat from half of it. A grid at half the tempo lands on every other beat, so the
+/// onsets halfway between its beats are onsets of the music's own beat: the two sides come out alike. A
+/// grid on the beat has the kick on it and whatever sits halfway is not the kick, and the two sides do not
+/// come out alike. The measure is a mean of the envelope over the beats and over the points halfway
+/// between them, each taken as the loudest hop within a fraction of a beat so a small phase error does not
+/// decide the question.
+pub fn beat_against_halfway(envelope: &[f32], period: f64, phase: f64) -> (f64, f64) {
+    if !(period.is_finite() && period >= 2.0) {
+        return (0.0, 0.0);
+    }
+    let reach = (period * 0.12).clamp(1.0, 8.0) as usize;
+    let end = envelope.len() as f64;
+    let loudest = |centre: f64| -> f32 {
+        let at = centre.round() as usize;
+        let from = at.saturating_sub(reach);
+        let to = (at + reach).min(envelope.len().saturating_sub(1));
+        envelope[from..=to].iter().copied().fold(0.0f32, f32::max)
+    };
+    let mut on = 0.0f64;
+    let mut on_count = 0usize;
+    let mut halfway = 0.0f64;
+    let mut halfway_count = 0usize;
+    let mut position = phase;
+    while position < end {
+        if (position.round() as usize) < envelope.len() {
+            on += f64::from(loudest(position));
+            on_count += 1;
+        }
+        let between = position + period * 0.5;
+        if (between.round() as usize) < envelope.len() {
+            halfway += f64::from(loudest(between));
+            halfway_count += 1;
+        }
+        position += period;
+    }
+    (
+        if on_count > 0 {
+            on / on_count as f64
+        } else {
+            0.0
+        },
+        if halfway_count > 0 {
+            halfway / halfway_count as f64
+        } else {
+            0.0
+        },
+    )
+}
+
 fn best_phase_and_score(envelope: &[f32], period: f64) -> (f64, f64) {
     const STEP: f64 = 0.25;
     let steps = ((period / STEP).ceil() as usize).clamp(4, 8_192);
@@ -1474,6 +1717,174 @@ fn on_the_bar(onsets: &[f32], kick: &[f32], rate: f64, tempo: &mut Tempo) {
         beat: 0,
     }];
     tempo.metre = bar.metre;
+}
+
+/// The onset nearest `at`, refined to a fraction of a hop: where the envelope's peak actually is.
+///
+/// The peak is a parabola through three hops: the envelope is smoothed by the spectrum's own window, so
+/// the true attack sits between two hops and the parabola finds it to a few hundredths of one.
+/// The same, for measurement: where the peak nearest `at` actually is, in hops.
+pub fn onset_near_peak(envelope: &[f32], at: f64, reach: f64) -> Option<f64> {
+    onset_near(envelope, at, reach)
+}
+
+fn onset_near(envelope: &[f32], at: f64, reach: f64) -> Option<f64> {
+    let first = (at - reach).floor().max(1.0) as usize;
+    let last = ((at + reach).ceil() as usize).min(envelope.len().saturating_sub(2));
+    if last <= first {
+        return None;
+    }
+    let mut best = first;
+    for index in first..=last {
+        if envelope[index] > envelope[best] {
+            best = index;
+        }
+    }
+    if envelope[best] <= 0.0 {
+        return None;
+    }
+    let (left, centre, right) = (
+        f64::from(envelope[best - 1]),
+        f64::from(envelope[best]),
+        f64::from(envelope[best + 1]),
+    );
+    let denominator = left - 2.0 * centre + right;
+    let offset = if denominator.abs() > f64::EPSILON {
+        (0.5 * (left - right) / denominator).clamp(-0.5, 0.5)
+    } else {
+        0.0
+    };
+    Some(best as f64 + offset)
+}
+
+/// Put the single-tempo grid on the onsets it lands on, to the sample.
+///
+/// The tempo is chosen by a comb over hops and the phase to a quarter of one; that is enough to know
+/// which periodicity the music has and not enough to describe it. A hop is 5,8 ms at 44,1 kHz, and a
+/// quarter hop of period error is a quarter of a hop per beat — 6 ms after a hundred beats, a third of a
+/// second after a five-minute track. The reference grids a DJ sets by hand are exact to the sample, and a
+/// grid that drifts away from the music by a third of a second is not the same grid.
+///
+/// So the last step is a fit: every beat of the chosen lattice is matched with the onset it lands on, and
+/// a line through those onsets — time against beat number — is the tempo and the anchor. The fit is
+/// weighted by nothing and repeated on the beats that agree with it, because a beat landing on a
+/// breakdown has no onset to fit and a beat landing on a syncopation has the wrong one.
+fn snap_to_onsets(tempo: &mut Tempo, envelope: &[f32], per_second: f64) {
+    // A grid of stretches has a period per stretch, and each is settled by the same rule; a track that
+    // holds its tempo is what this fits.
+    if !tempo.is_single() {
+        return;
+    }
+    let Some(segment) = tempo.segments.first().copied() else {
+        return;
+    };
+    let Some((bpm, first)) = settle_tempo(
+        envelope,
+        per_second,
+        segment.bpm,
+        segment.first_beat_frame as f64,
+    ) else {
+        return;
+    };
+    if !(bpm.is_finite() && bpm > 0.0 && first.is_finite() && first >= 0.0) {
+        return;
+    }
+    tempo.segments = vec![TempoSegment {
+        bpm,
+        first_beat_frame: first.round() as u64,
+        beat: 0,
+    }];
+}
+
+/// Put the grid on the side of the beat the weight of the music is on.
+///
+/// A lattice and the same lattice half a beat later both fit an onset envelope that has something on every
+/// eighth: the comb cannot tell which of the two sides is the beat, and the full spectrum prefers the hats,
+/// which are broadband. The kick band does not: a track's beat is the kick, and the offbeat rarely has one.
+/// So the side is decided there, and a grid found on the wrong side is moved by half a period.
+fn on_the_beat_side(tempo: &mut Tempo, band: &[f32], per_second: f64) {
+    if !tempo.is_single() {
+        return;
+    }
+    let Some(segment) = tempo.segments.first().copied() else {
+        return;
+    };
+    let period = per_second * 60.0 / segment.bpm;
+    if !(period.is_finite() && period >= 2.0) {
+        return;
+    }
+    let phase =
+        ((segment.first_beat_frame as f64 - BLOCK as f64 / 2.0) / HOP as f64).rem_euclid(period);
+    let (on, halfway) = beat_against_halfway(band, period, phase);
+    if !(on.is_finite() && halfway.is_finite()) || halfway <= on * 2.0 {
+        return;
+    }
+    let shifted = phase + period * 0.5;
+    let first = shifted * HOP as f64 + BLOCK as f64 / 2.0;
+    if !(first.is_finite() && first >= 0.0) {
+        return;
+    }
+    tempo.segments = vec![TempoSegment {
+        bpm: segment.bpm,
+        first_beat_frame: first.round() as u64,
+        beat: 0,
+    }];
+}
+
+/// The tempo and the anchor of a single-tempo grid, settled over the whole track to a fraction of a hop.
+///
+/// The periods before this one are measured on windows and on hops: a hop is 5,8 ms at 44,1 kHz and the
+/// comb that chose the tempo resolves its period to about a hundredth of one, which is a sixteenth of a
+/// millisecond per beat — and a hundredth of a millisecond per beat is a third of a second over a
+/// five-minute track. A grid a DJ sets by hand is exact: the lines sit on the transients from the first bar
+/// to the last, and that is the standard this has to meet.
+///
+/// So the search is on parts per million of the period, over the whole track, in three passes: a wide one
+/// to find the valley the windowed answer is near, a narrow one to fall into it, and a fine one to settle
+/// at the bottom. Each pass asks the same question — how much of the envelope sits on the grid — and at
+/// each period it also chooses the phase, because a period that is wrong by a hair fits best at a phase
+/// that is wrong by a hair too.
+fn settle_tempo(envelope: &[f32], per_second: f64, bpm: f64, first: f64) -> Option<(f64, f64)> {
+    let mut period = per_second * 60.0 / bpm;
+    if !(period.is_finite() && period >= 2.0) {
+        return None;
+    }
+    let mut phase = (first - BLOCK as f64 / 2.0) / HOP as f64;
+    // A phase measured before the first block is the same lattice: only the offset inside the period counts.
+    phase = phase.rem_euclid(period);
+    for (span, step) in [(800.0f64, 40.0f64), (40.0, 4.0), (4.0, 0.4)] {
+        let mut best = (f64::NEG_INFINITY, period, phase);
+        let mut delta = -span;
+        while delta <= span {
+            let candidate = period * (1.0 + delta * 1e-6);
+            let (found, score) = best_phase_and_score(envelope, candidate);
+            if score > best.0 {
+                best = (score, candidate, found);
+            }
+            delta += step;
+        }
+        if !best.0.is_finite() {
+            return None;
+        }
+        period = best.1;
+        phase = best.2;
+    }
+    // The phase to a fiftieth of a hop: the passes above chose it on a quarter-hop grid.
+    let mut best = (f64::NEG_INFINITY, phase);
+    for index in -32..=32 {
+        let candidate = (phase + f64::from(index) * 0.02).rem_euclid(period);
+        let score = comb_score(envelope, period, candidate);
+        if score > best.0 {
+            best = (score, candidate);
+        }
+    }
+    if !best.0.is_finite() {
+        return None;
+    }
+    Some((
+        per_second * 60.0 / period,
+        best.1 * HOP as f64 + BLOCK as f64 / 2.0,
+    ))
 }
 
 /// Read the head of a file as mono and measure its tempo.

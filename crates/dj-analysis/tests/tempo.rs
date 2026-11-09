@@ -28,6 +28,29 @@ fn click_track(bpm: f64, offset: usize, seconds: f64) -> Vec<f32> {
     samples
 }
 
+/// A click every beat, every `bar`-th of them louder: the accent pattern of a four-on-the-floor record.
+///
+/// The loudest periodicity in the spectrum of this is the bar and the half of it, which is how a house
+/// record at 128 used to be measured at 64.
+fn accented_click_track(bpm: f64, seconds: f64, bar: usize) -> Vec<f32> {
+    let frames = (RATE * seconds) as usize;
+    let mut samples = vec![0.0f32; frames];
+    let period = RATE * 60.0 / bpm;
+    let mut position = 0.0f64;
+    let mut beat = 0usize;
+    while (position as usize) + 256 < frames {
+        let level = if beat.is_multiple_of(bar) { 0.95 } else { 0.35 };
+        let start = position as usize;
+        for i in 0..192 {
+            let decay = 1.0 - i as f32 / 192.0;
+            samples[start + i] = level * decay * if i % 2 == 0 { 0.8 } else { -0.8 };
+        }
+        position += period;
+        beat += 1;
+    }
+    samples
+}
+
 /// A kick: sixty hertz, a fifth of a second of decay. The band the bar is in.
 fn kick(samples: &mut [f32], at: usize, level: f32) {
     let length = (RATE * 0.2) as usize;
@@ -598,6 +621,48 @@ fn a_half_time_section_is_not_a_change_of_tempo() {
         tempo.bpm() > 100.0,
         "the answer should be the beat, not its half: {}",
         tempo.bpm()
+    );
+}
+
+#[test]
+fn a_bar_accent_does_not_halve_the_tempo() {
+    // A click on every beat at 128 with every fourth one loud: the strongest periodicity is the bar, and
+    // the answer used to be the half of the beat — which is what four house tracks of the reference set
+    // came back as (64, 63, 65,5 and 65 BPM). A DJ counts this at 128.
+    for bpm in [120.0f64, 128.0, 131.0] {
+        let samples = accented_click_track(bpm, 90.0, 4);
+        let tempo = dj_analysis::tempo::detect(&samples, RATE).expect("a tempo");
+        assert!(
+            (tempo.bpm() - bpm).abs() < 1.0,
+            "measured {:.2} BPM instead of {bpm}",
+            tempo.bpm()
+        );
+    }
+}
+
+#[test]
+fn the_grid_holds_the_click_for_four_minutes() {
+    // The reference grids a DJ sets by hand are exact to the sample, and the difference between a comb
+    // measured on hops and the beat of the music grows with the track: a hundredth of a hop of period
+    // error is a third of a second after five minutes. This one asks for the whole four minutes inside
+    // ten milliseconds, on a tempo that is not a whole number of hops.
+    let samples = click_track(128.0006, 0, 240.0);
+    let tempo = dj_analysis::tempo::detect(&samples, RATE).expect("a tempo");
+    assert!(
+        (tempo.bpm() - 128.0006).abs() < 0.002,
+        "measured {:.5} BPM instead of 128,0006",
+        tempo.bpm()
+    );
+    let period = RATE * 60.0 / 128.0006;
+    let mut position = 0.0f64;
+    let mut worst = 0.0f64;
+    while position < RATE * 240.0 {
+        worst = worst.max(off_the_grid(&tempo, position as u64));
+        position += period;
+    }
+    assert!(
+        worst <= 10.0,
+        "the grid drifts {worst:.1} ms from the click"
     );
 }
 
