@@ -539,6 +539,11 @@ impl Deck {
     /// Attach a prepared source (the loader has already waited for `Ready`).
     pub fn attach(&mut self, source: Box<dyn DeckSource>, track: Option<TrackMeta>) {
         self.source = Some(source);
+        // The grid travels with the track: the engine measures it before the deck sees the file, and a
+        // deck that dropped it here had none — the button lit, the click did not sound, and only an
+        // explicit re-measure put a grid on the deck. A track that brings no grid must also clear the
+        // last one, or the deck clicks on beats the new file never had.
+        self.grid = track.as_ref().and_then(|meta| meta.grid.clone());
         self.track = track;
         self.load = DeckLoad::Ready;
         self.position = 0;

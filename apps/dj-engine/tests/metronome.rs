@@ -67,6 +67,11 @@ impl dj_deck::DeckSource for Marks {
 ///
 /// The marks sit half a beat away from the beats so a mark never hides a click.
 fn marked_deck() -> Deck {
+    // The grid arrives with the file, the way the engine hands it over after its own measurement: no
+    // command sets it, so a deck that dropped it would click nothing at all.
+    let grid = dj_domain::BeatGrid::single(120.0, ANCHOR as u64)
+        .expect("a grid")
+        .with_beats_per_bar(4);
     let mut deck = Deck::new(DeckId::A);
     deck.attach(
         Box::new(Marks {
@@ -78,19 +83,14 @@ fn marked_deck() -> Deck {
             title: String::from("Marks"),
             artist: String::new(),
             duration_frames: Some(960_000),
-            bpm: None,
-            first_beat_frame: None,
-            grid: None,
+            bpm: Some(grid.bpm()),
+            first_beat_frame: Some(grid.first_beat_frame()),
+            grid: Some(grid),
             key: None,
         }),
     );
     deck.set_blocking(false);
     deck.set_gain(1.0);
-    deck.set_beat_grid(
-        dj_domain::BeatGrid::single(120.0, ANCHOR as u64)
-            .expect("a grid")
-            .with_beats_per_bar(4),
-    );
     deck
 }
 

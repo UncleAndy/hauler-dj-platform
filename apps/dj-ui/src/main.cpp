@@ -3661,7 +3661,8 @@ int main(int argc, char *argv[])
                                    .isEmpty();
                 },
                 20000)) {
-            std::fprintf(stderr, "dj-ui: the deck published no grid to click against\n");
+            std::fprintf(stderr, "dj-ui: the deck published no grid to click against (path '%s')\n",
+                         deckA().value(QStringLiteral("path")).toString().toUtf8().constData());
             return 1;
         }
         auto *button = findItem(window->contentItem(), QStringLiteral("metronome_A"));
