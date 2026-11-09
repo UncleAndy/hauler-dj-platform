@@ -13,6 +13,8 @@ import "../mixer"
 
 Pane {
     id: panel
+    // Named so a check can press what the DJ presses: the panel owns the tap→grid arithmetic.
+    objectName: "deckPanel_" + panel.deckId
 
     required property string deckId
     required property string deckLabel
@@ -84,37 +86,87 @@ Pane {
         Bridge.shiftGrid(panel.deckId, direction * beat);
     }
 
-    /// The tempo the DJ tapped: the median gap between taps, and a beat on the last one.
+    /// One tap, kept with the place the music was at when it landed: a tap is a moment of the deck, not
+    /// only a moment of the clock, and the grid has to be put where the DJ's hand said it is.
     function tap() {
         const now = Date.now();
-        if (panel.taps.length > 0 && now - panel.taps[panel.taps.length - 1] > 2000) {
+        if (panel.taps.length > 0 && now - panel.taps[panel.taps.length - 1].ms > 2000) {
             panel.taps = [];
         }
-        const taps = panel.taps.concat([now]);
+        const taps = panel.taps.concat([
+            { "ms": now, "frame": panel.deck.source_frame !== undefined ? panel.deck.source_frame : 0 }
+        ]);
         panel.taps = taps;
-        if (taps.length < 4) {
-            return;
+        if (taps.length >= 4) {
+            panel.applyTaps(taps);
         }
-        const gaps = [];
-        for (let index = 1; index < taps.length; ++index) {
-            gaps.push(taps[index] - taps[index - 1]);
+    }
+
+    /// The grid a run of taps describes, or null when they describe nothing.
+    ///
+    /// The beats per minute are the slope of a line through the tap moments, not a median of gaps: four
+    /// taps are four points, and a line through all four is what the DJ actually beat out. The first
+    /// beat is where that line says it is — `frame` of each tap, counted back by whole beats — so the
+    /// grid lands on the taps instead of next to them.
+    function gridFromTaps(taps) {
+        const count = taps.length;
+        if (count < 2) {
+            return null;
         }
-        gaps.sort((left, right) => left - right);
-        const median = gaps[Math.floor(gaps.length / 2)];
-        if (!(median > 0)) {
-            panel.taps = [];
-            return;
+        let sumX = 0;
+        let sumY = 0;
+        for (let index = 0; index < count; ++index) {
+            sumX += index;
+            sumY += taps[index].ms;
         }
-        const bpm = 60000 / median;
-        Bridge.setGridTempo(panel.deckId, bpm);
-        // The last tap is the beat: move the grid so a line lands on it. Measured against the first
-        // segment, which is where a tapped grid always is.
-        const first = panel.track.grid.segments[0];
-        const period = panel.gridRate * 60 / bpm;
-        const offset = ((panel.deck.source_frame - first.frame) % period + period) % period;
-        const delta = offset > period / 2 ? offset - period : offset;
-        Bridge.shiftGrid(panel.deckId, Math.round(delta));
+        const meanX = sumX / count;
+        const meanY = sumY / count;
+        let num = 0;
+        let den = 0;
+        for (let index = 0; index < count; ++index) {
+            const dx = index - meanX;
+            num += dx * (taps[index].ms - meanY);
+            den += dx * dx;
+        }
+        if (!(den > 0)) {
+            return null;
+        }
+        const periodMs = num / den;
+        if (!(periodMs > 0)) {
+            return null;
+        }
+        const periodFrames = periodMs * panel.gridRate / 1000;
+        if (!(periodFrames > 0)) {
+            return null;
+        }
+        // The frame of the first beat: every tap is a beat, so each one back-projects to beat zero, and
+        // the average of those is steadier than any single tap.
+        let anchor = 0;
+        for (let index = 0; index < count; ++index) {
+            anchor += taps[index].frame - index * periodFrames;
+        }
+        anchor /= count;
+        return { "periodFrames": periodFrames, "anchor": anchor };
+    }
+
+    /// Put the grid where the taps were: the tempo from their slope, the first beat on their line.
+    function applyTaps(taps) {
+        const fit = panel.gridFromTaps(taps);
         panel.taps = [];
+        if (fit === null) {
+            return false;
+        }
+        const bpm = panel.gridRate * 60 / fit.periodFrames;
+        Bridge.setGridTempo(panel.deckId, bpm);
+        // Then slide it by the shortest way round, so a beat lands on the fitted first tap.
+        const first = panel.gridReady ? panel.track.grid.segments[0].frame : 0;
+        const period = fit.periodFrames;
+        let delta = ((fit.anchor - first) % period + period) % period;
+        if (delta > period / 2) {
+            delta -= period;
+        }
+        Bridge.shiftGrid(panel.deckId, Math.round(delta));
+        return true;
     }
 
     /// The tempo under the play head, falling back to the track's own number for a client that talks to
@@ -724,7 +776,7 @@ Pane {
                 Layout.preferredHeight: 18
                 focusPolicy: Qt.NoFocus
                 ToolTip.visible: hovered
-                ToolTip.text: qsTr("Tap the tempo: four taps, the last one is the beat")
+                ToolTip.text: qsTr("Tap the tempo: the grid is put on your taps, from the fourth one")
                 onClicked: panel.tap()
             }
             Item { Layout.fillWidth: true }

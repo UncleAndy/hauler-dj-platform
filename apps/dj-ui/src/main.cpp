@@ -919,6 +919,10 @@ int main(int argc, char *argv[])
         QStringLiteral("Close the window after this many milliseconds: the shutdown path, exercised "
                        "instead of described."),
         QStringLiteral("ms"));
+    const QCommandLineOption tapOption(
+        QStringLiteral("tap-check"),
+        QStringLiteral("With --connect and --load: require the tapped grid to be put on the taps — the "
+                       "tempo from their slope and a beat on the line through them."));
     const QCommandLineOption gridLinesOption(
         QStringLiteral("grid-lines-check"),
         QStringLiteral("With --connect and --load: require the strip to draw the beat lines of the grid, "
@@ -1171,6 +1175,7 @@ int main(int argc, char *argv[])
     parser.addOption(windowCheckOption);
     parser.addOption(curveCheckOption);
     parser.addOption(masterCheckOption);
+    parser.addOption(tapOption);
     parser.addOption(gridLinesOption);
     parser.addOption(gridCheckOption);
     parser.addOption(tempoRecheckOption);
@@ -3329,6 +3334,161 @@ int main(int argc, char *argv[])
         return 0;
     }
 
+    if (parser.isSet(tapOption)) {
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        const QString fixture = parser.value(loadOption);
+        if (fixture.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: --tap-check needs --load\n");
+            return 1;
+        }
+        const auto waitFor = [](const std::function<bool()> &ready, int budget) {
+            QElapsedTimer timer;
+            timer.start();
+            while (timer.elapsed() < budget) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                if (ready()) {
+                    return true;
+                }
+                QThread::msleep(10);
+            }
+            return ready();
+        };
+        bridge->connectToEngine(parser.value(connectOption));
+        if (!waitFor([&]() { return bridge->isConnected(); }, 3000)) {
+            std::fprintf(stderr, "dj-ui: no engine\n");
+            return 1;
+        }
+        const auto deckA = [&]() {
+            const QVariantList decks = bridge->snapshot().value(QStringLiteral("decks")).toList();
+            for (const QVariant &entry : decks) {
+                const QVariantMap deck = entry.toMap();
+                if (deck.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                    return deck;
+                }
+            }
+            return QVariantMap();
+        };
+        const auto grid = [&]() {
+            return deckA()
+                .value(QStringLiteral("track"))
+                .toMap()
+                .value(QStringLiteral("grid"))
+                .toMap();
+        };
+        bridge->load(QStringLiteral("A"), fixture);
+        if (!waitFor([&]() { return !grid().value(QStringLiteral("segments")).toList().isEmpty(); },
+                     20000)) {
+            std::fprintf(stderr, "dj-ui: the deck published no grid to tap onto\n");
+            return 1;
+        }
+        auto *panel = findItem(window->contentItem(), QStringLiteral("deckPanel_A"));
+        if (panel == nullptr) {
+            std::fprintf(stderr, "dj-ui: there is no deck panel to tap on\n");
+            return 1;
+        }
+        // Four taps on a 120 BPM line that starts 0.32 s into the file, with the deck's position
+        // jittering by a snapshot the way a real hand does: the grid has to come out on the line
+        // through the taps, not on the play head and not on their median gap alone.
+        constexpr double kRate = 48000.0;
+        constexpr double kPeriod = 24000.0;
+        // A quarter of a beat after the first frame: a grid put on the play head instead of on the taps
+        // is a quarter of a beat away, which the check has to notice.
+        constexpr double kFirst = 12000.0;
+        // The play head is moved away from the taps' own phase first: a grid put on the play head
+        // instead of on the taps then lands a third of a beat off, which the check has to notice.
+        bool moved = false;
+        for (int attempt = 0; attempt < 3 && !moved; ++attempt) {
+            bridge->seek(QStringLiteral("A"), 100'000);
+            moved = waitFor(
+                [&]() { return deckA().value(QStringLiteral("source_frame")).toDouble() >= 99'999.0; },
+                3000);
+        }
+        if (!moved) {
+            std::fprintf(stderr, "dj-ui: the deck never moved to where the taps are not\n");
+            return 1;
+        }
+        QVariantList taps;
+        for (int index = 0; index < 4; ++index) {
+            QVariantMap tap;
+            tap.insert(QStringLiteral("ms"), 10'000 + 500 * index);
+            const double jitter = index % 2 == 0 ? 360.0 : -360.0;
+            tap.insert(QStringLiteral("frame"), kFirst + kPeriod * index + jitter);
+            taps.append(tap);
+        }
+        QVariant accepted;
+        QMetaObject::invokeMethod(panel, "applyTaps", Q_RETURN_ARG(QVariant, accepted),
+                                  Q_ARG(QVariant, taps));
+        if (!accepted.toBool()) {
+            std::fprintf(stderr, "dj-ui: the taps made no grid\n");
+            return 1;
+        }
+        const auto firstBeat = [&]() {
+            const QVariantList segments = grid().value(QStringLiteral("segments")).toList();
+            if (segments.isEmpty()) {
+                return -1.0;
+            }
+            return segments.first().toMap().value(QStringLiteral("frame")).toDouble();
+        };
+        const auto tempo = [&]() {
+            const QVariantList segments = grid().value(QStringLiteral("segments")).toList();
+            return segments.isEmpty()
+                       ? 0.0
+                       : segments.first().toMap().value(QStringLiteral("bpm")).toDouble();
+        };
+        const double tempoBefore = tempo();
+        const double firstBefore = std::max(0.0, firstBeat());
+        // The old grid is a grid too: the wait is for the tapped one, which has a different tempo or a
+        // different first beat, and for the taps to sit on it.
+        const auto tapsOnBeats = [&]() {
+            const double period = kRate * 60.0 / tempo();
+            if (!(period > 0.0) || firstBeat() < 0.0) {
+                return false;
+            }
+            for (int index = 0; index < taps.size(); ++index) {
+                const double frame = taps.at(index).toMap().value(QStringLiteral("frame")).toDouble();
+                const double beat = (frame - firstBeat()) / period;
+                if (std::abs(beat - std::round(beat)) > 0.08) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        if (!waitFor(
+                [&]() {
+                    const bool changed = std::abs(tempo() - tempoBefore) > 0.05 ||
+                                         std::abs(firstBeat() - firstBefore) > 1.0;
+                    return changed && std::abs(tempo() - 120.0) < 0.2 && tapsOnBeats();
+                },
+                8000)) {
+            std::fprintf(stderr, "dj-ui: the tapped grid reads %.2f BPM with its first beat at %.0f\n",
+                         tempo(), firstBeat());
+            return 1;
+        }
+        // Every tap has to land on a beat: the grid passes through the hand, not near it.
+        const double period = kRate * 60.0 / tempo();
+        for (int index = 0; index < taps.size(); ++index) {
+            const double frame = taps.at(index).toMap().value(QStringLiteral("frame")).toDouble();
+            const double beat = (frame - firstBeat()) / period;
+            const double off = std::abs(beat - std::round(beat));
+            if (off > 0.08) {
+                std::fprintf(stderr,
+                             "dj-ui: tap %d at frame %.0f is %.2f of a beat off the grid (first beat "
+                             "%.0f, %.2f BPM)\n",
+                             index, frame, off, firstBeat(), tempo());
+                return 1;
+            }
+        }
+        std::fprintf(stdout,
+                     "dj-ui: the taps made the grid: %.2f BPM, first beat %.0f on the line through "
+                     "four taps\n",
+                     tempo(), firstBeat());
+        return 0;
+    }
+
     if (parser.isSet(gridLinesOption)) {
         auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
         if (window == nullptr) {
@@ -3468,7 +3628,16 @@ int main(int argc, char *argv[])
         const auto drawnBeats = [&]() { return strip->property("drawnBeats").toInt(); };
         const auto drawnBars = [&]() { return strip->property("drawnBars").toInt(); };
         const auto spacing = [&]() { return strip->property("beatSpacing").toDouble(); };
-        if (!waitFor([&]() { return drawnBeats() >= 2 && spacing() > 0.0; }, 5000)) {
+        // The numbers arrive with a paint, and a paint of an older window is a window that no longer
+        // exists: the lines counted have to be the lines that tile the strip.
+        const auto lines = [&]() {
+            return drawnBeats() + drawnBars() + strip->property("drawnSquares").toInt();
+        };
+        if (!waitFor(
+                [&]() {
+                    return lines() >= 4 && spacing() > 0.0 && lines() * spacing() >= 0.7 * strip->width();
+                },
+                8000)) {
             std::fprintf(stderr, "dj-ui: the strip drew no beat lines (beats %d, spacing %.1f)\n",
                          drawnBeats(), spacing());
             return 1;
@@ -3489,8 +3658,11 @@ int main(int argc, char *argv[])
         const int bars = drawnBars();
 
         if (beats < 6 || bars < 2) {
-            std::fprintf(stderr, "dj-ui: the strip drew %d beats and %d bars over the track\n", beats,
-                         bars);
+            std::fprintf(stderr,
+                         "dj-ui: the strip drew %d beats and %d bars over the track (window %.3f + "
+                         "%.3f, play head %.3f, %d px wide)\n",
+                         beats, bars, strip->property("windowStart").toDouble(),
+                         span, strip->property("playheadRatio").toDouble(), int(strip->width()));
             return 1;
         }
         // A single tempo has no anchors; a strip that invents one is lying about the track.
@@ -3574,6 +3746,57 @@ int main(int argc, char *argv[])
                      "%s on a bar\n",
                      squareBefore, squareBefore + periodRatio, qPrintable(labelBefore),
                      qPrintable(labelShifted));
+
+        // The shift has no wall at the start of the file. The fixture's first beat is half a second in,
+        // so one press of "one beat earlier" already walks the anchor past zero; six of them must leave
+        // the picture intact, with only the lines moved.
+        const int linesBefore = beats + bars + strip->property("drawnSquares").toInt();
+        const double spacingBefore = spacing();
+        const double beatBefore = deckA().value(QStringLiteral("beat")).toDouble();
+        for (int press = 0; press < 6; ++press) {
+            QMetaObject::invokeMethod(barLeft, "clicked");
+            QCoreApplication::processEvents();
+            QThread::msleep(250);
+        }
+        if (!waitFor(
+                [&]() {
+                    return std::abs(deckA().value(QStringLiteral("beat")).toDouble() - beatBefore - 6.0) <
+                           0.2;
+                },
+                5000)) {
+            std::fprintf(stderr,
+                         "dj-ui: six presses of one beat moved the play head's beat from %.2f to %.2f, "
+                         "not by six\n",
+                         beatBefore, deckA().value(QStringLiteral("beat")).toDouble());
+            return 1;
+        }
+        const auto firstFrame = [&]() {
+            return gridOf().isEmpty() ? -1.0 : gridOf().first().toMap().value(QStringLiteral("frame")).toDouble();
+        };
+        if (firstFrame() < 0.0) {
+            std::fprintf(stderr, "dj-ui: the anchor reads %.0f after walking past the start\n",
+                         firstFrame());
+            return 1;
+        }
+        if (std::abs(spacing() - spacingBefore) > 0.5) {
+            std::fprintf(stderr, "dj-ui: the beat spacing changed to %.1f px on an unbounded shift\n",
+                         spacing());
+            return 1;
+        }
+        const int linesAfter = drawnBeats() + drawnBars() + strip->property("drawnSquares").toInt();
+        if (std::abs(linesAfter - linesBefore) > 1) {
+            std::fprintf(stderr, "dj-ui: the strip drew %d lines before the walk and %d after\n",
+                         linesBefore, linesAfter);
+            return 1;
+        }
+        std::fprintf(stdout,
+                     "dj-ui: six presses of one beat walked the anchor past the start and kept %d lines\n",
+                     linesAfter);
+        for (int press = 0; press < 6; ++press) {
+            QMetaObject::invokeMethod(barRight, "clicked");
+            QCoreApplication::processEvents();
+            QThread::msleep(150);
+        }
 
         // Half the tempo and the lines move with the grid: this is the proof that they are the grid and
         // not a decoration of the waveform.

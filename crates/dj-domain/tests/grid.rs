@@ -100,13 +100,41 @@ fn a_grid_that_does_not_move_forwards_is_refused() {
 #[test]
 fn a_shift_moves_the_whole_grid_and_nothing_else() {
     let grid = BeatGrid::single(120.0, 12_000).expect("a grid");
-    let moved = grid.shifted(480).expect("a shifted grid");
+    let moved = grid.shifted(480, 48_000.0).expect("a shifted grid");
     assert_eq!(moved.first_beat_frame(), 12_480);
     assert_eq!(moved.bpm(), 120.0);
-    let back = moved.shifted(-480).expect("back again");
+    let back = moved.shifted(-480, 48_000.0).expect("back again");
     assert_eq!(back.first_beat_frame(), 12_000);
-    // Off the start of the file is not a grid: the beats would be before the audio they belong to.
-    assert!(grid.shifted(-12_001).is_none());
+}
+
+#[test]
+fn a_shift_past_the_start_of_the_file_rebases_the_grid_and_keeps_its_lines() {
+    // 120 BPM at 48 kHz: 24 000 frames a beat, and a square of four bars is 384 000 frames.
+    let rate = 48_000.0;
+    let near = BeatGrid::single(120.0, 12_000).expect("a grid");
+    // The same lines, described from the next square along: the anchor sits sixteen beats later.
+    let far = BeatGrid::single(120.0, 396_000).expect("the same grid a square later");
+    // One beat earlier, which takes the near anchor below zero and leaves the far one inside the file.
+    let rebased = near
+        .shifted(-24_000, rate)
+        .expect("a grid shifted past the start");
+    let plain = far
+        .shifted(-24_000, rate)
+        .expect("a grid shifted inside the file");
+    // One beat earlier from 12 000 would be −12 000, so the grid is rebased forward by one whole
+    // square — 384 000 frames, sixteen beats — and lands exactly where the far grid put the same lines.
+    assert_eq!(rebased.first_beat_frame(), 372_000);
+    // The rebase is a description, not an edit: the lines are where the plain shift put them.
+    for frame in [0u64, 5_000, 50_000, 200_000, 380_000] {
+        let a = rebased.beat_at(frame, rate).rem_euclid(1.0);
+        let b = plain.beat_at(frame, rate).rem_euclid(1.0);
+        assert!(
+            (a - b).abs() < 0.01,
+            "the rebase moved a line at {frame}: {a} against {b}"
+        );
+    }
+    // And the shift itself still happened: one beat earlier means every frame carries one beat more.
+    assert!((rebased.beat_at(0, rate) - near.beat_at(0, rate) - 1.0).abs() < 0.01);
 }
 
 #[test]

@@ -81,6 +81,14 @@ Item {
             const until = next !== null ? next.frame : total;
             let frame = segment.frame;
             let beat = segment.beat;
+            // The lines run both ways from the anchor, out to the ends of the track: a grid whose first
+            // beat sits half a second in still says where the beats before it are, and a grid shifted
+            // past the start comes back rebased — the picture must not lose its left side either way.
+            if (index === 0 && frame > 0) {
+                const back = Math.ceil(frame / period);
+                frame -= back * period;
+                beat -= back;
+            }
             while (frame < until && marks.length < limit) {
                 if (frame >= 0 && frame <= total) {
                     marks.push({

@@ -923,9 +923,12 @@ pub struct MetaEdit {
 /// One place, so the meaning of "half" is the same in the engine, in the file and in a test. The edits
 /// are the DJ's: they are applied to the whole track, because a grid is how the whole track is read, and
 /// a refusal (a shift off the start of the file, a tempo that is not a number) leaves the grid alone.
-pub fn edit_grid(grid: &BeatGrid, edit: &GridEdit) -> Option<BeatGrid> {
+pub fn edit_grid(grid: &BeatGrid, edit: &GridEdit, source_rate: u32) -> Option<BeatGrid> {
     match edit {
-        GridEdit::Shift { frames } => grid.shifted(*frames),
+        // The rate is the grid's own timebase, and a shift needs it only to know how wide a square of
+        // four bars is: a grid that is shifted past the start of the file is rebased by whole squares
+        // instead of stopping at zero.
+        GridEdit::Shift { frames } => grid.shifted(*frames, f64::from(source_rate)),
         GridEdit::Tempo { bpm } => grid.retimed(*bpm),
         GridEdit::Double => grid.retimed(grid.bpm() * 2.0),
         GridEdit::Half => grid.retimed(grid.bpm() / 2.0),

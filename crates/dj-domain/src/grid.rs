@@ -31,12 +31,6 @@ pub struct BeatGrid {
     segments: Vec<BeatSegment>,
 }
 
-/// Move a frame by a signed amount, refusing to walk off the start of the file.
-fn shift_frame(frame: u64, frames: i64) -> Option<u64> {
-    let moved = i128::from(frame) + i128::from(frames);
-    u64::try_from(moved).ok()
-}
-
 /// A frame scaled away from an anchor, refusing a negative or absurd result.
 fn rescale_frame(frame: u64, anchor: u64, scale: f64) -> Option<u64> {
     if !scale.is_finite() || scale <= 0.0 {
@@ -112,6 +106,12 @@ impl BeatGrid {
         rate * 60.0 / segment.bpm
     }
 
+    /// Frames in one square of four bars: the period a grid repeats with, so the amount the anchor may
+    /// be moved by without changing a single line.
+    fn square_frames(segment: &BeatSegment, rate: f64) -> f64 {
+        16.0 * Self::frames_per_beat(segment, rate)
+    }
+
     /// The segment a frame falls in, or the first one when the frame is before the grid starts.
     fn segment_at(&self, frame: u64) -> &BeatSegment {
         // The list is short — one segment for a track that holds its tempo, a handful for an edit — so
@@ -167,12 +167,44 @@ impl BeatGrid {
     ///
     /// The DJ hears the beat a few milliseconds off and says so; the fix is one number, and the whole
     /// grid moves — every segment, so a track that changes tempo keeps its shape.
-    pub fn shifted(&self, frames: i64) -> Option<Self> {
+    ///
+    /// The shift has no wall at the start of the file. A track whose first beat sits half a second in
+    /// runs out of frames after one press of "one beat earlier", and the DJ has not finished asking:
+    /// the grid is a set of lines, and a set that repeats every square of four bars is described as
+    /// well from any of its squares. So when the anchor would walk below zero, the whole grid is
+    /// rebased by whole squares — frames and beats move together, every frame keeps the beat it had —
+    /// and the lines carry on moving. The DJ sees the picture move, not the anchor jump.
+    pub fn shifted(&self, frames: i64, rate: f64) -> Option<Self> {
+        if !rate.is_finite() || rate <= 0.0 {
+            return None;
+        }
+        let first = self.segments.first()?;
+        let per_beat = Self::frames_per_beat(first, rate);
+        if !per_beat.is_finite() || per_beat <= 0.0 {
+            return None;
+        }
+        // Whole squares that keep the anchor inside the file after the shift: one square is sixteen
+        // beats, which is also four bars, so rebasing never changes which line is a bar or a square.
+        let below = -(first.frame as f64 + frames as f64);
+        let squares = if below > 0.0 {
+            (below / (16.0 * per_beat)).ceil()
+        } else {
+            0.0
+        };
+        if !squares.is_finite() || squares < 0.0 {
+            return None;
+        }
+        let beat_lift = u64::try_from(squares as u128 * 16u128).ok()?;
         let mut moved: Vec<BeatSegment> = Vec::with_capacity(self.segments.len());
         for segment in &self.segments {
+            let lift = squares * Self::square_frames(segment, rate);
+            let target = segment.frame as f64 + frames as f64 + lift;
+            if !target.is_finite() || target < 0.0 || target > u64::MAX as f64 {
+                return None;
+            }
             moved.push(BeatSegment {
-                frame: shift_frame(segment.frame, frames)?,
-                beat: segment.beat,
+                frame: target.round() as u64,
+                beat: segment.beat.checked_add(beat_lift)?,
                 bpm: segment.bpm,
             });
         }

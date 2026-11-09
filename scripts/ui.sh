@@ -91,6 +91,10 @@ case "${1:-}" in
       exit 1
     fi
     run_dir="$(mktemp -d)"
+    # Metadata has a mirror keyed by the file's fingerprint, so two copies of one fixture share their
+    # beats and cues. The gate points that mirror at its own directory: a run must not inherit the grid
+    # of the run before it, or of the check before it.
+    export XDG_DATA_HOME="$run_dir/data"
     socket="$run_dir/engine.sock"
     "$engine_bin" --null-sink --socket "$socket" --block 256 &
     engine_pid=$!
@@ -225,12 +229,21 @@ case "${1:-}" in
     # and the file must come back locked against the next automatic measurement.
     grid_file="$run_dir/grid-edit.wav"
     cp crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav "$grid_file"
+    tap_file="$run_dir/tap-grid.wav"
+    cp crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav "$tap_file"
+    # The same music as a different file: one sample changed by a bit, so the fingerprint differs and
+    # the tap check starts from no grid at all instead of the one the editor check just wrote.
+    printf '\x01' | dd of="$tap_file" bs=1 seek=1044 conv=notrunc status=none
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --grid-check --load "$grid_file"
     # The grid has to be visible on the strip, not only in the snapshot: beat lines, a bar every fourth,
     # and a spacing that follows the tempo — the same file, so the second run starts from a locked grid.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --grid-lines-check --load "$grid_file"
+    # Taps are beats, not just a tempo: the grid has to come out on the line through the tap moments,
+    # and a grid put on the play head instead fails this by most of a beat.
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
+        --tap-check --load "$tap_file"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --eq-check
     # A double click is the way back to neutral on every mouse-driven control, and each control has its
     # own neutral: a gain or a band goes flat, a fader opens, the master stands at three quarters of its

@@ -325,6 +325,9 @@ fn run(argv: &[String]) -> Result<(), String> {
     let (grid_edits, grid_edits_rx) = std::sync::mpsc::channel::<GridEditRequest>();
     let grids: Arc<Mutex<Vec<Option<dj_domain::BeatGrid>>>> =
         Arc::new(Mutex::new(vec![None; dj_domain::DeckId::COUNT]));
+    // The source rate of each deck's file: the grid is expressed in it, and a shift past the start
+    // rebases by whole squares, which is a number of frames that needs the rate.
+    let rates: Arc<Mutex<Vec<u32>>> = Arc::new(Mutex::new(vec![0; dj_domain::DeckId::COUNT]));
     // Loads never enter the audio callback: clients hand them to a loader thread, which hands a
     // prepared source back to the graph and a new description to the publisher.
     let (load_requests, load_requests_rx) = std::sync::mpsc::channel::<LoadRequest>();
@@ -364,6 +367,7 @@ fn run(argv: &[String]) -> Result<(), String> {
         let playing = Arc::clone(&playing);
         let subscribers = Arc::clone(&subscribers);
         let grids = Arc::clone(&grids);
+        let rates = Arc::clone(&rates);
         // The state rate is a parameter (display.state_hz): twenty snapshots a second is the
         // default, and raising it trades IPC for less projection between snapshots.
         let publish_every = Duration::from_micros(1_000_000 / u64::from(state_hz));
@@ -379,6 +383,7 @@ fn run(argv: &[String]) -> Result<(), String> {
                         Published::Deck(update) => {
                             let deck = update.deck;
                             let grid = update.static_info.grid.clone();
+                            let rate = update.static_info.source_rate;
                             if let Some(slot) = statics.iter_mut().find(|entry| entry.deck == deck)
                             {
                                 *slot = update.static_info;
@@ -387,6 +392,11 @@ fn run(argv: &[String]) -> Result<(), String> {
                                 && let Some(slot) = held.get_mut(deck.index())
                             {
                                 *slot = grid;
+                            }
+                            if let Ok(mut held) = rates.lock()
+                                && let Some(slot) = held.get_mut(deck.index())
+                            {
+                                *slot = rate;
                             }
                         }
                         Published::Grid { deck, grid } => {
@@ -572,6 +582,7 @@ fn run(argv: &[String]) -> Result<(), String> {
         let published_to = deck_updates.clone();
         let store = store.clone();
         let grids = Arc::clone(&grids);
+        let rates = Arc::clone(&rates);
         std::thread::spawn(move || {
             while let Ok(request) = grid_edits_rx.recv() {
                 let deck = request.deck;
@@ -586,10 +597,23 @@ fn run(argv: &[String]) -> Result<(), String> {
                     );
                     continue;
                 };
-                let Some(edited) = dj_engine::edit_grid(&current, &request.edit) else {
+                let rate = rates
+                    .lock()
+                    .ok()
+                    .and_then(|held| held.get(deck.index()).copied())
+                    .unwrap_or(0);
+                let Some(edited) = dj_engine::edit_grid(&current, &request.edit, rate) else {
                     eprintln!("dj-engine: the edit does not make a grid; nothing changed");
                     continue;
                 };
+                // The grid in the map is published a snapshot late, and two edits arriving together —
+                // a tapped tempo and the shift that puts it on the taps — would otherwise compose from
+                // the same stale copy and the last one would win. The worker owns the grid it edits.
+                if let Ok(mut held) = grids.lock()
+                    && let Some(slot) = held.get_mut(deck.index())
+                {
+                    *slot = Some(edited.clone());
+                }
                 let path = std::path::PathBuf::from(&request.path);
                 if let Err(message) =
                     dj_engine::meta::write_beatgrid(&store, volume(), root(), &path, &edited, true)
