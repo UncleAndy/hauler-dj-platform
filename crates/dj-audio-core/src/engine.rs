@@ -280,6 +280,7 @@ impl Engine {
                 position_ratio: None,
                 track: None,
                 loop_region: None,
+                loop_mode: false,
                 active_loops: Vec::new(),
                 hotcues: vec![None; dj_domain::HOTCUE_SLOTS],
                 pad_loops: Vec::new(),

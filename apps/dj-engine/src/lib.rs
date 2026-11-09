@@ -517,6 +517,8 @@ pub struct StateCells {
     /// Loops on pads, per deck: a range is not an atomic word either.
     pad_loops: std::sync::Mutex<Vec<DeckLoops>>,
     /// Loops loop mode is watching, per deck: as many as the track has, not one.
+    /// Whether loop mode repeats each deck's loops, one flag per deck.
+    loop_mode: std::sync::Mutex<Vec<bool>>,
     active_loops: std::sync::Mutex<Vec<Vec<(u64, u64)>>>,
 }
 
@@ -566,6 +568,27 @@ impl StateCells {
             guard.push(std::array::from_fn(|_| None));
         }
         guard[deck][slot] = region;
+    }
+
+    /// Put the mode where the publisher will find it: the Loop button draws this, not a copy.
+    pub fn set_loop_mode(&self, deck: usize, on: bool) {
+        let mut guard = self
+            .loop_mode
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        while guard.len() <= deck {
+            guard.push(false);
+        }
+        guard[deck] = on;
+    }
+
+    /// What the publisher reads for one deck.
+    fn loop_mode_of(&self, deck: usize) -> bool {
+        let guard = self
+            .loop_mode
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        guard.get(deck).copied().unwrap_or(false)
     }
 
     /// Put the armed loops where the publisher will find them.
@@ -673,6 +696,7 @@ impl StateCells {
             decks: std::array::from_fn(|_| DeckCells::new()),
             cue_meta: std::sync::Mutex::new(Vec::new()),
             pad_loops: std::sync::Mutex::new(Vec::new()),
+            loop_mode: std::sync::Mutex::new(Vec::new()),
             active_loops: std::sync::Mutex::new(Vec::new()),
         }
     }
@@ -808,6 +832,7 @@ impl StateCells {
                     start: SourceFrame(loop_start),
                     end: SourceFrame(loop_end),
                 }),
+                loop_mode: self.loop_mode_of(index),
                 active_loops: self
                     .active_loops_of(index)
                     .into_iter()
@@ -1544,6 +1569,8 @@ impl EngineGraph {
                 DjCommand::SetLoopMode { deck, .. }
                 | DjCommand::SetPadLoop { deck, .. }
                 | DjCommand::SetLoop { deck, .. }
+                | DjCommand::LoopBeats { deck, .. }
+                | DjCommand::LoopMove { deck, .. }
                 | DjCommand::Cue { deck, .. }
                 | DjCommand::Load { deck, .. }
                 | DjCommand::Eject { deck } => Some(*deck),
@@ -1559,6 +1586,8 @@ impl EngineGraph {
                     .map(|region| (region.start.0, region.end.0))
                     .collect();
                 self.cells.set_active_loops(index, armed);
+                self.cells
+                    .set_loop_mode(index, self.decks[index].loop_mode());
             }
             if let DjCommand::SetCueMeta {
                 deck,

@@ -1652,6 +1652,7 @@ impl Deck {
             position_ratio: ratio,
             track: self.track.clone(),
             loop_region: self.loop_region,
+            loop_mode: self.loop_mode,
             active_loops: self.armed.clone(),
             hotcues: self
                 .hotcues

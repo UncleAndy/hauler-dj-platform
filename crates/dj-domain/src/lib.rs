@@ -860,6 +860,12 @@ pub struct DeckSnapshot {
     /// engine never says a measurement is running.
     #[serde(default)]
     pub analyzing: bool,
+    /// True while loop mode repeats this deck's loops.
+    ///
+    /// The Loop button draws this and keeps no copy of its own: a mode the engine refused would
+    /// otherwise look lit, and a lit button over a silent loop is worse than no button.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub loop_mode: bool,
     /// True while the metronome clicks this deck's grid.
     ///
     /// Defaulted and omitted when off: a client that knows nothing about a click is not a protocol

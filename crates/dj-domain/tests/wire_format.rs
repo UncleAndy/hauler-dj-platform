@@ -187,6 +187,7 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
                 key: Some("8A".to_string()),
             }),
             loop_region: None,
+            loop_mode: false,
             active_loops: Vec::new(),
             hotcues: vec![
                 Some(SourceFrame(1_000)),

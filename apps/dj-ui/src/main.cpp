@@ -3289,6 +3289,75 @@ int main(int argc, char *argv[])
             return 1;
         }
         const double period = rate * 60.0 / bpm;
+        const qint64 anchor = first.value(QStringLiteral("frame")).toLongLong();
+        const auto onGrid = [&](qint64 frame) {
+            const double lines = (static_cast<double>(frame) - static_cast<double>(anchor)) / period;
+            const double off = std::fabs(lines - std::round(lines)) * period;
+            return off <= 2.0;
+        };
+        // Snap and quantize, on a pair of presses made off the grid on purpose: the start goes to the
+        // nearest line and the end is a whole number of beats after it (DJP-DECK-005).
+        const auto seekTo = [&](qint64 frame) {
+            bridge->seek(QStringLiteral("A"), static_cast<qulonglong>(frame));
+            return waitFor([&]() {
+                return std::llabs(deckA().value(QStringLiteral("source_frame")).toLongLong() - frame)
+                    <= 2;
+            }, 5000);
+        };
+        const auto loopStart = [&]() -> qint64 {
+            const QVariantMap region = loopRegion();
+            return region.isEmpty() ? -1 : region.value(QStringLiteral("start")).toLongLong();
+        };
+        const qint64 markFrom = anchor + static_cast<qint64>(period * 3.0) + 137;
+        const qint64 markTo = anchor + static_cast<qint64>(period * 6.4) - 211;
+        if (!seekTo(markFrom)) {
+            std::fprintf(stderr, "dj-ui: the play head did not reach the snap mark\n");
+            return 1;
+        }
+        auto *panelItem = findItem(window->contentItem(), QStringLiteral("deckPanel_A"));
+        if (panelItem == nullptr) {
+            std::fprintf(stderr, "dj-ui: no deck panel to press Loop on\n");
+            return 1;
+        }
+        const auto pressLoop = [&]() {
+            QMetaObject::invokeMethod(panelItem, "pressLoop", Q_ARG(QVariant, QVariant(false)));
+            QCoreApplication::processEvents();
+            return true;
+        };
+        if (!pressLoop()) {
+            return 1;
+        }
+        if (!seekTo(markTo)) {
+            std::fprintf(stderr, "dj-ui: the play head did not reach the quantize mark\n");
+            return 1;
+        }
+        if (!pressLoop()) {
+            return 1;
+        }
+        if (!waitFor([&]() { return loopStart() >= 0; }, 5000)) {
+            std::fprintf(stderr, "dj-ui: the two presses made no loop\n");
+            return 1;
+        }
+        const qint64 snappedStart = loopStart();
+        const qint64 snappedEnd = loopRegion().value(QStringLiteral("end")).toLongLong();
+        if (!onGrid(snappedStart) || !onGrid(snappedEnd)) {
+            std::fprintf(stderr, "dj-ui: the loop edges are off the grid: %lld..%lld (anchor %lld, "
+                                 "period %.1f)\n",
+                         snappedStart, snappedEnd, anchor, period);
+            return 1;
+        }
+        const double beats = static_cast<double>(snappedEnd - snappedStart) / period;
+        if (std::fabs(beats - std::round(beats)) > 0.02 || std::round(beats) < 1.0) {
+            std::fprintf(stderr, "dj-ui: the loop is %.3f beats long, not a whole number\n", beats);
+            return 1;
+        }
+        const auto snappedBeats = static_cast<qint64>(std::llround(beats));
+        // Clear it, so the size loop below is not refused for crossing this one.
+        bridge->setLoop(QStringLiteral("A"), false, 0, 0);
+        if (!waitFor([&]() { return loopStart() < 0; }, 5000)) {
+            std::fprintf(stderr, "dj-ui: the loop outlived the clear\n");
+            return 1;
+        }
         const auto four = static_cast<qint64>(std::llround(4.0 * period));
         if (!click(QStringLiteral("loopSize_A_4"))) {
             return 1;
@@ -3330,11 +3399,40 @@ int main(int argc, char *argv[])
                          loopLength());
             return 1;
         }
+        // Every loop is the same loop: the one the size button made has to light the Loop button, and a
+        // press inside it has to put the mode out — that is how a DJ leaves a loop.
+        auto *loopButton = findItem(window->contentItem(), QStringLiteral("loop_A"));
+        if (loopButton == nullptr) {
+            std::fprintf(stderr, "dj-ui: no Loop button to read\n");
+            return 1;
+        }
+        if (!waitFor([&]() { return deckA().value(QStringLiteral("loop_mode")).toBool(); }, 5000)) {
+            std::fprintf(stderr, "dj-ui: the loop did not put the mode on\n");
+            return 1;
+        }
+        if (!loopButton->property("active").toBool()) {
+            std::fprintf(stderr, "dj-ui: the Loop button is not lit over an active loop\n");
+            return 1;
+        }
+        if (!pressLoop()) {
+            return 1;
+        }
+        if (!waitFor(
+                [&]() {
+                    return !deckA().value(QStringLiteral("loop_mode")).toBool()
+                        && !loopButton->property("active").toBool();
+                },
+                5000)) {
+            std::fprintf(stderr, "dj-ui: a press on the lit Loop button left the mode on\n");
+            return 1;
+        }
         std::fprintf(stdout,
                      "dj-ui: a four beat loop is %lld frames of the grid (a beat is %.1f), it starts on a "
                      "beat at frame %lld, and one press of the arrow moved it %.1f frames without "
-                     "changing its length\n",
-                     four, period, start, static_cast<double>(beatStep));
+                     "changing its length; two presses off the grid snapped to %lld..%lld (%lld whole "
+                     "beats), the size loop lit the Loop button, and a press inside it put the mode out\n",
+                     four, period, start, static_cast<double>(beatStep), snappedStart, snappedEnd,
+                     snappedBeats);
         return 0;
     }
 

@@ -164,6 +164,9 @@ fn four_beats_is_four_beats_of_this_track() {
     assert_eq!(region.start.0, ANCHOR, "the loop starts on a beat");
     assert_eq!(region.len(), 4 * BEAT_FRAMES, "four beats long");
     assert_eq!(state.source_frame.0, ANCHOR, "the play head is in the loop");
+    // Every loop is the same loop: the one made of beats arms the mode exactly as a pad's would, and the
+    // state document says so — the Loop button has nothing else to draw.
+    assert!(state.loop_mode, "a loop put in force arms the mode");
 }
 
 #[test]

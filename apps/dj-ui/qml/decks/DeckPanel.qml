@@ -298,7 +298,9 @@ Pane {
     readonly property var activeLoops: panel.deck !== null && panel.deck.active_loops !== undefined
                                        ? panel.deck.active_loops : []
 
-    readonly property bool loopModeOn: panel.activeLoops.length > 0
+    /// Whether loop mode is on. The engine's own flag, not a count of loops: every loop is the same kind
+    /// of loop here, and the button has to be lit for the one the size buttons made as well as for a pad's.
+    readonly property bool loopModeOn: panel.deck !== null && panel.deck.loop_mode === true
 
     /// The region the playhead stands in, out of everything the deck knows: armed loops first, then
     /// the last loop the button made.
@@ -353,6 +355,30 @@ Pane {
         return false;
     }
 
+    /// Snap: a loop point lands on the nearest line of the grid instead of on the frame the hand was on.
+    property bool snap: true
+    /// Quantize: the loop's end is a whole number of beats after its start.
+    property bool quantize: true
+
+    /// The nearest line of this deck's grid, or the frame itself when there is no grid to snap to.
+    function onTheGrid(frame) {
+        if (!panel.gridReady || !(panel.localBpm > 0)) {
+            return frame;
+        }
+        const period = panel.gridRate * 60 / panel.localBpm;
+        const anchor = panel.track.grid.segments[0].frame;
+        return Math.round(anchor + Math.round((frame - anchor) / period) * period);
+    }
+
+    /// The nearest whole number of beats from `from` to `frame`, in frames.
+    function wholeBeatsBetween(from, frame) {
+        if (!panel.gridReady || !(panel.localBpm > 0)) {
+            return frame;
+        }
+        const period = panel.gridRate * 60 / panel.localBpm;
+        return from + Math.max(1, Math.round((frame - from) / period)) * period;
+    }
+
     /// The Loop button: inside a loop it switches the mode on where the playhead stands; outside it
     /// starts marking another loop. Shift only switches the mode, and never moves anything.
     function pressLoop(cancel) {
@@ -372,8 +398,13 @@ Pane {
         // playhead stands: leaving it hanging because the playhead happened to be inside another loop is
         // how a press ends up doing nothing at all.
         if (panel.loopPending) {
-            const from = Math.min(panel.loopStartFrame, frame);
-            const to = Math.max(panel.loopStartFrame, frame);
+            const closed = panel.snap ? panel.onTheGrid(frame) : frame;
+            const start = panel.snap ? panel.onTheGrid(panel.loopStartFrame) : panel.loopStartFrame;
+            const end = panel.quantize ? panel.wholeBeatsBetween(Math.min(start, closed),
+                                                                 Math.max(start, closed))
+                                       : Math.max(start, closed);
+            const from = Math.round(Math.min(start, closed));
+            const to = Math.round(Math.max(end, from + 1));
             panel.loopPending = false;
             if (to - from < 480) {
                 panel.loopNotice = qsTr("too short to loop");
@@ -389,11 +420,10 @@ Pane {
             return;
         }
 
-        // Inside any loop the deck knows, a press only makes sure the mode is on.
+        // Inside a loop the button does what the button says: lit, it turns the mode off — that is how a
+        // DJ leaves a loop; dark, it arms it again.
         if (panel.loopAt(frame) !== null) {
-            if (!panel.loopModeOn) {
-                Bridge.setLoopMode(panel.deckId, true);
-            }
+            Bridge.setLoopMode(panel.deckId, !panel.loopModeOn);
             return;
         }
 
@@ -717,7 +747,7 @@ Pane {
                 color: UiSettings.themeTextDim
             }
             Repeater {
-                model: [1, 2, 4, 8]
+                model: [1, 2, 4, 8, 16, 32, 64]
                 Button {
                     objectName: "loopSize_" + panel.deckId + "_" + modelData
                     text: qsTr("%1").arg(modelData)
@@ -756,6 +786,34 @@ Pane {
                 onClicked: Bridge.moveLoop(panel.deckId, 1)
             }
             Item { Layout.fillWidth: true }
+            // Snap puts a loop point on the nearest line of the grid; quantize makes the loop end a whole
+            // number of beats after its start. Both are the DJ's switches, not the engine's policy.
+            Button {
+                objectName: "snap_" + panel.deckId
+                text: qsTr("snap")
+                font.pixelSize: 10
+                Layout.preferredHeight: 20
+                checkable: true
+                checked: panel.snap
+                enabled: panel.live && panel.gridReady
+                focusPolicy: Qt.NoFocus
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Put loop points on the beat grid")
+                onClicked: panel.snap = checked
+            }
+            Button {
+                objectName: "quantize_" + panel.deckId
+                text: qsTr("quant")
+                font.pixelSize: 10
+                Layout.preferredHeight: 20
+                checkable: true
+                checked: panel.quantize
+                enabled: panel.live && panel.gridReady
+                focusPolicy: Qt.NoFocus
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Make a loop a whole number of beats long")
+                onClicked: panel.quantize = checked
+            }
         }
 
         // The grid editor: the measurement is a first answer, and this is where the DJ corrects it. Each
