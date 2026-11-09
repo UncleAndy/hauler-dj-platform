@@ -168,6 +168,22 @@ fn a_syncopated_kick_does_not_move_the_grid_off_the_beat() {
 }
 
 #[test]
+fn a_tempo_that_is_not_a_whole_number_of_hops_is_measured_where_it_is() {
+    // 100,06 BPM is 112,4 analysis hops per beat at 48 kHz — not a whole number. A tenth of a percent
+    // walks a tenth of a beat across two minutes, which is a grid that looks right at the start and is off
+    // by a sixteenth at the end. A clean click track is measured right with or without the fine period
+    // search (the witness for that is the real track, where the coarse answer was 100,11); this keeps the
+    // between-the-hops case from regressing.
+    let samples = click_track(100.06, 0, 120.0);
+    let tempo = dj_analysis::tempo::detect(&samples, RATE).expect("a tempo");
+    assert!(
+        (tempo.bpm() - 100.06).abs() < 0.02,
+        "measured {} BPM instead of 100,06",
+        tempo.bpm()
+    );
+}
+
+#[test]
 fn a_bar_of_four_beats_is_not_read_as_three_of_them() {
     // The kick band says where the bar is; the full spectrum only says where the onsets are, and on
     // dense percussion that is every third sixteenth as much as every fourth.

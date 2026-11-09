@@ -248,6 +248,7 @@ fn single_tempo(
     if period <= 0.0 {
         return None;
     }
+    period = refined_period(envelope, period);
     // How much of the onset energy actually sits on this grid: a real beat explains nearly all of it,
     // while a rubato line or a sparse noise explains a fraction. This is the confidence that matters —
     // the spectrum can be sharp about a tempo nothing is playing to.
@@ -282,6 +283,11 @@ fn single_tempo(
     if explained < MIN_EXPLAINED_SHARE || beats < MIN_BEATS {
         return None;
     }
+    // The phase comes from the comb, not from the beat tracker. The tracker places every beat where the
+    // music wants it, which on a track whose period is not exactly the grid's means its beats walk a whole
+    // period over the file (measured: phases 0,25 … 103 hops on `Shadow Rhythm — Deep Resonance`); a grid
+    // in `.djmeta` is rigid — one tempo per segment — so the best rigid grid is the comb's, and the tracker
+    // is kept for the level choice and the confidence, where its local view is the right one.
     let bpm = per_second * 60.0 / period;
     // Half a block: the block that saw the onset starts at `phase · HOP`, and flux rises as soon as its
     // 21 ms window touches the beat, so the block's centre is the better estimate of where the beat is.
@@ -660,6 +666,35 @@ fn played_share(envelope: &[f32], period: f64, phase: f64, strongest: f32) -> f6
 }
 
 /// The period the comb likes best around a hint, searched over ±0.6 % in steps of 0.02 %.
+/// The period searched finely around a guess, kept only when it explains the music better.
+///
+/// A tenth of a percent of period error walks a tenth of a beat across two minutes, and the comb is sharp
+/// enough to see it: on `Shadow Rhythm — Deep Resonance` the coarse 103,250 hops score 49 while 103,297
+/// score 202 — a rigid grid either sits on the music or does not. The search steps a two-hundredth of a
+/// hop over ±0,4 %, and its answer is taken only when the onset strength on the grid improves by more than
+/// two percent: an eight-second clip cannot tell a tenth of a percent from a coincidence, and there the
+/// guess is kept.
+fn refined_period(envelope: &[f32], period: f64) -> f64 {
+    if !(period.is_finite() && period > 0.0) {
+        return period;
+    }
+    let coarse = comb_score(envelope, period, best_phase(envelope, period));
+    let mut fine = period * 0.996;
+    let mut chosen = (period, coarse);
+    while fine <= period * 1.004 {
+        let score = comb_score(envelope, fine, best_phase(envelope, fine));
+        if score > chosen.1 {
+            chosen = (fine, score);
+        }
+        fine += 0.005;
+    }
+    if chosen.1 > coarse * 1.02 {
+        chosen.0
+    } else {
+        period
+    }
+}
+
 fn refine_period(envelope: &[f32], hint: f64) -> f64 {
     if !hint.is_finite() || hint <= 1.0 {
         return hint;
@@ -1099,7 +1134,7 @@ fn bar_tempo_of(
             if !(MIN_BPM..=MAX_BPM).contains(&candidate) {
                 continue;
             }
-            let period_hops = period * per_second;
+            let period_hops = refined_period(onsets, period * per_second);
             let phase = best_phase(onsets, period_hops);
             let Some(bar) = bar_of_kick(kick, period_hops, metre, phase) else {
                 continue;
@@ -1108,6 +1143,7 @@ fn bar_tempo_of(
                 .as_ref()
                 .is_none_or(|(_, _, _, score)| *strength > *score)
             {
+                let candidate = per_second * 60.0 / period_hops;
                 best = Some((candidate, phase, bar, *strength));
             }
         }
@@ -1146,9 +1182,16 @@ fn on_the_bar(onsets: &[f32], kick: &[f32], rate: f64, tempo: &mut Tempo) {
         0
     };
     let period = per_second * 60.0 / bpm;
-    let beat = phase + downbeat as f64 * period;
-    // Half a block, as in `single_tempo`: the block that saw the onset starts a hop before it.
-    let first = (beat * HOP as f64 + BLOCK as f64 / 2.0).round();
+    // When the tempo does not move, the anchor the tracker found is kept and only the bar is laid on it:
+    // the downbeat is a whole number of beats, so shifting the anchor by them changes which beat is the
+    // first of a bar and nothing about where the beats are.
+    let first = if (bpm / segment.bpm - 1.0).abs() < 0.001 {
+        segment.first_beat_frame as f64 + downbeat as f64 * period * HOP as f64
+    } else {
+        let beat = phase + downbeat as f64 * period;
+        // Half a block, as in `single_tempo`: the block that saw the onset starts a hop before it.
+        beat * HOP as f64 + BLOCK as f64 / 2.0
+    };
     if !first.is_finite() || first < 0.0 || first > u64::MAX as f64 {
         return;
     }
