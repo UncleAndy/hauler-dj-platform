@@ -51,10 +51,6 @@ const MIN_EXPLAINED_SHARE: f64 = 0.08;
 const PREFERRED_BPM: f64 = 120.0;
 const PRIOR_SPREAD_OCTAVES: f64 = 0.9;
 
-/// How much of the file the detector reads, in seconds. Four minutes covers every intro and breakdown
-/// a track is likely to open with, and a DJ waits for the number.
-pub const ANALYSED_SECONDS: f64 = 240.0;
-
 /// Length of one window the tempo is looked for in, in seconds.
 pub const WINDOW_SECONDS: f64 = 40.0;
 
@@ -275,8 +271,16 @@ pub fn detect_in_envelope(envelope: &[f32], rate: f64) -> Option<Tempo> {
             // of ordinary music differ by a fraction of a percent at random, and a grid cut up by that
             // noise is worse than one tempo — so the grid is taken only when its tempo walks in one
             // direction, and only when it explains the music by the margin.
+            // A drift has to be worth describing: a track that moves a tenth of a percent over six minutes
+            // is one tempo, and cutting it into eight stretches buys nothing but anchors in the file.
+            let walked = match (drifting.segments.first(), drifting.segments.last()) {
+                (Some(first), Some(last)) => (last.bpm / first.bpm - 1.0).abs(),
+                _ => 0.0,
+            };
             if drifting.segments.len() >= 3
+                && walked >= MIN_DRIFT
                 && drifts_one_way(&drifting.segments)
+                && same_level(&drifting.segments, rigid.bpm())
                 && drift_score > rigid_score * ELASTIC_MARGIN
             {
                 return Some(drifting);
@@ -287,7 +291,33 @@ pub fn detect_in_envelope(envelope: &[f32], rate: f64) -> Option<Tempo> {
 }
 
 /// The grid of a track that holds one tempo: the old answer, unchanged.
+/// The grid of a track that holds one tempo: the answer, or the answer one level away when the first
+/// cannot be a grid at all.
+///
+/// The windows answer whichever periodicity they heard clearest, and on an acoustic take that is the
+/// strumming, not the beat: `Среди своих (v3 - soft rock accustic)` answered 60,7 BPM and refused the
+/// grid (it carried 6,5 % of the onsets, under the 8 % floor), while the onsets of the whole file sit on
+/// 138,5. So when the answer cannot be published, the levels around it are asked — and only then: a track
+/// whose answer holds is not moved, because on the tracks where the rough answer is right (a remix whose
+/// eighth-note grid carries more onsets than its beat) the finer level would win on the count alone.
 fn single_tempo(
+    envelope: &[f32],
+    per_second: f64,
+    bpm: f64,
+    clear: &std::ops::Range<usize>,
+) -> Option<Tempo> {
+    if let Some(tempo) = grid_at_level(envelope, per_second, bpm, clear) {
+        return Some(tempo);
+    }
+    let level = refine_level(envelope, per_second, bpm);
+    if (level / bpm - 1.0).abs() <= 0.02 {
+        return None;
+    }
+    grid_at_level(envelope, per_second, level, clear)
+}
+
+/// The grid of a track that holds one tempo, at the tempo it was given.
+fn grid_at_level(
     envelope: &[f32],
     per_second: f64,
     bpm: f64,
@@ -609,9 +639,17 @@ fn choose_tempo(envelope: &[f32], per_second: f64) -> Option<(f64, std::ops::Ran
             }
             inner += 1;
         }
-        // Between clusters the prior has its say: it cannot make a weak reading win, only settle a tie.
+        // Which cluster is the beat: the one whose grid carries the most of this track's onsets, measured
+        // on the whole envelope and not on the windows that voted. A window's contrast says how clearly
+        // that window repeated, which is a different question: on the acoustic take the loudest windows
+        // said 60,7 BPM while the onsets of the whole file sit on 138,5, twice as well.
         let cluster_bpm = moment / weight;
-        let settled = weight * tempo_prior(cluster_bpm);
+        let period = per_second * 60.0 / cluster_bpm;
+        let inside = best_phase(envelope, period);
+        let (share, _) = explained_share(envelope, period, inside);
+        // The prior cannot make a weak reading win, only settle a tie; the window weight keeps a cluster
+        // nobody measured strongly from winning on a fraction of a percent of share.
+        let settled = (share + weight * 0.001) * tempo_prior(cluster_bpm);
         if best
             .as_ref()
             .is_none_or(|(best_weight, _, _)| settled > *best_weight)
@@ -672,6 +710,22 @@ fn tempo_of_window(envelope: &[f32], per_second: f64) -> Option<f64> {
                 }
             }
             thirds *= 3.0;
+        }
+        // And the levels *above* the peak. A peak is the strongest periodicity, not the beat: an acoustic
+        // track strums at twice the beat and accents every third of it, so its envelope spectrum peaks at
+        // half and two thirds of the tempo while the beat itself is no peak at all. Measured on
+        // `Среди своих (v3 - soft rock accustic)`: the windows answered 60,7 and 90,2 BPM, the beat is
+        // 138,5 — and no division of either peak reaches it, only 90,2 × 3/2 does.
+        for multiple in [2.0f64, 3.0, 1.5, 4.0 / 3.0] {
+            let candidate = *bpm * multiple;
+            if !(MIN_BPM..=MAX_BPM).contains(&candidate) {
+                continue;
+            }
+            let period = per_second * 60.0 / candidate;
+            let contrast = contrast_of(envelope, period);
+            if contrast > best.0 {
+                best = (contrast, candidate);
+            }
         }
     }
     if best.1 <= 0.0 {
@@ -743,6 +797,14 @@ fn played_share(envelope: &[f32], period: f64, phase: f64, strongest: f32) -> f6
 /// quarter at least. Twenty percent is between.
 const ELASTIC_MARGIN: f64 = 1.2;
 
+/// How far a track's tempo has to move before a grid of segments is worth publishing (DJP-SYNC-002).
+///
+/// One percent: the smallest drift a DJ can hear across a track, and well above the jitter of a window's
+/// own estimate. Measured on `Среди своих (v3 - soft rock accustic)`: windows differ by a fraction of a
+/// percent from window to window, and without this gate the track came back cut into eight stretches that
+/// all claimed the same tempo.
+const MIN_DRIFT: f64 = 0.01;
+
 /// The mean onset strength at the beats a grid implies, up to `end` (in hops).
 fn grid_onset(envelope: &[f32], segments: &[TempoSegment], per_second: f64, end: f64) -> f64 {
     let mut sum = 0.0f64;
@@ -776,6 +838,20 @@ fn grid_onset(envelope: &[f32], segments: &[TempoSegment], per_second: f64, end:
     }
 }
 
+/// Whether every segment of a drifting grid is still the same beat the rigid grid found.
+///
+/// The drift pass is about a tempo that *moves*, not about which metrical level it is: a track whose
+/// windows answer half the beat should not come back as an elastic grid of half-time. Measured on
+/// `Среди своих (v3 - soft rock accustic)`: the drift pass cut the track into eight stretches at 90 BPM
+/// while the onsets of the whole file sit on 138,5 — a different beat, published because a drifting grid
+/// was allowed to answer a question that was never asked of it.
+fn same_level(segments: &[TempoSegment], bpm: f64) -> bool {
+    bpm > 0.0
+        && segments
+            .iter()
+            .all(|segment| segment.bpm > 0.0 && (segment.bpm / bpm - 1.0).abs() <= 0.03)
+}
+
 /// Whether the segments' tempo walks in one direction from the first to the last.
 ///
 /// A window's tempo estimate jitters by a fraction of a percent, and a track that holds its tempo would
@@ -792,6 +868,35 @@ fn drifts_one_way(segments: &[TempoSegment]) -> bool {
         }
     }
     rising == 0 || falling == 0
+}
+
+/// The metrical level of the tempo: the rough answer and its relatives, scored over the whole track.
+///
+/// The windows answer whichever periodicity they heard clearest, and that is not always the beat: on
+/// `Среди своих (v3 - soft rock accustic)` the six windows answered 60,7 and 90,2 BPM, while the onsets of
+/// the whole file sit on 138,5 — twice as many of them, once the level is asked of the whole track instead
+/// of a forty-second slice. So the rough answer is re-asked among its relatives (the double, the half, the
+/// three-halves, the four-thirds and their inverses), each scored by the share of the onsets its grid
+/// carries, weighted by the same prior the clusters use — the prior is what keeps a sixteenth-note grid
+/// from winning on the count of onsets alone.
+fn refine_level(envelope: &[f32], per_second: f64, bpm: f64) -> f64 {
+    if !(bpm.is_finite() && bpm > 0.0) {
+        return bpm;
+    }
+    let mut best = (bpm, f64::NEG_INFINITY);
+    for multiple in [1.0, 2.0, 1.5, 4.0 / 3.0, 0.75, 2.0 / 3.0, 0.5] {
+        let candidate = bpm * multiple;
+        if !(MIN_BPM..=MAX_BPM).contains(&candidate) {
+            continue;
+        }
+        let period = per_second * 60.0 / candidate;
+        let (share, _) = explained_share(envelope, period, best_phase(envelope, period));
+        let score = share * tempo_prior(candidate);
+        if score > best.1 {
+            best = (candidate, score);
+        }
+    }
+    best.0
 }
 
 /// The period a stretch of the track plays, searched three percent either way.
@@ -1375,10 +1480,13 @@ fn on_the_bar(onsets: &[f32], kick: &[f32], rate: f64, tempo: &mut Tempo) {
 pub fn analyse(path: &std::path::Path) -> Result<Option<Tempo>, MediaError> {
     let mut decoder = StreamDecoder::open(path)?;
     let rate = decoder.sample_rate();
-    let limit = (f64::from(rate) * ANALYSED_SECONDS) as usize;
+    // The whole file. A four-minute cap was a guess about how long a track is, and on a six-minute acoustic
+    // take it cut the measurement in half: the first 240 s said 60,7 BPM with a share too low to publish,
+    // while all 379 s said 138,5 with twice the evidence. The decode is one pass and the envelope is small
+    // (71 000 frames for six minutes), so there is nothing to gain by stopping early.
     let mut buffer = vec![0.0f32; 4096 * 2];
-    let mut mono = Vec::with_capacity(limit.min(1 << 22));
-    while mono.len() < limit {
+    let mut mono = Vec::with_capacity(1 << 20);
+    loop {
         let read = decoder.read_frames(&mut buffer)?;
         if read == 0 {
             break;

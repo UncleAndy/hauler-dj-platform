@@ -253,6 +253,21 @@ fn a_beat_that_holds_its_tempo_is_one_segment_still() {
 }
 
 #[test]
+fn a_beat_that_begins_after_four_minutes_is_still_found() {
+    // A five-minute take whose count starts late: four minutes and ten seconds of quiet, then forty of
+    // clicks. The analysis used to stop at four minutes — a guess about how long a track is — so the whole
+    // file read as silence and the deck got no grid at all.
+    let mut samples = vec![0.0f32; (RATE * 250.0) as usize];
+    samples.extend(click_track(124.0, 0, 40.0));
+    let tempo = dj_analysis::tempo::detect(&samples, RATE).expect("a tempo after four minutes");
+    assert!(
+        (tempo.bpm() - 124.0).abs() < 0.5,
+        "measured {} BPM instead of 124",
+        tempo.bpm()
+    );
+}
+
+#[test]
 fn a_bar_of_four_beats_is_not_read_as_three_of_them() {
     // The kick band says where the bar is; the full spectrum only says where the onsets are, and on
     // dense percussion that is every third sixteenth as much as every fourth.
