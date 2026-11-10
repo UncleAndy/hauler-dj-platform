@@ -128,6 +128,7 @@ public:
     Q_INVOKABLE int setSync(const QString &deck, const QString &mode);
     /// Make this deck the one the others follow (DJP-SYNC-001).
     Q_INVOKABLE int setMaster(const QString &deck);
+    Q_INVOKABLE int clearMaster();
     Q_INVOKABLE int setCrossfader(double position);
     Q_INVOKABLE int setChannelGain(const QString &deck, double gain);
     /// Playback rate of a deck: 1.0 is the file's own speed, and the pitch moves with it.

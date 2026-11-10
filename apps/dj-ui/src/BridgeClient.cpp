@@ -546,6 +546,17 @@ int BridgeClient::setMaster(const QString &deck)
     return sendCommand(deck, command);
 }
 
+int BridgeClient::clearMaster()
+{
+    // Nobody leads. The decks that followed stop following and keep playing: a tempo a hand set is a
+    // decision, not a state to undo.
+    // A command with no fields is a bare name on the wire: serde writes a unit variant as `null`, and a
+    // reader that is handed `{}` rejects it as unknown.
+    QJsonObject command;
+    command.insert(QStringLiteral("MasterOff"), QJsonValue::Null);
+    return sendCommand(QString(), command);
+}
+
 int BridgeClient::setCrossfader(double position)
 {
     QJsonObject options;

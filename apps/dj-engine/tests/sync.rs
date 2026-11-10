@@ -499,3 +499,94 @@ fn the_bar_phase_tells_a_beat_behind_from_aligned() {
         "a whole beat along is a quarter of the bar: {bar:.4}"
     );
 }
+
+#[test]
+fn putting_the_master_down_stops_following_and_leaves_the_tempo() {
+    // The owner's rule: when the master goes, the mode goes with it and the deck plays on exactly as it
+    // was — the tempo a hand gave it is a decision, not a state to undo.
+    let seeks = Arc::new(AtomicU32::new(0));
+    let counter = Arc::clone(&seeks);
+    let mut decks = vec![
+        deck_with_grid(DeckId::A, 128.0, 0, Arc::clone(&seeks)),
+        deck_with_grid(DeckId::B, 120.0, 0, Arc::clone(&seeks)),
+    ];
+    decks[0].play();
+    decks[1].play();
+    let mut mixer = mixer();
+    lock_b_to_a(&mut decks, &mut mixer);
+    let mut memory = SyncMemory::default();
+    let mut block = vec![0.0f32; 256 * 2];
+    for _ in 0..50 {
+        sync_step(&mut decks, &mut memory, STEP_SECONDS);
+        // A playing deck approaches a tempo by gliding over the blocks it renders, the way the engine
+        // does: a step without sound would leave the speed where the glide started.
+        for _ in 0..8 {
+            decks[1].render(&mut block);
+        }
+    }
+    let trimmed = decks[1].tempo_ratio();
+    // The glide approaches its target rather than stamping it: within a tenth of a percent is "on the
+    // master's tempo" for a deck that has been following for two seconds.
+    assert!(
+        (trimmed - 128.0 / 120.0).abs() < 1e-3,
+        "the follower was on the master's tempo: {trimmed:.9}"
+    );
+
+    let ack = apply(&mut decks, &mut mixer, &command(3, DjCommand::MasterOff), 0);
+    assert!(
+        matches!(ack.status, AckStatus::Applied { .. }),
+        "{:?}",
+        ack.status
+    );
+    assert!(!decks[0].master() && !decks[1].master(), "nobody leads");
+    assert_eq!(
+        decks[1].sync(),
+        SyncMode::Off,
+        "the mode goes with the leader"
+    );
+    assert_eq!(
+        decks[1].tempo_ratio(),
+        trimmed,
+        "the tempo stays where the hand left it"
+    );
+
+    // And no further step touches the deck: no trims, no jumps.
+    let position = decks[1].position();
+    let before = counter.load(Ordering::Relaxed);
+    for _ in 0..25 {
+        sync_step(&mut decks, &mut memory, STEP_SECONDS);
+    }
+    println!(
+        "after the master went: {made} seeks, ratio {:.9}, head {position} -> {}",
+        decks[1].tempo_ratio(),
+        decks[1].position(),
+        made = counter.load(Ordering::Relaxed) - before
+    );
+    assert_eq!(
+        counter.load(Ordering::Relaxed) - before,
+        0,
+        "nothing to chase"
+    );
+    assert_eq!(decks[1].position(), position, "the head stays where it was");
+    assert_eq!(decks[1].tempo_ratio(), trimmed, "and so does the speed");
+}
+
+#[test]
+fn a_lone_deck_does_not_lead_itself() {
+    // Before this rule a single playing deck picked itself as master, so sync did nothing at all while
+    // looking like it should: the follower sat on the beat of a leader that was itself.
+    let seeks = Arc::new(AtomicU32::new(0));
+    let counter = Arc::clone(&seeks);
+    let mut decks = vec![deck_with_grid(DeckId::B, 120.0, 0, Arc::clone(&seeks))];
+    decks[0].play();
+    decks[0].set_sync(SyncMode::Beat);
+    let frames = decks[0].position();
+    let before = counter.load(Ordering::Relaxed);
+    let mut memory = SyncMemory::default();
+    for _ in 0..25 {
+        sync_step(&mut decks, &mut memory, STEP_SECONDS);
+    }
+    assert_eq!(counter.load(Ordering::Relaxed) - before, 0);
+    assert_eq!(decks[0].position(), frames);
+    assert!((decks[0].tempo_ratio() - 1.0).abs() < 1e-12);
+}

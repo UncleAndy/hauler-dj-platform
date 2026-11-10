@@ -262,6 +262,16 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
     match &command.command {
         // One master at a time: making a deck lead takes the flag off every other deck, so two decks
         // can never both claim to be the beat everything else follows (DJP-SYNC-001).
+        DjCommand::MasterOff => {
+            for deck in decks.iter_mut() {
+                deck.set_master(false);
+                // Following nothing is not a speed: the deck keeps the tempo it was given and plays on.
+                if !deck.sync().is_off() {
+                    deck.set_sync(SyncMode::Off);
+                }
+            }
+            Ack::applied(id, at)
+        }
         DjCommand::Master { deck: chosen } => {
             if !decks.iter().any(|candidate| candidate.id() == *chosen) {
                 return Ack {
@@ -696,19 +706,6 @@ impl SyncMemory {
 
 /// Which deck leads: the one a hand made master, else the first playing deck with a beat, else the
 /// first deck that has one. Deterministic, so the phase meter cannot flicker between two masters.
-fn master_index(decks: &[Deck]) -> Option<usize> {
-    let has_beat = |deck: &Deck| deck.has_source() && deck.beat_grid().is_some();
-    decks
-        .iter()
-        .position(|deck| deck.master() && has_beat(deck))
-        .or_else(|| {
-            decks
-                .iter()
-                .position(|deck| deck.is_playing() && has_beat(deck))
-        })
-        .or_else(|| decks.iter().position(has_beat))
-}
-
 /// What the master's beat is, read once: the followers are compared against one instant.
 fn master_reading(deck: &Deck) -> Option<Reading> {
     let grid = deck.beat_grid()?;
@@ -741,21 +738,29 @@ pub fn sync_step(decks: &mut [Deck], memory: &mut SyncMemory, seconds: f64) {
     let limits = PitchLimits::default();
     let trim = RateTrim::default();
     memory.tick();
-    let Some(master_index) = master_index(decks) else {
-        return;
-    };
-    // A stopped deck still says what the tempo is, and following its speed is legal. Its beat, though,
-    // stands still: a follower pulled onto a beat that is not moving is pulled back every step, and a
-    // deck asked to seek four times a second never gets to play its material. So the beat is only
-    // followed while the master is running.
-    let master_running = decks[master_index].is_playing();
-    let Some(master) = master_reading(&decks[master_index]) else {
-        return;
-    };
-    for (index, deck) in decks.iter_mut().enumerate() {
-        if index == master_index {
-            continue;
+    // Resolved before the loop and per follower: the master is a deck, and a deck cannot lead itself.
+    // Fixed arrays and no allocation: this runs in the audio callback, where a Vec is a defect measured
+    // by `the_callback_path_does_not_allocate`.
+    let explicit = decks.iter().position(|deck| deck.master());
+    let mut readings: [Option<(Reading, bool)>; MAX_DECKS] = [None; MAX_DECKS];
+    for (index, deck) in decks.iter().enumerate().take(MAX_DECKS) {
+        if deck.has_source() && deck.beat_grid().is_some() {
+            // A stopped deck still says what the tempo is, and following its speed is legal. Its beat,
+            // though, stands still: a follower pulled onto a beat that is not moving is pulled back
+            // every step, and a deck asked to seek four times a second never gets to play its material.
+            // So the beat is only followed while the master is running.
+            readings[index] = master_reading(deck).map(|reading| (reading, deck.is_playing()));
         }
+    }
+    for (index, deck) in decks.iter_mut().enumerate() {
+        let leader = explicit.filter(|master| *master != index).or_else(|| {
+            (0..readings.len()).find(|master| *master != index && readings[*master].is_some())
+        });
+        let Some((master, master_running)) =
+            leader.and_then(|master| readings.get(master).copied().flatten())
+        else {
+            continue;
+        };
         let mode = deck.sync();
         if mode.is_off() || !deck.has_source() {
             continue;

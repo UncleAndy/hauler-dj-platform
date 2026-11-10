@@ -175,7 +175,7 @@ impl Engine {
         let status = match scheduled.command {
             // The A01 renderer holds one tone and no beat: a deck to follow or to lead does not exist
             // here, and saying so is better than pretending the flag did something.
-            DjCommand::Sync { .. } | DjCommand::Master { .. } => Some(Ack {
+            DjCommand::Sync { .. } | DjCommand::Master { .. } | DjCommand::MasterOff => Some(Ack {
                 command_id,
                 status: AckStatus::Rejected(RejectReason::NotSupported),
             }),

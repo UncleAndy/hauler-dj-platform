@@ -6853,6 +6853,63 @@ int main(int argc, char *argv[])
             return 1;
         }
 
+        // Putting the master down: the mode goes with it and the deck plays on exactly as it was — the
+        // tempo a hand set is a decision, not a state to undo (owner's rule).
+        if (!press(QStringLiteral("syncBeat_B"))) {
+            return 1;
+        }
+        const bool following_again = waitFor(
+            [&]() {
+                return modeOf(QStringLiteral("B")) == QStringLiteral("beat");
+            },
+            5000);
+        if (!following_again) {
+            std::fprintf(stderr, "dj-ui: the sync button did not take before the master went\n");
+            return 1;
+        }
+        const double ratio_before = deckOf(QStringLiteral("B"))
+                                        .value(QStringLiteral("tempo_ratio"))
+                                        .toDouble();
+        if (!press(QStringLiteral("syncMaster_A"))) {
+            return 1;
+        }
+        const bool leader_gone = waitFor(
+            [&]() {
+                return !deckOf(QStringLiteral("A")).value(QStringLiteral("master")).toBool()
+                       && modeOf(QStringLiteral("B")) == QStringLiteral("off");
+            },
+            5000);
+        if (!leader_gone) {
+            std::fprintf(stderr,
+                         "dj-ui: with the master put down the follower is A master %d, B mode %s\n",
+                         deckOf(QStringLiteral("A")).value(QStringLiteral("master")).toBool(),
+                         qPrintable(modeOf(QStringLiteral("B"))));
+            return 1;
+        }
+        const double ratio_after = deckOf(QStringLiteral("B"))
+                                       .value(QStringLiteral("tempo_ratio"))
+                                       .toDouble();
+        const double head_at_release = frameOf(QStringLiteral("B"));
+        QElapsedTimer playing_on;
+        playing_on.start();
+        while (playing_on.elapsed() < 700) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QThread::msleep(10);
+        }
+        const double head_later = frameOf(QStringLiteral("B"));
+        if (std::abs(ratio_after - ratio_before) > 1e-9) {
+            std::fprintf(stderr,
+                         "dj-ui: the tempo moved when the master went (%.9 -> %.9)\n",
+                         ratio_before, ratio_after);
+            return 1;
+        }
+        if (head_later - head_at_release < 0.3 * rate) {
+            std::fprintf(stderr,
+                         "dj-ui: the deck stopped when the master went (%.0f frames in 0,7 s)\n",
+                         head_later - head_at_release);
+            return 1;
+        }
+
         // Both decks back to quiet: the next check loads its own file, and a deck that is still playing
         // does not take a load.
         bridge->play(QStringLiteral("A"), false);
@@ -6867,9 +6924,11 @@ int main(int argc, char *argv[])
         std::fprintf(stdout,
                      "dj-ui: sync — MASTER on A and SYNC on B put the follower on the beat (phase %.3f "
                      "ms), a stopped follower held its head at %.0f frames for 1,2 s while the needle "
-                     "stood still, and one beat along the bar (%.3f beats) moved the needle %.0f px off "
-                     "centre\n",
-                     phase_playing, held_at, bar_along, offCentre);
+                     "stood still, one beat along the bar (%.3f beats) moved the needle %.0f px off "
+                     "centre, and putting the master down cleared the mode while the deck kept its "
+                     "speed %.9f and played %.0f frames on\n",
+                     phase_playing, held_at, bar_along, offCentre, ratio_after,
+                     head_later - head_at_release);
         return 0;
     }
 

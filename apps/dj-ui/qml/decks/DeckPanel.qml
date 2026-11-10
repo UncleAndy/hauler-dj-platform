@@ -619,8 +619,12 @@ Pane {
                     focusPolicy: Qt.NoFocus
                     highlighted: panel.isMaster
                     ToolTip.visible: hovered
-                    ToolTip.text: qsTr("The deck the others follow")
-                    onClicked: Bridge.setMaster(panel.deckId)
+                    ToolTip.text: panel.isMaster
+                                  ? qsTr("Press again to leave the others without a leader")
+                                  : qsTr("The deck the others follow")
+                    // A master is a state, not a latch: pressing the button that lit it puts it down.
+                    // The decks that followed stop following and keep playing as they were.
+                    onClicked: panel.isMaster ? Bridge.clearMaster() : Bridge.setMaster(panel.deckId)
                 }
                 Button {
                     objectName: "syncBeat_" + panel.deckId

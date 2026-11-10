@@ -516,6 +516,12 @@ pub enum DjCommand {
         /// The deck that leads.
         deck: DeckId,
     },
+    /// No deck leads until a hand names one (DJP-SYNC-001).
+    ///
+    /// The decks that were following stop following, and keep playing exactly as they were: the tempo
+    /// a hand set is a decision, not a state to undo. A lit SYNC over nothing would be a button lying
+    /// about what it does, so the mode goes off with the leader.
+    MasterOff,
     /// Bend the rate the way a hand on the platter does (DJP-DECK-006): `-1 … 1`, zero lets go.
     ///
     /// Continuous: the shell sends the deflection while the control is held and zero on release. It is
@@ -625,6 +631,7 @@ impl DjCommand {
             | DjCommand::SetReverse { .. }
             | DjCommand::Sync { .. }
             | DjCommand::Master { .. }
+            | DjCommand::MasterOff
             | DjCommand::Load { .. }
             | DjCommand::AnalyzeTempo { .. }
             | DjCommand::EditGrid { .. }
