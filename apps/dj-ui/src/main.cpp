@@ -7911,12 +7911,16 @@ int main(int argc, char *argv[])
             }
             return false;
         };
+        // The width to come back to is whatever the layout held, not a number written into the check: a
+        // hand that set 130 px must not turn a red check green, and the check must not go red because the
+        // layout it was handed is not the one a fresh install has.
         const qreal railBefore = rail->width();
-        panel->setProperty("railWidth", 140);
-        const bool grew = railWidthBecomes(140);
+        const int railHome = qRound(railBefore);
+        panel->setProperty("railWidth", railHome + 40);
+        const bool grew = railWidthBecomes(railHome + 40);
         const qreal railAfter = rail->width();
-        panel->setProperty("railWidth", 92);
-        const bool shrank = railWidthBecomes(92);
+        panel->setProperty("railWidth", railHome);
+        const bool shrank = railWidthBecomes(railHome);
         const qreal railBack = rail->width();
         if (!grew || !shrank || !(railAfter > railBefore + 20.0 && qAbs(railBack - railBefore) < 2.0)) {
             std::fprintf(stderr, "dj-ui: the rail width did not follow the setting (%.0f, %.0f, "
