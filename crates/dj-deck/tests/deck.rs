@@ -200,16 +200,21 @@ fn saving_a_playing_loop_on_a_pad_keeps_the_sound_where_it_is() {
     deck.render(&mut after);
     // The wrap is where the deck evens out the step of the seam (two milliseconds, DJP-DECK-005): the
     // copy is the material everywhere else, and at the seam itself it must not step.
+    // The seam crossfade is the last two milliseconds of the loop: the tail fades out while the head
+    // fades in, and the pass after it starts at the head's ninety-seventh frame — the head's first two
+    // milliseconds are heard during the fades only. So the material after the wrap is the region shifted
+    // by the fade, and inside the fade the sample is a blend of two places, not one.
     let seam = 2_000u64.saturating_sub(1_400) as usize;
+    let fade = seam - 96;
     for frame in 0..1_000usize {
         let position = 1_400 + frame as u64;
         let wrapped = if position < 2_000 {
             position
         } else {
-            1_000 + (position - 2_000)
+            1_000 + 96 + (position - 2_000)
         };
         let expected = ramp(wrapped);
-        if (seam..seam + 96).contains(&frame) {
+        if (fade..seam).contains(&frame) {
             continue;
         }
         assert!(
@@ -218,8 +223,8 @@ fn saving_a_playing_loop_on_a_pad_keeps_the_sound_where_it_is() {
             after[frame * 2]
         );
     }
-    let mut previous = after[(seam - 1) * 2];
-    for frame in seam..(seam + 96).min(1_000) {
+    let mut previous = after[(fade - 1) * 2];
+    for frame in fade..seam.min(1_000) {
         let step = (after[frame * 2] - previous).abs();
         assert!(
             step < 0.01,

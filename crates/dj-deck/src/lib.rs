@@ -60,14 +60,19 @@ const TEMPO_GLIDE_SECONDS: f64 = 0.03;
 /// rate change never allocates inside the callback.
 const MAX_TEMPO_BLOCK_FRAMES: usize = 8192;
 
-/// How long a step at the loop's seam is evened out, in frames.
+/// How long the loop's seam is crossfaded, in frames.
 ///
 /// A copy that jumps from the last frame of the loop to the first is a step: the material stops in the
 /// middle of a waveform and starts in the middle of another one, and the ear hears the step as a click.
-/// The fix is the oldest one in audio — the copy starts at the level the sound had a frame ago and walks
-/// to its own level over two milliseconds. Not a crossfade: nothing is repeated, the loop keeps its
-/// length, and the correction decays to nothing.
-const LOOP_DECLICK_FRAMES: usize = 96;
+/// The cure is a crossfade of equal power: the last two milliseconds of the loop and the first two of it
+/// are played together, the tail fading out while the head fades in. Both are real material, so there is
+/// no step and no bump on the level — the loop sounds as if it had always continued, which is what a DJ
+/// mixer's loop does. A decaying offset instead of this was tried first and made the seam worse: it
+/// shifted two milliseconds by the whole step and the ear heard a thump.
+///
+/// The price is two milliseconds of the loop: the seam is shorter than the region by this much, and the
+/// loop keeps that length on every pass.
+const LOOP_SEAM_FRAMES: usize = 96;
 
 /// Where a deck reads frames from. Implemented by the prefetcher; tests provide their own.
 pub trait DeckSource: Send {
@@ -257,11 +262,8 @@ pub struct Deck {
     loop_buffer: Option<LoopBuffer>,
     /// True while the playhead reads the captured loop instead of the source.
     reading_loop_buffer: bool,
-    /// Frames left of the seam correction, and the step it is even out, per channel.
-    declick_left: usize,
-    declick_step: [f32; 2],
-    /// The last frame this deck put out, so a copy can start where the sound was instead of jumping.
-    last_out: [f32; 2],
+    /// How far the seam crossfade has run, in frames: zero when the loop is playing its middle.
+    seam_faded: usize,
     /// Where the captured buffer stops being used after the loop was switched off: the playhead keeps
     /// reading the copy it is in the middle of until it reaches this frame, and the decoder — which sits
     /// exactly there — takes over. That is the only way to leave a loop without a click.
@@ -357,10 +359,8 @@ impl Deck {
             loop_config: LoopConfig::default(),
             loop_buffer: None,
             reading_loop_buffer: false,
+            seam_faded: 0,
             drain_until: None,
-            declick_left: 0,
-            declick_step: [0.0; 2],
-            last_out: [0.0; 2],
             eq: ChannelEq::new(EQ_SAMPLE_RATE),
             output_rate: EQ_SAMPLE_RATE as u32,
             rate_ratio: 1.0,
@@ -1244,13 +1244,6 @@ impl Deck {
             self.render_keylocked(out);
         }
 
-        // What the material ended on, before any gain or EQ: the seam correction is a correction of the
-        // material, and mixing the two domains would compare a quiet frame with a loud one.
-        if let Some(last) = out.len().checked_sub(2)
-            && out.len() >= 2
-        {
-            self.last_out = [out[last], out[last + 1]];
-        }
         // Trim, then the measured correction: both are gain staging before the EQ, and neither one is
         // visible on the knob.
         let staging = self.gain * self.auto_gain;
@@ -1576,48 +1569,42 @@ impl Deck {
         let take = want.min(frames - offset);
         out[..take * 2].copy_from_slice(&buffer.data[offset * 2..(offset + take) * 2]);
         // A copy that is being drained (the loop was switched off) must come out exactly as it was
-        // recorded: the correction belongs to a seam that repeats, not to the last pass.
+        // recorded: the crossfade belongs to a seam that repeats, not to the last pass.
         if !wrapping {
-            self.declick_left = 0;
+            self.seam_faded = 0;
         }
-        // The seam: the copy starts where the material is, but the sound was somewhere else a frame ago.
-        // The correction walks the first two milliseconds from that somewhere else to the copy's own
-        // level, so nothing steps.
-        for index in 0..take {
-            if self.declick_left == 0 {
-                break;
+        // The seam, crossfaded: over the last two milliseconds of the loop the copy's tail fades out
+        // while its head fades in, so the wrap is a continuation and not a step.
+        if wrapping {
+            let fade_from = frames.saturating_sub(LOOP_SEAM_FRAMES);
+            for index in 0..take {
+                let at = offset + index;
+                if at < fade_from {
+                    continue;
+                }
+                let share = (at - fade_from + 1) as f32 / LOOP_SEAM_FRAMES as f32;
+                let into = at - fade_from;
+                let tail = (fade_from + into).min(frames - 1);
+                let head = into.min(frames - 1);
+                // Equal *gain*, not equal power: musical material at a loop seam is strongly correlated
+                // (it is the same track two milliseconds apart), and equal power would sum the two halves
+                // into a swell of up to three decibels. A linear fade keeps their sum at one.
+                let out_gain = 1.0 - share;
+                let in_gain = share;
+                for channel in 0..2 {
+                    out[index * 2 + channel] = buffer.data[tail * 2 + channel] * out_gain
+                        + buffer.data[head * 2 + channel] * in_gain;
+                }
             }
-            let share = self.declick_left as f32 / LOOP_DECLICK_FRAMES as f32;
-            out[index * 2] += self.declick_step[0] * share;
-            out[index * 2 + 1] += self.declick_step[1] * share;
-            self.declick_left -= 1;
         }
         self.position += take as u64;
         heard += take as u64;
         if wrapping && heard >= end {
-            self.position = self.read_at(start);
+            // The head has been played during the fade: the next pass starts past it.
+            self.position = self.read_at(start + LOOP_SEAM_FRAMES as u64);
             self.stats.loop_wraps += 1;
-            // The next frame out is the loop's first, and the one before it was the loop's last.
-            let frames_of_loop = usize::try_from(buffer.frames()).unwrap_or(0);
-            if frames_of_loop > 0 {
-                let tail = (frames_of_loop - 1) * 2;
-                self.arm_declick(
-                    [buffer.data[tail], buffer.data[tail + 1]],
-                    [buffer.data[0], buffer.data[1]],
-                );
-            }
         }
         Some(take)
-    }
-
-    /// Arm the seam correction from the copy's own tail: `tail` is its last frame, `head` its first.
-    ///
-    /// The reference is the loop's last frame, not the last frame that happened to leave the deck: both
-    /// the wrap and the first entry into the copy jump from that tail, and taking it from the material
-    /// keeps the correction right even when the block in between was cut short.
-    fn arm_declick(&mut self, tail: [f32; 2], head: [f32; 2]) {
-        self.declick_step = [tail[0] - head[0], tail[1] - head[1]];
-        self.declick_left = LOOP_DECLICK_FRAMES;
     }
 
     /// Read-only state for displays and the UI (fields ordered by display priority, ADR-0006).
