@@ -154,9 +154,14 @@ pub struct LoopConfig {
     pub buffer_max_seconds: f64,
     /// Length of the seam crossfade, in milliseconds. Zero plays the seam as a cut.
     ///
-    /// A setting because the right length is a matter of the material: two milliseconds hides a step in a
-    /// tone and is nothing to a kick, where the ear wants the cut to be a musical join. Zero exists for
-    /// the measurement that decides the default, and for a DJ who prefers the raw cut.
+    /// A setting because the right length is a matter of the material: a millisecond hides a step in a
+    /// dense mix and is nothing to a kick, where the ear wants the cut to be a musical join. Zero exists
+    /// for the measurement that decides the default, and for a DJ who prefers the raw cut.
+    ///
+    /// Measured on the reference tracks as the broadband burst at the seam against the same statistic
+    /// away from it: one millisecond is the best of 0, 0,5, 1, 2, 5 and 10 on both a dense track (0,3x
+    /// against 1,3x with no fade) and a sparse one (6,2x against 12,7x); longer fades blend two different
+    /// musical moments and read worse.
     pub seam_ms: f64,
 }
 
@@ -164,7 +169,7 @@ impl Default for LoopConfig {
     fn default() -> Self {
         Self {
             buffer_max_seconds: 30.0,
-            seam_ms: 2.0,
+            seam_ms: 1.0,
         }
     }
 }
