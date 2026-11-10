@@ -7446,10 +7446,83 @@ int main(int argc, char *argv[])
                          small, bigger, back);
             return 1;
         }
+        // The rail's width is adjustable, and the divider is the only thing that adjusts it.
+        QQuickItem *rail = panel->findChild<QQuickItem *>(QStringLiteral("browserSections"));
+        QQuickItem *splitterItem = panel->findChild<QQuickItem *>(QStringLiteral("browserRailSplitter"));
+        if (rail == nullptr || splitterItem == nullptr) {
+            std::fprintf(stderr, "dj-ui: the browser has no sections rail or no divider\n");
+            return 1;
+        }
+        // A layout re-polishes on the next frame: the check waits for the width instead of reading a
+        // value that may not have been laid out yet.
+        const auto railWidthBecomes = [&](int want) {
+            for (int attempt = 0; attempt < 60; ++attempt) {
+                QCoreApplication::processEvents();
+                QThread::msleep(10);
+                if (qAbs(rail->width() - static_cast<qreal>(want)) < 2.0) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        const qreal railBefore = rail->width();
+        panel->setProperty("railWidth", 140);
+        const bool grew = railWidthBecomes(140);
+        const qreal railAfter = rail->width();
+        panel->setProperty("railWidth", 92);
+        const bool shrank = railWidthBecomes(92);
+        const qreal railBack = rail->width();
+        if (!grew || !shrank || !(railAfter > railBefore + 20.0 && qAbs(railBack - railBefore) < 2.0)) {
+            std::fprintf(stderr, "dj-ui: the rail width did not follow the setting (%.0f, %.0f, "
+                                 "%.0f)\n",
+                         railBefore, railAfter, railBack);
+            return 1;
+        }
+
+        // The section text is the same type as the list: one control for the browser, not two.
+        // The section text is the same type as the list: one control for the browser, not two.
+        // Measured on the label the rail actually renders, not on the property that feeds it.
+        // Delegates of a Repeater are item children of the rail but not QObject children of the
+        // panel, so the search walks the item tree instead of findChild.
+        std::function<QQuickItem *(QQuickItem *, const QString &)> findInItems =
+            [&](QQuickItem *root, const QString &name) -> QQuickItem * {
+            if (root == nullptr) {
+                return nullptr;
+            }
+            if (root->objectName() == name) {
+                return root;
+            }
+            for (QQuickItem *child : root->childItems()) {
+                if (QQuickItem *hit = findInItems(child, name)) {
+                    return hit;
+                }
+            }
+            return nullptr;
+        };
+        QQuickItem *sectionRow = findInItems(panel, QStringLiteral("section_files"));
+        if (sectionRow == nullptr || sectionRow->childItems().isEmpty()) {
+            std::fprintf(stderr, "dj-ui: the sections rail has no label to measure\n");
+            return 1;
+        }
+        QQuickItem *sectionLabel = sectionRow->childItems().first();
+        const int sectionBefore = sectionLabel->property("font").value<QFont>().pixelSize();
+        QMetaObject::invokeMethod(plus, "clicked");
+        QCoreApplication::processEvents();
+        const int sectionAfter = sectionLabel->property("font").value<QFont>().pixelSize();
+        QMetaObject::invokeMethod(minus, "clicked");
+        QCoreApplication::processEvents();
+        const int sectionBack = sectionLabel->property("font").value<QFont>().pixelSize();
+        if (sectionAfter != sectionBefore + 1 || sectionBack != sectionBefore) {
+            std::fprintf(stderr, "dj-ui: the section text did not follow the preset (%d, %d, %d)\n",
+                         sectionBefore, sectionAfter, sectionBack);
+            return 1;
+        }
+
         std::fprintf(stdout,
-                     "dj-ui: browser selects and acts, selection follows the click, \"..\" goes up "
-                     "and the text size moves the row (%d px)\n",
-                     small);
+                     "dj-ui: browser selects and acts, selection follows the click, \"..\" goes up, "
+                     "the text size moves the row and the sections (%d px), and the rail is "
+                     "%.0f px wide\n",
+                     small, railAfter);
         return 0;
     }
 

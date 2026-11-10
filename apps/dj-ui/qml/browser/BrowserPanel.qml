@@ -43,13 +43,17 @@ Pane {
     // The row grows with its text: a bigger font in a fixed row is a clipped font.
     readonly property int rowHeight: browser.listFont + 7
 
+    // Width of the sections rail, in pixels, and the range a drag may leave it in: a rail narrower
+    // than its longest word is a smudge, a rail wider than the download is a list with no room.
+    property int railWidth: 92
+    readonly property int minRailWidth: 72
+    readonly property int maxRailWidth: 260
+
+    // Section text follows the list's text: one control for the browser's type, not two.
+    readonly property int sectionFont: Math.max(8, browser.listFont - 1)
+
     // The sections rail. Today there is one section; the collection and the playlists are the next
-    // two entries and need no new layout, only a line in this list.
-    readonly property var sections: [
-        { key: "files", title: qsTr("Files"), ready: true },
-        { key: "collection", title: qsTr("Collection"), ready: false },
-        { key: "playlists", title: qsTr("Playlists"), ready: false }
-    ]
+    // two entries and need no new layout, only a row in sectionModel.
 
     function stepFont(delta) {
         browser.listFont = Math.max(browser.minListFont,
@@ -110,39 +114,99 @@ Pane {
         // be their own views behind their own entries.
         ColumnLayout {
             objectName: "browserSections"
-            Layout.preferredWidth: 92
+            // The rail takes exactly what the divider gives it: a layout that may stretch it would
+            // make the divider a decoration.
+            Layout.preferredWidth: browser.railWidth
+            Layout.minimumWidth: browser.railWidth
+            Layout.maximumWidth: browser.railWidth
             Layout.fillHeight: true
             spacing: 2
 
             Label {
+                objectName: "sectionHeading"
                 text: qsTr("Sections")
-                font.pixelSize: 9
+                font.pixelSize: Math.max(8, browser.sectionFont - 1)
                 font.bold: true
                 color: UiSettings.themeTextDim
             }
+            ListModel {
+                id: sectionModel
+                ListElement {
+                    key: "files"
+                    title: "Files"
+                    ready: true
+                }
+                ListElement {
+                    key: "collection"
+                    title: "Collection"
+                    ready: false
+                }
+                ListElement {
+                    key: "playlists"
+                    title: "Playlists"
+                    ready: false
+                }
+            }
             Repeater {
-                model: browser.sections
+                model: sectionModel
                 delegate: Rectangle {
-                    required property var modelData
-                    objectName: "section_" + modelData.key
+                    required property string key
+                    required property string title
+                    required property bool ready
+                    objectName: "section_" + key
                     Layout.fillWidth: true
-                    height: 18
+                    height: browser.rowHeight
                     // Only Files exists today; the others are dimmed until they do, rather than
                     // pretending to be a place that holds nothing.
-                    color: modelData.ready ? UiSettings.themeAccentDim : "transparent"
+                    color: ready ? UiSettings.themeAccentDim : "transparent"
                     radius: 2
                     Label {
+                        objectName: "sectionLabel_" + key
                         anchors.left: parent.left
                         anchors.leftMargin: 6
                         anchors.verticalCenter: parent.verticalCenter
-                        text: modelData.title
-                        font.pixelSize: 10
-                        color: modelData.ready ? UiSettings.themeText : UiSettings.themeWaveOutline
+                        width: parent.width - 8
+                        text: title
+                        font.pixelSize: browser.sectionFont
+                        elide: Text.ElideRight
+                        color: ready ? UiSettings.themeText : UiSettings.themeWaveOutline
                     }
                 }
             }
             Item {
                 Layout.fillHeight: true
+            }
+        }
+
+        // The divider: its width is the rail's width, and dragging it is the only way to change it.
+        Rectangle {
+            id: railSplitter
+            objectName: "browserRailSplitter"
+            Layout.fillHeight: true
+            Layout.preferredWidth: 5
+            color: railDrag.pressed ? UiSettings.themeAccent : UiSettings.themeBorder
+
+            MouseArea {
+                id: railDrag
+                anchors.fill: parent
+                anchors.leftMargin: -3
+                anchors.rightMargin: -3
+                cursorShape: Qt.SplitHCursor
+                property real anchorX: 0
+                property int anchorWidth: 0
+                onPressed: {
+                    railDrag.anchorX = mouse.x;
+                    railDrag.anchorWidth = browser.railWidth;
+                }
+                onPositionChanged: {
+                    if (!railDrag.pressed) {
+                        return;
+                    }
+                    const moved = Math.round(mouse.x - railDrag.anchorX);
+                    browser.railWidth = Math.max(browser.minRailWidth,
+                                                 Math.min(browser.maxRailWidth,
+                                                          railDrag.anchorWidth + moved));
+                }
             }
         }
 
