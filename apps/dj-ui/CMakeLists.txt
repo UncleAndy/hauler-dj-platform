@@ -57,6 +57,12 @@ target_include_directories(dj-ui PRIVATE
 
 target_link_libraries(dj-ui PRIVATE Qt6::Quick Qt6::Network)
 
+# A format string is checked by the compiler or by nobody: a `%.9` that lost its `f` printed garbage on
+# the screen and the build said nothing. Warnings are on, and a broken format is an error, because that
+# defect shows up as nonsense in front of a person rather than as a hint in a log.
+target_compile_options(dj-ui PRIVATE -Wall -Wextra -Werror=format)
+
+
 set_target_properties(dj-ui PROPERTIES
     WIN32_EXECUTABLE OFF
     MACOSX_BUNDLE OFF

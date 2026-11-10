@@ -1943,21 +1943,12 @@ int main(int argc, char *argv[])
         const double knobBottom = knob->mapToItem(content, QPointF(0, knob->height())).y();
         const double meterTop = meter->mapToItem(content, QPointF(0, 0)).y();
         const double meterBottom = meter->mapToItem(content, QPointF(0, meter->height())).y();
-        const double deckMeterTop = meterA->mapToItem(content, QPointF(0, 0)).y();
         const double deckMeterBottom = meterA->mapToItem(content, QPointF(0, meterA->height())).y();
         std::fprintf(stdout, "dj-ui: the master meter starts %.0f px below the knob and ends %.0f px "
                              "from the deck meters; heights %.0f and %.0f px\n",
                      meterTop - knobBottom, meterBottom - deckMeterBottom, meter->height(),
                      meterA->height());
         auto *row = item(QStringLiteral("stripRow"));
-        const auto place = [&](QQuickItem *what, const char *name) {
-            if (what == nullptr) {
-                std::fprintf(stdout, "dj-ui:   %s missing\n", name);
-                return;
-            }
-            const QPointF at = what->mapToItem(content, QPointF(0, 0));
-            std::fprintf(stdout, "dj-ui:   %s y %.0f h %.0f\n", name, at.y(), what->height());
-        };
         if (meterTop < knobBottom) {
             std::fprintf(stderr, "dj-ui: the master knob overlaps the meter\n");
             return 1;
@@ -3430,7 +3421,6 @@ int main(int argc, char *argv[])
                          rawStart);
             return 1;
         }
-        const qint64 rawEnd = loopRegion().value(QStringLiteral("end")).toLongLong();
         bridge->setLoop(QStringLiteral("A"), false, 0, 0);
         if (!waitFor([&]() { return loopStart() < 0; }, 5000)) {
             return 1;
@@ -6899,7 +6889,7 @@ int main(int argc, char *argv[])
         const double head_later = frameOf(QStringLiteral("B"));
         if (std::abs(ratio_after - ratio_before) > 1e-9) {
             std::fprintf(stderr,
-                         "dj-ui: the tempo moved when the master went (%.9 -> %.9)\n",
+                         "dj-ui: the tempo moved when the master went (%.9f -> %.9f)\n",
                          ratio_before, ratio_after);
             return 1;
         }

@@ -293,6 +293,10 @@ void BridgeClient::sendJson(const QJsonObject &message)
 
 int BridgeClient::sendCommand(const QString &deck, const QJsonObject &command)
 {
+    // The deck travels inside the command itself; the argument is here so a call site reads as "this is
+    // a command for deck A" rather than as a bare object, and the engine takes the target from the
+    // command body it receives.
+    Q_UNUSED(deck)
     const int id = m_nextCommandId++;
     QJsonObject scheduled;
     scheduled.insert(QStringLiteral("id"), id);
