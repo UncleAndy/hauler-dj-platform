@@ -65,6 +65,11 @@ impl DeckSource for CachedSource {
         Ok(take)
     }
 
+    /// Memory: a seek is an index assignment, so the deck may walk this source backwards.
+    fn seeks_are_immediate(&self) -> bool {
+        true
+    }
+
     fn seek(&mut self, frame: u64) -> Result<u64, String> {
         // The same rule the other sources keep: a play head never leaves the material, and frame zero of
         // an empty file is not a frame at all.
@@ -106,6 +111,11 @@ impl DeckSource for CachedReaderSource {
         self.reader
             .read_frames(out)
             .map_err(|error| format!("cache: {error}"))
+    }
+
+    /// Memory: a seek is an index assignment, so the deck may walk this source backwards.
+    fn seeks_are_immediate(&self) -> bool {
+        true
     }
 
     fn seek(&mut self, frame: u64) -> Result<u64, String> {

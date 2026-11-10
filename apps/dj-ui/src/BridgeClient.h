@@ -120,6 +120,7 @@ public:
     Q_INVOKABLE int nudge(const QString &deck, double amount);
     /// Slip: the sound may jump or repeat while the track under it keeps running (DJP-DECK-007).
     Q_INVOKABLE int setSlip(const QString &deck, bool enabled);
+    Q_INVOKABLE int setReverse(const QString &deck, bool enabled);
     Q_INVOKABLE int setCrossfader(double position);
     Q_INVOKABLE int setChannelGain(const QString &deck, double gain);
     /// Playback rate of a deck: 1.0 is the file's own speed, and the pitch moves with it.

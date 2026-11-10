@@ -222,6 +222,7 @@ impl Engine {
             | DjCommand::BeatJump { .. }
             | DjCommand::Nudge { .. }
             | DjCommand::SetSlip { .. }
+            | DjCommand::SetReverse { .. }
             | DjCommand::Load { .. }
             | DjCommand::AnalyzeTempo { .. }
             | DjCommand::EditGrid { .. }
@@ -270,6 +271,8 @@ impl Engine {
                 load: dj_domain::DeckLoad::Ready,
                 playing: self.playing,
                 analyzing: false,
+                // A generated tone is not a file, so it has nothing to play backwards.
+                reverse: false,
                 // The A01 renderer plays a tone it generated: it has no grid, so nothing clicks.
                 metronome: false,
                 clicks: 0,

@@ -55,6 +55,7 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
         | DjCommand::Nudge { deck, .. }
         | DjCommand::BeatJump { deck, .. }
         | DjCommand::SetSlip { deck, .. }
+        | DjCommand::SetReverse { deck, .. }
         | DjCommand::Metronome { deck, .. }
         | DjCommand::Eject { deck }
         | DjCommand::Load { deck, .. } => Some(*deck),
@@ -223,6 +224,19 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
             DjCommand::SetSlip { enabled, .. } => {
                 target.set_slip(*enabled);
                 Ack::applied(id, at)
+            }
+            // Reverse walks the material backwards from the playhead. A track still streaming from disk
+            // has no cheap seek, so the deck refuses — and the client is told, rather than left waiting
+            // for a callback that would have to block on a decoder.
+            DjCommand::SetReverse { enabled, .. } => {
+                if target.set_reverse(*enabled) == *enabled {
+                    Ack::applied(id, at)
+                } else {
+                    Ack {
+                        command_id: id,
+                        status: AckStatus::Rejected(RejectReason::NotSupported),
+                    }
+                }
             }
             // A jump is measured on the deck's own grid: the DJ asks for beats, not for frames, and a
             // deck without a grid has no beats to give — that refusal is the honest answer.
@@ -483,6 +497,7 @@ struct DeckCells {
     // Slip and its virtual head: the ghost marker a client draws beside the play head.
     slip: AtomicBool,
     slip_frame: AtomicU64,
+    reverse: AtomicBool,
 }
 
 impl DeckCells {
@@ -509,6 +524,7 @@ impl DeckCells {
             nudge: AtomicU32::new(0.0f32.to_bits()),
             slip: AtomicBool::new(false),
             slip_frame: AtomicU64::new(EMPTY),
+            reverse: AtomicBool::new(false),
         }
     }
 }
@@ -774,6 +790,7 @@ impl StateCells {
                 .nudge
                 .store((deck.nudge() as f32).to_bits(), Ordering::Relaxed);
             cells.slip.store(deck.slip(), Ordering::Relaxed);
+            cells.reverse.store(deck.reverse(), Ordering::Relaxed);
             cells
                 .slip_frame
                 .store(deck.slip_frame().unwrap_or(EMPTY), Ordering::Relaxed);
@@ -929,6 +946,7 @@ impl StateCells {
                 tempo_ratio: f64::from_bits(cells.tempo.load(Ordering::Relaxed)),
                 nudge: f32::from_bits(cells.nudge.load(Ordering::Relaxed)),
                 slip: cells.slip.load(Ordering::Relaxed),
+                reverse: cells.reverse.load(Ordering::Relaxed),
                 slip_frame: {
                     let frame = cells.slip_frame.load(Ordering::Relaxed);
                     (frame != EMPTY).then_some(SourceFrame(frame))

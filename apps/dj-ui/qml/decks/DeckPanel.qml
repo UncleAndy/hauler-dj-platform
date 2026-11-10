@@ -921,6 +921,22 @@ Pane {
                                    + "running; leaving a loop puts the sound back on the track's clock")
                 onClicked: Bridge.setSlip(panel.deckId, panel.deck.slip !== true)
             }
+            // Reverse walks the material backwards from the playhead. It lights like the other modes,
+            // and it refuses on a track that is still streaming: the engine says so instead of stalling.
+            Button {
+                objectName: "reverse_" + panel.deckId
+                text: qsTr("Rev")
+                font.pixelSize: 11
+                width: 46
+                height: 20
+                enabled: panel.live
+                focusPolicy: Qt.NoFocus
+                highlighted: panel.deck.reverse === true
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Plays the material backwards from the playhead; a track held in "
+                                   + "the cache can do it, one still reading from disk cannot")
+                onClicked: Bridge.setReverse(panel.deckId, panel.deck.reverse !== true)
+            }
         }
 
         RowLayout {

@@ -90,6 +90,16 @@ pub trait DeckSource: Send {
         self.seek(frame)
     }
 
+    /// True when a seek costs a pointer move instead of a wait on a decoder.
+    ///
+    /// A deck can walk such a source backwards one block at a time from inside the audio callback:
+    /// read the block that ends at the playhead, reverse it in place, hand it on as forward material.
+    /// A source that has to wait for a decoder cannot be walked that way — that is what the window
+    /// worker in the reverse plan exists for.
+    fn seeks_are_immediate(&self) -> bool {
+        false
+    }
+
     /// Wait until at least `frames` are available, returning how many actually are.
     ///
     /// Sources that cannot block (a file read straight through) return `frames`. The prefetcher
@@ -367,6 +377,10 @@ pub struct Deck {
     /// until the playhead moves: flipping the path every time the fader crosses the file's own speed
     /// is what a listener hears as a click.
     keylock_engaged: bool,
+    /// Whether the material is walked backwards from the playhead (DJP-DECK-007).
+    reverse: bool,
+    /// One block of material read backwards, reversed in place before it is handed on.
+    reverse_scratch: Vec<f32>,
 }
 
 impl std::fmt::Debug for Deck {
@@ -439,6 +453,8 @@ impl Deck {
             stretch_in: vec![0.0; MAX_TEMPO_BLOCK_FRAMES * 2],
             stretch_carry: 0.0,
             keylock_engaged: false,
+            reverse: false,
+            reverse_scratch: vec![0.0; MAX_TEMPO_BLOCK_FRAMES * 2],
         }
     }
 
@@ -813,7 +829,9 @@ impl Deck {
 
     /// Seek to a source frame, clamped to the track.
     pub fn seek(&mut self, frame: u64) -> u64 {
-        // A seek moves the playhead: the frames carried for the tempo stage are now behind it.
+        // A seek moves the playhead: the frames carried for the tempo stage are now behind it, and a
+        // deck that was walking backwards is now walking forwards from wherever it was put.
+        self.reverse = false;
         self.drop_pending();
         let lead = self.lead();
         let Some(source) = self.source.as_mut() else {
@@ -1765,6 +1783,74 @@ impl Deck {
         }
     }
 
+    /// One block of material played backwards.
+    ///
+    /// The material is read forward from a source frame `want` behind the playhead and reversed in a
+    /// buffer the deck already owns, so the rest of the deck sees ordinary forward material: the tempo
+    /// stage, the resampler and the key-lock stretcher stay exactly as they are. Nothing is allocated,
+    /// nothing waits — this only works because the source promises seeks are a pointer move.
+    fn read_reversed(&mut self, out: &mut [f32]) -> usize {
+        let want = out.len() / 2;
+        if want == 0 {
+            return 0;
+        }
+        let end = self.position;
+        let start = end.saturating_sub(want as u64);
+        let count = usize::try_from(end - start).unwrap_or(0);
+        if count == 0 {
+            return 0;
+        }
+        let mut scratch = std::mem::take(&mut self.reverse_scratch);
+        if scratch.len() < count * 2 {
+            scratch.resize(count * 2, 0.0);
+        }
+        let mut read = 0usize;
+        if let Some(source) = self.source.as_mut()
+            && source.request_seek(start).is_ok()
+        {
+            read = source.read(&mut scratch[..count * 2]).unwrap_or(0);
+        }
+        for index in 0..read {
+            out[index * 2] = scratch[(read - 1 - index) * 2];
+            out[index * 2 + 1] = scratch[(read - 1 - index) * 2 + 1];
+        }
+        self.reverse_scratch = scratch;
+        if read > 0 {
+            // The next block ends where this one began, so the playhead walks down by what was heard.
+            self.position = start;
+        }
+        read
+    }
+
+    /// Play the material backwards from the playhead (DJP-DECK-007).
+    ///
+    /// Returns whether reverse is now on. A streamed track refuses: walking a decoder backwards would
+    /// mean waiting on it from the audio callback, which is why the plan keeps a window worker as the
+    /// fallback for tracks too large for the cache. A track held in the cache always accepts.
+    ///
+    /// Slip and reverse answer different questions: slip is where the *track's clock* stands, reverse
+    /// is which way the *material* is read. With both on the sound walks backwards while the virtual
+    /// head keeps its own forward pace; switching slip off puts the sound where that head has arrived,
+    /// which is a jump forward, and a jump ends reverse like any other head move.
+    pub fn set_reverse(&mut self, enabled: bool) -> bool {
+        if !enabled {
+            self.reverse = false;
+            return false;
+        }
+        let possible = self
+            .source
+            .as_ref()
+            .is_some_and(|source| source.seeks_are_immediate())
+            && !self.reading_loop_buffer;
+        self.reverse = possible;
+        possible
+    }
+
+    /// Whether the material is played backwards.
+    pub fn reverse(&self) -> bool {
+        self.reverse
+    }
+
     /// Fill `out` from the source, honouring the loop and the end of the file. No gain, no EQ, no
     /// measurement: those belong to the block a listener hears, not to the material pulled for it.
     fn pull(&mut self, out: &mut [f32]) {
@@ -1776,6 +1862,16 @@ impl Deck {
         let frames = out.len() / 2;
         let mut written = 0usize;
         while written < frames {
+            if self.reverse {
+                let filled = self.read_reversed(&mut out[written * 2..]);
+                written += filled;
+                if filled == 0 {
+                    // The start of the file is where reverse ends, the way it does on a platter.
+                    self.reverse = false;
+                    break;
+                }
+                continue;
+            }
             // Once the loop has been captured, the seam is a copy: no seek, no gap (ADR-0009).
             if self.reading_loop_buffer
                 && let Some(until) = self.drain_until
@@ -2125,6 +2221,7 @@ impl Deck {
             load: self.load.clone(),
             playing: self.playing,
             analyzing: self.analyzing,
+            reverse: self.reverse,
             metronome: self.metronome,
             clicks: self.clicks,
             beat,

@@ -58,6 +58,9 @@ counters the probe reports, for the evidence directory.
 decks stay paused and every level reads zero, which says nothing about the output path.
 --state-hz N publishes state N times a second (default 20, from display.state_hz in the settings).
 --crossfader-curve LAW picks the crossfader law: constant_power (default), linear, smooth, sharp.
+--cache-mb N keeps N megabytes of whole tracks in memory (default from pcm_cache.whole_track_gb,
+one gigabyte, which holds four ten-minute tracks at 48 kHz); zero turns it off.
+--cache-lossless on|off decides whether lossless files are kept there too (default on).
 --stop asks the running engine to shut down over its socket. Ctrl-C works too, but a signal can be
 blocked by the audio backend, so a stop must also be possible without one.
 
@@ -154,6 +157,13 @@ fn run(argv: &[String]) -> Result<(), String> {
     // How much of the measured level correction a deck applies. Nine tenths is the default because a
     // full one puts peaks in the limiter; the flag is here so that is a choice, not a constant.
     let mut auto_gain_share = defaults.analysis.share();
+    // The whole-track cache. The budget is the owner's setting (`pcm_cache.whole_track_gb`), because a
+    // gigabyte is a number about tracks, not about the machine: four ten-minute tracks at 48 kHz are
+    // 922 MB, and anything larger only waits to be evicted.
+    let mut cache_mb: u64 = (defaults.pcm_cache.whole_track_gb * 1024.0)
+        .round()
+        .max(0.0) as u64;
+    let mut cache_lossless = defaults.pcm_cache.lossless;
 
     let mut index = 0;
     while index < argv.len() {
@@ -202,6 +212,20 @@ fn run(argv: &[String]) -> Result<(), String> {
                     return Err("--auto-gain-share must be 0..=1".to_string());
                 }
                 auto_gain_share = parsed;
+                index += 2;
+            }
+            "--cache-mb" => {
+                cache_mb = value(1)?
+                    .parse()
+                    .map_err(|_| "--cache-mb expects megabytes")?;
+                index += 2;
+            }
+            "--cache-lossless" => {
+                cache_lossless = match value(1)?.as_str() {
+                    "on" | "true" | "yes" => true,
+                    "off" | "false" | "no" => false,
+                    _ => return Err("--cache-lossless expects on or off".to_string()),
+                };
                 index += 2;
             }
             "--crossfader-curve" => {
@@ -688,35 +712,61 @@ fn run(argv: &[String]) -> Result<(), String> {
 
     // The loader: one thread, because a load is a second of work that must not touch the callback.
     let waveform_cache = dj_analysis::WaveformCache::new(peaks_directory());
+    // The track cache builds in its own thread.
+    //
+    // A decode into memory is a whole second pass over the file. Left in the loader, it would make the
+    // next load wait for it — a DJ loading two decks would watch the second one sit a file behind. Here
+    // the deck starts on the stream and the entry arrives when it arrives.
+    let (cache_requests, cache_work) = std::sync::mpsc::channel::<(std::path::PathBuf, DeckId)>();
+    {
+        let prepared = graph_loads.clone();
+        std::thread::spawn(move || {
+            // The budget is the owner's setting (`pcm_cache.whole_track_gb`): a gigabyte holds four
+            // ten-minute tracks at 48 kHz, and a larger number only waits to be evicted.
+            //
+            // f32 and not i16: a cached track must play the same samples the stream played. Memory and
+            // not disk: the point is a read path that cannot be late.
+            let mut cache = if cache_mb == 0 {
+                None
+            } else {
+                match dj_codec::PcmCache::new(
+                    std::env::temp_dir().join("hauler-dj-pcm"),
+                    dj_codec::CacheConfig {
+                        enabled: true,
+                        lossless: cache_lossless,
+                        storage: dj_codec::CacheStorage::Memory,
+                        max_bytes: cache_mb.saturating_mul(1024 * 1024),
+                        sample_format: dj_codec::PcmSampleFormat::F32,
+                    },
+                ) {
+                    Ok(cache) => Some(cache),
+                    Err(error) => {
+                        eprintln!("dj-engine: no track cache: {error}");
+                        None
+                    }
+                }
+            };
+            match cache.as_ref() {
+                Some(_) => eprintln!(
+                    "dj-engine: track cache {cache_mb} MB in memory, lossless {}",
+                    if cache_lossless { "on" } else { "off" }
+                ),
+                None => eprintln!("dj-engine: track cache off"),
+            }
+            while let Ok((path, deck)) = cache_work.recv() {
+                let Some(store) = cache.as_mut() else {
+                    continue;
+                };
+                if let Some((source, _key)) = dj_engine::cached_source(&path, store) {
+                    let _ = prepared.send(GraphLoad::CacheReady { deck, path, source });
+                }
+            }
+        });
+    }
     {
         let prepared = graph_loads.clone();
         let updates = deck_updates.clone();
         std::thread::spawn(move || {
-            // The track cache: whole files in memory. The budget is the owner's number — four ten-minute
-            // tracks at 48 kHz are 922 MB of stereo f32 — so a set of four decks fits with headroom.
-            //
-            // f32 and not i16: a cached track must play the same samples the stream played, and only f32
-            // keeps every bit of a decoded file. Memory and not disk: the point is a read path that
-            // cannot be late.
-            //
-            // No pinning: a reader taken from the cache owns its data (or its open file), so eviction
-            // can free the cache entry without pulling the material out from under a playing deck.
-            let mut cache = match dj_codec::PcmCache::new(
-                std::env::temp_dir().join("hauler-dj-pcm"),
-                dj_codec::CacheConfig {
-                    enabled: true,
-                    lossless: true,
-                    storage: dj_codec::CacheStorage::Memory,
-                    max_bytes: 1024 * 1024 * 1024,
-                    sample_format: dj_codec::PcmSampleFormat::F32,
-                },
-            ) {
-                Ok(cache) => Some(cache),
-                Err(error) => {
-                    eprintln!("dj-engine: no track cache: {error}");
-                    None
-                }
-            };
             while let Ok(request) = load_requests_rx.recv() {
                 let _ = updates.send(Published::Deck(Box::new(DeckUpdate {
                     deck: request.deck,
@@ -779,15 +829,8 @@ fn run(argv: &[String]) -> Result<(), String> {
                         let _ = prepared.send(GraphLoad::Attach(Box::new(prepared_track)));
                         // Now the same file again, into memory. The deck is already playing from the
                         // stream, so this second decode costs the loader thread and nobody's ears.
-                        if let Some(store) = cache.as_mut()
-                            && let Some((source, _key)) = dj_engine::cached_source(&path, store)
-                        {
-                            let _ = prepared.send(GraphLoad::CacheReady {
-                                deck: request.deck,
-                                path: path.clone(),
-                                source,
-                            });
-                        }
+                        // Ask for the entry; the cache thread answers with CacheReady when it has one.
+                        let _ = cache_requests.send((path.clone(), request.deck));
                         let _ = updates.send(Published::Deck(Box::new(DeckUpdate {
                             deck: request.deck,
                             static_info: static_info.clone(),

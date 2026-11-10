@@ -1563,6 +1563,61 @@ fn a_loop_longer_than_the_budget_is_not_captured() {
     );
 }
 
+#[test]
+fn key_lock_keeps_the_pitch_and_runs_at_the_nominal_speed() {
+    // Two readings of one promise: a key-locked deck at tempo r must consume r source frames per output
+    // frame, and a tone must come out at the frequency the file put there. The deck once ran about
+    // thirteen cents fast at 1.00 — rate alone would have shown it, pitch is what a listener hears.
+    for tempo in [1.0, 0.96, 1.04] {
+        let mut speed = tone_deck(48_000 * 60);
+        speed.set_keylock(true);
+        speed.set_tempo(tempo);
+        assert!(speed.play(), "the deck plays");
+        let mut block = vec![0.0f32; 512 * 2];
+        for _ in 0..200 {
+            speed.render(&mut block);
+        }
+        let start = speed.position();
+        let blocks = 400.0;
+        for _ in 0..400 {
+            speed.render(&mut block);
+        }
+        let rate = (speed.position() - start) as f64 / (blocks * 512.0);
+        assert!(
+            (rate - tempo).abs() < 1e-4,
+            "key lock at {tempo} consumed {rate} source frames per output frame"
+        );
+
+        let mut sound = tone_deck(48_000 * 60);
+        sound.set_keylock(true);
+        sound.set_tempo(tempo);
+        assert!(sound.play(), "the deck plays");
+        for _ in 0..200 {
+            sound.render(&mut block);
+        }
+        let seconds = 5.0;
+        let rendered = seconds * 48_000.0 / 512.0;
+        let mut crossings = 0usize;
+        let mut last = 0.0f32;
+        for _ in 0..(rendered as usize) {
+            sound.render(&mut block);
+            for frame in 0..512 {
+                let sample = block[frame * 2];
+                if last < 0.0 && sample >= 0.0 {
+                    crossings += 1;
+                }
+                last = sample;
+            }
+        }
+        let pitch = crossings as f64 / seconds;
+        let cents = 1200.0 * (pitch / 440.0).log2();
+        assert!(
+            cents.abs() < 5.0,
+            "key lock at {tempo} put the tone {cents:.1} cents off 440 Hz"
+        );
+    }
+}
+
 /// A pure tone, so the tempo stage can be measured in pitch and not only in position.
 struct ToneSource {
     frames: u64,
@@ -1724,6 +1779,206 @@ fn a_deck_on_a_cache_entry_plays_the_same_frames_as_a_deck_on_the_stream() {
             "the cache entry must be the same material, sample for sample"
         );
     }
+}
+
+/// Material whose sample value is its own frame number, so a block of it can be checked frame by frame.
+fn ramp_material(frames: u64) -> std::sync::Arc<[f32]> {
+    let mut data = Vec::with_capacity(usize::try_from(frames).expect("a track that fits") * 2);
+    for frame in 0..frames {
+        #[allow(clippy::cast_precision_loss)]
+        let value = frame as f32;
+        data.push(value);
+        data.push(value);
+    }
+    data.into()
+}
+
+#[test]
+fn reverse_walks_the_material_backwards() {
+    // The witness is the material itself: a ramp played backwards comes out descending, one frame at a
+    // time, and the playhead walks down with it.
+    let frames = 200_000;
+    let mut deck = Deck::new(DeckId::A);
+    deck.set_output_rate(44_100);
+    deck.set_keylock(false);
+    deck.attach(
+        Box::new(CachedSource::new(ramp_material(frames), 44_100)),
+        None,
+    );
+    deck.seek(100_000);
+    assert!(deck.play(), "the deck plays");
+    let mut block = vec![0.0f32; 512 * 2];
+    for _ in 0..40 {
+        deck.render(&mut block);
+    }
+    let before = deck.position();
+    assert!(
+        deck.set_reverse(true),
+        "a track held in the cache can be walked backwards"
+    );
+    deck.render(&mut block);
+    let first = block[0];
+    let step = block[0] - block[2];
+    assert!(
+        step > 0.0,
+        "the material must descend, not ascend: first {first}, next {}",
+        block[2]
+    );
+    for index in 0..512usize {
+        #[allow(clippy::cast_precision_loss)]
+        let expected = first - step * index as f32;
+        let heard = block[index * 2];
+        assert!(
+            (heard - expected).abs() < 1e-2,
+            "frame {index}: heard {heard}, expected {expected}"
+        );
+    }
+    assert!(
+        deck.position() < before,
+        "the playhead walks down: {} was {}, now {}",
+        before,
+        before,
+        deck.position()
+    );
+}
+
+#[test]
+fn reverse_ends_at_the_start_of_the_file() {
+    let frames = 40_000;
+    let mut deck = Deck::new(DeckId::A);
+    deck.set_output_rate(44_100);
+    deck.set_keylock(false);
+    deck.attach(
+        Box::new(CachedSource::new(ramp_material(frames), 44_100)),
+        None,
+    );
+    deck.seek(4_000);
+    assert!(deck.play(), "the deck plays");
+    assert!(deck.set_reverse(true), "reverse starts");
+    let mut block = vec![0.0f32; 512 * 2];
+    let mut stopped_at = None;
+    for _ in 0..60 {
+        deck.render(&mut block);
+        if !deck.reverse() {
+            // Read here and not later: once reverse is off the deck plays forward again, which is
+            // exactly what it should do, and the playhead moves on.
+            stopped_at = Some(deck.position());
+            break;
+        }
+    }
+    assert_eq!(
+        stopped_at,
+        Some(0),
+        "reverse ends at the first frame and leaves the playhead there"
+    );
+}
+
+#[test]
+fn a_streamed_track_cannot_be_reversed() {
+    // Walking a decoder backwards would mean waiting on it from the audio callback.
+    let mut deck = code_deck(50_000);
+    assert!(
+        !deck.set_reverse(true),
+        "a streamed source must refuse reverse rather than stall the callback"
+    );
+    assert!(!deck.reverse());
+}
+
+#[test]
+fn reverse_with_key_lock_keeps_the_pitch() {
+    let rate = 48_000u32;
+    let frames = u64::from(rate) * 8;
+    let mut data = Vec::with_capacity(usize::try_from(frames).expect("a short track") * 2);
+    for frame in 0..frames {
+        #[allow(clippy::cast_precision_loss)]
+        let phase = std::f64::consts::TAU * 440.0 * frame as f64 / f64::from(rate);
+        let value = (phase.sin() * 0.5) as f32;
+        data.push(value);
+        data.push(value);
+    }
+    let mut deck = Deck::new(DeckId::A);
+    deck.set_output_rate(rate);
+    deck.set_keylock(true);
+    deck.attach(Box::new(CachedSource::new(data.into(), rate)), None);
+    deck.seek(frames - 4 * u64::from(rate));
+    deck.set_tempo(1.04);
+    assert!(deck.play(), "the deck plays");
+    let mut block = vec![0.0f32; 512 * 2];
+    for _ in 0..100 {
+        deck.render(&mut block);
+    }
+    assert!(deck.set_reverse(true), "reverse under key lock");
+    let mut crossings = 0usize;
+    let mut last = 0.0f32;
+    let blocks = 200;
+    for _ in 0..blocks {
+        deck.render(&mut block);
+        for frame in 0..512 {
+            let sample = block[frame * 2];
+            if last < 0.0 && sample >= 0.0 {
+                crossings += 1;
+            }
+            last = sample;
+        }
+    }
+    #[allow(clippy::cast_precision_loss)]
+    let seconds = (blocks as f64 * 512.0) / f64::from(rate);
+    let pitch = crossings as f64 / seconds;
+    let cents = 1200.0 * (pitch / 440.0).log2();
+    assert!(
+        cents.abs() < 5.0,
+        "reverse under key lock put the tone {cents:.1} cents off 440 Hz"
+    );
+}
+
+#[test]
+fn reverse_works_while_slip_is_on() {
+    // Slip and reverse answer different questions: slip is where the track's own clock stands, reverse
+    // is which way the material is read. Both at once must work — the sound walks back while the
+    // virtual head runs on, and that is the whole point of the pair.
+    let frames = 200_000;
+    let mut deck = Deck::new(DeckId::A);
+    deck.set_output_rate(44_100);
+    deck.set_keylock(false);
+    deck.attach(
+        Box::new(CachedSource::new(ramp_material(frames), 44_100)),
+        None,
+    );
+    deck.seek(100_000);
+    assert!(deck.play(), "the deck plays");
+    deck.set_slip(true);
+    assert!(deck.slip(), "slip is on");
+    let mut block = vec![0.0f32; 512 * 2];
+    for _ in 0..40 {
+        deck.render(&mut block);
+    }
+    let head_before = deck.slip_frame().expect("slip publishes its head");
+    assert!(
+        deck.set_reverse(true),
+        "slip must not stop reverse: the two are independent"
+    );
+    deck.render(&mut block);
+    let step = block[0] - block[2];
+    assert!(
+        step > 0.0,
+        "the material must descend under slip as well: first {}, next {}",
+        block[0],
+        block[2]
+    );
+    let head_after = deck.slip_frame().expect("slip still publishes its head");
+    assert!(
+        head_after > head_before,
+        "the virtual head keeps its own forward pace while the sound walks back: {} then {}",
+        head_before,
+        head_after
+    );
+    // Leaving slip puts the sound on the track's own clock, which is ahead: that is a jump forward,
+    // and a jump ends reverse rather than fighting it.
+    deck.set_slip(false);
+    assert!(
+        !deck.reverse(),
+        "leaving slip ends reverse, because the sound moves forward"
+    );
 }
 
 #[test]

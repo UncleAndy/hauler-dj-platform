@@ -169,6 +169,17 @@ pub struct CacheSettings {
     pub long_file_minutes: f64,
     /// How many seconds count as "ready" for a long file.
     pub long_file_ready_seconds: f64,
+    /// Memory, in gigabytes, that the engine may spend holding whole tracks.
+    ///
+    /// This is a different budget from `max_size_gb`: that one is the decoder's cache on disk, this one
+    /// is playback material kept in RAM so the read path cannot be late. One gigabyte holds four
+    /// ten-minute tracks at 48 kHz in stereo f32 (922 MB); zero turns the whole-track cache off.
+    pub whole_track_gb: f64,
+    /// Whether the whole-track cache also takes lossless files (WAV, FLAC).
+    ///
+    /// Lossy formats are cached by policy anyway; lossless costs a second decode and buys a read path
+    /// that never touches the disk. Off by default would leave most DJ libraries uncached, so it is on.
+    pub lossless: bool,
 }
 
 impl Default for CacheSettings {
@@ -180,6 +191,8 @@ impl Default for CacheSettings {
             sample_format: CacheSampleFormat::I24,
             long_file_minutes: 15.0,
             long_file_ready_seconds: 60.0,
+            whole_track_gb: 1.0,
+            lossless: true,
         }
     }
 }
@@ -343,6 +356,12 @@ impl Config {
                 self.loop_playback.buffer_max_seconds
             )));
         }
+        if !(0.0..=64.0).contains(&self.pcm_cache.whole_track_gb) {
+            return Err(ConfigError::Invalid(format!(
+                "pcm_cache.whole_track_gb {} is outside 0..=64",
+                self.pcm_cache.whole_track_gb
+            )));
+        }
         if !(0.0..=10_000.0).contains(&self.pcm_cache.max_size_gb) {
             return Err(ConfigError::Invalid(format!(
                 "pcm_cache.max_size_gb {} is outside 0..=10000",
@@ -429,6 +448,40 @@ mod tests {
         assert_eq!(config.display.state_hz, 20);
         assert_eq!(config.display.frame_hz, 20);
         config.validate().unwrap_or_else(|err| panic!("{err}"));
+    }
+
+    #[test]
+    fn the_whole_track_budget_is_a_setting_and_its_default_holds_four_long_tracks() {
+        // Four ten-minute tracks at 48 kHz stereo f32 are 921 600 000 bytes; the default budget must
+        // hold them, and the file must be able to say otherwise.
+        let defaults = Config::default();
+        assert_eq!(defaults.pcm_cache.whole_track_gb, 1.0);
+        assert!(defaults.pcm_cache.lossless, "lossless is cached by default");
+        let needed_gb = 4.0 * 600.0 * 48_000.0 * 2.0 * 4.0 / 1e9;
+        assert!(
+            defaults.pcm_cache.whole_track_gb >= needed_gb,
+            "the default budget {needed_gb} GB must fit four ten-minute tracks"
+        );
+
+        let smaller = Config::from_toml(
+            &defaults
+                .to_toml()
+                .unwrap_or_else(|err| panic!("{err}"))
+                .replace("whole_track_gb = 1.0", "whole_track_gb = 0.25"),
+        )
+        .unwrap_or_else(|err| panic!("{err}"));
+        assert_eq!(smaller.pcm_cache.whole_track_gb, 0.25);
+
+        let broken = Config::from_toml(
+            &defaults
+                .to_toml()
+                .unwrap_or_else(|err| panic!("{err}"))
+                .replace("whole_track_gb = 1.0", "whole_track_gb = 100.0"),
+        );
+        assert!(
+            broken.is_err(),
+            "a hundred gigabytes is a typo, not a setting"
+        );
     }
 
     #[test]

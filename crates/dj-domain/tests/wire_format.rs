@@ -247,6 +247,9 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
             nudge: 0.0,
             slip: false,
             slip_frame: None,
+            // Reverse is off in this record, so the document says nothing about it either: an older
+            // client reads the same bytes it always did.
+            reverse: false,
             fader: 0.85,
             eq: EqGains {
                 low_db: 3.0,

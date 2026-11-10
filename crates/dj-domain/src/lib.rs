@@ -433,6 +433,17 @@ pub enum DjCommand {
         /// Destination in source frames.
         frame: SourceFrame,
     },
+    /// Play the material backwards from the playhead (DJP-DECK-007).
+    ///
+    /// Critical: a lost "off" would leave a deck running into the start of the file. A deck whose
+    /// source cannot be walked backwards — one still streaming from disk — refuses with `NotSupported`,
+    /// because the alternative is a callback waiting on a decoder.
+    SetReverse {
+        /// Target deck.
+        deck: DeckId,
+        /// Whether the material plays backwards.
+        enabled: bool,
+    },
     /// Switch slip on or off (DJP-DECK-007).
     ///
     /// With slip on, a jump or a loop moves the sound but not the virtual play head; switching it off
@@ -570,6 +581,7 @@ impl DjCommand {
             | DjCommand::LoopMove { .. }
             | DjCommand::BeatJump { .. }
             | DjCommand::SetSlip { .. }
+            | DjCommand::SetReverse { .. }
             | DjCommand::Load { .. }
             | DjCommand::AnalyzeTempo { .. }
             | DjCommand::EditGrid { .. }
@@ -972,6 +984,9 @@ pub struct DeckSnapshot {
     /// nothing about slip is not a protocol error.
     #[serde(default, skip_serializing_if = "is_false")]
     pub slip: bool,
+    /// Whether the material plays backwards (DJP-DECK-007). Left off the wire when forward.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub reverse: bool,
     /// Where the virtual play head stands while slip is on: what the shell draws as the ghost marker.
     /// Absent when nothing is slipping, so "no slip" and "slip at frame zero" cannot be confused.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -508,6 +508,16 @@ int BridgeClient::setSlip(const QString &deck, bool enabled)
     return sendCommand(deck, command);
 }
 
+int BridgeClient::setReverse(const QString &deck, bool enabled)
+{
+    QJsonObject options;
+    options.insert(QStringLiteral("deck"), deck);
+    options.insert(QStringLiteral("enabled"), enabled);
+    QJsonObject command;
+    command.insert(QStringLiteral("SetReverse"), options);
+    return sendCommand(deck, command);
+}
+
 int BridgeClient::setCrossfader(double position)
 {
     QJsonObject options;

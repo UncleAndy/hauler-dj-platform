@@ -3710,11 +3710,89 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: slip stayed on after the second press\n");
             return 1;
         }
+        // Reverse: the button exists and the material turns around under it. A track still streaming
+        // from disk refuses — the deck says so in its state and the head keeps going forward — so the
+        // press is repeated until the entry is in the cache, and only then is the head expected to
+        // walk down. Nothing here reads a timer into the verdict: the state is the verdict.
+        if (findItem(window->contentItem(), QStringLiteral("reverse_A")) == nullptr) {
+            std::fprintf(stderr, "dj-ui: the panel has no reverse button\n");
+            return 1;
+        }
+        // Reverse needs a moving deck with material on both sides of the head. Whether the deck is
+        // paused has nothing to do with reverse, so the check puts it in a state where the question is
+        // only about reverse: somewhere in the middle of the file, playing.
+        const qint64 target = first + static_cast<qint64>(period * 8.0);
+        bridge->seek(QStringLiteral("A"), target);
+        waitFor([&]() { return std::llabs(playHead() - target) <= 2; }, 5000);
+        if (!deckA().value(QStringLiteral("playing")).toBool() && !press(QStringLiteral("play_A"))) {
+            return 1;
+        }
+        if (!waitFor([&]() { return playHead() > target; }, 4000)) {
+            std::fprintf(stderr, "dj-ui: the deck is not moving before the reverse test (%lld)\n",
+                         playHead());
+            return 1;
+        }
+        const qint64 beforeReverse = playHead();
+        bool accepted = false;
+        QElapsedTimer reverseWait;
+        reverseWait.start();
+        while (reverseWait.elapsed() < 12'000) {
+            if (!press(QStringLiteral("reverse_A"))) {
+                return 1;
+            }
+            if (waitFor(
+                    [&]() { return deckA().value(QStringLiteral("reverse")).toBool(); }, 800)) {
+                accepted = true;
+                break;
+            }
+            // Refused: the track is not in the cache yet. Wait a moment and ask again.
+            waitFor([]() { return false; }, 250);
+        }
+        if (!accepted) {
+            std::fprintf(stderr,
+                         "dj-ui: reverse was never accepted (the track never reached the cache)\n");
+            return 1;
+        }
+        if (!waitFor([&]() { return playHead() < beforeReverse; }, 4000)) {
+            std::fprintf(stderr,
+                         "dj-ui: reverse was on but the play head did not walk down (%lld from "
+                         "%lld)\n",
+                         playHead(), beforeReverse);
+            return 1;
+        }
+        const qint64 downhill = playHead();
+        if (!press(QStringLiteral("reverse_A"))) {
+            return 1;
+        }
+        if (!waitFor(
+                [&]() { return !deckA().value(QStringLiteral("reverse")).toBool(); }, 3000)) {
+            std::fprintf(stderr, "dj-ui: reverse stayed on after the second press\n");
+            return 1;
+        }
+        if (!waitFor([&]() { return playHead() > downhill; }, 4000)) {
+            std::fprintf(stderr,
+                         "dj-ui: the deck did not play forward again after reverse was switched off "
+                         "(%lld from %lld)\n",
+                         playHead(), downhill);
+            return 1;
+        }
+        // Hand the deck back quiet. The next check loads its own file, and a deck that is still
+        // playing refuses a load on purpose — leaving it running would make this check's leftovers
+        // look like a broken load in someone else's check.
+        if (deckA().value(QStringLiteral("playing")).toBool()
+            && !press(QStringLiteral("play_A"))) {
+            return 1;
+        }
+        if (!waitFor([&]() { return !deckA().value(QStringLiteral("playing")).toBool(); }, 3000)) {
+            std::fprintf(stderr, "dj-ui: the deck would not stop for the next check\n");
+            return 1;
+        }
         std::fprintf(stdout,
                      "dj-ui: a jump of one beat moved the play head %lld frames and landed on the "
-                     "grid, the nudge bent the deck and let go, and slip drew its virtual head on both "
-                     "strips (%.4f against the sound at %.4f)\n",
-                     jump, slipMark, heardMark);
+                     "grid, the nudge bent the deck and let go, slip drew its virtual head on both "
+                     "strips (%.4f against the sound at %.4f), and reverse walked the head down to "
+                     "%lld and forward again, and the deck was left paused for the next check\n",
+                     jump, slipMark, heardMark, downhill);
         return 0;
     }
 
