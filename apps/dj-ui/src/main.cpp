@@ -3747,7 +3747,13 @@ int main(int argc, char *argv[])
         }
         const double cachedMb =
             deckA().value(QStringLiteral("cached_bytes")).toDouble() / (1024.0 * 1024.0);
-        std::fprintf(stdout, "dj-ui: the track is in memory: %.1f MB held by the deck\n", cachedMb);
+        const double budgetMb = bridge->snapshot()
+                                    .value(QStringLiteral("cache_budget_bytes"))
+                                    .toDouble()
+            / (1024.0 * 1024.0);
+        std::fprintf(stdout,
+                     "dj-ui: the track is in memory: %.1f MB of the %.0f MB budget (%.1f%%)\n",
+                     cachedMb, budgetMb, budgetMb > 0.0 ? 100.0 * cachedMb / budgetMb : 0.0);
         const qint64 beforeReverse = playHead();
         bool accepted = false;
         QElapsedTimer reverseWait;

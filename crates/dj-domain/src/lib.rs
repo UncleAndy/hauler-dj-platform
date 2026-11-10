@@ -1062,6 +1062,12 @@ pub struct Snapshot {
     /// Defaulted, so a snapshot from a build without a lookahead still reads as zero.
     #[serde(default)]
     pub master_latency_frames: u32,
+    /// Bytes the whole-track cache may hold (its budget), zero when the cache is off.
+    ///
+    /// The deck reports what it costs; this says what it is allowed to cost, which is what makes the
+    /// number a fraction instead of a fact nobody can judge.
+    #[serde(default, skip_serializing_if = "is_zero_count")]
+    pub cache_budget_bytes: u64,
     /// One entry per deck.
     pub decks: Vec<DeckSnapshot>,
 }

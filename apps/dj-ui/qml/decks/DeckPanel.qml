@@ -453,17 +453,33 @@ Pane {
     }
 
     /// The correction as a person reads it, or an empty string when there is nothing measured.
-    // How much memory this deck's track is taking: "in RAM" without a size answers nothing.
+    // How much of the cache budget this deck's track takes. A size alone says nothing about whether
+    // the next track fits; a fraction of the whole does.
+    readonly property real cacheBudget: Bridge.snapshot !== undefined
+                                        && Bridge.snapshot.cache_budget_bytes !== undefined
+                                        ? Number(Bridge.snapshot.cache_budget_bytes) : 0
+
     function cachedText() {
         const bytes = panel.deck !== null ? Number(panel.deck.cached_bytes || 0) : 0;
         if (bytes <= 0) {
-            return qsTr("RAM");
+            return "";
         }
+        if (panel.cacheBudget > 0) {
+            return "RAM " + (100.0 * bytes / panel.cacheBudget).toFixed(1) + "%";
+        }
+        return "RAM " + (bytes / 1048576).toFixed(0) + " MB";
+    }
+
+    // The same number in words, for the tooltip: a percentage without the megabytes behind it is
+    // half an answer.
+    function cachedHint() {
+        const bytes = panel.deck !== null ? Number(panel.deck.cached_bytes || 0) : 0;
         const mb = bytes / 1048576;
-        if (mb >= 1024) {
-            return "RAM " + (mb / 1024).toFixed(1) + " GB";
+        if (panel.cacheBudget > 0) {
+            return (mb).toFixed(0) + " MB of " + (panel.cacheBudget / 1048576).toFixed(0)
+                   + " MB in memory";
         }
-        return "RAM " + mb.toFixed(0) + " MB";
+        return mb.toFixed(0) + " MB in memory";
     }
 
     function autoGainText() {
@@ -574,6 +590,8 @@ Pane {
                     // property of the deck, not of the file, so it is said here and only when true.
                     visible: panel.deck !== null && panel.deck.cached === true
                     text: panel.cachedText()
+                    ToolTip.visible: hovered
+                    ToolTip.text: panel.cachedHint()
                     color: UiSettings.themeAccent
                     opacity: 0.7
                     font.pixelSize: 9

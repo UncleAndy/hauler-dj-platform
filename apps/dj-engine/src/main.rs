@@ -919,7 +919,8 @@ fn run(argv: &[String]) -> Result<(), String> {
         graph_loads_rx,
     )
     .with_meta_sink(meta_edits)
-    .with_reverse_worker(reverse_requests);
+    .with_reverse_worker(reverse_requests)
+    .with_cache_budget(cache_mb.saturating_mul(1024 * 1024));
 
     // One bag of run parameters for both paths.
     let options = RunOptions {

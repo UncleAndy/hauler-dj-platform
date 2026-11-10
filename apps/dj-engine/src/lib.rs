@@ -349,6 +349,8 @@ pub fn snapshot(
 ) -> Snapshot {
     Snapshot {
         protocol: dj_domain::STATE_PROTOCOL.to_string(),
+        // A snapshot taken from the mixer alone says nothing about the loader's cache.
+        cache_budget_bytes: 0,
         revision,
         epoch,
         audio_clock_samples: clock,
@@ -568,6 +570,8 @@ pub struct StateCells {
     master_latency: AtomicU32,
     master_gain: AtomicU32,
     count: AtomicUsize,
+    /// Bytes the whole-track cache may hold: the whole a deck's cost is a fraction of.
+    cache_budget: AtomicU64,
     decks: [DeckCells; MAX_DECKS],
     /// Hotcue names and colours, per deck and slot.
     ///
@@ -753,6 +757,7 @@ impl StateCells {
             master_latency: AtomicU32::new(0),
             master_gain: AtomicU32::new(1.0f32.to_bits()),
             count: AtomicUsize::new(0),
+            cache_budget: AtomicU64::new(0),
             decks: std::array::from_fn(|_| DeckCells::new()),
             cue_meta: std::sync::Mutex::new(Vec::new()),
             pad_loops: std::sync::Mutex::new(Vec::new()),
@@ -762,6 +767,11 @@ impl StateCells {
     }
 
     /// Publish the scalars. No allocation, no lock, no syscall: callable from a callback.
+    /// Record the cache budget: the snapshot says how full the cache is, and "full" needs a whole.
+    pub fn set_cache_budget(&self, bytes: u64) {
+        self.cache_budget.store(bytes, Ordering::Relaxed);
+    }
+
     pub fn publish(&self, decks: &[Deck], mixer: &Mixer, clock: u64) {
         self.clock.store(clock, Ordering::Relaxed);
         self.crossfader
@@ -973,6 +983,7 @@ impl StateCells {
         }
         Snapshot {
             protocol: dj_domain::STATE_PROTOCOL.to_string(),
+            cache_budget_bytes: self.cache_budget.load(Ordering::Relaxed),
             revision,
             epoch,
             audio_clock_samples: self.clock.load(Ordering::Acquire),
@@ -1481,6 +1492,8 @@ pub struct EngineGraph {
     /// Where a request for reversed material goes. `None` in a renderer with no worker (the A01
     /// tone engine, most tests): a deck then simply has to wait for material it will never get.
     reverse_worker: Option<std::sync::mpsc::Sender<ReverseRequest>>,
+    /// Bytes the whole-track cache may hold, as configured. Zero when the cache is off.
+    cache_budget: u64,
     /// The metronome's click generator: four voices mixed into the master bus.
     metronome: metronome::Metronome,
 }
@@ -1512,6 +1525,7 @@ impl EngineGraph {
             cache_swaps: 0,
             meta: None,
             reverse_worker: None,
+            cache_budget: 0,
             paths: vec![None; decks_len],
             metronome: metronome::Metronome::new(mixer_sample_rate),
         }
@@ -1549,6 +1563,12 @@ impl EngineGraph {
     }
 
     /// Send cue and loop edits to `sink`. Called before the stream starts: the callback never locks.
+    /// Tell the graph the cache budget, so the state can say how full it is.
+    pub fn with_cache_budget(mut self, bytes: u64) -> Self {
+        self.cache_budget = bytes;
+        self
+    }
+
     /// Give the graph the worker that fills reversed windows for streamed tracks.
     pub fn with_reverse_worker(mut self, worker: std::sync::mpsc::Sender<ReverseRequest>) -> Self {
         self.reverse_worker = Some(worker);
@@ -1649,6 +1669,8 @@ impl EngineGraph {
     /// never waits for a decoder: a deck that has no data renders silence and counts it.
     pub fn render_pair(&mut self, master: &mut [f32], cue: &mut [f32], frames: usize) {
         let frames = frames.min(self.block);
+        // The budget is a setting, not a measurement: one atomic store keeps the state honest.
+        self.cells.set_cache_budget(self.cache_budget);
         // A prepared track is attached here, at a block boundary: the decode already happened on
         // the loader thread, so this costs a pointer swap and the release of the old decoder.
         while let Ok(load) = self.loads.try_recv() {

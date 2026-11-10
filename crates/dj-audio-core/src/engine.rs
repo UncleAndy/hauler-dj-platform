@@ -252,6 +252,8 @@ impl Engine {
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
             protocol: STATE_PROTOCOL.to_string(),
+            // The A01 renderer has no cache: nothing is allowed and nothing is spent.
+            cache_budget_bytes: 0,
             revision: self.revision,
             epoch: self.epoch,
             audio_clock_samples: self.clock,
