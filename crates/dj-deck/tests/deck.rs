@@ -1344,6 +1344,71 @@ fn a_moved_loop_plays_only_the_material_it_says() {
 }
 
 #[test]
+fn moving_a_loop_around_the_playhead_does_not_move_the_sound() {
+    // The owner's rule: a loop nudged by a beat while the head is still inside it must not be heard as a
+    // jump. The material says where the sound is, so consecutive output frames tell whether it moved.
+    let mut deck = code_deck(4_000_000);
+    deck.set_keylock(false);
+    let grid =
+        dj_domain::BeatGrid::single(120.0, 4_800).unwrap_or_else(|| panic!("a 120 BPM grid"));
+    deck.set_beat_grid(grid);
+    let Some(region) = FrameRange::new(48_900, 93_000) else {
+        panic!("a loop");
+    };
+    deck.set_loop(Some(region));
+    // Two beats in: far enough inside that moving the loop one beat forward still holds the head.
+    deck.seek(80_000);
+    deck.play();
+    let mut block = vec![0.0f32; 256 * 2];
+    let mut all: Vec<f32> = Vec::new();
+    for _ in 0..20 {
+        deck.render(&mut block);
+        all.extend_from_slice(&block);
+    }
+    let before = deck.position();
+    let Some(moved) = deck.move_loop(1) else {
+        panic!("the loop moves a beat");
+    };
+    assert!(
+        moved.contains(SourceFrame(before)),
+        "the check needs the head to stay inside: head {before}, loop {}..{}",
+        moved.start.0,
+        moved.end.0
+    );
+    for _ in 0..20 {
+        deck.render(&mut block);
+        all.extend_from_slice(&block);
+    }
+    // Every output frame must be the next one after the previous: no jump in the middle of the stretch.
+    let mono: Vec<f32> = all.chunks_exact(2).map(|frame| frame[0]).collect();
+    // The first blocks carry what the prefetcher had before the seek and then the rise, so the trace is
+    // read from where the material settles.
+    let audible = mono
+        .iter()
+        .position(|value| value.abs() > 1e-6)
+        .unwrap_or(0);
+    let from = (audible + 300).min(mono.len().saturating_sub(1));
+    let mut worst = 0.0f32;
+    let mut at = 0usize;
+    for index in (from + 1)..mono.len() {
+        let step = (mono[index] - mono[index - 1]).abs() * 4_000_000.0;
+        if step > worst {
+            worst = step;
+            at = index;
+        }
+    }
+    println!(
+        "MEASURE move without a jump: head {before} -> {}, worst step {worst:.1} frames at {at}",
+        deck.position()
+    );
+    // One frame's worth of material is a step of one; anything much larger is the sound having moved.
+    assert!(
+        worst < 8.0,
+        "the sound moved by {worst:.0} frames at {at}: the loop shift was heard as a jump"
+    );
+}
+
+#[test]
 fn a_short_loop_plays_through_its_seam_without_a_gap() {
     // A loop that fits the capture budget must wrap by copying, not by asking the source for a
     // seek: that seek is where the audible block of silence came from (ADR-0009).

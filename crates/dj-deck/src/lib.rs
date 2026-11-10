@@ -911,15 +911,15 @@ impl Deck {
         }
     }
 
-    /// Move the active loop by `beats` beats, keeping its length and the play head's place in it
-    /// (DJP-DECK-005).
+    /// Move the active loop by `beats` beats, keeping its length (DJP-DECK-005).
     ///
     /// The length is kept in frames rather than recomputed from two coordinates: a loop that is moved ten
     /// times must be the same loop at the end, not a slightly shorter one each time.
     ///
-    /// The head moves with the loop, at the same place inside it. Leaving it behind would play whatever
-    /// sits between the old and the new region — the beats just outside the loop, which is exactly what
-    /// the owner heard after moving a loop with the arrows a few times.
+    /// The sound is left alone whenever the play head is still inside the moved loop: a DJ nudging a loop
+    /// by a beat and hearing the record jump has been moved, not edited. Only a head that the move would
+    /// leave outside is taken along — and then at its own place in the loop, because leaving it behind
+    /// plays whatever sits between the old and the new region.
     pub fn move_loop(&mut self, beats: i32) -> Option<FrameRange> {
         if beats == 0 {
             return None;
@@ -942,13 +942,14 @@ impl Deck {
             .checked_sub(current.start.0)
             .filter(|offset| *offset < current.len())
             .unwrap_or(0);
-        if self.set_loop_with(Some(region), true) {
+        if !self.set_loop_with(Some(region), true) {
+            return None;
+        }
+        if !region.contains(SourceFrame(self.position())) {
             let target = region.start.0.saturating_add(place).min(region.end.0 - 1);
             self.seek(target);
-            Some(region)
-        } else {
-            None
         }
+        Some(region)
     }
 
     /// Capture policy in force.
