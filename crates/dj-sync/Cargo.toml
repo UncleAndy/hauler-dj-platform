@@ -1,0 +1,14 @@
+[package]
+name = "dj-sync"
+description = "Synchronisation: beat phase, tempo matching and the master clock, whatever the clock's origin."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+dj-domain = { path = "../dj-domain" }
+
+[lints]
+workspace = true

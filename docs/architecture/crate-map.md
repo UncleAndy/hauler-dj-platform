@@ -19,6 +19,7 @@
 | `dj-analysis` | media | A07 | R0 | DJP-MEDIA-003 |
 | `dj-library` | media | A08 | R0 | DJP-DATA-001…006 — переносимые метаданные трека (`.djmeta`), индекс SQLite только для поиска и сортировки |
 | `dj-session` | media | A08 | R0 | DJP-ENV-006; DJP-SET-002, -003 |
+| `dj-sync` | audio-core | B03 | R1 | DJP-SYNC-001, -002 — **ядро (часть B03)**: `BeatClock` (источник темпа и фазы: дека, MIDI, Link — планировщику всё равно), `DeckClock` поверх `BeatGrid`, `plan()` (Tempo/Beat Sync, отказ вне питч-диапазона), `choose_master()` (явный/авто), `DriftMeter` для AC-SYNC, `RateTrim` для хода питча. Проводки в движок и оболочки пока нет |
 | `dj-bridge` | ui | A06 | R0 | DJP-ARCH-004; DJP-UI-001, -002 | — **реализовано в A06 (часть 1)**: кадры с длиной, рукопожатие `command-v1`, снапшоты, отказ чужому протоколу, замена протухшего сокета
 | `dj-controller-core` | hardware | A09 | R0 | DJP-CTRL-001, -002, -004 |
 | `dj-signalsmith-sys` | audio-core | A04 (B04) | R0 | Вендоренные Signalsmith DSP и Basics (MIT) за C ABI: метры с баллистикой (`PeakDecayLinear`), мастер-лимитер с lookahead (`LimiterFloat`, задержка публикуется как `master_latency_frames`) ресемплер 16 отводов Кайзера (`InterpolatorKaiserSincN`) для смены частоты и темпа и трёхполосный изолятор на LR-кроссовере (`BiquadStatic`). Каждый новый потребитель добавляет свою функцию, а не общий доступ ко всем заголовкам |
@@ -39,7 +40,6 @@
 
 | Крейт | Владелец | Когда |
 |---|---|---|
-| `dj-sync` | audio-core | M2–R2 (DJP-SYNC-001…006) — master clock, сетка, `TempoSource`, подгонка фазы |
 | `dj-time-stretch` | dsp | M2 (DJP-DECK-008) |
 | `dj-fx` | dsp | M4 (DJP-FX-001…004) |
 | `dj-stems` | ml | M5 (DJP-STEM-*) |

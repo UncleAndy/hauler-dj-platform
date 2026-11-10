@@ -424,6 +424,13 @@ name = "dj-stretch-sys"
 version = "0.1.0"
 
 [[package]]
+name = "dj-sync"
+version = "0.1.0"
+dependencies = [
+ "dj-domain",
+]
+
+[[package]]
 name = "dj-testkit"
 version = "0.1.0"
 
