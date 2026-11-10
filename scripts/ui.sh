@@ -290,8 +290,20 @@ case "${1:-}" in
     sync_b="$run_dir/sync-b.wav"
     cp crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav "$sync_a"
     cp crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav "$sync_b"
-    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
+    # Its own engine: this check loads two decks and plays them, and reconnecting to the engine that has
+    # just been playing a two-deck load raced the loader thread — the deck came up without music, and the
+    # follower had nothing to stand on. Same reason as the colour check below.
+    sync_socket="$run_dir/engine-sync.sock"
+    "$engine_bin" --null-sink --socket "$sync_socket" --block 256 &
+    sync_pid=$!
+    for _ in $(seq 1 100); do
+      [ -S "$sync_socket" ] && break
+      sleep 0.05
+    done
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$sync_socket" \
         --sync-check --load "$sync_a" --load-b "$sync_b"
+    kill "$sync_pid" 2>/dev/null || true
+    wait "$sync_pid" 2>/dev/null || true
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --grid-here-check --load "$metronome_file"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \

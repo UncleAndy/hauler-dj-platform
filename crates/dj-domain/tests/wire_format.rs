@@ -265,6 +265,7 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
             master: false,
             sync: dj_domain::SyncMode::Off,
             phase_error_ms: None,
+            bar_error_beats: None,
         }],
     };
     // The sync fields are optional on the wire: absent by default, and named when a deck leads or

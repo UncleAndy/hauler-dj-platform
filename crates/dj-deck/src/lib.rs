@@ -2445,6 +2445,7 @@ impl Deck {
             // A phase is a distance between two decks, and a deck on its own has nobody to stand
             // against: the engine fills this in where it can see both.
             phase_error_ms: None,
+            bar_error_beats: None,
         }
     }
 }

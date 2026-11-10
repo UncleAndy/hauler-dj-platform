@@ -318,6 +318,7 @@ impl Engine {
                 master: false,
                 sync: dj_domain::SyncMode::Off,
                 phase_error_ms: None,
+                bar_error_beats: None,
             }],
         }
     }

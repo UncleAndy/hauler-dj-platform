@@ -994,6 +994,11 @@ pub struct DeckSnapshot {
     /// knows nothing about beats is not a protocol error.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub beat: Option<f64>,
+    /// How far this deck stands from the master inside the bar, in beats, wrapped to half a bar either
+    /// way (DJP-SYNC-002). A beat-level phase cannot tell "on the beat" from "on the wrong beat", and on
+    /// a bar of four that is a quarter of the music.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bar_error_beats: Option<f32>,
     /// The tempo under the play head. Differs from `track.bpm` only on a track that changes tempo, and
     /// it is the number the deck shows and sync has to follow.
     #[serde(default, skip_serializing_if = "Option::is_none")]

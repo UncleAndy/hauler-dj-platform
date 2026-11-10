@@ -194,9 +194,13 @@ Pane {
                                      && panel.deck.phase_error_ms !== null
     readonly property real phaseMs: panel.hasPhase ? panel.deck.phase_error_ms : 0.0
 
-    /// How far the needle may swing: a window of ±50 ms is about a tenth of a beat at 120 BPM, which is
-    /// the range a hand can hear and a beat can be nudged in.
-    readonly property int phaseWindowMs: 50
+    /// How far the needle may swing: half a bar either side. The meter draws the bar, not the beat —
+    /// a beat-level offset cannot tell "on the beat" from "on the wrong beat", and on a bar of four that
+    /// is a quarter of the music.
+    readonly property int barWindowBeats: 2
+    readonly property real barErrorBeats: panel.hasPhase && panel.deck.bar_error_beats !== undefined
+                                          ? panel.deck.bar_error_beats
+                                          : 0.0
 
     /// The tempo under the play head, falling back to the track's own number for a client that talks to
     /// an engine which does not publish one (DJP-SYNC-003).
@@ -646,12 +650,16 @@ Pane {
                     onClicked: Bridge.setSync(panel.deckId,
                                               panel.syncMode === "tempo" ? "off" : "tempo")
                 }
-                // The phase meter: the button says sync is on, the meter says whether it is true. A
-                // needle past the window is a beat that has been lost, not a beat that needs nudging.
+                // The phase meter: the button says sync is on, the meter says where the deck stands in
+                // the bar. Beat ticks on it, because a bar of four is read as four beats and not as a
+                // distance in pixels.
                 Item {
                     objectName: "phaseMeter_" + panel.deckId
-                    visible: panel.hasPhase && panel.syncMode !== "off"
-                    Layout.preferredWidth: 54
+                    // Shown while a mode is on, with or without a phase: a deck that stands still
+                    // publishes no distance, and the needle parks in the centre rather than the meter
+                    // vanishing and taking the deck's state with it.
+                    visible: panel.deck !== null && panel.syncMode !== "off"
+                    Layout.preferredWidth: 72
                     Layout.preferredHeight: 12
                     Rectangle {
                         anchors.fill: parent
@@ -660,13 +668,16 @@ Pane {
                         border.color: UiSettings.themeBorder
                         border.width: 1
                     }
-                    Rectangle {
-                        objectName: "phaseCentre_" + panel.deckId
-                        width: 1
-                        height: parent.height
-                        x: Math.round(parent.width / 2)
-                        color: UiSettings.themeTextDim
-                        opacity: 0.6
+                    // The beats of the bar: centre, both quarters and both edges.
+                    Repeater {
+                        model: 5
+                        Rectangle {
+                            width: 1
+                            height: parent.height
+                            opacity: index === 2 ? 0.6 : 0.3
+                            color: UiSettings.themeTextDim
+                            x: Math.round(index * (parent.width - 1) / 4)
+                        }
                     }
                     Rectangle {
                         objectName: "phaseNeedle_" + panel.deckId
@@ -677,14 +688,17 @@ Pane {
                         // the error, and the bar is there to say whether there is one.
                         x: Math.max(1, Math.min(parent.width - 3,
                                                 Math.round(parent.width / 2
-                                                           + (panel.phaseMs / panel.phaseWindowMs)
+                                                           + (panel.barErrorBeats / panel.barWindowBeats)
                                                              * (parent.width / 2 - 2))))
                         // Amber while it is off the beat, accent while it is on it: the same language the
-                        // loops use for "this is a decision about the beat".
+                        // loops use for "this is a decision about the beat". The bar says where it is
+                        // standing; the colour says whether the beats themselves line up.
                         color: Math.abs(panel.phaseMs) <= 2.0 ? UiSettings.themeAccent : "#ffb300"
                     }
                     ToolTip.visible: hovered
-                    ToolTip.text: qsTr("%1 ms from the master's beat").arg(panel.phaseMs.toFixed(1))
+                    ToolTip.text: qsTr("%1 ms from the master's beat, %2 beats along the bar")
+                                      .arg(panel.phaseMs.toFixed(1))
+                                      .arg(panel.barErrorBeats.toFixed(2))
                 }
                 Label {
                     objectName: "cached_" + panel.deckId

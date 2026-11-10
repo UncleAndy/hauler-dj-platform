@@ -156,8 +156,10 @@ fn beat_sync_puts_the_follower_on_the_master_s_beat() {
         deck_with_grid(DeckId::B, 120.0, 0, Arc::clone(&seeks)),
     ];
     let master_seeks = Arc::clone(&seeks);
-    // The master is running: a beat that stands still is not a beat to move onto.
+    // Both running: a beat that stands still is not a beat to move onto, and a deck that is not
+    // playing is not chasing one.
     decks[0].play();
+    decks[1].play();
     // A quarter of a beat ahead of the master: 6000 frames at 120 BPM and 48 kHz.
     decks[1].seek(6_000);
     assert!((phase_of(&decks[1]) - 0.25).abs() < 1e-9);
@@ -326,6 +328,7 @@ fn the_snapshot_says_who_leads_and_how_far_apart_the_beats_stand() {
         deck_with_grid(DeckId::B, 120.0, 0, Arc::clone(&seeks)),
     ];
     decks[0].play();
+    decks[1].play();
     decks[1].seek(6_000);
     let mut mixer = mixer();
     lock_b_to_a(&mut decks, &mut mixer);
@@ -369,4 +372,130 @@ fn the_deck_state_survives_a_command_round_trip() {
     assert_eq!(deck.snapshot().sync, SyncMode::Tempo);
     deck.set_sync(SyncMode::Off);
     assert_eq!(deck.snapshot().sync, SyncMode::Off);
+}
+
+#[test]
+fn a_stopped_follower_is_not_dragged_backwards() {
+    // The owner's report: with the master playing, a stopped follower's play head crept backwards in
+    // steps, in time with the phase meter. Every step the beat of a playing master moves on, and a jump
+    // onto it pulls the stopped deck back by that much — the play head is dragged through the track by
+    // a distance nobody asked for.
+    let seeks = Arc::new(AtomicU32::new(0));
+    let counter = Arc::clone(&seeks);
+    let mut decks = vec![
+        deck_with_grid(DeckId::A, 120.0, 0, Arc::clone(&seeks)),
+        deck_with_grid(DeckId::B, 120.0, 0, Arc::clone(&seeks)),
+    ];
+    decks[0].play();
+    decks[1].seek(48_000);
+    let mut mixer = mixer();
+    lock_b_to_a(&mut decks, &mut mixer);
+    let before = counter.load(Ordering::Relaxed);
+    let paused_at = decks[1].position();
+
+    let mut memory = SyncMemory::default();
+    for _ in 0..50 {
+        sync_step(&mut decks, &mut memory, STEP_SECONDS);
+    }
+    let made = counter.load(Ordering::Relaxed) - before;
+    println!(
+        "stopped follower: {made} seeks, position {paused_at} -> {}",
+        decks[1].position()
+    );
+    assert_eq!(made, 0, "a stopped deck is not chasing a beat");
+    assert_eq!(
+        decks[1].position(),
+        paused_at,
+        "the play head of a stopped deck stays where the hand left it"
+    );
+    assert!(
+        (decks[1].tempo_ratio() - 1.0).abs() < 1e-9,
+        "the tempo still follows: {}",
+        decks[1].tempo_ratio()
+    );
+}
+
+#[test]
+fn a_started_follower_is_aligned_on_the_first_step() {
+    // And the other side of the same rule: the moment it plays, it is placed on the beat.
+    let seeks = Arc::new(AtomicU32::new(0));
+    let mut decks = vec![
+        deck_with_grid(DeckId::A, 120.0, 0, Arc::clone(&seeks)),
+        deck_with_grid(DeckId::B, 120.0, 0, Arc::clone(&seeks)),
+    ];
+    decks[0].play();
+    let mut mixer = mixer();
+    lock_b_to_a(&mut decks, &mut mixer);
+    let mut memory = SyncMemory::default();
+    // A second of standing still: nothing is jumped.
+    for _ in 0..25 {
+        sync_step(&mut decks, &mut memory, STEP_SECONDS);
+    }
+    let aligned = decks[1].position();
+    decks[1].set_tempo(1.0);
+    decks[1].play();
+    decks[1].seek(aligned + 9_000);
+    sync_step(&mut decks, &mut memory, STEP_SECONDS);
+    let apart_ms = (phase_of(&decks[1]) - phase_of(&decks[0])).abs() * 500.0;
+    println!(
+        "after the start: leader {} frames, follower {} frames, {apart_ms:.3} ms apart",
+        decks[0].position(),
+        decks[1].position()
+    );
+    assert!(
+        apart_ms < 1.0,
+        "a started follower is placed on the beat: {apart_ms:.3} ms"
+    );
+}
+
+#[test]
+fn the_bar_phase_tells_a_beat_behind_from_aligned() {
+    // A beat-level phase says nothing about which beat: a follower a whole beat behind is "on the beat"
+    // and a quarter of the bar away. The bar number is what the meter draws.
+    let seeks = Arc::new(AtomicU32::new(0));
+    let mut decks = vec![
+        deck_with_grid(DeckId::A, 120.0, 0, Arc::clone(&seeks)),
+        deck_with_grid(DeckId::B, 120.0, 0, Arc::clone(&seeks)),
+    ];
+    decks[0].play();
+    decks[1].play();
+    let mut mixer = mixer();
+    lock_b_to_a(&mut decks, &mut mixer);
+    let mut memory = SyncMemory::default();
+    // Aligned on the same beat: the bar reads zero.
+    sync_step(&mut decks, &mut memory, STEP_SECONDS);
+    let state = dj_engine::snapshot(&decks, &mixer, 1, 0, RATE, 1);
+    let aligned = state
+        .decks
+        .iter()
+        .find(|deck| deck.deck == DeckId::B)
+        .expect("B");
+    let aligned_bar = aligned.bar_error_beats.expect("a bar error is published");
+    println!(
+        "aligned: bar {aligned_bar:.4}, phase {:?} ms",
+        aligned.phase_error_ms
+    );
+    assert!(
+        aligned_bar.abs() < 0.02,
+        "aligned reads zero: {aligned_bar:.4}"
+    );
+
+    // One beat (24000 frames at 120 BPM) further on: a quarter of the bar, and still on the beat.
+    let here = decks[1].position();
+    decks[1].seek(here + 24_000);
+    let state = dj_engine::snapshot(&decks, &mixer, 1, 0, RATE, 1);
+    let behind = state
+        .decks
+        .iter()
+        .find(|deck| deck.deck == DeckId::B)
+        .expect("B");
+    let bar = behind.bar_error_beats.expect("a bar error is published");
+    println!(
+        "one beat along: bar {bar:.4}, phase {:?} ms",
+        behind.phase_error_ms
+    );
+    assert!(
+        (bar.abs() - 1.0).abs() < 0.02,
+        "a whole beat along is a quarter of the bar: {bar:.4}"
+    );
 }

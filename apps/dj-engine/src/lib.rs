@@ -368,7 +368,7 @@ pub fn snapshot(
     epoch: u64,
 ) -> Snapshot {
     let mut published_decks: Vec<DeckSnapshot> = decks.iter().map(Deck::snapshot).collect();
-    fill_phase_errors(&mut published_decks);
+    fill_phase_errors(&mut published_decks, beats_per_bar(decks));
     Snapshot {
         protocol: dj_domain::STATE_PROTOCOL.to_string(),
         // A snapshot taken from the mixer alone says nothing about the loader's cache.
@@ -590,7 +590,7 @@ const SYNC_BLOCKS: u32 = 8;
 /// A phase is a distance between two decks at one instant, so it is filled in where both are in hand:
 /// by the publisher for the wire, and by the free snapshot for tests. Positive means the deck has to
 /// move forward to stand on the master's beat.
-pub fn fill_phase_errors(decks: &mut [DeckSnapshot]) {
+pub fn fill_phase_errors(decks: &mut [DeckSnapshot], beats_per_bar: u8) {
     let master = decks.iter().position(|deck| deck.master).or_else(|| {
         decks
             .iter()
@@ -599,26 +599,55 @@ pub fn fill_phase_errors(decks: &mut [DeckSnapshot]) {
     let Some(master_index) = master else {
         return;
     };
-    let Some((master_phase, master_bpm)) = beat_of(&decks[master_index]) else {
+    let Some((master_beat, master_bpm)) = beat_of(&decks[master_index]) else {
         return;
     };
+    let master_phase = Phase::of(master_beat);
+    let bar = f64::from(beats_per_bar.max(1));
     for (index, deck) in decks.iter_mut().enumerate() {
         if index == master_index || deck.sync.is_off() {
             continue;
         }
-        if let Some((phase, _)) = beat_of(deck) {
+        // A deck that stands still has no phase to report: its beat is a place, not a position in time,
+        // and the distance to a master that keeps playing grows every block. Publishing that number
+        // would make the meter sweep over a deck nobody is playing, which is a clock, not a phase.
+        if !deck.playing {
+            continue;
+        }
+        if let Some((beat, _)) = beat_of(deck) {
             deck.phase_error_ms =
-                Some(dj_sync::error_beats(phase, master_phase) * 60_000.0 / master_bpm);
+                Some(dj_sync::error_beats(Phase::of(beat), master_phase) * 60_000.0 / master_bpm);
+            #[allow(clippy::cast_possible_truncation)]
+            {
+                deck.bar_error_beats =
+                    Some(dj_sync::bar_error_beats(beat, master_beat, bar) as f32);
+            }
         }
     }
 }
 
+/// Bar length of the deck that leads: the bar is a property of the music the master is playing.
+fn beats_per_bar(decks: &[Deck]) -> u8 {
+    let master = decks
+        .iter()
+        .find(|deck| deck.master())
+        .or_else(|| {
+            decks
+                .iter()
+                .find(|deck| deck.is_playing() && deck.beat_grid().is_some())
+        })
+        .or_else(|| decks.iter().find(|deck| deck.beat_grid().is_some()));
+    master
+        .and_then(dj_deck::Deck::beat_grid)
+        .map_or(4, |grid| grid.beats_per_bar())
+}
+
 /// Phase and heard tempo of a deck, when it has a beat to speak of.
-fn beat_of(deck: &DeckSnapshot) -> Option<(Phase, f64)> {
+fn beat_of(deck: &DeckSnapshot) -> Option<(f64, f64)> {
     let beat = deck.beat?;
     let bpm = deck.local_bpm?;
     let heard = bpm * deck.tempo_ratio;
-    (heard.is_finite() && heard > 0.0).then(|| (Phase::of(beat), heard))
+    (heard.is_finite() && heard > 0.0).then_some((beat, heard))
 }
 
 /// What the sync loop remembers between two steps (DJP-SYNC-002).
@@ -754,8 +783,13 @@ pub fn sync_step(decks: &mut [Deck], memory: &mut SyncMemory, seconds: f64) {
         deck.set_tempo(next);
         // A beat is a jump, not a pull: the hand asked for the beat, and a slow correction is heard as a
         // deck losing the mix. One frame is below what anybody can hear, so it is not worth a seek.
+        // A deck that is not playing is not chasing anything. A stopped follower next to a playing
+        // master has a phase that runs away from it at the master's tempo, and jumping onto that beat
+        // every half second drags the play head backwards in steps a person can both see and hear. It
+        // is aligned on the first step after it starts playing, and not before.
         if mode == SyncMode::Beat
             && master_running
+            && deck.is_playing()
             && memory.allows_jump(index)
             && let Some(jump) = planned.jump
         {
@@ -804,6 +838,8 @@ pub struct StateCells {
     crossfader: AtomicU32,
     curve: AtomicU8,
     master_peak: AtomicU32,
+    /// Beats in the bar of the music that leads; four until a deck says otherwise.
+    beats_per_bar: AtomicU8,
     master_held: AtomicU32,
     master_latency: AtomicU32,
     master_gain: AtomicU32,
@@ -991,6 +1027,7 @@ impl StateCells {
             crossfader: AtomicU32::new(0.5f32.to_bits()),
             curve: AtomicU8::new(curve_index(CrossfaderCurve::default())),
             master_peak: AtomicU32::new(0),
+            beats_per_bar: AtomicU8::new(4),
             master_held: AtomicU32::new(0),
             master_latency: AtomicU32::new(0),
             master_gain: AtomicU32::new(1.0f32.to_bits()),
@@ -1008,6 +1045,12 @@ impl StateCells {
     /// Record the cache budget: the snapshot says how full the cache is, and "full" needs a whole.
     pub fn set_cache_budget(&self, bytes: u64) {
         self.cache_budget.store(bytes, Ordering::Relaxed);
+    }
+
+    /// Record the bar length of the music that leads: the publisher works from the cells and cannot see
+    /// a grid, and the bar is what the phase meter draws.
+    pub fn set_beats_per_bar(&self, beats: u8) {
+        self.beats_per_bar.store(beats, Ordering::Relaxed);
     }
 
     pub fn publish(&self, decks: &[Deck], mixer: &Mixer, clock: u64) {
@@ -1223,9 +1266,10 @@ impl StateCells {
                 sync: sync_from_index(cells.sync.load(Ordering::Relaxed)),
                 // Filled in below, where the master and the followers are both in hand.
                 phase_error_ms: None,
+                bar_error_beats: None,
             });
         }
-        fill_phase_errors(&mut decks);
+        fill_phase_errors(&mut decks, self.beats_per_bar.load(Ordering::Relaxed));
         Snapshot {
             protocol: dj_domain::STATE_PROTOCOL.to_string(),
             cache_budget_bytes: self.cache_budget.load(Ordering::Relaxed),
@@ -1922,6 +1966,7 @@ impl EngineGraph {
         let frames = frames.min(self.block);
         // The budget is a setting, not a measurement: one atomic store keeps the state honest.
         self.cells.set_cache_budget(self.cache_budget);
+        self.cells.set_beats_per_bar(beats_per_bar(&self.decks));
         // A prepared track is attached here, at a block boundary: the decode already happened on
         // the loader thread, so this costs a pointer swap and the release of the old decoder.
         while let Ok(load) = self.loads.try_recv() {

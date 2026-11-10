@@ -57,3 +57,28 @@ pub fn error_beats(follower: Phase, master: Phase) -> f64 {
     }
     wrapped
 }
+
+/// The distance between two decks inside a bar, in beats, wrapped to half a bar either way.
+///
+/// This is measured between *beat positions*, not between fractions of a beat: a follower a whole beat
+/// behind its master has the same fraction and is a quarter of a four-beat bar away. Positive means the
+/// deck has to move forward to stand where the master stands.
+pub fn bar_error_beats(follower_beats: f64, master_beats: f64, beats_per_bar: f64) -> f64 {
+    if !(beats_per_bar.is_finite()
+        && beats_per_bar > 0.0
+        && follower_beats.is_finite()
+        && master_beats.is_finite())
+    {
+        return 0.0;
+    }
+    let half = beats_per_bar / 2.0;
+    let raw = master_beats - follower_beats;
+    let mut wrapped = raw - (raw / beats_per_bar + 0.5).floor() * beats_per_bar;
+    if wrapped < -half {
+        wrapped += beats_per_bar;
+    }
+    if wrapped >= half {
+        wrapped -= beats_per_bar;
+    }
+    wrapped
+}

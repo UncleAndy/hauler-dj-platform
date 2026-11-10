@@ -28,6 +28,6 @@ pub mod trim;
 pub use clock::{BeatClock, COAST_MS, ClockStatus, DeckClock, LOCK_MS, LockState, Reading};
 pub use master::{DeckCandidate, MasterPolicy, choose_master};
 pub use meter::DriftMeter;
-pub use phase::{Phase, error_beats};
+pub use phase::{Phase, bar_error_beats, error_beats};
 pub use plan::{Jump, PitchLimits, Refusal, SyncMode, SyncPlan, matching_ratio, plan};
 pub use trim::RateTrim;

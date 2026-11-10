@@ -6645,23 +6645,23 @@ int main(int argc, char *argv[])
                          qPrintable(modeOf(QStringLiteral("B"))));
             return 1;
         }
-        // Same file on both decks: the phase is on the beat, and the meter has to say so rather than
-        // showing a needle parked at an edge.
-        const bool settled = waitFor(
-            [&]() {
-                const QVariant phase = deckOf(QStringLiteral("B")).value(QStringLiteral("phase_error_ms"));
-                return phase.isValid() && !phase.isNull();
-            },
-            5000);
-        if (!settled) {
-            std::fprintf(stderr, "dj-ui: a following deck published no phase\n");
-            return 1;
-        }
-        const double phase = deckOf(QStringLiteral("B")).value(QStringLiteral("phase_error_ms")).toDouble();
+        // A deck that stands still publishes no phase: the distance from a beat that is not moving is a
+        // clock, not a phase, and the meter would sweep. So the meter's presence is checked here and the
+        // number itself is checked once the deck plays.
         auto *meter = findItem(window->contentItem(), QStringLiteral("phaseMeter_B"));
         auto *needle = findItem(window->contentItem(), QStringLiteral("phaseNeedle_B"));
-        if (meter == nullptr || needle == nullptr || !meter->isVisible()) {
-            std::fprintf(stderr, "dj-ui: the phase meter is missing or hidden while sync is on\n");
+        // The strip takes a frame or two to re-bind after the mode reaches the deck, and the meter is
+        // only drawn while a mode is on: wait for it rather than assert on the first look.
+        const bool meter_shown = waitFor(
+            [&]() {
+                return meter != nullptr && needle != nullptr && meter->isVisible();
+            },
+            5000);
+        if (!meter_shown) {
+            std::fprintf(stderr,
+                         "dj-ui: the phase meter is missing or hidden while sync is on (meter %d, "
+                         "needle %d)\n",
+                         meter != nullptr, needle != nullptr);
             return 1;
         }
         // The meter is laid out with the rest of the strip, so its width is zero until a frame has
@@ -6671,11 +6671,13 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: the phase meter was never laid out (%.0f px)\n", meter->width());
             return 1;
         }
-        const double needle_x = needle->x();
         const double centre = meter->width() / 2.0;
-        if (std::abs(phase) <= 5.0 && std::abs(needle_x - centre) > 8.0) {
-            std::fprintf(stderr, "dj-ui: the needle stands at %.0f of %.0f while the beats are %.1f ms apart\n",
-                         needle_x, centre, phase);
+        // Standing still, both decks on the same frame: the needle belongs in the centre of the bar.
+        const bool parked = waitFor([&]() { return std::abs(needle->x() - centre) <= 2.0; }, 3000);
+        if (!parked) {
+            std::fprintf(stderr,
+                         "dj-ui: the needle stands at %.0f of %.0f with both decks on the same frame\n",
+                         needle->x(), centre);
             return 1;
         }
 
@@ -6700,6 +6702,13 @@ int main(int argc, char *argv[])
             }
             return loudest;
         };
+        const auto barErrorOf = [&](const QString &id) {
+            const QVariant bar = deckOf(id).value(QStringLiteral("bar_error_beats"));
+            return bar.isValid() ? bar.toDouble() : 0.0;
+        };
+        const auto frameOf = [&](const QString &id) {
+            return deckOf(id).value(QStringLiteral("source_frame")).toDouble();
+        };
 
         // The follower first, alone: a deck that cannot sound on its own makes the rest of this stage
         // measure nothing. The master has not played yet, so this is the deck and nothing else.
@@ -6717,85 +6726,120 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: the master makes no sound (deck peak %.4f)\n", master_heard);
             return 1;
         }
-        const double rate_b = deckOf(QStringLiteral("B")).value(QStringLiteral("source_rate")).toDouble();
-        const double heard_before = deckOf(QStringLiteral("B")).value(QStringLiteral("source_frame")).toDouble();
-        // The master stops. Its beat stands still, so anything that keeps jumping onto it asks for a seek
-        // every step — and a deck asked to seek that often never gets its material read. That is the
-        // defect this stage exists for: the follower stayed on the beat and made no sound.
-        bridge->play(QStringLiteral("A"), false);
-        const bool stopped = waitFor(
-            [&]() {
-                return !deckOf(QStringLiteral("A")).value(QStringLiteral("playing")).toBool();
-            },
-            5000);
-        if (!stopped) {
-            std::fprintf(stderr, "dj-ui: the master would not stop\n");
-            return 1;
-        }
-        const double heard_after_stop = loudestOver(QStringLiteral("B"), 1500);
-        const double heard_after = deckOf(QStringLiteral("B")).value(QStringLiteral("source_frame")).toDouble();
-        const double travelled = heard_after - heard_before;
-        if (heard_after_stop <= 0.01 || travelled < 0.5 * rate_b) {
-            std::fprintf(stderr,
-                         "dj-ui: with the master stopped the follower went quiet (deck peak %.4f, %.0f "
-                         "frames in 1,5 s)\n",
-                         heard_after_stop, travelled);
-            return 1;
-        }
-
-        // The master plays again before the meter is used as a control arm: against a stopped beat the
-        // follower drifts away by itself, and twenty milliseconds added to a distance that is already
-        // unknown measures the drift, not the needle.
-        bridge->play(QStringLiteral("A"), true);
-        const bool realigned = waitFor(
+        // Both playing and following: the follower is placed on the master's beat and must stay on it.
+        const bool locked_playing = waitFor(
             [&]() {
                 const QVariant phase = deckOf(QStringLiteral("B")).value(QStringLiteral("phase_error_ms"));
                 return phase.isValid() && std::abs(phase.toDouble()) < 2.0;
             },
             8000);
-        if (!realigned) {
-            std::fprintf(stderr, "dj-ui: the follower did not come back onto the master's beat\n");
+        if (!locked_playing) {
+            std::fprintf(stderr, "dj-ui: the follower did not come onto the master's beat\n");
+            return 1;
+        }
+        const double phase_playing =
+            deckOf(QStringLiteral("B")).value(QStringLiteral("phase_error_ms")).toDouble();
+
+        // A stopped follower next to a playing master: its play head must not creep. Every step the
+        // master's beat moves on, and a jump onto it drags a stopped deck backwards through the track.
+        bridge->play(QStringLiteral("B"), false);
+        const bool follower_stopped = waitFor(
+            [&]() {
+                return !deckOf(QStringLiteral("B")).value(QStringLiteral("playing")).toBool();
+            },
+            5000);
+        if (!follower_stopped) {
+            std::fprintf(stderr, "dj-ui: the follower would not stop\n");
+            return 1;
+        }
+        const double held_at = frameOf(QStringLiteral("B"));
+        const double needle_held = needle->x();
+        QElapsedTimer creep;
+        creep.start();
+        while (creep.elapsed() < 1200) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QThread::msleep(10);
+        }
+        const double held_after = frameOf(QStringLiteral("B"));
+        const double needle_after_stop = needle->x();
+        if (std::abs(held_after - held_at) > 0.5) {
+            std::fprintf(stderr,
+                         "dj-ui: the stopped follower was dragged %.0f frames while the master played\n",
+                         held_after - held_at);
+            return 1;
+        }
+        if (std::abs(needle_after_stop - needle_held) > 1.0) {
+            std::fprintf(stderr,
+                         "dj-ui: the needle moved %.1f px over a stopped deck\n",
+                         needle_after_stop - needle_held);
             return 1;
         }
 
-        // Tempo only: the deck follows the speed and keeps its own beat. That is also the control arm
-        // for the meter — with the beat left alone, a deck moved twenty milliseconds off shows a needle
-        // twenty milliseconds off, so a needle wired to the centre cannot pass this.
+        // Started again: back onto the beat.
+        bridge->play(QStringLiteral("B"), true);
+        const bool back_on_beat = waitFor(
+            [&]() {
+                const QVariant phase = deckOf(QStringLiteral("B")).value(QStringLiteral("phase_error_ms"));
+                return phase.isValid() && std::abs(phase.toDouble()) < 2.0;
+            },
+            8000);
+        if (!back_on_beat) {
+            std::fprintf(stderr, "dj-ui: a restarted follower did not come back onto the beat\n");
+            return 1;
+        }
+        // The middle of the bar, taken from the meter itself: the needle before the arm is not a
+        // reference, because a deck can be on the beat and a beat along the bar at the same time.
+        const double middle = meter->width() / 2.0 - 1.0;
+
+        // The control arm for the meter: it draws the bar, so a deck moved a whole beat shows a quarter
+        // of the bar, and a needle wired to the centre cannot pass this. Tempo mode first, because beat
+        // sync would put the deck back on the beat inside half a second and take the arm with it.
         if (!press(QStringLiteral("syncBeat_B")) || !press(QStringLiteral("syncTempo_B"))) {
             return 1;
         }
-        const bool tempo_only = waitFor(
+        const bool tempo_for_the_arm = waitFor(
             [&]() {
                 return modeOf(QStringLiteral("B")) == QStringLiteral("tempo");
             },
             5000);
-        if (!tempo_only) {
+        if (!tempo_for_the_arm) {
             std::fprintf(stderr, "dj-ui: the tempo button did not take\n");
             return 1;
         }
         const QVariantMap follower = deckOf(QStringLiteral("B"));
         const double rate = follower.value(QStringLiteral("source_rate")).toDouble();
-        const double here = follower.value(QStringLiteral("source_frame")).toDouble();
-        // Twenty milliseconds, which is a quarter of the window and well inside it: the needle should
-        // stand a quarter of the way to the edge, not at the edge.
-        const double shift = rate * 0.020;
-        bridge->seek(QStringLiteral("B"), static_cast<qulonglong>(here + shift));
-        const bool moved = waitFor(
+        const double beat_ms = 60000.0 / follower.value(QStringLiteral("local_bpm")).toDouble();
+        const double here = frameOf(QStringLiteral("B"));
+        bridge->seek(QStringLiteral("B"), static_cast<qulonglong>(here + rate * beat_ms / 1000.0));
+        const bool bar_moved = waitFor(
             [&]() {
-                const QVariant phase = deckOf(QStringLiteral("B")).value(QStringLiteral("phase_error_ms"));
-                return phase.isValid() && std::abs(phase.toDouble()) > 5.0;
+                return std::abs(barErrorOf(QStringLiteral("B"))) > 0.8;
             },
             5000);
-        if (!moved) {
-            std::fprintf(stderr, "dj-ui: moving the follower left the phase at zero\n");
+        if (!bar_moved) {
+            std::fprintf(stderr,
+                         "dj-ui: a beat along the bar reads %.3f beats\n",
+                         barErrorOf(QStringLiteral("B")));
             return 1;
         }
-        const bool needleMoved = waitFor([&]() { return std::abs(needle->x() - centre) > 5.0; }, 3000);
+        const bool needleMoved = waitFor([&]() { return std::abs(needle->x() - middle) > 5.0; }, 3000);
         if (!needleMoved) {
-            std::fprintf(stderr, "dj-ui: the needle stayed at %.0f while the beats are apart\n", needle->x());
+            std::fprintf(stderr,
+                         "dj-ui: the needle stayed at %.0f while the deck stood a beat along the bar\n",
+                         needle->x());
             return 1;
         }
-        const double offCentre = needle->x() - centre;
+        const double offCentre = needle->x() - middle;
+        const double bar_along = barErrorOf(QStringLiteral("B"));
+        // The needle has to lean the way the deck has to move, and by a distance a person can see.
+        if ((offCentre > 0.0) != (bar_along > 0.0) || std::abs(offCentre) > 40.0) {
+            std::fprintf(stderr,
+                         "dj-ui: the needle leans %.1f px for a deck %.3f beats along the bar\n",
+                         offCentre, bar_along);
+            return 1;
+        }
+
+        // Released: the mode button does what it says.
         if (!press(QStringLiteral("syncTempo_B"))) {
             return 1;
         }
@@ -6821,11 +6865,11 @@ int main(int argc, char *argv[])
             5000);
 
         std::fprintf(stdout,
-                     "dj-ui: sync — MASTER on A and SYNC on B locked the decks (phase %.3f ms, needle %.0f of "
-                     "%.0f), it sounded and kept playing with the master stopped (peak %.4f, %.0f "
-                     "frames in 1,5 s), TEMPO followed the speed alone, and twenty milliseconds off "
-                     "moved the needle %.0f px off centre before it let go\n",
-                     phase, needle_x, centre, heard_after_stop, travelled, offCentre);
+                     "dj-ui: sync — MASTER on A and SYNC on B put the follower on the beat (phase %.3f "
+                     "ms), a stopped follower held its head at %.0f frames for 1,2 s while the needle "
+                     "stood still, and one beat along the bar (%.3f beats) moved the needle %.0f px off "
+                     "centre\n",
+                     phase_playing, held_at, bar_along, offCentre);
         return 0;
     }
 
