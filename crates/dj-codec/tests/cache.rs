@@ -189,6 +189,87 @@ fn seeking_inside_the_entry_is_exact_and_cheap() {
 }
 
 #[test]
+fn a_reader_keeps_playing_after_its_entry_is_evicted() {
+    // The engine does not pin whole tracks; it relies on a reader owning its data. That makes eviction
+    // safe for a deck that is already playing, and this is the witness of it.
+    let root = cache_root("evict-reader");
+    let first = fixture("tone-1s-44100.flac");
+    let second = fixture("drums-8s-48000.wav");
+
+    let mut sizing = PcmCache::new(
+        root.clone(),
+        CacheConfig {
+            lossless: true,
+            ..config(CacheStorage::Memory, 1_000_000_000)
+        },
+    )
+    .unwrap_or_else(|err| panic!("cache: {err}"));
+    sizing
+        .prepare(&first)
+        .unwrap_or_else(|err| panic!("prepare: {err}"));
+    let small = sizing.size_bytes();
+    sizing
+        .prepare(&second)
+        .unwrap_or_else(|err| panic!("prepare: {err}"));
+    let big = sizing.size_bytes() - small;
+
+    // Room for the big one and half of the small one: the small entry has to be dropped when the big
+    // one arrives, and the big one must still fit.
+    let budget = big + small / 2;
+    assert!(
+        big <= budget && small + big > budget,
+        "the budget must hold the big entry and force the small one out ({small} + {big} against {budget})"
+    );
+    let mut cache = PcmCache::new(
+        root,
+        CacheConfig {
+            lossless: true,
+            ..config(CacheStorage::Memory, budget)
+        },
+    )
+    .unwrap_or_else(|err| panic!("cache: {err}"));
+
+    cache
+        .prepare(&first)
+        .unwrap_or_else(|err| panic!("prepare first: {err}"));
+    let info = StreamDecoder::open(&first)
+        .unwrap_or_else(|err| panic!("open: {err}"))
+        .info()
+        .clone();
+    let key =
+        PcmCache::key_for(&first, &info, cache.config()).unwrap_or_else(|err| panic!("key: {err}"));
+    let mut playing = cache
+        .open_reader(&key)
+        .unwrap_or_else(|err| panic!("reader: {err}"));
+    let mut block = vec![0.0f32; 512];
+    let heard = playing
+        .read_frames(&mut block)
+        .unwrap_or_else(|err| panic!("read: {err}"));
+    assert!(heard > 0, "the reader had material before the eviction");
+
+    cache
+        .prepare(&second)
+        .unwrap_or_else(|err| panic!("prepare second: {err}"));
+    assert!(
+        cache.frames(&key).is_none(),
+        "the budget had to drop the small entry to keep the big one"
+    );
+
+    let mut after = vec![0.0f32; 512];
+    let still = playing
+        .read_frames(&mut after)
+        .unwrap_or_else(|err| panic!("read after eviction: {err}"));
+    assert!(
+        still > 0,
+        "a deck that is already playing keeps its material after its entry leaves the cache"
+    );
+    assert!(
+        after[..still * 2].iter().any(|sample| sample.abs() > 0.0),
+        "and the material is the audio, not silence"
+    );
+}
+
+#[test]
 fn the_limit_evicts_the_least_recently_used_and_spares_pinned_entries() {
     let root = cache_root("evict");
     let probe = fixture("tone-1s-44100-cbr.mp3");
