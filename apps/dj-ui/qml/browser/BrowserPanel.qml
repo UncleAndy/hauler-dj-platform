@@ -56,6 +56,16 @@ Pane {
     // Section text follows the list's text: one control for the browser's type, not two.
     readonly property int sectionFont: Math.max(8, browser.listFont - 1)
 
+    /// The header is part of the browser, not a widget bolted on top of it: the title, the path, the two
+    /// text-size buttons and the deck buttons all follow the same type size. A browser whose list grows
+    /// while its own controls stay small is two panels stacked, and the hand keeps missing the small one.
+    readonly property int titleFont: Math.max(10, browser.listFont + 1)
+    readonly property int headerFont: Math.max(9, browser.listFont)
+    readonly property int headerButtonFont: Math.max(9, browser.listFont - 1)
+    readonly property int headerButtonHeight: Math.max(18, browser.listFont + 10)
+    readonly property int headerTextButtonWidth: Math.max(24, browser.listFont + 16)
+    readonly property int headerDeckButtonWidth: Math.max(20, browser.listFont + 12)
+
     // The sections rail. Today there is one section; the collection and the playlists are the next
     // two entries and need no new layout, only a row in sectionModel.
 
@@ -223,45 +233,49 @@ Pane {
                 Layout.fillWidth: true
                 spacing: 6
                 Label {
+                    objectName: "browserTitle"
                     text: qsTr("Browser")
                     font.bold: true
+                    font.pixelSize: browser.titleFont
                     color: UiSettings.themeText
                 }
                 Label {
+                    objectName: "browserPath"
                     Layout.fillWidth: true
                     text: Browser.folder
                     elide: Text.ElideMiddle
                     color: UiSettings.themeTextDim
-                    font.pixelSize: 10
+                    font.pixelSize: browser.headerFont
                 }
                 // The text size, changed where it is read: a browser whose font cannot be changed is
                 // a browser for one pair of eyes.
                 Button {
                     objectName: "fontMinus"
                     text: qsTr("A−")
-                    font.pixelSize: 9
+                    font.pixelSize: browser.headerButtonFont
                     padding: 2
-                    implicitWidth: 24
-                    implicitHeight: 18
+                    implicitWidth: browser.headerTextButtonWidth
+                    implicitHeight: browser.headerButtonHeight
                     enabled: browser.listFont > browser.minListFont
                     onClicked: browser.stepFont(-1)
                 }
                 Button {
                     objectName: "fontPlus"
                     text: qsTr("A+")
-                    font.pixelSize: 9
+                    font.pixelSize: browser.headerButtonFont
                     padding: 2
-                    implicitWidth: 24
-                    implicitHeight: 18
+                    implicitWidth: browser.headerTextButtonWidth
+                    implicitHeight: browser.headerButtonHeight
                     enabled: browser.listFont < browser.maxListFont
                     onClicked: browser.stepFont(1)
                 }
                 // The target is named in words, not painted into one of the buttons: at rest every
                 // deck button looks the same, and only a playing deck stands out.
                 Label {
+                    objectName: "browserTarget"
                     text: qsTr("→ %1").arg(browser.target)
                     color: UiSettings.themeTextDim
-                    font.pixelSize: 10
+                    font.pixelSize: browser.headerFont
                 }
                 Repeater {
                     model: ["A", "B", "C", "D"]
@@ -269,10 +283,10 @@ Pane {
                         required property string modelData
                         objectName: "deckButton_" + modelData
                         text: modelData
-                        font.pixelSize: 9
+                        font.pixelSize: browser.headerButtonFont
                         padding: 2
-                        implicitWidth: 20
-                        implicitHeight: 18
+                        implicitWidth: browser.headerDeckButtonWidth
+                        implicitHeight: browser.headerButtonHeight
                         // Blue for a playing deck: the browser tells the truth about the decks it feeds.
                         // The chosen target is not a colour of its own — it is written in the header.
                         playing: browser.deckIsPlaying(modelData)
@@ -364,7 +378,7 @@ Pane {
                 visible: Browser.entries.length === 0
                 text: Browser.error.length > 0 ? Browser.error : qsTr("no tracks here")
                 color: UiSettings.themeWaveOutline
-                font.pixelSize: 11
+                font.pixelSize: browser.headerFont
             }
         }
     }

@@ -7949,6 +7949,46 @@ int main(int argc, char *argv[])
             return 1;
         }
 
+        // The header is the same browser as the list. Its title, the path, the two text-size buttons and
+        // the deck buttons all follow the type size, and the buttons grow enough to keep their labels
+        // inside: a list that grows under controls too small to hit is a browser only half scaled.
+        QQuickItem *pathLabel = findItem(panel, QStringLiteral("browserPath"));
+        QQuickItem *deckButton = findItem(panel, QStringLiteral("deckButton_A"));
+        if (pathLabel == nullptr || deckButton == nullptr) {
+            std::fprintf(stderr, "dj-ui: the browser header has no path or no deck button to measure\n");
+            return 1;
+        }
+        const auto pixelSizeOf = [](QQuickItem *item) {
+            return item->property("font").value<QFont>().pixelSize();
+        };
+        const int pathBefore = pixelSizeOf(pathLabel);
+        const int deckBefore = pixelSizeOf(deckButton);
+        const double buttonBefore = plus->height();
+        const auto heightBecomes = [&](double want) {
+            for (int attempt = 0; attempt < 60; ++attempt) {
+                QCoreApplication::processEvents();
+                QThread::msleep(10);
+                if (plus->height() > want) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        QMetaObject::invokeMethod(plus, "clicked");
+        const bool buttonsGrew = heightBecomes(buttonBefore);
+        const int pathAfter = pixelSizeOf(pathLabel);
+        const int deckAfter = pixelSizeOf(deckButton);
+        const double buttonAfter = plus->height();
+        QMetaObject::invokeMethod(minus, "clicked");
+        QCoreApplication::processEvents();
+        if (pathAfter != pathBefore + 1 || deckAfter != deckBefore + 1 || !buttonsGrew) {
+            std::fprintf(stderr,
+                         "dj-ui: the browser header did not follow the type (path %d -> %d, deck button "
+                         "%d -> %d, height %.0f -> %.0f)\n",
+                         pathBefore, pathAfter, deckBefore, deckAfter, buttonBefore, buttonAfter);
+            return 1;
+        }
+
         // The height of the browser is a hand's decision too. A drop writes percentages, and the two
         // numbers must not move when the type changes size: a panel that snaps back the moment the
         // font grows is a panel that never remembers how tall it was.
@@ -8015,7 +8055,8 @@ int main(int argc, char *argv[])
 
         std::fprintf(stdout,
                      "dj-ui: browser selects and acts, selection follows the click, \"..\" goes up, "
-                     "the text size moves the row and the sections (%d px), the rail is %.0f px wide, "
+                     "the text size moves the row, the sections (%d px) and the header — title, path, "
+                     "the text-size buttons and the deck buttons — with it; the rail is %.0f px wide, "
                      "the browser keeps %d%% of the window when the type grows, and the rail width, the "
                      "font and the deck zoom come back after a restart (130 px, 14 px, 0.25)\n",
                      small, railAfter, browserPercent);
