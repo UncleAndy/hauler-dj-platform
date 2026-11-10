@@ -328,6 +328,32 @@ fn unity() -> f32 {
     1.0
 }
 
+/// What a deck does when it follows another deck's beat (DJP-SYNC-002).
+///
+/// Off is the default and the honest state of a deck nobody synchronised: the phase is still reported,
+/// because a DJ wants to see how far apart two decks are before deciding to lock them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncMode {
+    /// Nothing is followed; the deck keeps its own speed and its own beat.
+    #[default]
+    Off,
+    /// Follow the master's tempo, keep the deck's own beat where it stands.
+    Tempo,
+    /// Follow the master's tempo and stand on its beat.
+    Beat,
+}
+
+impl SyncMode {
+    /// Whether the deck follows anything at all.
+    ///
+    /// Taken by reference because serde's `skip_serializing_if` hands it one: a mode of `off` is left
+    /// off the wire rather than published twenty times a second.
+    pub fn is_off(&self) -> bool {
+        *self == Self::Off
+    }
+}
+
 /// One command from a client to the engine.
 ///
 /// Every state change of the live engine goes through one of these (DJP-ARCH-001).
@@ -475,6 +501,21 @@ pub enum DjCommand {
         /// Playback rate multiplier.
         ratio: f64,
     },
+    /// Follow another deck's beat, or stop following it (DJP-SYNC-002).
+    Sync {
+        /// The following deck.
+        deck: DeckId,
+        /// What it follows: nothing, the tempo, or the tempo and the beat.
+        mode: SyncMode,
+    },
+    /// Make this deck the master the others follow (DJP-SYNC-001).
+    ///
+    /// A master is a deck, not a number: the others need its beat, not only its tempo, and a tempo
+    /// without a phase cannot put two kicks together.
+    Master {
+        /// The deck that leads.
+        deck: DeckId,
+    },
     /// Bend the rate the way a hand on the platter does (DJP-DECK-006): `-1 … 1`, zero lets go.
     ///
     /// Continuous: the shell sends the deflection while the control is held and zero on release. It is
@@ -582,6 +623,8 @@ impl DjCommand {
             | DjCommand::BeatJump { .. }
             | DjCommand::SetSlip { .. }
             | DjCommand::SetReverse { .. }
+            | DjCommand::Sync { .. }
+            | DjCommand::Master { .. }
             | DjCommand::Load { .. }
             | DjCommand::AnalyzeTempo { .. }
             | DjCommand::EditGrid { .. }
@@ -1011,6 +1054,19 @@ pub struct DeckSnapshot {
     /// Defaulted so a snapshot from a build without the EQ still parses here.
     #[serde(default)]
     pub eq: EqGains,
+    /// Whether this deck leads the others (DJP-SYNC-001). Left off the wire when it does not.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub master: bool,
+    /// What this deck follows (DJP-SYNC-002). Left off the wire when it follows nothing.
+    #[serde(default, skip_serializing_if = "SyncMode::is_off")]
+    pub sync: SyncMode,
+    /// How far this deck's beat stands from the master's, in milliseconds, positive when the deck has
+    /// to move forward. Absent when the deck follows nothing or has no beat to compare.
+    ///
+    /// This is what a phase meter draws, and it is published rather than computed by every client: the
+    /// engine is the only place that sees both decks at one instant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase_error_ms: Option<f64>,
 }
 
 /// Where a deck's waveform envelope lives (DJP-MEDIA-003).

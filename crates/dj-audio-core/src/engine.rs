@@ -6,7 +6,7 @@
 //! offline buffers — lives outside it.
 
 use dj_domain::{
-    Ack, CommandId, DeckId, DeckSnapshot, DjCommand, RejectReason, STATE_PROTOCOL,
+    Ack, AckStatus, CommandId, DeckId, DeckSnapshot, DjCommand, RejectReason, STATE_PROTOCOL,
     ScheduledCommand, Snapshot, SourceFrame,
 };
 
@@ -173,6 +173,12 @@ impl Engine {
         let at_sample = self.clock;
         let command_id = scheduled.id;
         let status = match scheduled.command {
+            // The A01 renderer holds one tone and no beat: a deck to follow or to lead does not exist
+            // here, and saying so is better than pretending the flag did something.
+            DjCommand::Sync { .. } | DjCommand::Master { .. } => Some(Ack {
+                command_id,
+                status: AckStatus::Rejected(RejectReason::NotSupported),
+            }),
             DjCommand::Play { enabled, .. } => {
                 if enabled && !self.playing {
                     self.sine.reset();
@@ -308,6 +314,10 @@ impl Engine {
                 // The A01 renderer is a bare tone: no mixer, so no channel fader or EQ.
                 fader: 1.0,
                 eq: dj_domain::EqGains::FLAT,
+                // One generated tone has nobody to follow and nothing to lead.
+                master: false,
+                sync: dj_domain::SyncMode::Off,
+                phase_error_ms: None,
             }],
         }
     }

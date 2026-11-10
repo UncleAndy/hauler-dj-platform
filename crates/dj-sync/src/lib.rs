@@ -25,7 +25,7 @@ pub mod phase;
 pub mod plan;
 pub mod trim;
 
-pub use clock::{BeatClock, COAST_MS, ClockStatus, DeckClock, LOCK_MS, LockState};
+pub use clock::{BeatClock, COAST_MS, ClockStatus, DeckClock, LOCK_MS, LockState, Reading};
 pub use master::{DeckCandidate, MasterPolicy, choose_master};
 pub use meter::DriftMeter;
 pub use phase::{Phase, error_beats};

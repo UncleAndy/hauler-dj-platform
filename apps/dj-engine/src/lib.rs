@@ -19,6 +19,7 @@ use dj_domain::{
     TrackMeta,
 };
 use dj_mixer::{ChannelSettings, CrossAssign, CrossfaderCurve, Mixer};
+use dj_sync::{DeckClock, Phase, PitchLimits, RateTrim, Reading, SyncMode, plan as plan_sync};
 
 pub mod meta;
 pub mod metronome;
@@ -56,6 +57,7 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
         | DjCommand::BeatJump { deck, .. }
         | DjCommand::SetSlip { deck, .. }
         | DjCommand::SetReverse { deck, .. }
+        | DjCommand::Sync { deck, .. }
         | DjCommand::Metronome { deck, .. }
         | DjCommand::Eject { deck }
         | DjCommand::Load { deck, .. } => Some(*deck),
@@ -225,6 +227,10 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
                 target.set_slip(*enabled);
                 Ack::applied(id, at)
             }
+            DjCommand::Sync { mode, .. } => {
+                target.set_sync(*mode);
+                Ack::applied(id, at)
+            }
             // Reverse walks the material backwards from the playhead. A track still streaming from disk
             // has no cheap seek, so the deck refuses — and the client is told, rather than left waiting
             // for a callback that would have to block on a decoder.
@@ -254,6 +260,20 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
     }
 
     match &command.command {
+        // One master at a time: making a deck lead takes the flag off every other deck, so two decks
+        // can never both claim to be the beat everything else follows (DJP-SYNC-001).
+        DjCommand::Master { deck: chosen } => {
+            if !decks.iter().any(|candidate| candidate.id() == *chosen) {
+                return Ack {
+                    command_id: id,
+                    status: AckStatus::Rejected(RejectReason::InvalidValue),
+                };
+            }
+            for deck in decks.iter_mut() {
+                deck.set_master(deck.id() == *chosen);
+            }
+            Ack::applied(id, at)
+        }
         DjCommand::SetCrossfaderCurve { curve } => {
             mixer.set_curve(*curve);
             Ack::applied(id, at)
@@ -347,6 +367,8 @@ pub fn snapshot(
     rate: u32,
     epoch: u64,
 ) -> Snapshot {
+    let mut published_decks: Vec<DeckSnapshot> = decks.iter().map(Deck::snapshot).collect();
+    fill_phase_errors(&mut published_decks);
     Snapshot {
         protocol: dj_domain::STATE_PROTOCOL.to_string(),
         // A snapshot taken from the mixer alone says nothing about the loader's cache.
@@ -365,11 +387,10 @@ pub fn snapshot(
         },
         master_gain: mixer.master_gain(),
         master_latency_frames: mixer.latency_frames(),
-        decks: decks
-            .iter()
+        decks: published_decks
+            .into_iter()
             .enumerate()
-            .map(|(index, deck)| {
-                let mut published = deck.snapshot();
+            .map(|(index, mut published)| {
                 // The fader is the mixer's, keyed by the strip the deck feeds.
                 published.fader = mixer.channel(index).map_or(1.0, |settings| settings.fader);
                 published
@@ -502,6 +523,10 @@ struct DeckCells {
     reverse: AtomicBool,
     cached: AtomicBool,
     cached_bytes: AtomicU64,
+    // What the deck follows (DJP-SYNC-002), as one byte: off, tempo, beat.
+    sync: AtomicU8,
+    // Whether the deck leads the others (DJP-SYNC-001).
+    master: AtomicBool,
 }
 
 impl DeckCells {
@@ -531,6 +556,162 @@ impl DeckCells {
             reverse: AtomicBool::new(false),
             cached: AtomicBool::new(false),
             cached_bytes: AtomicU64::new(0),
+            sync: AtomicU8::new(0),
+            master: AtomicBool::new(false),
+        }
+    }
+}
+
+/// The sync mode as one byte, so the render thread can publish it without allocating.
+fn sync_index(mode: SyncMode) -> u8 {
+    match mode {
+        SyncMode::Off => 0,
+        SyncMode::Tempo => 1,
+        SyncMode::Beat => 2,
+    }
+}
+
+/// The mode a published byte stands for; anything unknown is `off`, because a client cannot have asked
+/// for a mode this build does not have.
+fn sync_from_index(index: u8) -> SyncMode {
+    match index {
+        1 => SyncMode::Tempo,
+        2 => SyncMode::Beat,
+        _ => SyncMode::Off,
+    }
+}
+
+/// Blocks between two sync steps: at 256 frames a block this is a step every 43 ms, which is the tick
+/// the planner was measured at.
+const SYNC_BLOCKS: u32 = 8;
+
+/// Every following deck's distance from the master's beat, in milliseconds (DJP-SYNC-002).
+///
+/// A phase is a distance between two decks at one instant, so it is filled in where both are in hand:
+/// by the publisher for the wire, and by the free snapshot for tests. Positive means the deck has to
+/// move forward to stand on the master's beat.
+pub fn fill_phase_errors(decks: &mut [DeckSnapshot]) {
+    let master = decks.iter().position(|deck| deck.master).or_else(|| {
+        decks
+            .iter()
+            .position(|deck| deck.playing && deck.beat.is_some())
+    });
+    let Some(master_index) = master else {
+        return;
+    };
+    let Some((master_phase, master_bpm)) = beat_of(&decks[master_index]) else {
+        return;
+    };
+    for (index, deck) in decks.iter_mut().enumerate() {
+        if index == master_index || deck.sync.is_off() {
+            continue;
+        }
+        if let Some((phase, _)) = beat_of(deck) {
+            deck.phase_error_ms =
+                Some(dj_sync::error_beats(phase, master_phase) * 60_000.0 / master_bpm);
+        }
+    }
+}
+
+/// Phase and heard tempo of a deck, when it has a beat to speak of.
+fn beat_of(deck: &DeckSnapshot) -> Option<(Phase, f64)> {
+    let beat = deck.beat?;
+    let bpm = deck.local_bpm?;
+    let heard = bpm * deck.tempo_ratio;
+    (heard.is_finite() && heard > 0.0).then(|| (Phase::of(beat), heard))
+}
+
+/// Which deck leads: the one a hand made master, else the first playing deck with a beat, else the
+/// first deck that has one. Deterministic, so the phase meter cannot flicker between two masters.
+fn master_index(decks: &[Deck]) -> Option<usize> {
+    let has_beat = |deck: &Deck| deck.has_source() && deck.beat_grid().is_some();
+    decks
+        .iter()
+        .position(|deck| deck.master() && has_beat(deck))
+        .or_else(|| {
+            decks
+                .iter()
+                .position(|deck| deck.is_playing() && has_beat(deck))
+        })
+        .or_else(|| decks.iter().position(has_beat))
+}
+
+/// What the master's beat is, read once: the followers are compared against one instant.
+fn master_reading(deck: &Deck) -> Option<Reading> {
+    let grid = deck.beat_grid()?;
+    let rate = f64::from(deck.source_rate());
+    if rate <= 0.0 {
+        return None;
+    }
+    let beat = grid.beat_at(deck.position(), rate);
+    let bpm = grid.bpm_at(deck.position()) * deck.tempo_ratio();
+    bpm.is_finite().then_some(Reading {
+        name: "the master deck",
+        tempo_bpm: bpm,
+        phase: Phase::of(beat),
+        age_ms: 0.0,
+        // A paused deck still has a beat: it is the beat the DJ lined the next track up against, and
+        // a sync that dies whenever the master is stopped is a sync nobody can trust at the moment
+        // it is needed. A file with no grid is the case that has nothing to follow, and it has
+        // already returned above.
+        running: true,
+    })
+}
+
+/// One step of the sync control loop: match the followers' tempo, and stand them on the master's beat
+/// when that is what they were asked for (DJP-SYNC-001/002).
+///
+/// Pure arithmetic on decks: no allocation, no locks, no I/O, so it runs inside the audio callback. It
+/// is idempotent — a second step moves the tempo no further than the trim allows and a deck already on
+/// the beat asks for no seek.
+pub fn sync_step(decks: &mut [Deck], seconds: f64) {
+    let limits = PitchLimits::default();
+    let trim = RateTrim::default();
+    let Some(master_index) = master_index(decks) else {
+        return;
+    };
+    let Some(master) = master_reading(&decks[master_index]) else {
+        return;
+    };
+    for (index, deck) in decks.iter_mut().enumerate() {
+        if index == master_index {
+            continue;
+        }
+        let mode = deck.sync();
+        if mode.is_off() || !deck.has_source() {
+            continue;
+        }
+        // The plan is made while the deck is read only; the deck is changed after it, so a refusal can
+        // leave it exactly as it was.
+        let planned = {
+            let Some(grid) = deck.beat_grid() else {
+                continue;
+            };
+            let follower = DeckClock {
+                grid,
+                source_rate: f64::from(deck.source_rate()),
+                frame: deck.position(),
+                ratio: deck.tempo_ratio(),
+            };
+            plan_sync(&master, &follower, mode, limits)
+        };
+        let Ok(planned) = planned else {
+            continue;
+        };
+        // A tempo is approached, not stamped: the trim's travel is slow enough to be inaudible and fast
+        // enough to land inside a bar.
+        let next = trim.step(deck.tempo_ratio(), planned.ratio, seconds);
+        deck.set_tempo(next);
+        // A beat is a jump, not a pull: the hand asked for the beat, and a slow correction is heard as a
+        // deck losing the mix. One frame is below what anybody can hear, so it is not worth a seek.
+        if mode == SyncMode::Beat
+            && let Some(jump) = planned.jump
+            && jump.frames.unsigned_abs() >= 2
+        {
+            let target = i128::from(deck.position()) + i128::from(jump.frames);
+            if let Ok(target) = u64::try_from(target.max(0)) {
+                deck.seek(target);
+            }
         }
     }
 }
@@ -805,6 +986,8 @@ impl StateCells {
                 .store((deck.nudge() as f32).to_bits(), Ordering::Relaxed);
             cells.slip.store(deck.slip(), Ordering::Relaxed);
             cells.reverse.store(deck.reverse(), Ordering::Relaxed);
+            cells.sync.store(sync_index(deck.sync()), Ordering::Relaxed);
+            cells.master.store(deck.master(), Ordering::Relaxed);
             cells
                 .cached
                 .store(deck.reads_from_memory(), Ordering::Relaxed);
@@ -979,8 +1162,13 @@ impl StateCells {
                     mid_db: f32::from_bits(cells.eq_mid.load(Ordering::Relaxed)),
                     high_db: f32::from_bits(cells.eq_high.load(Ordering::Relaxed)),
                 },
+                master: cells.master.load(Ordering::Relaxed),
+                sync: sync_from_index(cells.sync.load(Ordering::Relaxed)),
+                // Filled in below, where the master and the followers are both in hand.
+                phase_error_ms: None,
             });
         }
+        fill_phase_errors(&mut decks);
         Snapshot {
             protocol: dj_domain::STATE_PROTOCOL.to_string(),
             cache_budget_bytes: self.cache_budget.load(Ordering::Relaxed),
@@ -1496,6 +1684,8 @@ pub struct EngineGraph {
     cache_budget: u64,
     /// The metronome's click generator: four voices mixed into the master bus.
     metronome: metronome::Metronome,
+    /// Blocks since the last sync step: the loop runs every [`SYNC_BLOCKS`], not every block.
+    sync_blocks: u32,
 }
 
 impl EngineGraph {
@@ -1528,6 +1718,7 @@ impl EngineGraph {
             cache_budget: 0,
             paths: vec![None; decks_len],
             metronome: metronome::Metronome::new(mixer_sample_rate),
+            sync_blocks: 0,
         }
     }
 
@@ -1896,6 +2087,20 @@ impl EngineGraph {
                     .set_cue_meta(index, usize::from(*slot), label.clone(), color.clone());
             }
             let _ = submission.reply.send(ack);
+        }
+
+        // Sync is arithmetic on two decks and it has to see both at the same instant, which only the
+        // callback can promise. A step every few blocks is the tick the planner was measured at, and it
+        // is cheap enough not to need a thread of its own (DJP-SYNC-001/002).
+        self.sync_blocks = (self.sync_blocks + 1) % SYNC_BLOCKS;
+        if self.sync_blocks == 0 {
+            let rate = f64::from(self.mixer.sample_rate());
+            let seconds = if rate > 0.0 {
+                (self.block * SYNC_BLOCKS as usize) as f64 / rate
+            } else {
+                0.05
+            };
+            sync_step(&mut self.decks, seconds);
         }
 
         self.mixer.begin_block(frames);

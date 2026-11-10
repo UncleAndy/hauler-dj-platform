@@ -348,6 +348,7 @@ dependencies = [
  "dj-domain",
  "dj-library",
  "dj-mixer",
+ "dj-sync",
  "dj-testkit",
  "serde_json",
  "signal-hook",

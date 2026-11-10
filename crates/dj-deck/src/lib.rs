@@ -13,7 +13,7 @@
 use dj_codec::Prefetcher;
 use dj_domain::{
     BeatGrid, DeckId, DeckLoad, DeckSnapshot, EqGains, FrameRange, HOTCUE_SLOTS, Levels,
-    SourceFrame, TrackMeta,
+    SourceFrame, SyncMode, TrackMeta,
 };
 use dj_dsp::ChannelEq;
 use dj_signalsmith_sys::{DEFAULT_FALL_SECONDS, Interpolation, PeakDecay, Resampler};
@@ -315,6 +315,10 @@ pub struct Deck {
     grid: Option<BeatGrid>,
     /// Whether the metronome clicks this deck's grid.
     metronome: bool,
+    /// What this deck follows (DJP-SYNC-002).
+    sync: SyncMode,
+    /// Whether this deck leads the others (DJP-SYNC-001).
+    master: bool,
     /// Clicks the metronome has played since the deck was created.
     clicks: u64,
     /// What the strip's meter shows: the peak, held and falling back over half a second.
@@ -442,6 +446,8 @@ impl Deck {
             slip_virtual: 0.0,
             loop_region: None,
             loop_mode: false,
+            sync: SyncMode::Off,
+            master: false,
             armed: Vec::new(),
             hotcues: [None; HOTCUE_SLOTS],
             pad_loops: [None; HOTCUE_SLOTS],
@@ -1023,6 +1029,26 @@ impl Deck {
     /// Whether loop mode is on.
     pub fn loop_mode(&self) -> bool {
         self.loop_mode
+    }
+
+    /// What this deck follows: nothing, the master's tempo, or the master's beat (DJP-SYNC-002).
+    pub fn set_sync(&mut self, mode: SyncMode) {
+        self.sync = mode;
+    }
+
+    /// What this deck follows.
+    pub fn sync(&self) -> SyncMode {
+        self.sync
+    }
+
+    /// Whether this deck is the one the others follow (DJP-SYNC-001).
+    pub fn set_master(&mut self, master: bool) {
+        self.master = master;
+    }
+
+    /// Whether this deck leads.
+    pub fn master(&self) -> bool {
+        self.master
     }
 
     /// Every region loop mode is watching, in track order.
@@ -2414,6 +2440,11 @@ impl Deck {
             // unity, and the engine's snapshot fills the fader in from the strip.
             fader: 1.0,
             eq: self.eq.gains(),
+            master: self.master,
+            sync: self.sync,
+            // A phase is a distance between two decks, and a deck on its own has nobody to stand
+            // against: the engine fills this in where it can see both.
+            phase_error_ms: None,
         }
     }
 }

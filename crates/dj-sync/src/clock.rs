@@ -128,6 +128,47 @@ impl BeatClock for DeckClock<'_> {
     }
 }
 
+/// A clock read once: tempo and phase taken at one instant, with nothing behind them.
+///
+/// A deck is a clock that moves; this is the same clock photographed. The engine uses it for the
+/// master — the phase meter and the planner must see the master as it was at the instant the follower
+/// was read, not as it is a millisecond later.
+#[derive(Debug, Clone, Copy)]
+pub struct Reading {
+    /// Name of the source, for a refusal a person can read.
+    pub name: &'static str,
+    /// Tempo as heard, in beats per minute.
+    pub tempo_bpm: f64,
+    /// Where inside the beat the source stood.
+    pub phase: Phase,
+    /// How old the reading is, in milliseconds.
+    pub age_ms: f64,
+    /// Whether the source claims to be running.
+    pub running: bool,
+}
+
+impl BeatClock for Reading {
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    fn tempo_bpm(&self) -> f64 {
+        self.tempo_bpm
+    }
+
+    fn phase(&self) -> Phase {
+        self.phase
+    }
+
+    fn freshness_ms(&self) -> f64 {
+        self.age_ms
+    }
+
+    fn running(&self) -> bool {
+        self.running
+    }
+}
+
 /// What an external clock reports about itself, and what the shell shows: the name of the source, its
 /// tempo, and whether it is still there.
 #[derive(Debug, Clone, PartialEq)]

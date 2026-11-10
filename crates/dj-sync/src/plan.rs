@@ -7,16 +7,7 @@
 use crate::clock::{BeatClock, DeckClock, LockState};
 use crate::phase::error_beats;
 
-/// What the follower is asked to do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SyncMode {
-    /// Nothing: the plan reports the phase and leaves the deck alone.
-    Off,
-    /// Match the master's tempo, keep the deck's own beat where it stands.
-    Tempo,
-    /// Match the master's tempo **and** stand on its beat.
-    Beat,
-}
+pub use dj_domain::SyncMode;
 
 /// How far the pitch may be moved, either way, in percent of the file's own speed.
 #[derive(Debug, Clone, Copy, PartialEq)]

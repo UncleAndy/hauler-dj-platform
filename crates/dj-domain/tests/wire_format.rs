@@ -260,8 +260,30 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
                 mid_db: -4.5,
                 high_db: 0.0,
             },
+            // Nothing about sync is claimed in the frozen document: the fields are defaulted and left
+            // off the wire, which is what keeps an older client reading it.
+            master: false,
+            sync: dj_domain::SyncMode::Off,
+            phase_error_ms: None,
         }],
     };
+    // The sync fields are optional on the wire: absent by default, and named when a deck leads or
+    // follows. A client from before sync reads the same document and simply sees neither.
+    let mut synced = snapshot.clone();
+    synced.decks[0].master = true;
+    synced.decks[0].sync = dj_domain::SyncMode::Tempo;
+    synced.decks[0].phase_error_ms = Some(-12.5);
+    let wire = serde_json::to_string(&synced).unwrap_or_default();
+    assert!(wire.contains("\"master\":true"), "{wire}");
+    assert!(wire.contains("\"sync\":\"tempo\""), "{wire}");
+    assert!(wire.contains("\"phase_error_ms\":-12.5"), "{wire}");
+    assert!(
+        !serde_json::to_string(&snapshot)
+            .unwrap_or_default()
+            .contains("phase_error_ms"),
+        "a deck that follows nothing claims no phase"
+    );
+
     assert_eq!(
         serde_json::to_string(&snapshot).unwrap_or_default(),
         concat!(
