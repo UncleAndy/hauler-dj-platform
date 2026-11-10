@@ -7407,7 +7407,49 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: a deck button did not load the chosen track\n");
             return 1;
         }
-        std::fprintf(stdout, "dj-ui: browser selects and acts, selection follows the click\n");
+        // The way up is a row, not a button: it is first, it is called "..", and it goes up.
+        const QVariantList rows = browser.entries();
+        if (rows.isEmpty() || !rows.first().toMap().value(QStringLiteral("parent")).toBool()
+            || rows.first().toMap().value(QStringLiteral("name")).toString() != QStringLiteral("..")) {
+            std::fprintf(stderr, "dj-ui: the browser has no \"..\" row to go up with\n");
+            return 1;
+        }
+        const QString inside = browser.folder();
+        QDir up(inside);
+        const bool hasParent = up.cdUp();
+        QVariant opened;
+        QMetaObject::invokeMethod(panel, "openFolder", Q_RETURN_ARG(QVariant, opened),
+                                  Q_ARG(QVariant, 0));
+        QCoreApplication::processEvents();
+        if (hasParent && browser.folder() != up.absolutePath()) {
+            std::fprintf(stderr, "dj-ui: \"..\" did not go up (%s, wanted %s)\n",
+                         qPrintable(browser.folder()), qPrintable(up.absolutePath()));
+            return 1;
+        }
+
+        // The text size is a control in the browser, and the row grows with it.
+        const int small = panel->property("rowHeight").toInt();
+        QQuickItem *plus = panel->findChild<QQuickItem *>(QStringLiteral("fontPlus"));
+        QQuickItem *minus = panel->findChild<QQuickItem *>(QStringLiteral("fontMinus"));
+        if (plus == nullptr || minus == nullptr) {
+            std::fprintf(stderr, "dj-ui: the browser has no text-size control\n");
+            return 1;
+        }
+        QMetaObject::invokeMethod(plus, "clicked");
+        QCoreApplication::processEvents();
+        const int bigger = panel->property("rowHeight").toInt();
+        QMetaObject::invokeMethod(minus, "clicked");
+        QCoreApplication::processEvents();
+        const int back = panel->property("rowHeight").toInt();
+        if (bigger != small + 1 || back != small) {
+            std::fprintf(stderr, "dj-ui: the text size did not follow the buttons (%d, %d, %d)\n",
+                         small, bigger, back);
+            return 1;
+        }
+        std::fprintf(stdout,
+                     "dj-ui: browser selects and acts, selection follows the click, \"..\" goes up "
+                     "and the text size moves the row (%d px)\n",
+                     small);
         return 0;
     }
 

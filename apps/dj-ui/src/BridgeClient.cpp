@@ -95,6 +95,15 @@ void FileBrowser::load(const QString &path)
     m_folder = dir.absolutePath();
 
     QVariantList entries;
+    // The way up is the first row of the list, the way every file manager on this desktop does it.
+    // Root has no parent, so root has no such row.
+    QDir parent(m_folder);
+    if (parent.cdUp()) {
+        entries.append(QVariantMap{{QStringLiteral("name"), QStringLiteral("..")},
+                                   {QStringLiteral("path"), parent.absolutePath()},
+                                   {QStringLiteral("dir"), true},
+                                   {QStringLiteral("parent"), true}});
+    }
     const QFileInfoList dirs = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
     for (const QFileInfo &info : dirs) {
         entries.append(QVariantMap{{QStringLiteral("name"), info.fileName()},
