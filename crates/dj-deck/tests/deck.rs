@@ -1745,6 +1745,77 @@ fn a_jump_past_the_end_stops_at_the_last_frame() {
 }
 
 #[test]
+fn a_slip_jump_keeps_the_virtual_head_running() {
+    // Slip: the sound may jump, the track may not. A hotcue under slip moves what is heard while the
+    // virtual head carries on as if nothing had happened; letting slip go puts the sound where the
+    // track would be — that is the whole model, and it is what makes slip safe to press mid-mix.
+    let mut deck = deck_with_ramp(4_000_000);
+    deck.set_keylock(false);
+    deck.set_hotcue(1, 500_000);
+    deck.seek(100_000);
+    deck.play();
+    let mut block = vec![0.0f32; 256];
+    for _ in 0..10 {
+        deck.render(&mut block);
+    }
+    deck.set_slip(true);
+    assert_eq!(
+        deck.slip_frame(),
+        Some(101_280),
+        "slip starts where the sound is"
+    );
+
+    deck.jump_hotcue(1).expect("the cue is there");
+    assert_eq!(deck.position(), 500_000, "the sound jumps to the cue");
+    for _ in 0..10 {
+        deck.render(&mut block);
+    }
+    assert_eq!(
+        deck.slip_frame(),
+        Some(102_560),
+        "the virtual head never jumped"
+    );
+    assert_eq!(deck.position(), 501_280, "the sound plays on from the cue");
+
+    deck.set_slip(false);
+    assert_eq!(
+        deck.position(),
+        102_560,
+        "letting slip go puts the sound where the track would be"
+    );
+}
+
+#[test]
+fn a_slip_loop_returns_to_where_the_track_would_be() {
+    // Flux: the loop repeats what is heard while the virtual head walks straight through it. Three
+    // and a bit times round the loop later, letting go lands past the loop, not at its start.
+    let mut deck = deck_with_ramp(4_000_000);
+    deck.set_keylock(false);
+    deck.set_loop_mode(true);
+    let region = FrameRange::new(10_000, 22_000).expect("a twelve-thousand-frame loop");
+    assert!(deck.set_loop(Some(region)));
+    deck.seek(10_000);
+    deck.set_slip(true);
+    deck.play();
+    let mut block = vec![0.0f32; 256];
+    for _ in 0..300 {
+        deck.render(&mut block);
+    }
+    assert!(
+        region.contains(SourceFrame(deck.position())),
+        "the sound stays in the loop, got {}",
+        deck.position()
+    );
+    assert_eq!(
+        deck.slip_frame(),
+        Some(48_400),
+        "the virtual head went straight through the loop"
+    );
+    deck.set_slip(false);
+    assert_eq!(deck.position(), 48_400);
+}
+
+#[test]
 fn a_nudge_bends_the_rate_and_leaves_the_fader_alone() {
     // A hand on the platter: the speed changes while it is held, the play head moves only by the
     // material that was played, and letting go returns the deck to the fader's own rate. The block is

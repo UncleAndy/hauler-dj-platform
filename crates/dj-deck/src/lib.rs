@@ -263,6 +263,12 @@ pub struct Deck {
     /// A nudge is not a tempo change: the fader keeps its value, the bend lasts while it is held, and
     /// the deck comes back to the fader's rate the moment it is let go.
     nudge: f64,
+    /// Whether slip is on: the sound may jump or repeat, the track under it keeps running (DJP-DECK-007).
+    slip: bool,
+    /// Slip's virtual play head, in source frames: where the track would be had nothing been jumped
+    /// or repeated since slip was switched on. Fractional, because a tempo that is not 1.0 moves it by
+    /// a fraction of a frame per block.
+    slip_virtual: f64,
     /// The loop the Loop button made, if any: it is the one that can be captured into memory.
     loop_region: Option<FrameRange>,
     /// Whether loop mode is on. In loop mode **every** saved loop plays: a track can have many, and a
@@ -388,6 +394,8 @@ impl Deck {
             tempo_ratio: 1.0,
             tempo_target: 1.0,
             nudge: 0.0,
+            slip: false,
+            slip_virtual: 0.0,
             loop_region: None,
             loop_mode: false,
             armed: Vec::new(),
@@ -501,6 +509,41 @@ impl Deck {
         }
         // A rate change keeps the carried frames: they are still the material after the playhead, and
         // dropping them would drop a fraction of a frame the ear cannot hear but a test can.
+    }
+
+    /// Switch slip on or off (DJP-DECK-007).
+    ///
+    /// Slip is a model of the virtual position, not a sound effect: with it on, the virtual head keeps
+    /// running at the deck's rate while the sound jumps to a cue or repeats a loop. Switching it off
+    /// puts the sound where the track would be by now — so a jump made under slip is undone by one
+    /// press, and the mix never loses its place.
+    pub fn set_slip(&mut self, enabled: bool) {
+        if self.slip == enabled {
+            return;
+        }
+        if enabled {
+            self.slip_virtual = self.position() as f64;
+            self.slip = true;
+        } else {
+            self.slip = false;
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let target = self.slip_virtual.max(0.0).round() as u64;
+            self.seek(target);
+        }
+    }
+
+    /// Whether slip is on.
+    pub fn slip(&self) -> bool {
+        self.slip
+    }
+
+    /// Where the virtual play head stands, when slip is on.
+    pub fn slip_frame(&self) -> Option<u64> {
+        self.slip.then(|| {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let frame = self.slip_virtual.max(0.0).round() as u64;
+            frame
+        })
     }
 
     /// The rate the deck is being asked to play at: the fader's value with the nudge's bend on top.
@@ -1453,6 +1496,14 @@ impl Deck {
             self.render_keylocked(out);
         }
 
+        // Slip's virtual head runs at the deck's own rate, whatever the sound did this block: a loop
+        // that wrapped and a cue that jumped are both invisible to it.
+        if self.slip {
+            #[allow(clippy::cast_precision_loss)]
+            let frames = out.len() as f64 / 2.0;
+            self.slip_virtual += frames * step;
+        }
+
         // Trim, then the measured correction: both are gain staging before the EQ, and neither one is
         // visible on the knob.
         let staging = self.gain * self.auto_gain;
@@ -2043,6 +2094,8 @@ impl Deck {
             tempo_ratio: self.tempo_target,
             #[allow(clippy::cast_possible_truncation)]
             nudge: self.nudge as f32,
+            slip: self.slip,
+            slip_frame: self.slip_frame().map(SourceFrame),
             // The channel fader belongs to the mixer strip, not to the deck: a deck on its own is at
             // unity, and the engine's snapshot fills the fader in from the strip.
             fader: 1.0,

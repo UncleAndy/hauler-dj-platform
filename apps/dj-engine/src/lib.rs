@@ -54,6 +54,7 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
         | DjCommand::SetTempoRatio { deck, .. }
         | DjCommand::Nudge { deck, .. }
         | DjCommand::BeatJump { deck, .. }
+        | DjCommand::SetSlip { deck, .. }
         | DjCommand::Metronome { deck, .. }
         | DjCommand::Eject { deck }
         | DjCommand::Load { deck, .. } => Some(*deck),
@@ -218,6 +219,10 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
                         status: AckStatus::Rejected(RejectReason::InvalidValue),
                     }
                 }
+            }
+            DjCommand::SetSlip { enabled, .. } => {
+                target.set_slip(*enabled);
+                Ack::applied(id, at)
             }
             // A jump is measured on the deck's own grid: the DJ asks for beats, not for frames, and a
             // deck without a grid has no beats to give — that refusal is the honest answer.
@@ -475,6 +480,9 @@ struct DeckCells {
     fader: AtomicU32,
     // The nudge in force, `-1 … 1`, so the state can say the hand is still on the platter.
     nudge: AtomicU32,
+    // Slip and its virtual head: the ghost marker a client draws beside the play head.
+    slip: AtomicBool,
+    slip_frame: AtomicU64,
 }
 
 impl DeckCells {
@@ -499,6 +507,8 @@ impl DeckCells {
             eq_high: AtomicU32::new(0),
             fader: AtomicU32::new(1.0f32.to_bits()),
             nudge: AtomicU32::new(0.0f32.to_bits()),
+            slip: AtomicBool::new(false),
+            slip_frame: AtomicU64::new(EMPTY),
         }
     }
 }
@@ -763,6 +773,10 @@ impl StateCells {
             cells
                 .nudge
                 .store((deck.nudge() as f32).to_bits(), Ordering::Relaxed);
+            cells.slip.store(deck.slip(), Ordering::Relaxed);
+            cells
+                .slip_frame
+                .store(deck.slip_frame().unwrap_or(EMPTY), Ordering::Relaxed);
             let levels = deck.levels();
             cells
                 .peak_left
@@ -914,6 +928,11 @@ impl StateCells {
                 auto_gain_db: fixed.auto_gain_db,
                 tempo_ratio: f64::from_bits(cells.tempo.load(Ordering::Relaxed)),
                 nudge: f32::from_bits(cells.nudge.load(Ordering::Relaxed)),
+                slip: cells.slip.load(Ordering::Relaxed),
+                slip_frame: {
+                    let frame = cells.slip_frame.load(Ordering::Relaxed);
+                    (frame != EMPTY).then_some(SourceFrame(frame))
+                },
                 fader: f32::from_bits(cells.fader.load(Ordering::Relaxed)),
                 eq: EqGains {
                     low_db: f32::from_bits(cells.eq_low.load(Ordering::Relaxed)),

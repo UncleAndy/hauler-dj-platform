@@ -245,6 +245,8 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
             auto_gain_db: Some(-3.5),
             tempo_ratio: 1.0,
             nudge: 0.0,
+            slip: false,
+            slip_frame: None,
             fader: 0.85,
             eq: EqGains {
                 low_db: 3.0,

@@ -433,6 +433,16 @@ pub enum DjCommand {
         /// Destination in source frames.
         frame: SourceFrame,
     },
+    /// Switch slip on or off (DJP-DECK-007).
+    ///
+    /// With slip on, a jump or a loop moves the sound but not the virtual play head; switching it off
+    /// puts the sound where the track would be. Critical: a lost "off" would leave the deck slipped.
+    SetSlip {
+        /// Target deck.
+        deck: DeckId,
+        /// Whether slip is on.
+        enabled: bool,
+    },
     /// Beatjump: move the play head by a musical distance (DJP-DECK-006).
     ///
     /// Fractions and multiples of a beat are one command: `beats` is a number and its sign says which
@@ -559,6 +569,7 @@ impl DjCommand {
             | DjCommand::LoopBeats { .. }
             | DjCommand::LoopMove { .. }
             | DjCommand::BeatJump { .. }
+            | DjCommand::SetSlip { .. }
             | DjCommand::Load { .. }
             | DjCommand::AnalyzeTempo { .. }
             | DjCommand::EditGrid { .. }
@@ -957,6 +968,14 @@ pub struct DeckSnapshot {
     /// protocol error, and a deck whose hand is off is not bending anything.
     #[serde(default, skip_serializing_if = "is_no_bend")]
     pub nudge: f32,
+    /// Whether slip is on (DJP-DECK-007). Defaulted and left off the wire when off: a client that knows
+    /// nothing about slip is not a protocol error.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub slip: bool,
+    /// Where the virtual play head stands while slip is on: what the shell draws as the ghost marker.
+    /// Absent when nothing is slipping, so "no slip" and "slip at frame zero" cannot be confused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slip_frame: Option<SourceFrame>,
     /// Channel fader in force, linear: 1.0 is unity, 0.0 is silence.
     #[serde(default = "unity")]
     pub fader: f32,

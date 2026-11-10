@@ -184,6 +184,53 @@ fn a_nudge_reaches_the_deck_and_the_state_reports_it() {
 }
 
 #[test]
+fn slip_and_its_virtual_head_reach_the_state() {
+    // A client draws the ghost play head from the state, so the state has to carry it: the flag and the
+    // frame, not a promise that the engine knows.
+    let (mut graph, cells, submissions) = graph_for(deck_on_grid(true));
+    render_one(&mut graph);
+    let ack = apply(
+        &mut graph,
+        &submissions,
+        1,
+        DjCommand::SetSlip {
+            deck: DeckId::A,
+            enabled: true,
+        },
+    );
+    assert!(
+        matches!(ack.status, AckStatus::Applied { .. }),
+        "slip is an ordinary deck command, got {:?}",
+        ack.status
+    );
+    render_one(&mut graph);
+    let state = deck_state(&cells);
+    assert!(state.slip, "the state says slip is on");
+    assert!(
+        state.slip_frame.is_some(),
+        "a slip that says nothing about where the head is cannot be drawn"
+    );
+
+    let ack = apply(
+        &mut graph,
+        &submissions,
+        2,
+        DjCommand::SetSlip {
+            deck: DeckId::A,
+            enabled: false,
+        },
+    );
+    assert!(matches!(ack.status, AckStatus::Applied { .. }));
+    render_one(&mut graph);
+    let state = deck_state(&cells);
+    assert!(!state.slip);
+    assert_eq!(
+        state.slip_frame, None,
+        "nothing is slipping when slip is off"
+    );
+}
+
+#[test]
 fn a_beat_jump_is_decided_against_the_grid() {
     // The play head sits a third of a beat past the fourth: a jump of one beat must land on the fifth
     // beat, not a beat-length past where it stood. The state document is what the shell draws.
