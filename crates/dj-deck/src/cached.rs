@@ -70,6 +70,11 @@ impl DeckSource for CachedSource {
         true
     }
 
+    /// Stereo f32 material held in an array: the size is what the deck is paying for it.
+    fn memory_bytes(&self) -> Option<u64> {
+        Some(self.bytes() as u64)
+    }
+
     fn seek(&mut self, frame: u64) -> Result<u64, String> {
         // The same rule the other sources keep: a play head never leaves the material, and frame zero of
         // an empty file is not a frame at all.
@@ -116,6 +121,11 @@ impl DeckSource for CachedReaderSource {
     /// Memory: a seek is an index assignment, so the deck may walk this source backwards.
     fn seeks_are_immediate(&self) -> bool {
         true
+    }
+
+    /// Stereo f32 material held in an array: the size is what the deck is paying for it.
+    fn memory_bytes(&self) -> Option<u64> {
+        Some(self.reader.frames_expected()? * 2 * 4)
     }
 
     fn seek(&mut self, frame: u64) -> Result<u64, String> {

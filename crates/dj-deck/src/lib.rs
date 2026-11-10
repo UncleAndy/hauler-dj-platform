@@ -96,6 +96,14 @@ pub trait DeckSource: Send {
         self.seek(frame)
     }
 
+    /// Bytes this source keeps in memory, when it keeps its material there.
+    ///
+    /// A deck shows the number: "this track is in RAM" without a size says nothing about whether the
+    /// next one will fit.
+    fn memory_bytes(&self) -> Option<u64> {
+        None
+    }
+
     /// True when a seek costs a pointer move instead of a wait on a decoder.
     ///
     /// A deck can walk such a source backwards one block at a time from inside the audio callback:
@@ -1978,6 +1986,13 @@ impl Deck {
             .is_some_and(|source| source.seeks_are_immediate())
     }
 
+    /// Bytes of material this deck holds in memory, or `None` when it reads from a decoder.
+    pub fn memory_bytes(&self) -> Option<u64> {
+        self.source
+            .as_ref()
+            .and_then(|source| source.memory_bytes())
+    }
+
     /// Whether the material is played backwards.
     pub fn reverse(&self) -> bool {
         self.reverse
@@ -2357,6 +2372,7 @@ impl Deck {
             analyzing: self.analyzing,
             reverse: self.reverse,
             cached: self.reads_from_memory(),
+            cached_bytes: self.memory_bytes().unwrap_or(0),
             metronome: self.metronome,
             clicks: self.clicks,
             beat,

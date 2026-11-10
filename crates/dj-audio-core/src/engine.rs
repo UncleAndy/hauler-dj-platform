@@ -275,6 +275,7 @@ impl Engine {
                 reverse: false,
                 // The A01 renderer has no cache and no file: everything it plays is generated.
                 cached: false,
+                cached_bytes: 0,
                 // The A01 renderer plays a tone it generated: it has no grid, so nothing clicks.
                 metronome: false,
                 clicks: 0,

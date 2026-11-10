@@ -3736,11 +3736,18 @@ int main(int argc, char *argv[])
         // The handover happens a few seconds after the load (the entry is built behind the deck), so
         // the check waits instead of reading a single snapshot.
         if (!waitFor(
-                [&]() { return deckA().value(QStringLiteral("cached")).toBool(); }, 20000)) {
+                [&]() {
+                    return deckA().value(QStringLiteral("cached")).toBool()
+                        && deckA().value(QStringLiteral("cached_bytes")).toDouble() > 0.0;
+                },
+                20000)) {
             std::fprintf(stderr,
                          "dj-ui: the deck never reported its material in memory (cache off?)\n");
             return 1;
         }
+        const double cachedMb =
+            deckA().value(QStringLiteral("cached_bytes")).toDouble() / (1024.0 * 1024.0);
+        std::fprintf(stdout, "dj-ui: the track is in memory: %.1f MB held by the deck\n", cachedMb);
         const qint64 beforeReverse = playHead();
         bool accepted = false;
         QElapsedTimer reverseWait;

@@ -453,6 +453,19 @@ Pane {
     }
 
     /// The correction as a person reads it, or an empty string when there is nothing measured.
+    // How much memory this deck's track is taking: "in RAM" without a size answers nothing.
+    function cachedText() {
+        const bytes = panel.deck !== null ? Number(panel.deck.cached_bytes || 0) : 0;
+        if (bytes <= 0) {
+            return qsTr("RAM");
+        }
+        const mb = bytes / 1048576;
+        if (mb >= 1024) {
+            return "RAM " + (mb / 1024).toFixed(1) + " GB";
+        }
+        return "RAM " + mb.toFixed(0) + " MB";
+    }
+
     function autoGainText() {
         if (panel.autoGainDb === null) {
             return "";
@@ -560,7 +573,7 @@ Pane {
                     // A track the engine keeps in memory can lose its file and keep playing. That is a
                     // property of the deck, not of the file, so it is said here and only when true.
                     visible: panel.deck !== null && panel.deck.cached === true
-                    text: qsTr("RAM")
+                    text: panel.cachedText()
                     color: UiSettings.themeAccent
                     opacity: 0.7
                     font.pixelSize: 9

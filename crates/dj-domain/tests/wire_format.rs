@@ -252,6 +252,7 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
             reverse: false,
             // Nothing is cached in this record either: a streamed deck says nothing about memory.
             cached: false,
+            cached_bytes: 0,
             fader: 0.85,
             eq: EqGains {
                 low_db: 3.0,

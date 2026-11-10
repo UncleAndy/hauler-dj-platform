@@ -499,6 +499,7 @@ struct DeckCells {
     slip_frame: AtomicU64,
     reverse: AtomicBool,
     cached: AtomicBool,
+    cached_bytes: AtomicU64,
 }
 
 impl DeckCells {
@@ -527,6 +528,7 @@ impl DeckCells {
             slip_frame: AtomicU64::new(EMPTY),
             reverse: AtomicBool::new(false),
             cached: AtomicBool::new(false),
+            cached_bytes: AtomicU64::new(0),
         }
     }
 }
@@ -797,6 +799,9 @@ impl StateCells {
                 .cached
                 .store(deck.reads_from_memory(), Ordering::Relaxed);
             cells
+                .cached_bytes
+                .store(deck.memory_bytes().unwrap_or(0), Ordering::Relaxed);
+            cells
                 .slip_frame
                 .store(deck.slip_frame().unwrap_or(EMPTY), Ordering::Relaxed);
             let levels = deck.levels();
@@ -953,6 +958,7 @@ impl StateCells {
                 slip: cells.slip.load(Ordering::Relaxed),
                 reverse: cells.reverse.load(Ordering::Relaxed),
                 cached: cells.cached.load(Ordering::Relaxed),
+                cached_bytes: cells.cached_bytes.load(Ordering::Relaxed),
                 slip_frame: {
                     let frame = cells.slip_frame.load(Ordering::Relaxed);
                     (frame != EMPTY).then_some(SourceFrame(frame))

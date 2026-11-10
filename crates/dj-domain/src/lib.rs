@@ -990,6 +990,12 @@ pub struct DeckSnapshot {
     /// nothing about the cache is not a protocol error.
     #[serde(default, skip_serializing_if = "is_false")]
     pub cached: bool,
+    /// Bytes this deck holds in memory, zero when it streams (DJP-MEDIA cache).
+    ///
+    /// Said next to `cached` because "in memory" without a size cannot answer the only question a DJ
+    /// has about it: will the next track fit.
+    #[serde(default, skip_serializing_if = "is_zero_count")]
+    pub cached_bytes: u64,
     /// Whether the material plays backwards (DJP-DECK-007). Left off the wire when forward.
     #[serde(default, skip_serializing_if = "is_false")]
     pub reverse: bool,
