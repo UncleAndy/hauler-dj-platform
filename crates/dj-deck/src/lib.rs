@@ -532,6 +532,24 @@ impl Deck {
         }
     }
 
+    /// Leaving a repeat with slip on: the sound goes to the virtual head at once (DJP-DECK-007).
+    ///
+    /// This is the half of the model a DJ knows as Flux — the loop is a detour, and letting go of it puts
+    /// the track back on its own clock instead of leaving the sound inside the loop. Without slip the
+    /// sound simply plays on from where the loop left it, which is what a loop is for.
+    fn leave_repeat_for_the_virtual_head(&mut self) {
+        if !self.slip {
+            return;
+        }
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let target = self.slip_virtual.max(0.0).round() as u64;
+        // Nothing to catch up with when the deck never jumped: the seek would be a no-op with a fade on
+        // top, and a fade on a loop that was going to end anyway is a hole in the sound.
+        if target.abs_diff(self.position()) > 2 {
+            self.seek(target);
+        }
+    }
+
     /// Whether slip is on.
     pub fn slip(&self) -> bool {
         self.slip
@@ -901,6 +919,13 @@ impl Deck {
 
     /// Turn loop mode on or off. With it off no region repeats; with it on every saved loop repeats.
     pub fn set_loop_mode(&mut self, enabled: bool) {
+        // Whether the sound is inside a repeat right now: leaving a mode nobody was looping under is not
+        // a reason to move the play head.
+        let was_repeating = self.loop_mode
+            && self
+                .armed
+                .iter()
+                .any(|region| region.contains(SourceFrame(self.position())));
         self.loop_mode = enabled;
         self.rebuild_armed();
         // A playhead inside the captured copy must finish it rather than be yanked back to the source:
@@ -910,6 +935,9 @@ impl Deck {
                 .loop_buffer
                 .as_ref()
                 .map(|buffer| buffer.start.saturating_add(buffer.frames()));
+        }
+        if !enabled && was_repeating {
+            self.leave_repeat_for_the_virtual_head();
         }
     }
 
@@ -1005,6 +1033,15 @@ impl Deck {
     /// for a clash skips the active loop when the caller is the mover. Saved pads are still checked: a
     /// moved loop must not land on one.
     fn set_loop_with(&mut self, region: Option<FrameRange>, replacing_active: bool) -> bool {
+        if region.is_none() {
+            let was_repeating = self
+                .armed
+                .iter()
+                .any(|armed| armed.contains(SourceFrame(self.position())));
+            if was_repeating {
+                self.leave_repeat_for_the_virtual_head();
+            }
+        }
         if let Some(region) = region {
             let clash = if replacing_active {
                 self.pad_clash(region, None)

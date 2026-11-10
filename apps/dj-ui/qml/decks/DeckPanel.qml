@@ -910,7 +910,8 @@ Pane {
                 focusPolicy: Qt.NoFocus
                 highlighted: panel.deck.slip === true
                 ToolTip.visible: hovered
-                ToolTip.text: qsTr("The sound may jump or repeat; the track under it keeps running")
+                ToolTip.text: qsTr("The sound may jump or repeat while the track under it keeps "
+                                   + "running; leaving a loop puts the sound back on the track's clock")
                 onClicked: Bridge.setSlip(panel.deckId, panel.deck.slip !== true)
             }
         }

@@ -1745,6 +1745,57 @@ fn a_jump_past_the_end_stops_at_the_last_frame() {
 }
 
 #[test]
+fn leaving_a_loop_under_slip_lands_on_the_virtual_head() {
+    // Slip's other half, the one a DJ calls Flux: the loop is a detour, and dropping it puts the sound
+    // back on the track's own clock instead of leaving it inside the repeat.
+    let mut deck = deck_with_ramp(4_000_000);
+    deck.set_keylock(false);
+    deck.set_loop_mode(true);
+    let region = FrameRange::new(10_000, 22_000).expect("a twelve-thousand-frame loop");
+    assert!(deck.set_loop(Some(region)));
+    deck.seek(10_000);
+    deck.set_slip(true);
+    deck.play();
+    let mut block = vec![0.0f32; 256];
+    for _ in 0..300 {
+        deck.render(&mut block);
+    }
+    assert_eq!(deck.slip_frame(), Some(48_400));
+    deck.set_loop_mode(false);
+    assert_eq!(
+        deck.position(),
+        48_400,
+        "dropping the loop puts the sound where the track would be"
+    );
+    assert!(!deck.loop_mode(), "the mode is still what the button said");
+}
+
+#[test]
+fn leaving_a_loop_without_slip_keeps_the_sound_where_it_is() {
+    // The guard on the rule above: without slip a loop stays a loop, and switching the mode off plays on
+    // from inside it. A jump here would be the deck inventing a feature nobody asked for.
+    let mut deck = deck_with_ramp(4_000_000);
+    deck.set_keylock(false);
+    deck.set_loop_mode(true);
+    let region = FrameRange::new(10_000, 22_000).expect("a twelve-thousand-frame loop");
+    assert!(deck.set_loop(Some(region)));
+    deck.seek(10_000);
+    deck.play();
+    let mut block = vec![0.0f32; 256];
+    for _ in 0..300 {
+        deck.render(&mut block);
+    }
+    let inside = deck.position();
+    deck.set_loop_mode(false);
+    assert_eq!(
+        deck.position(),
+        inside,
+        "the sound stays where the loop left it"
+    );
+    assert_eq!(deck.slip_frame(), None, "nothing slips when slip is off");
+}
+
+#[test]
 fn a_slip_jump_keeps_the_virtual_head_running() {
     // Slip: the sound may jump, the track may not. A hotcue under slip moves what is heard while the
     // virtual head carries on as if nothing had happened; letting slip go puts the sound where the
