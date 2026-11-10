@@ -1745,6 +1745,66 @@ fn a_jump_past_the_end_stops_at_the_last_frame() {
 }
 
 #[test]
+fn a_nudge_bends_the_rate_and_leaves_the_fader_alone() {
+    // A hand on the platter: the speed changes while it is held, the play head moves only by the
+    // material that was played, and letting go returns the deck to the fader's own rate. The block is
+    // 128 stereo frames, so ten of them are 1 280 frames at the file's own speed.
+    let mut deck = deck_with_ramp(4_000_000);
+    deck.set_keylock(false);
+    deck.play();
+    let mut block = vec![0.0f32; 256];
+    deck.render(&mut block);
+    let before = deck.position();
+    deck.set_nudge(1.0);
+    assert!((deck.nudge() - 1.0).abs() < 1e-9);
+    for _ in 0..10 {
+        deck.render(&mut block);
+    }
+    let bent = deck.position() - before;
+    // Four per cent faster: 1 331 frames instead of 1 280.
+    assert!(
+        (1_327..=1_335).contains(&bent),
+        "the nudge must bend the rate, got {bent} frames"
+    );
+    assert!(
+        (deck.tempo_target() - 1.0).abs() < 1e-9,
+        "the fader keeps its value while the platter is bent"
+    );
+    assert!(
+        (deck.tempo_ratio() - 1.04).abs() < 1e-9,
+        "the applied rate is the fader with the bend on top"
+    );
+
+    let held = deck.position();
+    deck.set_nudge(0.0);
+    for _ in 0..10 {
+        deck.render(&mut block);
+    }
+    assert_eq!(
+        deck.position() - held,
+        1_280,
+        "letting go returns the deck to its own rate"
+    );
+}
+
+#[test]
+fn a_nudge_stays_inside_the_range_it_promises() {
+    let mut deck = deck_with_ramp(4_000_000);
+    deck.set_nudge(9.0);
+    assert!(
+        (deck.nudge() - 1.0).abs() < 1e-9,
+        "a nudge stops at the end of its range"
+    );
+    deck.set_nudge(-9.0);
+    assert!((deck.nudge() + 1.0).abs() < 1e-9);
+    deck.set_nudge(f64::NAN);
+    assert!(
+        deck.nudge().abs() < 1e-9,
+        "a nudge that is not a number is no nudge"
+    );
+}
+
+#[test]
 fn a_deck_at_its_own_speed_renders_the_same_bytes_as_before_the_tempo_stage() {
     // The golden render compares bytes: a tempo stage that touched the signal at unity would move every
     // baseline in the repository.

@@ -52,6 +52,7 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
         | DjCommand::LoopBeats { deck, .. }
         | DjCommand::LoopMove { deck, .. }
         | DjCommand::SetTempoRatio { deck, .. }
+        | DjCommand::Nudge { deck, .. }
         | DjCommand::BeatJump { deck, .. }
         | DjCommand::Metronome { deck, .. }
         | DjCommand::Eject { deck }
@@ -196,6 +197,20 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
                     && (dj_deck::MIN_TEMPO_RATIO..=dj_deck::MAX_TEMPO_RATIO).contains(ratio)
                 {
                     target.set_tempo(*ratio);
+                    Ack::applied(id, at)
+                } else {
+                    Ack {
+                        command_id: id,
+                        status: AckStatus::Rejected(RejectReason::InvalidValue),
+                    }
+                }
+            }
+            // A hand on the platter: the deck bends its own rate, the fader keeps its value, and the
+            // state says the bend is in force. The deck clamps the deflection, so a client cannot ask
+            // for more bend than the range promises.
+            DjCommand::Nudge { amount, .. } => {
+                if amount.is_finite() {
+                    target.set_nudge(f64::from(*amount));
                     Ack::applied(id, at)
                 } else {
                     Ack {
@@ -458,6 +473,8 @@ struct DeckCells {
     eq_high: AtomicU32,
     // The channel fader as applied by the mixer strip.
     fader: AtomicU32,
+    // The nudge in force, `-1 … 1`, so the state can say the hand is still on the platter.
+    nudge: AtomicU32,
 }
 
 impl DeckCells {
@@ -481,6 +498,7 @@ impl DeckCells {
             eq_mid: AtomicU32::new(0),
             eq_high: AtomicU32::new(0),
             fader: AtomicU32::new(1.0f32.to_bits()),
+            nudge: AtomicU32::new(0.0f32.to_bits()),
         }
     }
 }
@@ -741,6 +759,10 @@ impl StateCells {
             cells
                 .tempo
                 .store(deck.tempo_ratio().to_bits(), Ordering::Relaxed);
+            #[allow(clippy::cast_possible_truncation)]
+            cells
+                .nudge
+                .store((deck.nudge() as f32).to_bits(), Ordering::Relaxed);
             let levels = deck.levels();
             cells
                 .peak_left
@@ -891,6 +913,7 @@ impl StateCells {
                 auto_gain: fixed.auto_gain,
                 auto_gain_db: fixed.auto_gain_db,
                 tempo_ratio: f64::from_bits(cells.tempo.load(Ordering::Relaxed)),
+                nudge: f32::from_bits(cells.nudge.load(Ordering::Relaxed)),
                 fader: f32::from_bits(cells.fader.load(Ordering::Relaxed)),
                 eq: EqGains {
                     low_db: f32::from_bits(cells.eq_low.load(Ordering::Relaxed)),

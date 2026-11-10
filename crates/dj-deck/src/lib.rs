@@ -49,6 +49,10 @@ pub const MIN_TEMPO_RATIO: f64 = 0.25;
 /// Fastest playback rate a deck accepts.
 pub const MAX_TEMPO_RATIO: f64 = 4.0;
 
+/// How far a nudge bends the rate at full deflection: four per cent, about the width of a hand on a
+/// platter (DJP-DECK-006).
+pub const NUDGE_RANGE: f64 = 0.04;
+
 /// How long the playing rate takes to reach what the hand asked, in seconds.
 ///
 /// Shorter and the stretcher's phase jumps (a click); longer and the fader feels laggy under the hand.
@@ -254,6 +258,11 @@ pub struct Deck {
     /// What the hand asked for. The deck glides `tempo_ratio` towards it: a rate that jumps in one
     /// block makes the stretcher jump its phase, and that is heard as a click at the start of a move.
     tempo_target: f64,
+    /// The bend a hand on the platter adds: `-1 … 1` of [`NUDGE_RANGE`], zero when the hand is off.
+    ///
+    /// A nudge is not a tempo change: the fader keeps its value, the bend lasts while it is held, and
+    /// the deck comes back to the fader's rate the moment it is let go.
+    nudge: f64,
     /// The loop the Loop button made, if any: it is the one that can be captured into memory.
     loop_region: Option<FrameRange>,
     /// Whether loop mode is on. In loop mode **every** saved loop plays: a track can have many, and a
@@ -378,6 +387,7 @@ impl Deck {
             auto_gain_db: None,
             tempo_ratio: 1.0,
             tempo_target: 1.0,
+            nudge: 0.0,
             loop_region: None,
             loop_mode: false,
             armed: Vec::new(),
@@ -487,10 +497,42 @@ impl Deck {
             // Nothing is sounding, or nothing is being stretched: the rate can move in one piece. The
             // resampling stage is sample-continuous and takes a jump; only the spectral stage needs the
             // glide below.
-            self.tempo_ratio = clamped;
+            self.tempo_ratio = self.asked_rate();
         }
         // A rate change keeps the carried frames: they are still the material after the playhead, and
         // dropping them would drop a fraction of a frame the ear cannot hear but a test can.
+    }
+
+    /// The rate the deck is being asked to play at: the fader's value with the nudge's bend on top.
+    fn asked_rate(&self) -> f64 {
+        self.tempo_target * (1.0 + self.nudge * NUDGE_RANGE)
+    }
+
+    /// Bend the rate the way a hand on the platter does, `-1 … 1`; zero lets go (DJP-DECK-006).
+    ///
+    /// The bend is on top of the fader and never written into it: a DJ pushing a mix back into phase
+    /// does not want the pitch fader to move, and does not want the tempo to stay bent after the hand
+    /// is off. With the key locked the bend glides like any other rate change, because a rate that
+    /// jumps in one block makes the stretcher jump its phase and that jump is heard.
+    pub fn set_nudge(&mut self, amount: f64) {
+        let clamped = if amount.is_finite() {
+            amount.clamp(-1.0, 1.0)
+        } else {
+            0.0
+        };
+        if (clamped - self.nudge).abs() < f64::EPSILON {
+            return;
+        }
+        self.nudge = clamped;
+        if !self.playing || !self.keylock_engaged {
+            // The resampling stage is sample-continuous: it takes the bend at once, as a turntable does.
+            self.tempo_ratio = self.asked_rate();
+        }
+    }
+
+    /// The bend in force, `-1 … 1`.
+    pub fn nudge(&self) -> f64 {
+        self.nudge
     }
 
     /// Whether the tempo moves without the pitch. On by default (DJP-DECK-008).
@@ -1343,9 +1385,10 @@ impl Deck {
     /// and a moved phase is a click. Thirty milliseconds is short enough to feel immediate and long
     /// enough to be inaudible as a jump.
     fn glide_tempo(&mut self, frames: usize) {
-        let difference = self.tempo_target - self.tempo_ratio;
+        let asked = self.asked_rate();
+        let difference = asked - self.tempo_ratio;
         if difference.abs() < 1e-9 {
-            self.tempo_ratio = self.tempo_target;
+            self.tempo_ratio = asked;
             return;
         }
         let reach =
@@ -1998,6 +2041,8 @@ impl Deck {
             auto_gain: self.auto_gain,
             auto_gain_db: self.auto_gain_db,
             tempo_ratio: self.tempo_target,
+            #[allow(clippy::cast_possible_truncation)]
+            nudge: self.nudge as f32,
             // The channel fader belongs to the mixer strip, not to the deck: a deck on its own is at
             // unity, and the engine's snapshot fills the fader in from the strip.
             fader: 1.0,

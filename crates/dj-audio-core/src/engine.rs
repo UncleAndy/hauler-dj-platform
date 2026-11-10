@@ -220,6 +220,7 @@ impl Engine {
             | DjCommand::LoopBeats { .. }
             | DjCommand::LoopMove { .. }
             | DjCommand::BeatJump { .. }
+            | DjCommand::Nudge { .. }
             | DjCommand::Load { .. }
             | DjCommand::AnalyzeTempo { .. }
             | DjCommand::EditGrid { .. }
@@ -292,6 +293,7 @@ impl Engine {
                 auto_gain: 1.0,
                 auto_gain_db: None,
                 tempo_ratio: self.tempo_ratio,
+                nudge: 0.0,
                 // The A01 renderer is a bare tone: no mixer, so no channel fader or EQ.
                 fader: 1.0,
                 eq: dj_domain::EqGains::FLAT,

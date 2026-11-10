@@ -454,6 +454,16 @@ pub enum DjCommand {
         /// Playback rate multiplier.
         ratio: f64,
     },
+    /// Bend the rate the way a hand on the platter does (DJP-DECK-006): `-1 … 1`, zero lets go.
+    ///
+    /// Continuous: the shell sends the deflection while the control is held and zero on release. It is
+    /// not a tempo change — the fader keeps its value, and the deck returns to it when the hand is off.
+    Nudge {
+        /// Target deck.
+        deck: DeckId,
+        /// Deflection, `-1 … 1`, of the deck's nudge range.
+        amount: f32,
+    },
     /// Channel gain in linear units (1.0 = unity).
     SetChannelGain {
         /// Target deck / channel.
@@ -554,6 +564,7 @@ impl DjCommand {
             | DjCommand::EditGrid { .. }
             | DjCommand::Eject { .. } => true,
             DjCommand::SetTempoRatio { .. }
+            | DjCommand::Nudge { .. }
             | DjCommand::SetChannelGain { .. }
             | DjCommand::SetChannelFader { .. }
             | DjCommand::SetChannelEq { .. }
@@ -571,6 +582,7 @@ impl DjCommand {
         let key = self.coalesce_key()?;
         let deck = match self {
             DjCommand::SetTempoRatio { deck, .. }
+            | DjCommand::Nudge { deck, .. }
             | DjCommand::SetChannelGain { deck, .. }
             | DjCommand::SetChannelFader { deck, .. }
             | DjCommand::SetChannelEq { deck, .. } => deck.index(),
@@ -592,6 +604,7 @@ impl DjCommand {
     pub fn coalesce_key(&self) -> Option<CoalesceKey> {
         match self {
             DjCommand::SetTempoRatio { .. } => Some(CoalesceKey::Tempo),
+            DjCommand::Nudge { .. } => Some(CoalesceKey::Nudge),
             DjCommand::SetChannelGain { .. } => Some(CoalesceKey::ChannelGain),
             DjCommand::SetChannelFader { .. } => Some(CoalesceKey::ChannelFader),
             DjCommand::SetChannelEq { .. } => Some(CoalesceKey::ChannelEq),
@@ -618,6 +631,8 @@ pub enum CoalesceKey {
     MasterGain,
     /// Channel fader of a deck: the last position wins.
     ChannelFader,
+    /// A nudge of a deck: the last deflection wins.
+    Nudge,
     /// One band of a deck's equaliser: the last value of that band wins.
     ChannelEq,
 }
@@ -627,7 +642,7 @@ impl CoalesceKey {
     ///
     /// This has to name every variant: it sizes the queue, and it used to say three while five keys
     /// existed, so the master gain landed past the end of the array.
-    pub const COUNT: usize = 7;
+    pub const COUNT: usize = 8;
 
     /// First slot of the EQ block: the deck-wide controls come first, one block of `DeckId::COUNT`
     /// slots each.
@@ -642,9 +657,10 @@ impl CoalesceKey {
             CoalesceKey::CrossfaderCurve => 3,
             CoalesceKey::MasterGain => 4,
             CoalesceKey::ChannelFader => 5,
+            CoalesceKey::Nudge => 6,
             // The EQ keeps the last index on purpose: its slots are a block of three per deck, and the
             // block sits after every deck-wide control.
-            CoalesceKey::ChannelEq => 6,
+            CoalesceKey::ChannelEq => 7,
         }
     }
 }
@@ -822,6 +838,11 @@ fn is_zero(value: &u32) -> bool {
     *value == 0
 }
 
+/// Whether a bend is at rest, so a nudge that is not happening stays off the wire.
+fn is_no_bend(value: &f32) -> bool {
+    value.abs() < f32::EPSILON
+}
+
 /// Whether a flag is false, so a switch that is off stays off the wire.
 fn is_false(value: &bool) -> bool {
     !*value
@@ -930,6 +951,12 @@ pub struct DeckSnapshot {
     pub auto_gain_db: Option<f32>,
     /// Current tempo ratio.
     pub tempo_ratio: f64,
+    /// The bend a hand on the platter is applying right now, `-1 … 1` (DJP-DECK-006).
+    ///
+    /// Defaulted and left off the wire at rest: a client that knows nothing about nudging is not a
+    /// protocol error, and a deck whose hand is off is not bending anything.
+    #[serde(default, skip_serializing_if = "is_no_bend")]
+    pub nudge: f32,
     /// Channel fader in force, linear: 1.0 is unity, 0.0 is silence.
     #[serde(default = "unity")]
     pub fader: f32,

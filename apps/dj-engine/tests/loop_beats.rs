@@ -139,6 +139,51 @@ fn render_one(graph: &mut EngineGraph) {
 }
 
 #[test]
+fn a_nudge_reaches_the_deck_and_the_state_reports_it() {
+    // The shell holds a key and expects the sound to move with it: the command is continuous, and the
+    // snapshot has to carry the bend so a client that reconnects knows the hand is still on.
+    let (mut graph, cells, submissions) = graph_for(deck_on_grid(true));
+    render_one(&mut graph);
+    let ack = apply(
+        &mut graph,
+        &submissions,
+        1,
+        DjCommand::Nudge {
+            deck: DeckId::A,
+            amount: 0.5,
+        },
+    );
+    assert!(
+        matches!(ack.status, AckStatus::Applied { .. }),
+        "a nudge is an ordinary deck command, got {:?}",
+        ack.status
+    );
+    render_one(&mut graph);
+    let bent = deck_state(&cells).nudge;
+    assert!(
+        (bent - 0.5).abs() < 1e-6,
+        "the state must say the deck is bent, got {bent}"
+    );
+
+    let ack = apply(
+        &mut graph,
+        &submissions,
+        2,
+        DjCommand::Nudge {
+            deck: DeckId::A,
+            amount: 0.0,
+        },
+    );
+    assert!(matches!(ack.status, AckStatus::Applied { .. }));
+    render_one(&mut graph);
+    assert_eq!(
+        deck_state(&cells).nudge,
+        0.0,
+        "letting go is a bend of zero"
+    );
+}
+
+#[test]
 fn a_beat_jump_is_decided_against_the_grid() {
     // The play head sits a third of a beat past the fourth: a jump of one beat must land on the fifth
     // beat, not a beat-length past where it stood. The state document is what the shell draws.
