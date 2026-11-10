@@ -498,6 +498,7 @@ struct DeckCells {
     slip: AtomicBool,
     slip_frame: AtomicU64,
     reverse: AtomicBool,
+    cached: AtomicBool,
 }
 
 impl DeckCells {
@@ -525,6 +526,7 @@ impl DeckCells {
             slip: AtomicBool::new(false),
             slip_frame: AtomicU64::new(EMPTY),
             reverse: AtomicBool::new(false),
+            cached: AtomicBool::new(false),
         }
     }
 }
@@ -792,6 +794,9 @@ impl StateCells {
             cells.slip.store(deck.slip(), Ordering::Relaxed);
             cells.reverse.store(deck.reverse(), Ordering::Relaxed);
             cells
+                .cached
+                .store(deck.reads_from_memory(), Ordering::Relaxed);
+            cells
                 .slip_frame
                 .store(deck.slip_frame().unwrap_or(EMPTY), Ordering::Relaxed);
             let levels = deck.levels();
@@ -947,6 +952,7 @@ impl StateCells {
                 nudge: f32::from_bits(cells.nudge.load(Ordering::Relaxed)),
                 slip: cells.slip.load(Ordering::Relaxed),
                 reverse: cells.reverse.load(Ordering::Relaxed),
+                cached: cells.cached.load(Ordering::Relaxed),
                 slip_frame: {
                     let frame = cells.slip_frame.load(Ordering::Relaxed);
                     (frame != EMPTY).then_some(SourceFrame(frame))
@@ -1009,6 +1015,18 @@ pub enum GraphLoad {
         /// Target deck.
         deck: DeckId,
     },
+    /// Material behind the playhead, reversed by the worker, for a deck that cannot walk its source
+    /// backwards (a decoded track too large for the cache).
+    ReverseWindow {
+        /// Target deck.
+        deck: DeckId,
+        /// The file the window was read from: a deck that has moved on keeps its own material.
+        path: std::path::PathBuf,
+        /// Source frame the window begins at.
+        start: u64,
+        /// Forward material from `start`; the deck reverses it on the command thread.
+        material: Vec<f32>,
+    },
     /// The cache finished building this track after the deck had already started streaming it.
     ///
     /// The loader attaches the stream first and builds the cache behind it, so a long file starts playing
@@ -1035,6 +1053,21 @@ pub enum GraphLoad {
         /// The grid, in source frames. Boxed: a grid of segments outweighs the other variants.
         grid: Box<BeatGrid>,
     },
+}
+
+/// A reversed window the graph asks the worker for.
+///
+/// Born in the audio callback, so it carries no owned buffers beyond the path it already knows: the
+/// worker opens the file, seeks, reads and answers with [`GraphLoad::ReverseWindow`].
+pub struct ReverseRequest {
+    /// Deck that wants the material.
+    pub deck: DeckId,
+    /// File to read.
+    pub path: std::path::PathBuf,
+    /// Source frame the window begins at.
+    pub start: u64,
+    /// How many frames to read forward from `start`.
+    pub frames: u64,
 }
 
 /// What the loader hands back to the graph once the deck is playable.
@@ -1439,6 +1472,9 @@ pub struct EngineGraph {
     meta: Option<std::sync::mpsc::Sender<MetaEdit>>,
     /// Path of the file on each deck, in deck order.
     paths: Vec<Option<std::path::PathBuf>>,
+    /// Where a request for reversed material goes. `None` in a renderer with no worker (the A01
+    /// tone engine, most tests): a deck then simply has to wait for material it will never get.
+    reverse_worker: Option<std::sync::mpsc::Sender<ReverseRequest>>,
     /// The metronome's click generator: four voices mixed into the master bus.
     metronome: metronome::Metronome,
 }
@@ -1469,6 +1505,7 @@ impl EngineGraph {
             loads_applied: 0,
             cache_swaps: 0,
             meta: None,
+            reverse_worker: None,
             paths: vec![None; decks_len],
             metronome: metronome::Metronome::new(mixer_sample_rate),
         }
@@ -1506,6 +1543,12 @@ impl EngineGraph {
     }
 
     /// Send cue and loop edits to `sink`. Called before the stream starts: the callback never locks.
+    /// Give the graph the worker that fills reversed windows for streamed tracks.
+    pub fn with_reverse_worker(mut self, worker: std::sync::mpsc::Sender<ReverseRequest>) -> Self {
+        self.reverse_worker = Some(worker);
+        self
+    }
+
     pub fn with_meta_sink(mut self, sink: std::sync::mpsc::Sender<MetaEdit>) -> Self {
         self.meta = Some(sink);
         self
@@ -1656,6 +1699,18 @@ impl EngineGraph {
                         self.loads_applied += 1;
                     }
                 }
+                GraphLoad::ReverseWindow {
+                    deck,
+                    path,
+                    start,
+                    material,
+                } => {
+                    if let Some(index) = self.decks.iter().position(|held| held.id() == deck)
+                        && self.paths[index].as_ref() == Some(&path)
+                    {
+                        self.decks[index].fill_reverse_window(start, &material);
+                    }
+                }
                 GraphLoad::CacheReady { deck, path, source } => {
                     // Only the track that is still loaded: a DJ who skipped on must not hear the previous
                     // track's memory under the new one.
@@ -1689,6 +1744,25 @@ impl EngineGraph {
                         self.loads_applied += 1;
                     }
                 }
+            }
+        }
+
+        // A deck going backwards on a decoded source asks for the next window here, at a block
+        // boundary: the send is the only thing that touches another thread, and it allocates nothing.
+        if let Some(worker) = self.reverse_worker.clone() {
+            for index in 0..self.decks.len() {
+                let Some((start, frames)) = self.decks[index].reverse_window_needed() else {
+                    continue;
+                };
+                let Some(path) = self.paths.get(index).cloned().flatten() else {
+                    continue;
+                };
+                let _ = worker.send(ReverseRequest {
+                    deck: self.decks[index].id(),
+                    path,
+                    start,
+                    frames,
+                });
             }
         }
 

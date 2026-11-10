@@ -556,6 +556,16 @@ Pane {
                     font.pixelSize: 10
                 }
                 Label {
+                    objectName: "cached_" + panel.deckId
+                    // A track the engine keeps in memory can lose its file and keep playing. That is a
+                    // property of the deck, not of the file, so it is said here and only when true.
+                    visible: panel.deck !== null && panel.deck.cached === true
+                    text: qsTr("RAM")
+                    color: UiSettings.themeAccent
+                    opacity: 0.7
+                    font.pixelSize: 9
+                }
+                Label {
                     objectName: "autogain_" + panel.deckId
                     // Every measured track says what was done to its level: a DJ who cannot see the
                     // correction cannot trust the fader either. A track nobody measured says nothing.

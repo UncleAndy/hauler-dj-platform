@@ -860,6 +860,56 @@ fn run(argv: &[String]) -> Result<(), String> {
         });
     }
 
+    // Reversed windows for streamed tracks: the deck asks from the audio callback, this thread does the
+    // decoding and the reading, and the answer arrives at a block boundary like any other load.
+    let (reverse_requests, reverse_work) = std::sync::mpsc::channel::<dj_engine::ReverseRequest>();
+    {
+        let prepared = graph_loads.clone();
+        std::thread::spawn(move || {
+            let mut decoder: Option<(std::path::PathBuf, dj_codec::StreamDecoder)> = None;
+            while let Ok(request) = reverse_work.recv() {
+                let fresh = !matches!(decoder.as_ref(), Some((path, _)) if path == &request.path);
+                if fresh {
+                    match dj_codec::StreamDecoder::open(&request.path) {
+                        Ok(open) => decoder = Some((request.path.clone(), open)),
+                        Err(error) => {
+                            eprintln!("dj-engine: reversed window: {error}");
+                            decoder = None;
+                            continue;
+                        }
+                    }
+                }
+                let Some((_, open)) = decoder.as_mut() else {
+                    continue;
+                };
+                if let Err(error) = open.seek(request.start) {
+                    eprintln!("dj-engine: reversed window seek: {error}");
+                    continue;
+                }
+                let frames = usize::try_from(request.frames).unwrap_or(0);
+                let mut material = vec![0.0f32; frames * 2];
+                let mut read = 0usize;
+                while read < frames {
+                    match open.read_frames(&mut material[read * 2..]) {
+                        Ok(0) => break,
+                        Ok(got) => read += got,
+                        Err(_) => break,
+                    }
+                }
+                if read == 0 {
+                    continue;
+                }
+                material.truncate(read * 2);
+                let _ = prepared.send(dj_engine::GraphLoad::ReverseWindow {
+                    deck: request.deck,
+                    path: request.path,
+                    start: request.start,
+                    material,
+                });
+            }
+        });
+    }
+
     let graph = EngineGraph::new(
         decks,
         mixer,
@@ -868,7 +918,8 @@ fn run(argv: &[String]) -> Result<(), String> {
         block,
         graph_loads_rx,
     )
-    .with_meta_sink(meta_edits);
+    .with_meta_sink(meta_edits)
+    .with_reverse_worker(reverse_requests);
 
     // One bag of run parameters for both paths.
     let options = RunOptions {

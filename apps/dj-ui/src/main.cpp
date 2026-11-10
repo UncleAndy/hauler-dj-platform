@@ -3732,6 +3732,15 @@ int main(int argc, char *argv[])
                          playHead());
             return 1;
         }
+        // The cache: the engine holds this track in memory, and the deck says so in its own state.
+        // The handover happens a few seconds after the load (the entry is built behind the deck), so
+        // the check waits instead of reading a single snapshot.
+        if (!waitFor(
+                [&]() { return deckA().value(QStringLiteral("cached")).toBool(); }, 20000)) {
+            std::fprintf(stderr,
+                         "dj-ui: the deck never reported its material in memory (cache off?)\n");
+            return 1;
+        }
         const qint64 beforeReverse = playHead();
         bool accepted = false;
         QElapsedTimer reverseWait;

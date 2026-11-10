@@ -984,6 +984,12 @@ pub struct DeckSnapshot {
     /// nothing about slip is not a protocol error.
     #[serde(default, skip_serializing_if = "is_false")]
     pub slip: bool,
+    /// Whether this deck plays its material from memory rather than a decoder.
+    ///
+    /// Left off the wire when false: a streamed deck is the ordinary case, and a client that knows
+    /// nothing about the cache is not a protocol error.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub cached: bool,
     /// Whether the material plays backwards (DJP-DECK-007). Left off the wire when forward.
     #[serde(default, skip_serializing_if = "is_false")]
     pub reverse: bool,

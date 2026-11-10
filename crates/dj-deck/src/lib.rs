@@ -56,6 +56,12 @@ pub const MAX_TEMPO_RATIO: f64 = 4.0;
 /// platter (DJP-DECK-006).
 pub const NUDGE_RANGE: f64 = 0.04;
 
+/// How many seconds of material the engine reads for one reversed window.
+///
+/// Two seconds is the plan's number: long enough that a fill is rare, short enough that the worker's
+/// read is cheap (384 KB of stereo f32 at 48 kHz).
+const REVERSE_WINDOW_SECONDS: f64 = 2.0;
+
 /// How long the playing rate takes to reach what the hand asked, in seconds.
 ///
 /// Shorter and the stretcher's phase jumps (a click); longer and the fader feels laggy under the hand.
@@ -381,6 +387,19 @@ pub struct Deck {
     reverse: bool,
     /// One block of material read backwards, reversed in place before it is handed on.
     reverse_scratch: Vec<f32>,
+    /// Material behind the playhead, already reversed: what a streamed track plays backwards.
+    ///
+    /// A decoded source cannot be walked backwards from the audio callback, so the engine fills this
+    /// off the audio thread. It holds `reverse_cursor` frames still unplayed, counted from its end.
+    reverse_window: Vec<f32>,
+    /// Source frame the window begins at: the last frame it plays.
+    reverse_start: u64,
+    /// Frames of the window not played yet.
+    reverse_cursor: u64,
+    /// Whether the deck is waiting for a window before it can go on backwards.
+    reverse_waiting: bool,
+    /// The window start already asked for, so a waiting deck asks once and not every block.
+    reverse_asked: Option<u64>,
 }
 
 impl std::fmt::Debug for Deck {
@@ -455,6 +474,11 @@ impl Deck {
             keylock_engaged: false,
             reverse: false,
             reverse_scratch: vec![0.0; MAX_TEMPO_BLOCK_FRAMES * 2],
+            reverse_window: Vec::new(),
+            reverse_start: 0,
+            reverse_cursor: 0,
+            reverse_waiting: false,
+            reverse_asked: None,
         }
     }
 
@@ -1794,6 +1818,32 @@ impl Deck {
         if want == 0 {
             return 0;
         }
+        // A window filled by the engine comes first: for a decoded source it is the only way backwards.
+        if !self.reverse_window.is_empty() {
+            let available = usize::try_from(self.reverse_cursor).unwrap_or(0);
+            let take = want.min(available);
+            if take == 0 {
+                // Nothing left in this window: the engine has to bring the next one.
+                self.reverse_waiting = true;
+                return 0;
+            }
+            let first = self.reverse_window.len() / 2 - available;
+            out[..take * 2].copy_from_slice(&self.reverse_window[first * 2..(first + take) * 2]);
+            self.reverse_cursor -= take as u64;
+            self.position = self.reverse_start + self.reverse_cursor;
+            self.reverse_waiting = self.reverse_cursor == 0;
+            return take;
+        }
+        // A decoded source is not walked directly: a seek on it may wait for a decoder, and the audio
+        // callback has no room for that. Its material comes from the engine, window by window.
+        let immediate = self
+            .source
+            .as_ref()
+            .is_some_and(|source| source.seeks_are_immediate());
+        if !immediate {
+            self.reverse_waiting = true;
+            return 0;
+        }
         let end = self.position;
         let start = end.saturating_sub(want as u64);
         let count = usize::try_from(end - start).unwrap_or(0);
@@ -1835,15 +1885,97 @@ impl Deck {
     pub fn set_reverse(&mut self, enabled: bool) -> bool {
         if !enabled {
             self.reverse = false;
+            self.reverse_window.clear();
+            self.reverse_cursor = 0;
+            self.reverse_waiting = false;
+            self.reverse_asked = None;
             return false;
         }
-        let possible = self
+        if self.reading_loop_buffer || self.source.is_none() {
+            return false;
+        }
+        let immediate = self
+            .source
+            .as_ref()
+            .is_some_and(|source| source.seeks_are_immediate());
+        if !immediate {
+            // A decoded source needs a window prepared off the audio thread before it can go back.
+            self.reverse_window.clear();
+            self.reverse_cursor = 0;
+            self.reverse_waiting = true;
+            self.reverse_asked = None;
+        }
+        self.reverse = true;
+        true
+    }
+
+    /// The window the deck needs from the engine, as `(start, frames)`, when it cannot walk the source
+    /// backwards by itself.
+    ///
+    /// The engine reads `frames` of material ending at `start` and hands it back through
+    /// [`Deck::fill_reverse_window`]. The request repeats only when the answer has not arrived yet and
+    /// only once per window, so a slow fill does not flood the worker.
+    pub fn reverse_window_needed(&mut self) -> Option<(u64, u64)> {
+        if !self.reverse {
+            return None;
+        }
+        if self
             .source
             .as_ref()
             .is_some_and(|source| source.seeks_are_immediate())
-            && !self.reading_loop_buffer;
-        self.reverse = possible;
-        possible
+        {
+            return None;
+        }
+        let end = if self.reverse_window.is_empty() {
+            self.position
+        } else {
+            self.reverse_start
+        };
+        if end == 0 {
+            return None;
+        }
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let frames = (REVERSE_WINDOW_SECONDS * self.source_rate_of_current()).round() as u64;
+        let start = end.saturating_sub(frames);
+        let frames = end - start;
+        if start == self.reverse_asked.unwrap_or(u64::MAX) {
+            return None;
+        }
+        self.reverse_asked = Some(start);
+        Some((start, frames))
+    }
+
+    /// Play the material the engine read for a reversed window: `material` is forward audio starting at
+    /// `start`, and the deck keeps it reversed so the same read path serves it.
+    ///
+    /// This runs on the command thread, never on the audio callback: the copy is the price of not
+    /// touching a decoder from the callback.
+    pub fn fill_reverse_window(&mut self, start: u64, material: &[f32]) {
+        let frames = material.len() / 2;
+        if frames == 0 {
+            return;
+        }
+        self.reverse_window.clear();
+        self.reverse_window.reserve(frames * 2);
+        for index in (0..frames).rev() {
+            self.reverse_window.push(material[index * 2]);
+            self.reverse_window.push(material[index * 2 + 1]);
+        }
+        self.reverse_start = start;
+        self.reverse_cursor = frames as u64;
+        self.reverse_waiting = false;
+        self.reverse_asked = None;
+        self.position = start + frames as u64;
+    }
+
+    /// Whether this deck reads its material from memory instead of a decoder.
+    ///
+    /// The loader hands a deck a cached source when the track fits the budget; the state says so, because
+    /// "the file can disappear and this keeps playing" is worth seeing on the deck.
+    pub fn reads_from_memory(&self) -> bool {
+        self.source
+            .as_ref()
+            .is_some_and(|source| source.seeks_are_immediate())
     }
 
     /// Whether the material is played backwards.
@@ -1866,8 +1998,10 @@ impl Deck {
                 let filled = self.read_reversed(&mut out[written * 2..]);
                 written += filled;
                 if filled == 0 {
-                    // The start of the file is where reverse ends, the way it does on a platter.
-                    self.reverse = false;
+                    if !self.reverse_waiting {
+                        // The start of the file is where reverse ends, the way it does on a platter.
+                        self.reverse = false;
+                    }
                     break;
                 }
                 continue;
@@ -2222,6 +2356,7 @@ impl Deck {
             playing: self.playing,
             analyzing: self.analyzing,
             reverse: self.reverse,
+            cached: self.reads_from_memory(),
             metronome: self.metronome,
             clicks: self.clicks,
             beat,

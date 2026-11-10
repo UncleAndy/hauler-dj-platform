@@ -273,6 +273,8 @@ impl Engine {
                 analyzing: false,
                 // A generated tone is not a file, so it has nothing to play backwards.
                 reverse: false,
+                // The A01 renderer has no cache and no file: everything it plays is generated.
+                cached: false,
                 // The A01 renderer plays a tone it generated: it has no grid, so nothing clicks.
                 metronome: false,
                 clicks: 0,

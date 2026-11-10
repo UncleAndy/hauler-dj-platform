@@ -1874,14 +1874,33 @@ fn reverse_ends_at_the_start_of_the_file() {
 }
 
 #[test]
-fn a_streamed_track_cannot_be_reversed() {
-    // Walking a decoder backwards would mean waiting on it from the audio callback.
+fn a_streamed_track_waits_for_its_window_instead_of_stalling() {
+    // The old contract was a refusal, because walking a decoder backwards would stall the callback.
+    // The deck now accepts reverse and asks the engine for a window; the sound waits in silence while
+    // the callback keeps its budget, which is the point.
     let mut deck = code_deck(50_000);
+    deck.seek(20_000);
+    assert!(deck.play(), "the deck plays");
+    let mut block = vec![0.0f32; 512 * 2];
+    for _ in 0..10 {
+        deck.render(&mut block);
+    }
     assert!(
-        !deck.set_reverse(true),
-        "a streamed source must refuse reverse rather than stall the callback"
+        deck.set_reverse(true),
+        "reverse is accepted, the material comes later"
     );
-    assert!(!deck.reverse());
+    let before = deck.position();
+    deck.render(&mut block);
+    assert!(deck.reverse(), "still waiting, so still reversing");
+    assert_eq!(
+        deck.position(),
+        before,
+        "nothing was read from the decoder: the callback did not wait on it"
+    );
+    assert!(
+        deck.reverse_window_needed().is_some(),
+        "the deck says what it needs"
+    );
 }
 
 #[test]
@@ -1978,6 +1997,104 @@ fn reverse_works_while_slip_is_on() {
     assert!(
         !deck.reverse(),
         "leaving slip ends reverse, because the sound moves forward"
+    );
+}
+
+#[test]
+fn a_streamed_track_goes_backwards_through_a_window_the_engine_fills() {
+    // A decoded track cannot be walked backwards from the audio callback, so the deck asks for a window
+    // and waits: silence, not a stall, and not the end of the file either.
+    let frames = 200_000;
+    let mut deck = code_deck(frames);
+    deck.set_keylock(false);
+    deck.seek(100_000);
+    assert!(deck.play(), "the deck plays");
+    let mut block = vec![0.0f32; 512 * 2];
+    for _ in 0..40 {
+        deck.render(&mut block);
+    }
+    assert!(
+        deck.set_reverse(true),
+        "a streamed track accepts reverse: the engine brings the material"
+    );
+    deck.render(&mut block);
+    assert!(
+        deck.reverse(),
+        "waiting for a window is not the end of the file"
+    );
+    assert!(
+        block.iter().all(|sample| *sample == 0.0),
+        "with no window there is nothing to play, and silence is the honest answer"
+    );
+
+    let (start, want) = deck
+        .reverse_window_needed()
+        .expect("the deck asks the engine for a window");
+    assert!(want > 0, "a window has material");
+    assert!(
+        deck.reverse_window_needed().is_none(),
+        "a deck that has asked once is not asking again every block"
+    );
+
+    // What the engine would do: read forward from `start` and hand it back.
+    let mut material = Vec::with_capacity(usize::try_from(want).expect("a window that fits") * 2);
+    for frame in start..start + want {
+        #[allow(clippy::cast_precision_loss)]
+        let value = frame as f32;
+        material.push(value);
+        material.push(value);
+    }
+    deck.fill_reverse_window(start, &material);
+    deck.render(&mut block);
+    let step = block[0] - block[2];
+    assert!(
+        step > 0.0,
+        "the window must play backwards: first {}, next {}",
+        block[0],
+        block[2]
+    );
+    assert!(
+        block[0] > block[2],
+        "the first frame heard is the last frame of the window"
+    );
+}
+
+#[test]
+fn a_window_that_runs_out_asks_for_the_next_one() {
+    let frames = 400_000;
+    let mut deck = code_deck(frames);
+    deck.set_keylock(false);
+    deck.seek(300_000);
+    assert!(deck.play(), "the deck plays");
+    let mut block = vec![0.0f32; 512 * 2];
+    for _ in 0..20 {
+        deck.render(&mut block);
+    }
+    assert!(deck.set_reverse(true), "reverse on a streamed track");
+    let (start, want) = deck.reverse_window_needed().expect("the first window");
+    let mut material = Vec::with_capacity(usize::try_from(want).expect("a window") * 2);
+    for frame in start..start + want {
+        #[allow(clippy::cast_precision_loss)]
+        let value = frame as f32;
+        material.push(value);
+        material.push(value);
+    }
+    deck.fill_reverse_window(start, &material);
+
+    // Play the window out; the deck must ask for the next one, and it must end where this one began.
+    let mut asked = None;
+    for _ in 0..(want as usize / 512 + 4) {
+        deck.render(&mut block);
+        if let Some((next, next_frames)) = deck.reverse_window_needed() {
+            asked = Some((next, next_frames));
+            break;
+        }
+    }
+    let (next_start, next_frames) = asked.expect("the deck asks for the next window");
+    assert_eq!(
+        next_start + next_frames,
+        start,
+        "the next window ends where this one started, so the material joins and does not repeat"
     );
 }
 

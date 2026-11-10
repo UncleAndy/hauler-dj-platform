@@ -135,9 +135,33 @@ Beatjump, nudge и slip выведены в панель деки (DJP-DECK-006/
 Замер прогона оболочки: reverse увёл голову к **240 193** и вернул её вперёд; до этого проверка
 дождалась, что дека играет и стоит в середине файла, — пауза не выдаётся за отказ reverse.
 
-**Ограничение, записанное честно:** трек, который не влез в бюджет кэша и играет потоком, reverse не
-принимает (ответ `NotSupported`). Оконный путь из `.hermes/plans/2026-11-10_120000-reverse.md` остаётся
-запасным и пока не реализован — с кэшем на 1 ГиБ он нужен только для очень длинных файлов.
+## Reverse на потоковом треке: окно, которое готовит движок (2026-11-10)
+
+Раньше такая дека отказывала (`NotSupported`): идти по декодеру назад из аудиопотока нельзя. Теперь
+дека **принимает** reverse и просит окно, а движок его готовит вне RT.
+
+| Файл | Содержание |
+|---|---|
+| `crates/dj-deck/src/lib.rs` | `REVERSE_WINDOW_SECONDS = 2,0`; `reverse_window_needed()` — что и откуда читать; `fill_reverse_window(start, material)` — разворот в буфер деки на командном потоке; `read_reversed` играет окно и **не трогает декодер**, пока окна нет — тишина, а не ожидание |
+| `apps/dj-engine/src/lib.rs` | `GraphLoad::ReverseWindow`, `ReverseRequest`, `with_reverse_worker`; опрос нужд деки — раз в блок, `send` в поток-воркер |
+| `apps/dj-engine/src/main.rs` | воркер: держит `StreamDecoder`, по запросу `seek(start)` и читает `frames` вперёд, отвечает окном |
+
+Контракт стыка: следующее окно **заканчивается там, где началось предыдущее** (`next_start + next_frames
+== start`), поэтому материал идёт непрерывно и не повторяется. Пока окна нет — дека молчит и остаётся в
+reverse; концом файла считается только кадр 0.
+
+Свидетели: `a_streamed_track_waits_for_its_window_instead_of_stalling` (позиция не двигалась — декодер не
+трогали), `a_streamed_track_goes_backwards_through_a_window_the_engine_fills` (окно играется назад),
+`a_window_that_runs_out_asks_for_the_next_one` (стык без повтора).
+
+Замер живого прогона (движок с `--cache-mb 0`, то есть **всё играется потоком**):
+
+```
+dj-ui: a jump of one beat moved the play head 35689 frames …, slip drew its virtual head on both
+strips (0,3123 against the sound at 0,3748), and reverse walked the head down to 145729 and forward again
+```
+
+С кэшем включённым тот же прогон уводит голову к 240 705: путь через память короче, но оба работают.
 
 ## Что осталось
 
