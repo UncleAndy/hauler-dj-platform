@@ -735,32 +735,33 @@ fn run(argv: &[String]) -> Result<(), String> {
                     },
                 })));
                 let path = std::path::PathBuf::from(&request.path);
-                match prepare_track(&path, rate, 2.0, auto_gain_share, cache.as_mut()).map(
-                    |mut prepared| {
-                        if let Some(problem) =
-                            dj_engine::meta::restore(&mut prepared, &store, volume(), root())
-                        {
-                            eprintln!("dj-engine: {problem}");
+                // Stream first, cache behind: a ten-minute file is two decodes, and the deck should
+                // not wait for the second one to start playing. The entry is handed over at a block
+                // boundary once it exists (GraphLoad::CacheReady).
+                match prepare_track(&path, rate, 2.0, auto_gain_share, None).map(|mut prepared| {
+                    if let Some(problem) =
+                        dj_engine::meta::restore(&mut prepared, &store, volume(), root())
+                    {
+                        eprintln!("dj-engine: {problem}");
+                    }
+                    // The grid is worth keeping: measuring it is a decode of the whole file, and the
+                    // next load should not pay for it again. A stored grid is left alone by the write.
+                    if let Some(grid) = prepared.grid.as_ref() {
+                        match dj_engine::meta::write_beatgrid(
+                            &store,
+                            volume(),
+                            root(),
+                            &path,
+                            grid,
+                            false,
+                        ) {
+                            Ok(true) => {}
+                            Ok(false) => {}
+                            Err(message) => eprintln!("dj-engine: {message}"),
                         }
-                        // The grid is worth keeping: measuring it is a decode of the whole file, and the
-                        // next load should not pay for it again. A stored grid is left alone by the write.
-                        if let Some(grid) = prepared.grid.as_ref() {
-                            match dj_engine::meta::write_beatgrid(
-                                &store,
-                                volume(),
-                                root(),
-                                &path,
-                                grid,
-                                false,
-                            ) {
-                                Ok(true) => {}
-                                Ok(false) => {}
-                                Err(message) => eprintln!("dj-engine: {message}"),
-                            }
-                        }
-                        prepared
-                    },
-                ) {
+                    }
+                    prepared
+                }) {
                     Ok(mut prepared_track) => {
                         prepared_track.deck = request.deck;
                         prepared_track.static_info.deck = request.deck;
@@ -776,6 +777,17 @@ fn run(argv: &[String]) -> Result<(), String> {
                         // a cue sent before the deck holds the track would belong to nothing.
                         let static_info = prepared_track.static_info.clone();
                         let _ = prepared.send(GraphLoad::Attach(Box::new(prepared_track)));
+                        // Now the same file again, into memory. The deck is already playing from the
+                        // stream, so this second decode costs the loader thread and nobody's ears.
+                        if let Some(store) = cache.as_mut()
+                            && let Some((source, _key)) = dj_engine::cached_source(&path, store)
+                        {
+                            let _ = prepared.send(GraphLoad::CacheReady {
+                                deck: request.deck,
+                                path: path.clone(),
+                                source,
+                            });
+                        }
                         let _ = updates.send(Published::Deck(Box::new(DeckUpdate {
                             deck: request.deck,
                             static_info: static_info.clone(),

@@ -37,12 +37,12 @@ fn tone_wav(dir: &Path, name: &str, seconds: f32) -> PathBuf {
     path
 }
 
-fn memory_cache(dir: &Path) -> dj_codec::PcmCache {
+fn memory_cache(dir: &Path, lossless: bool) -> dj_codec::PcmCache {
     dj_codec::PcmCache::new(
         dir.join("pcm"),
         dj_codec::CacheConfig {
             enabled: true,
-            lossless: true,
+            lossless,
             storage: dj_codec::CacheStorage::Memory,
             max_bytes: 64 * 1024 * 1024,
             sample_format: dj_codec::PcmSampleFormat::F32,
@@ -52,17 +52,17 @@ fn memory_cache(dir: &Path) -> dj_codec::PcmCache {
 }
 
 #[test]
-fn a_cached_track_keeps_playing_after_the_file_is_gone() {
+fn a_track_the_cache_holds_keeps_playing_after_the_file_is_gone() {
     let dir = temp_dir("cached");
     let path = tone_wav(&dir, "tone", 3.0);
-    let mut cache = memory_cache(&dir);
+    let mut cache = memory_cache(&dir, true);
 
-    let prepared = dj_engine::prepare_track(&path, 48_000, 2.0, 0.7, Some(&mut cache))
+    // The production order: the deck starts on the stream, the entry is asked for behind it.
+    let streamed = dj_engine::prepare_track(&path, 48_000, 2.0, 0.7, None)
         .unwrap_or_else(|err| panic!("prepare: {err}"));
-    assert!(
-        prepared.cache_key.is_some(),
-        "a lossless file the policy asks for must come from the cache"
-    );
+    assert!(streamed.cache_key.is_none(), "a streamed load has no key");
+    let (source, _key) =
+        dj_engine::cached_source(&path, &mut cache).expect("the cache takes a lossless file");
     assert_eq!(cache.len(), 1, "one entry for one file");
     assert!(cache.size_bytes() > 0, "the entry holds samples");
 
@@ -72,7 +72,7 @@ fn a_cached_track_keeps_playing_after_the_file_is_gone() {
     std::fs::rename(&path, &hidden)
         .unwrap_or_else(|err| panic!("rename {}: {err}", path.display()));
 
-    let mut source = prepared.source;
+    let mut source = source;
     let mut block = vec![0.0f32; 512];
     let mut audible = 0usize;
     for round in 0..200 {
@@ -89,13 +89,20 @@ fn a_cached_track_keeps_playing_after_the_file_is_gone() {
 }
 
 #[test]
-fn without_a_cache_the_reader_is_the_stream() {
+fn the_engine_asks_the_cache_only_when_the_policy_wants_lossless() {
     let dir = temp_dir("streamed");
     let path = tone_wav(&dir, "tone", 1.0);
-    let prepared = dj_engine::prepare_track(&path, 48_000, 2.0, 0.7, None)
-        .unwrap_or_else(|err| panic!("prepare: {err}"));
+
+    let mut refusing = memory_cache(&dir, false);
     assert!(
-        prepared.cache_key.is_none(),
-        "no cache configured, no cache key"
+        dj_engine::cached_source(&path, &mut refusing).is_none(),
+        "lossless is streamed unless the policy asks for it"
+    );
+    assert_eq!(refusing.len(), 0, "a refusal writes nothing");
+
+    let mut asking = memory_cache(&dir, true);
+    assert!(
+        dj_engine::cached_source(&path, &mut asking).is_some(),
+        "a policy that asks gets the entry"
     );
 }

@@ -991,6 +991,18 @@ pub enum GraphLoad {
         /// Target deck.
         deck: DeckId,
     },
+    /// The cache finished building this track after the deck had already started streaming it.
+    ///
+    /// The loader attaches the stream first and builds the cache behind it, so a long file starts playing
+    /// at once instead of after two decodes. The deck swaps sources on a block boundary without a reset.
+    CacheReady {
+        /// Target deck.
+        deck: DeckId,
+        /// The file the entry was built from: a deck that has moved on keeps its own source.
+        path: std::path::PathBuf,
+        /// The reader that plays the entry.
+        source: Box<dyn DeckSource>,
+    },
     /// A measurement started or finished for this deck (B02).
     SetAnalyzing {
         /// Target deck.
@@ -1203,6 +1215,51 @@ pub fn route(command: &ScheduledCommand) -> Routed {
 ///
 /// Runs on the loader thread. The PCM-cache decision is taken here, at load, from the file's
 /// format — never in the middle of playback, where it would show up as a dropout.
+/// The reader that plays a track from the cache, and the entry's key.
+///
+/// `None` when the cache does not want the file (disabled, lossless not asked for, over budget) or cannot
+/// hold it. A refusal is not an error: the deck keeps streaming, which is what it was doing anyway.
+pub fn cached_source(
+    path: &std::path::Path,
+    cache: &mut dj_codec::PcmCache,
+) -> Option<(Box<dyn DeckSource>, String)> {
+    match cache.prepare(path) {
+        Ok(dj_codec::CacheOutcome::Built | dj_codec::CacheOutcome::Hit) => {}
+        Ok(_) => return None,
+        Err(error) => {
+            eprintln!("dj-engine: the cache refused {}: {error}", path.display());
+            return None;
+        }
+    }
+    let info = match dj_codec::StreamDecoder::open(path) {
+        Ok(decoder) => decoder.info().clone(),
+        Err(error) => {
+            eprintln!("dj-engine: no cache key for {}: {error}", path.display());
+            return None;
+        }
+    };
+    let key = match PcmCache::key_for(path, &info, cache.config()) {
+        Ok(key) => key,
+        Err(error) => {
+            eprintln!("dj-engine: no cache key for {}: {error}", path.display());
+            return None;
+        }
+    };
+    match cache.open_reader(&key) {
+        Ok(reader) => Some((
+            Box::new(dj_deck::CachedReaderSource::new(reader)) as Box<dyn DeckSource>,
+            key,
+        )),
+        Err(error) => {
+            eprintln!(
+                "dj-engine: the cache entry for {} cannot be read: {error}",
+                path.display()
+            );
+            None
+        }
+    }
+}
+
 pub fn prepare_track(
     path: &std::path::Path,
     rate: u32,
@@ -1358,6 +1415,7 @@ pub struct EngineGraph {
     retired: Vec<Box<dyn DeckSource>>,
     /// Loads applied since start, so the report can say whether a load ever stalled a block.
     loads_applied: u64,
+    cache_swaps: u64,
     /// Where an edit goes. The callback only sends; the writing happens on another thread, because
     /// a disk call in the audio path is the one thing DJP-NFR-001 forbids outright.
     meta: Option<std::sync::mpsc::Sender<MetaEdit>>,
@@ -1391,6 +1449,7 @@ impl EngineGraph {
             loads,
             retired: Vec::with_capacity(16),
             loads_applied: 0,
+            cache_swaps: 0,
             meta: None,
             paths: vec![None; decks_len],
             metronome: metronome::Metronome::new(mixer_sample_rate),
@@ -1512,6 +1571,11 @@ impl EngineGraph {
         self.loads_applied
     }
 
+    /// How many decks took their material from the track cache after starting on the stream.
+    pub fn cache_swaps(&self) -> u64 {
+        self.cache_swaps
+    }
+
     /// Render one block into `master` and `cue`, interleaved stereo.
     ///
     /// Everything here runs inside the audio callback, so it allocates nothing, locks nothing, and
@@ -1572,6 +1636,16 @@ impl EngineGraph {
                         self.decks[index].set_auto_gain(prepared.auto_gain, prepared.auto_gain_db);
                         self.paths[index] = prepared.path;
                         self.loads_applied += 1;
+                    }
+                }
+                GraphLoad::CacheReady { deck, path, source } => {
+                    // Only the track that is still loaded: a DJ who skipped on must not hear the previous
+                    // track's memory under the new one.
+                    if let Some(index) = self.decks.iter().position(|held| held.id() == deck)
+                        && self.paths[index].as_ref() == Some(&path)
+                        && self.decks[index].swap_source(source)
+                    {
+                        self.cache_swaps += 1;
                     }
                 }
                 GraphLoad::SetAnalyzing { deck, analyzing } => {
