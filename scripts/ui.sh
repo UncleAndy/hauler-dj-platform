@@ -304,6 +304,21 @@ case "${1:-}" in
         --sync-check --load "$sync_a" --load-b "$sync_b"
     kill "$sync_pid" 2>/dev/null || true
     wait "$sync_pid" 2>/dev/null || true
+    # Four decks are a claim about the whole chain: four deck objects, four mixer channels, four strips on
+    # screen. One engine of its own, because the check loads four copies of the same fixture.
+    four_socket="$run_dir/engine-four.sock"
+    "$engine_bin" --null-sink --socket "$four_socket" --block 256 &
+    four_pid=$!
+    for _ in $(seq 1 100); do
+      [ -S "$four_socket" ] && break
+      sleep 0.05
+    done
+    four_file="$run_dir/four-decks.wav"
+    cp crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav "$four_file"
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$four_socket" \
+        --four-deck-check --load "$four_file"
+    kill "$four_pid" 2>/dev/null || true
+    wait "$four_pid" 2>/dev/null || true
     # S4: ten minutes of two decks is the soak the hand runs; the gate keeps a minute of the same shape —
     # the same click tracks, the same hands on the master, the follower and the loop, a tenth of the time.
     soak_socket="$run_dir/engine-soak.sock"

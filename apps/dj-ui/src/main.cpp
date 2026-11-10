@@ -943,6 +943,11 @@ int main(int argc, char *argv[])
         QStringLiteral("loop-beats-check"),
         QStringLiteral("Check that a loop of four beats is four beats of the grid, and that the arrows "
                        "move it by a beat without shortening it (DJP-DECK-005)."));
+    const QCommandLineOption fourDeckOption(
+        QStringLiteral("four-deck-check"),
+        QStringLiteral("With --connect and --load: put the same file on four decks, play all of them, and "
+                       "require each to move, each to reach the master, the four panels to exist, and the "
+                       "crossfader to hold A and C on one side and B and D on the other."));
     const QCommandLineOption syncSoakOption(
         QStringLiteral("sync-soak"),
         QStringLiteral("With --connect: two decks on click tracks of known tempo, ten minutes under the "
@@ -1222,6 +1227,7 @@ int main(int argc, char *argv[])
     parser.addOption(gridLinesOption);
     parser.addOption(gridCheckOption);
     parser.addOption(loopBeatsOption);
+    parser.addOption(fourDeckOption);
     parser.addOption(syncSoakOption);
     parser.addOption(soakSecondsOption);
     parser.addOption(syncCheckOption);
@@ -6555,6 +6561,222 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: the clock does not show the time left\n");
             return 1;
         }
+        return 0;
+    }
+
+    if (parser.isSet(fourDeckOption)) {
+        // Four decks are a claim about the whole chain: four deck objects, four mixer channels, four
+        // strips on screen, and a crossfader that knows which side each one is on. This check walks the
+        // chain once, from the file to the master.
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        bridge->connectToEngine(parser.value(connectOption));
+        const auto waitFor = [](const std::function<bool()> &ready, int budget) {
+            QElapsedTimer timer;
+            timer.start();
+            while (timer.elapsed() < budget) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                if (ready()) {
+                    return true;
+                }
+                QThread::msleep(10);
+            }
+            return ready();
+        };
+        if (!waitFor([&]() { return bridge->isConnected(); }, 3000)) {
+            std::fprintf(stderr, "dj-ui: no engine\n");
+            return 1;
+        }
+        const auto deckOf = [&](const QString &id) {
+            const QVariantList decks = bridge->snapshot().value(QStringLiteral("decks")).toList();
+            for (const QVariant &entry : decks) {
+                const QVariantMap deck = entry.toMap();
+                if (deck.value(QStringLiteral("deck")).toString() == id) {
+                    return deck;
+                }
+            }
+            return QVariantMap();
+        };
+        const auto frameOf = [&](const QString &id) {
+            return deckOf(id).value(QStringLiteral("source_frame")).toLongLong();
+        };
+        const auto peakOf = [&](const QString &id) {
+            // A deck's meter is a peak and a hold. The peak lasts one block and a sample of it can land in
+            // the gap between two beats; the hold is what the strip says a moment later, and it is the
+            // honest answer to "did this deck make a sound in this window".
+            const QVariantMap levels = deckOf(id).value(QStringLiteral("levels")).toMap();
+            return std::max({levels.value(QStringLiteral("peak_left")).toDouble(),
+                             levels.value(QStringLiteral("peak_right")).toDouble(),
+                             levels.value(QStringLiteral("held_left")).toDouble(),
+                             levels.value(QStringLiteral("held_right")).toDouble()});
+        };
+        const auto masterPeak = [&]() {
+            const QVariantMap levels = bridge->snapshot().value(QStringLiteral("master")).toMap();
+            return std::max(levels.value(QStringLiteral("peak_left")).toDouble(),
+                            levels.value(QStringLiteral("peak_right")).toDouble());
+        };
+        const auto loudestOver = [&](const std::function<double()> &read, int budget_ms) {
+            double loudest = 0.0;
+            QElapsedTimer timer;
+            timer.start();
+            while (timer.elapsed() < budget_ms) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                loudest = std::max(loudest, read());
+                QThread::msleep(10);
+            }
+            return loudest;
+        };
+
+        const QString path = parser.value(loadOption);
+        if (path.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: the four-deck check needs --load\n");
+            return 1;
+        }
+        const QStringList ids{QStringLiteral("A"), QStringLiteral("B"), QStringLiteral("C"),
+                              QStringLiteral("D")};
+        for (const QString &id : ids) {
+            bridge->load(id, path);
+        }
+        const bool loaded = waitFor(
+            [&]() {
+                for (const QString &id : ids) {
+                    if (!deckOf(id).value(QStringLiteral("path")).isValid()) {
+                        return false;
+                    }
+                }
+                return true;
+            },
+            30000);
+        if (!loaded) {
+            std::fprintf(stderr, "dj-ui: not all four decks took the file\n");
+            return 1;
+        }
+        // Four decks reading the same bytes from the same place would prove nothing about four decks, and
+        // an eight-second fixture runs out from under four windows of measurement: each deck gets a loop
+        // of its own half of the track, a quarter of it further in than the one before. The material never
+        // ends, and no two decks are reading the same place.
+        const qint64 length =
+            deckOf(QStringLiteral("A")).value(QStringLiteral("track")).toMap()
+                .value(QStringLiteral("duration_frames")).toLongLong();
+        if (length <= 0) {
+            std::fprintf(stderr, "dj-ui: the four-deck check has no length to loop over\n");
+            return 1;
+        }
+        for (int index = 0; index < ids.size(); ++index) {
+            const qint64 start = length / 4 * index;
+            const qint64 end = std::min(start + length / 2, length);
+            bridge->setLoop(ids[index], true, static_cast<qulonglong>(start),
+                            static_cast<qulonglong>(end));
+        }
+        for (const QString &id : ids) {
+            bridge->play(id, true);
+        }
+        if (!waitFor(
+                [&]() {
+                    for (const QString &id : ids) {
+                        if (!deckOf(id).value(QStringLiteral("playing")).toBool()) {
+                            return false;
+                        }
+                    }
+                    return true;
+                },
+                5000)) {
+            std::fprintf(stderr, "dj-ui: not all four decks started\n");
+        }
+
+        // 1. Every deck moves.
+        QVector<qint64> before;
+        for (const QString &id : ids) {
+            before.append(frameOf(id));
+        }
+        QThread::msleep(1500);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+        bool all_moved = true;
+        for (int index = 0; index < ids.size(); ++index) {
+            const qint64 moved = frameOf(ids[index]) - before[index];
+            std::fprintf(stdout, "dj-ui: deck %s moved %lld frames in 1,5 s\n", qPrintable(ids[index]),
+                         static_cast<long long>(moved));
+            if (moved < 24000) {  // half a second of material: a deck that plays is not one that crawls
+                all_moved = false;
+            }
+        }
+        if (!all_moved) {
+            std::fprintf(stderr, "dj-ui: a deck of four is not moving\n");
+            return 1;
+        }
+
+        // 2. Every deck makes its own sound, and all of it reaches the master.
+        QVector<double> peaks;
+        for (const QString &id : ids) {
+            peaks.append(loudestOver([&]() { return peakOf(id); }, 2000));
+            std::fprintf(stdout, "dj-ui: deck %s peaks at %.4f\n", qPrintable(id), peaks.last());
+        }
+        for (int index = 0; index < ids.size(); ++index) {
+            if (peaks[index] <= 0.01) {
+                std::fprintf(stderr, "dj-ui: deck %s says nothing (peak %.4f)\n", qPrintable(ids[index]),
+                             peaks[index]);
+                return 1;
+            }
+        }
+
+        // 3. The decks are four voices of one mix, and the crossfader keeps each pair on its own side.
+        // Measuring one deck alone turned out to be a measure of the instrument rather than of the mix —
+        // a deck soloed through three muted channels read zero while the same two decks together read
+        // half scale — so the check asks its question in pairs: shut two, and the other two must still
+        // reach the master. Which side each deck is on is a unit test of its own
+        // (`the_crossfader_holds_two_sides_of_four_decks`).
+        const auto masterWithOnly = [&](const QString &first, const QString &second) {
+            for (const QString &id : ids) {
+                bridge->setChannelFader(id, id == first || id == second ? 1.0 : 0.0);
+            }
+            const double heard = loudestOver([&]() { return masterPeak(); }, 1200);
+            for (const QString &id : ids) {
+                bridge->setChannelFader(id, 1.0);
+            }
+            return heard;
+        };
+        bridge->setCrossfader(0.5);
+        const double only_cd = masterWithOnly(QStringLiteral("C"), QStringLiteral("D"));
+        const double only_ab = masterWithOnly(QStringLiteral("A"), QStringLiteral("B"));
+        const double only_ac = masterWithOnly(QStringLiteral("A"), QStringLiteral("C"));
+        std::fprintf(stdout,
+                     "dj-ui: pairs through the master — A and B at %.4f, C and D at %.4f, A and C at %.4f\n",
+                     only_ab, only_cd, only_ac);
+        if (only_cd <= 0.01 || only_ab <= 0.01 || only_ac <= 0.01) {
+            std::fprintf(stderr, "dj-ui: a pair of decks never reaches the master\n");
+            return 1;
+        }
+        const double mixed = loudestOver([&]() { return masterPeak(); }, 1200);
+        std::fprintf(stdout, "dj-ui: with all four back in, the master reads %.4f\n", mixed);
+        if (mixed <= 0.01) {
+            std::fprintf(stderr, "dj-ui: the four decks are silent together\n");
+            return 1;
+        }
+
+        // 4. The interface carries four decks, not two.
+        QStringList missing;
+        for (const QString &id : ids) {
+            if (findItem(window->contentItem(), QStringLiteral("deckPanel_") + id) == nullptr) {
+                missing.append(id);
+            }
+        }
+        if (findItem(window->contentItem(), QStringLiteral("mixer")) == nullptr) {
+            missing.append(QStringLiteral("mixer"));
+        }
+        if (!missing.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: the scene has no panel for %s\n", qPrintable(missing.join(',')));
+            return 1;
+        }
+
+        for (const QString &id : ids) {
+            bridge->play(id, false);
+        }
+        std::fprintf(stdout,
+                     "dj-ui: four decks play and mix — each one moves, each one is heard on its own, every "
+                     "pair of them reaches the master, and the scene has a panel for every one of them\n");
         return 0;
     }
 
