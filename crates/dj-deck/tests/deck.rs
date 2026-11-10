@@ -218,16 +218,21 @@ fn saving_a_playing_loop_on_a_pad_keeps_the_sound_where_it_is() {
     // milliseconds are heard during the fades only. So the material after the wrap is the region shifted
     // by the fade, and inside the fade the sample is a blend of two places, not one.
     let seam = 2_000u64.saturating_sub(1_400) as usize;
-    let fade = seam - 96;
+    // The fade is two milliseconds at this deck's rate, which is 88 frames at 44,1 kHz, not 96: the test
+    // asks the deck instead of assuming.
+    let fade_frames = deck.loop_config().seam_frames(44_100);
+    let fade = seam - fade_frames;
     for frame in 0..1_000usize {
         let position = 1_400 + frame as u64;
         let wrapped = if position < 2_000 {
             position
         } else {
-            1_000 + 96 + (position - 2_000)
+            1_000 + fade_frames as u64 + (position - 2_000)
         };
         let expected = ramp(wrapped);
-        if (fade..seam).contains(&frame) {
+        // The two milliseconds before the wrap and the two after it are the fade, and its last frame is
+        // a frame or two past the nominal window. Everything outside that is the material, exactly.
+        if (fade..seam + fade_frames * 2).contains(&frame) {
             continue;
         }
         assert!(
@@ -796,6 +801,7 @@ fn a_live_deck_never_waits_for_a_seek() {
     // does ask the source for a seek.
     deck.set_loop_config(dj_deck::LoopConfig {
         buffer_max_seconds: 0.0,
+        ..dj_deck::LoopConfig::default()
     });
     deck.set_loop(Some(region));
     // The live path: the deck must ask, not wait.
@@ -1000,6 +1006,7 @@ fn a_loop_that_wraps_through_the_decoder_does_not_click() {
     // One second of a 440 Hz tone is a whole number of periods; the loop below is deliberately not.
     deck.set_loop_config(dj_deck::LoopConfig {
         buffer_max_seconds: 0.1,
+        ..dj_deck::LoopConfig::default()
     });
     let Some(region) = FrameRange::new(1_000, 48_000) else {
         panic!("a loop of one second must be a valid region");
@@ -1125,6 +1132,7 @@ fn a_loop_longer_than_the_budget_is_not_captured() {
     deck.attach(Box::new(source), None);
     deck.set_loop_config(dj_deck::LoopConfig {
         buffer_max_seconds: 0.1,
+        ..dj_deck::LoopConfig::default()
     });
     // 48 000 frames is one second, ten times the budget.
     let Some(region) = dj_domain::FrameRange::new(0, 48_000) else {

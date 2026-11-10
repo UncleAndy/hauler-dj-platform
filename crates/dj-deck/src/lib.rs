@@ -60,20 +60,6 @@ const TEMPO_GLIDE_SECONDS: f64 = 0.03;
 /// rate change never allocates inside the callback.
 const MAX_TEMPO_BLOCK_FRAMES: usize = 8192;
 
-/// How long the loop's seam is crossfaded, in frames.
-///
-/// A copy that jumps from the last frame of the loop to the first is a step: the material stops in the
-/// middle of a waveform and starts in the middle of another one, and the ear hears the step as a click.
-/// The cure is a crossfade of equal power: the last two milliseconds of the loop and the first two of it
-/// are played together, the tail fading out while the head fades in. Both are real material, so there is
-/// no step and no bump on the level — the loop sounds as if it had always continued, which is what a DJ
-/// mixer's loop does. A decaying offset instead of this was tried first and made the seam worse: it
-/// shifted two milliseconds by the whole step and the ear heard a thump.
-///
-/// The price is two milliseconds of the loop: the seam is shorter than the region by this much, and the
-/// loop keeps that length on every pass.
-const LOOP_SEAM_FRAMES: usize = 96;
-
 /// Where a deck reads frames from. Implemented by the prefetcher; tests provide their own.
 pub trait DeckSource: Send {
     /// Sample rate of the material.
@@ -166,17 +152,33 @@ pub struct LoopConfig {
     /// 30 s is ~11.5 MB) and the benefit stops mattering once the loop is long enough that the seam
     /// falls where nobody plays.
     pub buffer_max_seconds: f64,
+    /// Length of the seam crossfade, in milliseconds. Zero plays the seam as a cut.
+    ///
+    /// A setting because the right length is a matter of the material: two milliseconds hides a step in a
+    /// tone and is nothing to a kick, where the ear wants the cut to be a musical join. Zero exists for
+    /// the measurement that decides the default, and for a DJ who prefers the raw cut.
+    pub seam_ms: f64,
 }
 
 impl Default for LoopConfig {
     fn default() -> Self {
         Self {
             buffer_max_seconds: 30.0,
+            seam_ms: 2.0,
         }
     }
 }
 
 impl LoopConfig {
+    /// Length of the seam crossfade in frames at `sample_rate`, capped so a short loop keeps a middle.
+    pub fn seam_frames(&self, sample_rate: u32) -> usize {
+        if self.seam_ms <= 0.0 {
+            return 0;
+        }
+        let frames = self.seam_ms * f64::from(sample_rate) / 1000.0;
+        (frames.round().max(0.0) as usize).min(4_800)
+    }
+
     /// Longest captured loop in frames at `sample_rate`.
     pub fn max_frames(&self, sample_rate: u32) -> u64 {
         if self.buffer_max_seconds <= 0.0 {
@@ -1489,8 +1491,11 @@ impl Deck {
                     if self.seam_fade_in > 0 {
                         let faded = read.min(self.seam_fade_in);
                         for index in 0..faded {
-                            let share = (LOOP_SEAM_FRAMES - self.seam_fade_in + index + 1) as f32
-                                / LOOP_SEAM_FRAMES as f32;
+                            let seam = self
+                                .loop_config
+                                .seam_frames(self.source_rate_of_current() as u32);
+                            let share = (seam.saturating_sub(self.seam_fade_in) + index + 1) as f32
+                                / seam.max(1) as f32;
                             out[(written + index) * 2] *= share;
                             out[(written + index) * 2 + 1] *= share;
                         }
@@ -1527,13 +1532,22 @@ impl Deck {
                 } else {
                     // No copy to blend with: the tail fades out and the head fades in over two
                     // milliseconds, so the seam is a dip and not a step (DJP-DECK-005).
-                    let tail = written.min(LOOP_SEAM_FRAMES);
+                    let tail = written.min(
+                        self.loop_config
+                            .seam_frames(self.source_rate_of_current() as u32),
+                    );
                     for index in 0..tail {
-                        let share = (tail - index) as f32 / LOOP_SEAM_FRAMES as f32;
+                        let share = (tail - index) as f32
+                            / self
+                                .loop_config
+                                .seam_frames(self.source_rate_of_current() as u32)
+                                as f32;
                         out[(written - tail + index) * 2] *= share;
                         out[(written - tail + index) * 2 + 1] *= share;
                     }
-                    self.seam_fade_in = LOOP_SEAM_FRAMES;
+                    self.seam_fade_in = self
+                        .loop_config
+                        .seam_frames(self.source_rate_of_current() as u32);
                     let target = self.read_at(region.start.0);
                     if let Some(source) = self.source.as_mut() {
                         // Measured on the S4 run: a blocking wrap seek cost 3.8 ms inside the callback
@@ -1605,21 +1619,30 @@ impl Deck {
         // The seam, crossfaded: over the last two milliseconds of the loop the copy's tail fades out
         // while its head fades in, so the wrap is a continuation and not a step.
         if wrapping {
-            let fade_from = frames.saturating_sub(LOOP_SEAM_FRAMES);
+            let fade_from = frames.saturating_sub(
+                self.loop_config
+                    .seam_frames(self.source_rate_of_current() as u32),
+            );
             for index in 0..take {
                 let at = offset + index;
                 if at < fade_from {
                     continue;
                 }
-                let share = (at - fade_from + 1) as f32 / LOOP_SEAM_FRAMES as f32;
+                let share = (at - fade_from + 1) as f32
+                    / self
+                        .loop_config
+                        .seam_frames(self.source_rate_of_current() as u32)
+                        as f32;
                 let into = at - fade_from;
                 let tail = (fade_from + into).min(frames - 1);
                 let head = into.min(frames - 1);
-                // Equal *gain*, not equal power: musical material at a loop seam is strongly correlated
-                // (it is the same track two milliseconds apart), and equal power would sum the two halves
-                // into a swell of up to three decibels. A linear fade keeps their sum at one.
-                let out_gain = 1.0 - share;
-                let in_gain = share;
+                // Equal *gain* — the sum stays at one, which is what correlated material needs — but
+                // shaped as a raised cosine rather than a straight line: a linear fade meets its ends at a
+                // corner, and that corner is a step in the slope that the ear hears as a tick. The cosine
+                // leaves and arrives with zero slope.
+                let shaped = 0.5 - 0.5 * (share * std::f32::consts::PI).cos();
+                let out_gain = 1.0 - shaped;
+                let in_gain = shaped;
                 for channel in 0..2 {
                     out[index * 2 + channel] = buffer.data[tail * 2 + channel] * out_gain
                         + buffer.data[head * 2 + channel] * in_gain;
@@ -1630,7 +1653,13 @@ impl Deck {
         heard += take as u64;
         if wrapping && heard >= end {
             // The head has been played during the fade: the next pass starts past it.
-            self.position = self.read_at(start + LOOP_SEAM_FRAMES as u64);
+            self.position = self.read_at(
+                start
+                    + self
+                        .loop_config
+                        .seam_frames(self.source_rate_of_current() as u32)
+                        as u64,
+            );
             self.stats.loop_wraps += 1;
             if self.keylock_engaged {
                 // The stretcher is in the path: a jump it is not told about is a tick inside its windows.

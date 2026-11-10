@@ -283,6 +283,19 @@ fn run(argv: &[String]) -> Result<(), String> {
             deck.attach(Box::new(ToneSource::new(rate, 440.0, 600.0)), None);
         }
         deck.set_blocking(false);
+        // The loop seam is a setting in the deck; until it reaches the settings file (A08/A10) the ear
+        // that matters can choose it here: DJ_LOOP_SEAM_MS=0 plays the seam as a cut, 5 as a longer
+        // crossfade. Measured on the reference tracks, two milliseconds is the best of the tested values
+        // on three of four, and a longer fade blurs the attack of whatever the loop starts with.
+        if let Ok(value) = std::env::var("DJ_LOOP_SEAM_MS")
+            && let Ok(milliseconds) = value.trim().parse::<f64>()
+            && milliseconds.is_finite()
+        {
+            deck.set_loop_config(dj_deck::LoopConfig {
+                buffer_max_seconds: 30.0,
+                seam_ms: milliseconds.max(0.0),
+            });
+        }
         decks.push(deck);
     }
     let mut mixer = Mixer::new(decks.len());

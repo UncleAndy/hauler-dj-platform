@@ -273,6 +273,7 @@ fn run(argv: &[String]) -> Result<String, Error> {
             deck.set_gain(1.0);
             deck.set_loop_config(dj_deck::LoopConfig {
                 buffer_max_seconds: settings.loop_playback.buffer_max_seconds,
+                ..dj_deck::LoopConfig::default()
             });
             // A whole-track loop keeps the real path busy for the whole run instead of rendering
             // silence once the file ends.
