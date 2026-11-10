@@ -696,7 +696,10 @@ Pane {
                         color: Math.abs(panel.phaseMs) <= 2.0 ? UiSettings.themeAccent : "#ffb300"
                     }
                     ToolTip.visible: hovered
-                    ToolTip.text: qsTr("%1 ms from the master's beat, %2 beats along the bar")
+                    // Sync holds the beat; which beat of the bar the deck stands on is the DJ's call,
+                    // so the bar is shown and not forced (owner's decision, 2026-11-10).
+                    ToolTip.text: qsTr("%1 ms from the master's beat, %2 beats along the bar — sync "
+                                       + "holds the beat, the bar is yours")
                                       .arg(panel.phaseMs.toFixed(1))
                                       .arg(panel.barErrorBeats.toFixed(2))
                 }
