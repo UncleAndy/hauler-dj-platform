@@ -20,7 +20,11 @@ const STEP_SECONDS: f64 = 8.0 * 256.0 / 48_000.0;
 ///
 /// `seeks` counts what the deck asked its source for: a jump is the sync loop's only reason to seek, so
 /// the counter is how a test tells "one correction" from "a seek every step".
-fn deck_with_grid(id: DeckId, bpm: f64, first_beat: u64, seeks: Arc<AtomicU32>) -> Deck {
+fn grid_track(
+    bpm: f64,
+    first_beat: u64,
+    seeks: Arc<AtomicU32>,
+) -> (Box<dyn dj_deck::DeckSource>, TrackMeta) {
     struct Tone {
         seeks: Arc<AtomicU32>,
     }
@@ -46,19 +50,22 @@ fn deck_with_grid(id: DeckId, bpm: f64, first_beat: u64, seeks: Arc<AtomicU32>) 
         }
     }
     let grid = BeatGrid::single(bpm, first_beat).expect("a grid of one tempo");
+    let meta = TrackMeta {
+        title: String::from("Tone"),
+        artist: String::new(),
+        duration_frames: Some(48_000 * 600),
+        bpm: Some(bpm),
+        first_beat_frame: Some(first_beat),
+        grid: Some(grid),
+        key: None,
+    };
+    (Box::new(Tone { seeks }), meta)
+}
+
+fn deck_with_grid(id: DeckId, bpm: f64, first_beat: u64, seeks: Arc<AtomicU32>) -> Deck {
+    let (source, meta) = grid_track(bpm, first_beat, seeks);
     let mut deck = Deck::new(id);
-    deck.attach(
-        Box::new(Tone { seeks }),
-        Some(TrackMeta {
-            title: String::from("Tone"),
-            artist: String::new(),
-            duration_frames: Some(48_000 * 600),
-            bpm: Some(bpm),
-            first_beat_frame: Some(first_beat),
-            grid: Some(grid),
-            key: None,
-        }),
-    );
+    deck.attach(source, Some(meta));
     deck.set_blocking(false);
     deck.set_gain(1.0);
     deck
@@ -278,9 +285,11 @@ fn sync_off_leaves_the_follower_alone() {
 }
 
 #[test]
-fn a_tempo_the_fader_cannot_reach_leaves_the_follower_at_its_own_speed() {
-    // 150 against 120 needs 25 %, and the fader allows 16: the deck keeps its speed rather than
-    // stopping at the edge, and the phase meter is left to show the distance.
+fn a_tempo_the_fader_cannot_reach_is_matched_anyway() {
+    // 150 against 120 needs 25 %, and the fader allows 16. The rule was the opposite until the owner
+    // said otherwise on 2026-11-10: a sync is the deck's own business, and a tempo the fader cannot
+    // reach is still a tempo the DJ asked for. What the old rule left behind — a deck playing at the
+    // speed of the track before it — was a wrong tempo nobody could see.
     let seeks = Arc::new(AtomicU32::new(0));
     let mut decks = vec![
         deck_with_grid(DeckId::A, 150.0, 0, Arc::clone(&seeks)),
@@ -292,7 +301,12 @@ fn a_tempo_the_fader_cannot_reach_leaves_the_follower_at_its_own_speed() {
     for _ in 0..50 {
         sync_step(&mut decks, &mut memory, STEP_SECONDS);
     }
-    assert!((decks[1].tempo_ratio() - 1.0).abs() < 1e-12);
+    let ratio = decks[1].tempo_ratio();
+    println!("beyond the fader: ratio {ratio:.9}, wanted 1.25");
+    assert!(
+        (ratio - 1.25).abs() < 1e-6,
+        "the follower should reach 1.25 whatever the fader allows, it runs at {ratio:.9}"
+    );
 }
 
 #[test]
@@ -632,4 +646,98 @@ fn a_stopped_follower_still_says_where_its_head_stands() {
         "the distance moves with the master: {first:.3} then {second:.3}"
     );
     assert_eq!(decks[1].position(), head, "and the head itself stays put");
+}
+
+/// A deck follows a tempo, not a file: a new track under a deck that is already following has its own
+/// BPM, and keeping the pitch of the track before it leaves the mix at the wrong speed without saying so.
+#[test]
+fn a_new_track_under_a_following_deck_takes_the_master_tempo() {
+    let seeks = Arc::new(AtomicU32::new(0));
+    let mut decks = vec![
+        deck_with_grid(DeckId::A, 128.0, 0, Arc::clone(&seeks)),
+        deck_with_grid(DeckId::B, 120.0, 0, Arc::clone(&seeks)),
+    ];
+    let mut mixer = mixer();
+    lock_b_to_a(&mut decks, &mut mixer);
+    let mut memory = SyncMemory::default();
+    for _ in 0..50 {
+        sync_step(&mut decks, &mut memory, STEP_SECONDS);
+    }
+    let before = decks[1].tempo_ratio();
+    assert!(
+        (before - 128.0 / 120.0).abs() < 1e-6,
+        "the follower started on the master's tempo, it runs at {before:.9}"
+    );
+
+    // The hand loads a slower track into the following deck and sync stays on.
+    let (source, meta) = grid_track(100.0, 0, Arc::clone(&seeks));
+    decks[1].attach(source, Some(meta));
+    for _ in 0..50 {
+        sync_step(&mut decks, &mut memory, STEP_SECONDS);
+    }
+    let after = decks[1].tempo_ratio();
+    println!(
+        "new track: ratio {before:.9} -> {after:.9}, wanted {:.9}",
+        128.0 / 100.0
+    );
+    assert!(
+        (after - 128.0 / 100.0).abs() < 1e-6,
+        "the new track should run at the master's tempo, it runs at {after:.9}"
+    );
+}
+
+/// Pressing sync means the tempo changes now: a deck that spends the next seconds climbing into the
+/// mix is a deck that is not following yet.
+#[test]
+fn pressing_sync_takes_the_tempo_at_once() {
+    let seeks = Arc::new(AtomicU32::new(0));
+    let mut decks = vec![
+        deck_with_grid(DeckId::A, 128.0, 0, Arc::clone(&seeks)),
+        deck_with_grid(DeckId::B, 120.0, 0, Arc::clone(&seeks)),
+    ];
+    let mut mixer = mixer();
+    lock_b_to_a(&mut decks, &mut mixer);
+    let mut memory = SyncMemory::default();
+    // The mode comes on with the press; the first step after it is the press.
+    sync_step(&mut decks, &mut memory, STEP_SECONDS);
+    let ratio = decks[1].tempo_ratio();
+    println!("after the press: ratio {ratio:.9}");
+    assert!(
+        (ratio - 128.0 / 120.0).abs() < 1e-6,
+        "one step after the press the deck should be on the master's tempo, it runs at {ratio:.9}"
+    );
+}
+
+/// A follower stretched by 28 % is still a follower: the phase it holds is the phase a follower
+/// stretched by 6 % holds. The stretch is a multiplier on the rate, not a licence for drift.
+#[test]
+fn a_stretched_follower_holds_the_beat_as_tightly_as_a_near_one() {
+    for (file_bpm, label) in [(120.0, "6 %"), (100.0, "28 %")] {
+        let seeks = Arc::new(AtomicU32::new(0));
+        let mut decks = vec![
+            deck_with_grid(DeckId::A, 128.0, 0, Arc::clone(&seeks)),
+            deck_with_grid(DeckId::B, file_bpm, 0, Arc::clone(&seeks)),
+        ];
+        let mut mixer = mixer();
+        lock_b_to_a(&mut decks, &mut mixer);
+        let mut memory = SyncMemory::default();
+        let mut worst: f64 = 0.0;
+        for _ in 0..400 {
+            sync_step(&mut decks, &mut memory, STEP_SECONDS);
+            let mut apart = (phase_of(&decks[1]) - phase_of(&decks[0])).rem_euclid(1.0);
+            if apart > 0.5 {
+                apart -= 1.0;
+            }
+            let ms = (apart * 60_000.0 / 128.0).abs();
+            worst = worst.max(ms);
+        }
+        println!(
+            "{label}: ratio {:.9}, worst phase {worst:.4} ms over 400 steps",
+            decks[1].tempo_ratio()
+        );
+        assert!(
+            worst <= 2.0,
+            "{label}: a follower held {worst:.3} ms off the beat over four hundred steps"
+        );
+    }
 }

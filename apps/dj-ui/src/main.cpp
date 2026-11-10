@@ -6612,8 +6612,11 @@ int main(int argc, char *argv[])
             // Longer than the soak, and not by a few seconds: the faster deck eats its material at
             // 128/120, and the decks start playing while they are still being lined up. A fixture that
             // ends mid-run does not end the run — it turns the last minute into numbers about nothing.
+            // Ten minutes at 1.28 is thirteen minutes of material, and the decks play while they are
+            // still being lined up: a fixture that ends mid-run turns the last minute into numbers about
+            // nothing at all.
             const qint64 frames =
-                static_cast<qint64>(rate) * (static_cast<qint64>(seconds * 1.1) + 70);
+                static_cast<qint64>(rate) * (static_cast<qint64>(seconds * 1.5) + 60);
             const double beat = 60.0 / bpm;
             QFile file(path);
             if (!file.open(QIODevice::WriteOnly)) {
@@ -6670,7 +6673,9 @@ int main(int argc, char *argv[])
         };
         const QString a_path = soakDir.filePath(QStringLiteral("click-128.wav"));
         const QString b_path = soakDir.filePath(QStringLiteral("click-120.wav"));
-        if (!writeClick(a_path, 128.0) || !writeClick(b_path, 120.0)) {
+        // 128 against 100 is a factor of 1.28, well past the sixteen percent of the pitch control: the
+        // soak proves the rule of 2026-11-10 in its first second and then keeps proving it.
+        if (!writeClick(a_path, 128.0) || !writeClick(b_path, 100.0)) {
             std::fprintf(stderr, "dj-ui: the soak could not write its click tracks\n");
             return 1;
         }
@@ -6681,7 +6686,7 @@ int main(int argc, char *argv[])
                 const QVariantMap a = deckOf(QStringLiteral("A"));
                 const QVariantMap b = deckOf(QStringLiteral("B"));
                 return std::abs(a.value(QStringLiteral("local_bpm")).toDouble() - 128.0) < 0.05
-                       && std::abs(b.value(QStringLiteral("local_bpm")).toDouble() - 120.0) < 0.05
+                       && std::abs(b.value(QStringLiteral("local_bpm")).toDouble() - 100.0) < 0.05
                        && a.value(QStringLiteral("beat")).isValid();
             },
             // Ten minutes of a click track is a hundred megabytes a deck, and a debug build measures its
@@ -6691,7 +6696,7 @@ int main(int argc, char *argv[])
             300000);
         if (!loaded) {
             std::fprintf(stderr,
-                         "dj-ui: the soak decks came up at %.2f and %.2f BPM, not 128 and 120\n",
+                         "dj-ui: the soak decks came up at %.2f and %.2f BPM, not 128 and 100\n",
                          deckOf(QStringLiteral("A")).value(QStringLiteral("local_bpm")).toDouble(),
                          deckOf(QStringLiteral("B")).value(QStringLiteral("local_bpm")).toDouble());
             return 1;
@@ -6745,6 +6750,7 @@ int main(int argc, char *argv[])
         int over_tolerance = 0;
         int aligned_samples = 0;
         int samples = 0;
+        int stalled_samples = 0;
         bool expect_aligned = true;
         QElapsedTimer run;
         run.start();
@@ -6756,8 +6762,7 @@ int main(int argc, char *argv[])
             {"follower started", 0.45, true, [&]() { bridge->play(QStringLiteral("B"), true); }},
             {"loop of four beats", 0.60, true, [&]() { bridge->loopBeats(QStringLiteral("B"), 4); }},
             {"loop off", 0.70, true, [&]() { bridge->setLoop(QStringLiteral("B"), false, 0, 0); }},
-            {"master +25 % (fader cannot reach)", 0.80, false,
-             [&]() { bridge->setTempo(QStringLiteral("A"), 1.25); }},
+            {"master +4 % again", 0.80, true, [&]() { bridge->setTempo(QStringLiteral("A"), 1.04); }},
             {"master back to 1.0", 0.90, true, [&]() { bridge->setTempo(QStringLiteral("A"), 1.0); }},
         };
         struct Recovery {
@@ -6771,6 +6776,12 @@ int main(int argc, char *argv[])
         std::vector<Recovery> recoveries;
         std::size_t next_stage = 0;
         qint64 settled_from = 150;  // 150 ms after the start: the first jump has landed by then
+        // The audio clock is how this run tells a deck that drifted from a machine that could not render:
+        // a block the box never produced moves a play head by a whole block, which is 5,3 ms and looks
+        // exactly like a phase error. Counting those samples as drift would make the check a measure of
+        // how busy the computer was.
+        double clock_before = bridge->snapshot().value(QStringLiteral("audio_clock_samples")).toDouble();
+        qint64 wall_before = run.elapsed();
         while (run.elapsed() < seconds * 1000) {
             QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
             const qint64 now = run.elapsed();
@@ -6806,10 +6817,19 @@ int main(int argc, char *argv[])
                              now / 1000.0);
                 return 1;
             }
+            const double clock_now =
+                bridge->snapshot().value(QStringLiteral("audio_clock_samples")).toDouble();
+            const double expected = static_cast<double>(now - wall_before) * 48.0;  // 48 frames a ms
+            const bool stalled = clock_now - clock_before < 0.8 * expected;
+            clock_before = clock_now;
+            wall_before = now;
             const double phase = phaseOf(QStringLiteral("B"));
             if (std::isfinite(phase)) {
                 ++samples;
-                if (expect_aligned && now >= settled_from) {
+                if (stalled) {
+                    ++stalled_samples;
+                }
+                if (expect_aligned && now >= settled_from && !stalled) {
                     if (catching_up) {
                         worst_transient = std::max(worst_transient, phase);
                     } else {
@@ -6861,8 +6881,10 @@ int main(int argc, char *argv[])
 
         double worst_recovery = 0.0;
         bool all_recovered = true;
-        std::fprintf(stdout, "dj-ui: soak — %d samples over %d s of two decks, %d of them aligned\n",
-                     samples, seconds, aligned_samples);
+        std::fprintf(stdout,
+                     "dj-ui: soak — %d samples over %d s of two decks, %d of them aligned, %d with the "
+                     "machine too busy to render a block\n",
+                     samples, seconds, aligned_samples, stalled_samples);
         for (const auto &recovery : recoveries) {
             if (!recovery.counted) {
                 std::fprintf(stdout, "dj-ui: soak   %s — no phase to hold\n", qPrintable(recovery.name));

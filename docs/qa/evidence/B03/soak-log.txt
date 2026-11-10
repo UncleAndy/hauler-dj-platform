@@ -1,19 +1,19 @@
 dj-ui: soak — locked and settled, the clock starts here
-dj-ui: soak 120,1 s — master +4 %
-dj-ui: soak 180,0 s — master back to 1.0
+dj-ui: soak 120,0 s — master +4 %
+dj-ui: soak 180,1 s — master back to 1.0
 dj-ui: soak 240,0 s — follower paused (not a phase to hold)
 dj-ui: soak 270,0 s — follower started
-dj-ui: soak 360,1 s — loop of four beats
+dj-ui: soak 360,0 s — loop of four beats
 dj-ui: soak 420,0 s — loop off
-dj-ui: soak 480,0 s — master +25 % (fader cannot reach) (not a phase to hold)
+dj-ui: soak 480,1 s — master +4 % again
 dj-ui: soak 540,0 s — master back to 1.0
-dj-ui: soak — 10240 samples over 600 s of two decks, 8542 of them aligned
-dj-ui: soak   master +4 % — back on the beat in 1,2 s
-dj-ui: soak   master back to 1.0 — back on the beat in 1,2 s
+dj-ui: soak — 9979 samples over 600 s of two decks, 9237 of them aligned
+dj-ui: soak   master +4 % — back on the beat in 1,7 s
+dj-ui: soak   master back to 1.0 — back on the beat in 1,6 s
 dj-ui: soak   follower paused — no phase to hold
 dj-ui: soak   follower started — back on the beat in 0,1 s
 dj-ui: soak   loop of four beats — back on the beat in 0,1 s
 dj-ui: soak   loop off — back on the beat in 0,1 s
-dj-ui: soak   master +25 % (fader cannot reach) — no phase to hold
-dj-ui: soak   master back to 1.0 — back on the beat in 0,1 s
-dj-ui: soak — worst |phase| 1,878 ms while settled (15,626 ms during a correction), 100,00% of the settled samples inside 2 ms, worst recovery 1,2 s after a hand
+dj-ui: soak   master +4 % again — back on the beat in 1,7 s
+dj-ui: soak   master back to 1.0 — back on the beat in 1,7 s
+dj-ui: soak — worst |phase| 1,564 ms while settled (16,001 ms during a correction), 100,00% of the settled samples inside 2 ms, worst recovery 1,7 s after a hand

@@ -24,6 +24,18 @@ impl PitchLimits {
         }
     }
 
+    /// The limits of a tempo match: none.
+    ///
+    /// The fader is the hand's travel; a sync is the deck's own business. A track forty percent slower
+    /// than the master is a track a DJ may still want on the beat, and refusing it leaves the deck at the
+    /// speed of whatever was loaded before — a wrong tempo the DJ did not ask for and cannot see. What
+    /// protects the sound is the deck's own range and the fact that the ratio comes from the file's grid.
+    pub fn beyond_the_fader() -> Self {
+        Self {
+            max_percent: f64::INFINITY,
+        }
+    }
+
     /// The lowest legal ratio.
     pub fn lowest(&self) -> f64 {
         1.0 - self.max_percent / 100.0

@@ -710,6 +710,12 @@ fn beat_of(deck: &DeckSnapshot) -> Option<(f64, f64)> {
 #[derive(Debug, Clone)]
 pub struct SyncMemory {
     steps_since_jump: [u16; MAX_DECKS],
+    /// The mode each deck had at the last step: a mode that has just come on is a hand asking for the
+    /// tempo now, not a deck that is still trimming its way there.
+    last_mode: [SyncMode; MAX_DECKS],
+    /// The file tempo each deck was last matched against. A deck under a new track has a new tempo, and
+    /// the ratio of the track before it is a wrong speed, not a starting point.
+    matched_bpm: [f64; MAX_DECKS],
 }
 
 impl Default for SyncMemory {
@@ -718,6 +724,8 @@ impl Default for SyncMemory {
     fn default() -> Self {
         Self {
             steps_since_jump: [Self::QUIET_STEPS; MAX_DECKS],
+            last_mode: [SyncMode::Off; MAX_DECKS],
+            matched_bpm: [0.0; MAX_DECKS],
         }
     }
 }
@@ -777,7 +785,8 @@ fn master_reading(deck: &Deck) -> Option<Reading> {
 /// is idempotent — a second step moves the tempo no further than the trim allows and a deck already on
 /// the beat asks for no seek.
 pub fn sync_step(decks: &mut [Deck], memory: &mut SyncMemory, seconds: f64) {
-    let limits = PitchLimits::default();
+    // A tempo match is not a fader: the sync reaches the master's tempo whatever the fader's travel.
+    let limits = PitchLimits::beyond_the_fader();
     let trim = RateTrim::default();
     memory.tick();
     // Resolved before the loop and per follower: the master is a deck, and a deck cannot lead itself.
@@ -804,6 +813,10 @@ pub fn sync_step(decks: &mut [Deck], memory: &mut SyncMemory, seconds: f64) {
             continue;
         };
         let mode = deck.sync();
+        // A deck that has just been put into sync, or has just had a track loaded under it, is a deck
+        // that needs the tempo now: the trim is how a tempo is held, not how it is reached.
+        let fresh = !mode.is_off() && memory.last_mode[index] != mode;
+        memory.last_mode[index] = mode;
         if mode.is_off() || !deck.has_source() {
             continue;
         }
@@ -824,10 +837,18 @@ pub fn sync_step(decks: &mut [Deck], memory: &mut SyncMemory, seconds: f64) {
         let Ok(planned) = planned else {
             continue;
         };
-        // A tempo is approached, not stamped: the trim's travel is slow enough to be inaudible and fast
-        // enough to land inside a bar.
-        let next = trim.step(deck.tempo_ratio(), planned.ratio, seconds);
-        deck.set_tempo(next);
+        let new_track = (memory.matched_bpm[index] - planned.follower_bpm).abs() > 0.01;
+        memory.matched_bpm[index] = planned.follower_bpm;
+        if fresh || new_track {
+            // The hand asked for this tempo, or the file under the deck changed: the deck goes to the
+            // master's tempo in one piece.
+            deck.set_tempo_ratio(planned.ratio);
+        } else {
+            // Holding a tempo is another matter: the trim's travel is slow enough to be inaudible and
+            // fast enough to land inside a bar.
+            let next = trim.step(deck.tempo_ratio(), planned.ratio, seconds);
+            deck.set_tempo(next);
+        }
         // A beat is a jump, not a pull: the hand asked for the beat, and a slow correction is heard as a
         // deck losing the mix. One frame is below what anybody can hear, so it is not worth a seek.
         // A deck that is not playing is not chasing anything. A stopped follower next to a playing
