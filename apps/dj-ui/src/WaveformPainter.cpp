@@ -9,7 +9,8 @@
 
 WaveformStats paintWaveform(QPainter &painter, const Waveform &waveform,
                              const WaveformStyle &style, const QRect &area, double windowStart,
-                             double span, double playheadRatio, const QList<CueMark> &cues,
+                             double span, double playheadRatio, double slipRatio,
+                             const QList<CueMark> &cues,
                              const QList<LoopMark> &padLoops, bool hasLoop, double loopFrom,
                              double loopTo, bool loopActive, double pendingFrom,
                              const QList<BeatMark> &beats, const QList<double> &anchors)
@@ -221,6 +222,24 @@ WaveformStats paintWaveform(QPainter &painter, const Waveform &waveform,
         painter.setFont(font);
         painter.drawText(x + 3, area.top() + std::max(5, style.markFont) + 1,
                          cue.label.isEmpty() ? QString::number(slot + 1) : cue.label);
+    }
+
+    // The virtual play head of slip (DJP-DECK-007): where the track would be had the deck not jumped or
+    // repeated. Dashed and dimmer than the play head, because it is not where the sound is — it is where
+    // the sound will be when slip lets go, and the two lines must never be mistaken for each other.
+    if (slipRatio >= 0.0 && slipRatio <= 1.0) {
+        const int slip = xOfRatio(slipRatio);
+        if (slip >= area.left() && slip <= area.right()) {
+            QColor dim = style.playhead;
+            dim.setAlpha(150);
+            QPen pen(dim);
+            pen.setStyle(Qt::DashLine);
+            pen.setWidth(1);
+            painter.setPen(pen);
+            painter.setBrush(Qt::NoBrush);
+            painter.drawLine(slip, area.top(), slip, area.bottom());
+            stats.slip = 1;
+        }
     }
 
     painter.setPen(style.playhead);

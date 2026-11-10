@@ -227,6 +227,17 @@ Item {
         return marks;
     }
 
+    /// Where the virtual play head of slip stands, as a fraction of the track; negative when slip is off
+    /// (DJP-DECK-007). The strip draws it as a dashed line, dimmer than the play head: it is where the
+    /// sound will be when slip lets go, not where it is now.
+    readonly property real slipRatio: {
+        const frame = view.deckState !== undefined ? view.deckState.slip_frame : undefined;
+        if (frame === undefined || frame === null) {
+            return -1.0;
+        }
+        return view.ratioOfFrame(frame);
+    }
+
     // Fraction of the track the playhead sits at; the strip is always centred on it.
     readonly property real playheadRatio: {
         if (view.framesPerBucket <= 0 || view.columns <= 0) {
@@ -363,6 +374,7 @@ Item {
             windowStart: view.windowStart
             span: view.zoomSpan
             playheadRatio: view.playheadRatio
+            slipRatio: view.slipRatio
             cues: view.cueMarks
             // The zoomed strip has room for a readable number.
             markFont: 9

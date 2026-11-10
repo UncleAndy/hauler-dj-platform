@@ -46,6 +46,8 @@ struct WaveformStats
     /// Where the first visible square starts, as a fraction of the track: the number that moves when the
     /// grid is shifted by a bar, and the one the strip's check reads.
     double firstSquare = -1.0;
+    /// One when the virtual play head of slip was on the strip, zero when there was nothing to draw.
+    int slip = 0;
 };
 
 /// A loop stored on a pad: drawn as a pair of edge marks along the bottom of the strip, so a loop that
@@ -89,7 +91,7 @@ inline int frameStep(const WaveformStyle &style)
 // and the loop are fractions too, so nothing is drawn twice with two different timebases.
 WaveformStats paintWaveform(QPainter &painter, const Waveform &waveform, const WaveformStyle &style,
                              const QRect &area, double windowStart, double span,
-                             double playheadRatio, const QList<CueMark> &cues,
+                             double playheadRatio, double slipRatio, const QList<CueMark> &cues,
                              const QList<LoopMark> &padLoops, bool hasLoop, double loopFrom,
                              double loopTo, bool loopActive, double pendingFrom,
                              const QList<BeatMark> &beats, const QList<double> &anchors);

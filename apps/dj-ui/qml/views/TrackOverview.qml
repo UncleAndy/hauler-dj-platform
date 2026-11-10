@@ -35,6 +35,17 @@ Item {
                      ? overview.deckState.remaining_frames : -1;
         return left >= 0 ? overview.deckState.source_frame + left : 0;
     }
+    /// The virtual play head of slip, as a fraction of the whole track (DJP-DECK-007); negative when
+    /// slip is off. The overview is the one strip where the audible head and the virtual one can be far
+    /// apart, so it draws it too.
+    readonly property real slipRatio: {
+        const frame = overview.deckState !== undefined ? overview.deckState.slip_frame : undefined;
+        if (frame === undefined || frame === null) {
+            return -1.0;
+        }
+        return overview.ratioOfFrame(frame);
+    }
+
     function loopIsArmed(start, end) {
         const armed = overview.deckState !== undefined && overview.deckState.active_loops !== undefined
                       ? overview.deckState.active_loops : [];
@@ -125,12 +136,16 @@ Item {
     }
 
     WaveformStrip {
+        objectName: "overviewStrip_" + (overview.deckState !== undefined
+                                        && overview.deckState.deck !== undefined
+                                        ? overview.deckState.deck : "")
         id: strip
         anchors.fill: parent
         waveform: overview.envelope
         windowStart: 0.0
         span: 1.0
         playheadRatio: overview.ratio
+        slipRatio: overview.slipRatio
         cues: overview.cueMarks
         // A whole track in a hundred pixels: the number has to be half the size, or it covers the
         // strip instead of naming a point on it.

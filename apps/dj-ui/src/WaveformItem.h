@@ -21,6 +21,8 @@ class WaveformItem : public QQuickPaintedItem
     Q_PROPERTY(double windowStart READ windowStart WRITE setWindowStart NOTIFY appearanceChanged)
     Q_PROPERTY(double span READ span WRITE setSpan NOTIFY appearanceChanged)
     Q_PROPERTY(double playheadRatio READ playheadRatio WRITE setPlayheadRatio NOTIFY appearanceChanged)
+    // Where the virtual play head of slip stands, as a fraction of the track; negative when slip is off.
+    Q_PROPERTY(double slipRatio READ slipRatio WRITE setSlipRatio NOTIFY appearanceChanged)
     Q_PROPERTY(QVariantList cues READ cues WRITE setCues NOTIFY appearanceChanged)
     Q_PROPERTY(bool hasLoop READ hasLoop WRITE setHasLoop NOTIFY appearanceChanged)
     Q_PROPERTY(double loopFrom READ loopFrom WRITE setLoopFrom NOTIFY appearanceChanged)
@@ -37,6 +39,7 @@ class WaveformItem : public QQuickPaintedItem
     Q_PROPERTY(int drawnBars READ drawnBars NOTIFY appearanceChanged)
     Q_PROPERTY(int drawnSquares READ drawnSquares NOTIFY appearanceChanged)
     Q_PROPERTY(double firstSquare READ firstSquare NOTIFY appearanceChanged)
+    Q_PROPERTY(int drawnSlip READ drawnSlip NOTIFY appearanceChanged)
     Q_PROPERTY(int drawnAnchors READ drawnAnchors NOTIFY appearanceChanged)
     Q_PROPERTY(double beatSpacing READ beatSpacing NOTIFY appearanceChanged)
     Q_PROPERTY(bool coloured READ coloured WRITE setColoured NOTIFY appearanceChanged)
@@ -65,6 +68,8 @@ public:
     void setSpan(double value);
     double playheadRatio() const { return m_playheadRatio; }
     void setPlayheadRatio(double value);
+    double slipRatio() const { return m_slipRatio; }
+    void setSlipRatio(double value);
     QVariantList cues() const { return m_cues; }
     void setCues(const QVariantList &value);
     bool hasLoop() const { return m_hasLoop; }
@@ -86,6 +91,7 @@ public:
     int drawnBars() const { return m_stats.bars; }
     int drawnSquares() const { return m_stats.squares; }
     double firstSquare() const { return m_stats.firstSquare; }
+    int drawnSlip() const { return m_stats.slip; }
     int drawnAnchors() const { return m_stats.anchors; }
     double beatSpacing() const { return m_stats.beatSpacing; }
     void setLoopTo(double value);
@@ -122,6 +128,8 @@ private:
     double m_windowStart = 0.0;
     double m_span = 1.0;
     double m_playheadRatio = 0.0;
+    /// Where the virtual play head of slip stands, as a fraction of the track; negative means none.
+    double m_slipRatio = -1.0;
     QVariantList m_cues;
     bool m_hasLoop = false;
     double m_loopFrom = 0.0;

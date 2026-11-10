@@ -2374,8 +2374,8 @@ int main(int argc, char *argv[])
             QElapsedTimer timer;
             timer.start();
             QPainter painter(&image);
-            paintWaveform(painter, envelope, style, image.rect(), start, 0.1, start + 0.05, {}, {},
-                          false, 0.0, 0.0, false, -1.0, {}, {});
+            paintWaveform(painter, envelope, style, image.rect(), start, 0.1, start + 0.05, -1.0,
+                          {}, {}, false, 0.0, 0.0, false, -1.0, {}, {});
             painter.end();
             costs.push_back(double(timer.nsecsElapsed()) / 1.0e6);
         }
@@ -3658,6 +3658,39 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: slip did not reach the state\n");
             return 1;
         }
+        // The virtual head has to be on the picture, not only in the state: a jump under slip moves the
+        // sound and leaves the virtual head behind, and both strips have to show that difference.
+        const qint64 beforeSlipJump = playHead();
+        if (!press(QStringLiteral("jump_A_p1"))) {
+            return 1;
+        }
+        if (!waitFor([&]() { return playHead() != beforeSlipJump; }, 5000)) {
+            std::fprintf(stderr, "dj-ui: the jump under slip did not move the sound\n");
+            return 1;
+        }
+        auto *overview = findItem(window->contentItem(), QStringLiteral("overviewStrip_A"));
+        if (overview == nullptr) {
+            std::fprintf(stderr, "dj-ui: the overview strip is not there to draw the virtual head\n");
+            return 1;
+        }
+        if (overview->property("drawnSlip").toInt() != 1) {
+            std::fprintf(stderr, "dj-ui: the overview drew no virtual head (slip %.4f)\n",
+                         overview->property("slipRatio").toDouble());
+            return 1;
+        }
+        const double slipMark = overview->property("slipRatio").toDouble();
+        const double heardMark = overview->property("playheadRatio").toDouble();
+        if (std::fabs(slipMark - heardMark) < 1e-4) {
+            std::fprintf(stderr,
+                         "dj-ui: the virtual head sits on the play head after a jump (both %.4f)\n",
+                         slipMark);
+            return 1;
+        }
+        auto *strip = findItem(window->contentItem(), QStringLiteral("waveStrip_A"));
+        if (strip == nullptr || strip->property("slipRatio").toDouble() < 0.0) {
+            std::fprintf(stderr, "dj-ui: the main strip was never told where the virtual head is\n");
+            return 1;
+        }
         if (!press(QStringLiteral("slip_A"))) {
             return 1;
         }
@@ -3668,8 +3701,9 @@ int main(int argc, char *argv[])
         }
         std::fprintf(stdout,
                      "dj-ui: a jump of one beat moved the play head %lld frames and landed on the "
-                     "grid, the nudge bent the deck and let go, and slip carried a virtual head\n",
-                     jump);
+                     "grid, the nudge bent the deck and let go, and slip drew its virtual head on both "
+                     "strips (%.4f against the sound at %.4f)\n",
+                     jump, slipMark, heardMark);
         return 0;
     }
 

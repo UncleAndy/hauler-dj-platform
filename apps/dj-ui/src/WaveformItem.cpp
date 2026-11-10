@@ -63,7 +63,8 @@ void WaveformItem::paint(QPainter *painter)
 
     m_stats = paintWaveform(*painter, *m_waveform, style,
                             QRect(0, 0, int(width()), int(height())), m_windowStart, m_span,
-                            m_playheadRatio, cues, m_padLoops, m_hasLoop, m_loopFrom, m_loopTo,
+                            m_playheadRatio, m_slipRatio, cues, m_padLoops, m_hasLoop, m_loopFrom,
+                            m_loopTo,
                             m_loopActive, m_pendingFrom, beats, m_anchors);
 }
 
@@ -111,6 +112,16 @@ void WaveformItem::setPlayheadRatio(double value)
         return;
     }
     m_playheadRatio = value;
+    update();
+    emit appearanceChanged();
+}
+
+void WaveformItem::setSlipRatio(double value)
+{
+    if (qFuzzyCompare(m_slipRatio, value)) {
+        return;
+    }
+    m_slipRatio = value;
     update();
     emit appearanceChanged();
 }
