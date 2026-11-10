@@ -16,7 +16,9 @@
 class LayoutSettings : public QObject
 {
     Q_OBJECT
-    Q_PROPERTY(QString preset READ preset NOTIFY changed)
+    // Readable and writable: a dragged splitter leaves the named presets behind, and the shell
+    // says so instead of pretending the arrangement is still "traktor".
+    Q_PROPERTY(QString preset READ preset WRITE setPreset NOTIFY changed)
     Q_PROPERTY(int deckRows READ deckRows WRITE setDeckRows NOTIFY changed)
     Q_PROPERTY(double globalPercent READ globalPercent WRITE setGlobalPercent NOTIFY changed)
     // Derived: the deck rows take whatever the global strip and the browser leave. Setting an
@@ -40,6 +42,8 @@ public:
     /// Presets, measured from the reference screenshots (see docs/qa/evidence/A07/layout.md).
     Q_INVOKABLE bool applyPreset(const QString &name);
     QString preset() const { return m_preset; }
+    // Only the name changes: "custom" keeps whatever numbers the hand produced.
+    void setPreset(const QString &name);
 
     int deckRows() const { return m_deckRows; }
     void setDeckRows(int rows);

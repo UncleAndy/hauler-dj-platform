@@ -7280,15 +7280,32 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: the root object is not a window\n");
             return 1;
         }
+        // The splitter has not laid anything out until the scene has had a frame: reading geometry
+        // before that measures the minimum sizes, not the settings.
+        QEventLoop settle;
+        QTimer::singleShot(600, &settle, &QEventLoop::quit);
+        settle.exec();
         QQuickItem *panel = findItem(window->contentItem(), QStringLiteral("browserPanel"));
         QQuickItem *detail = findItem(window->contentItem(), QStringLiteral("deckDetail_A"));
         if (panel == nullptr || detail == nullptr) {
             std::fprintf(stderr, "dj-ui: the shell has no browser panel or no deck waveform\n");
             return 1;
         }
+        QQuickItem *shellItem = findItem(window->contentItem(), QStringLiteral("shellLayout"));
+        if (shellItem == nullptr || shellItem->height() <= 0.0) {
+            std::fprintf(stderr, "dj-ui: the shell has no height to divide\n");
+            return 1;
+        }
         const int rail = panel->property("railWidth").toInt();
         const int font = panel->property("listFont").toInt();
         const double span = detail->property("zoomSpan").toDouble();
+        const double heightShare = panel->height() / shellItem->height() * 100.0;
+        if (qAbs(heightShare - layout.browserPercent()) > 2.0) {
+            std::fprintf(stderr,
+                         "dj-ui: the browser came back %0.1f%% tall instead of %0.1f%%\n",
+                         heightShare, layout.browserPercent());
+            return 1;
+        }
         if (rail != layout.browserRailWidth() || font != layout.browserFont()
             || qAbs(span - layout.waveformSpan()) > 1e-6) {
             std::fprintf(stderr,
@@ -7299,9 +7316,10 @@ int main(int argc, char *argv[])
             return 1;
         }
         std::fprintf(stdout,
-                     "dj-ui: a new run opens with the rail at %d px, the browser text at %d px and "
-                     "the deck zoom at a span of %s, the numbers the last run left\n",
-                     rail, font, qPrintable(QString::number(span, 'f', 3)));
+                     "dj-ui: a new run opens with the rail at %d px, the browser text at %d px, the "
+                     "browser %0.1f%% tall and the deck zoom at a span of %s, the numbers the last run "
+                     "left\n",
+                     rail, font, heightShare, qPrintable(QString::number(span, 'f', 3)));
         return 0;
     }
 
@@ -7542,8 +7560,40 @@ int main(int argc, char *argv[])
             return 1;
         }
 
-        // The three view numbers outlive the run: they are written to the layout file and read back by
-        // a fresh instance, which is exactly what the next start does (DJP-UI-001).
+        // The height of the browser is a hand's decision too. A drop writes percentages, and the two
+        // numbers must not move when the type changes size: a panel that snaps back the moment the
+        // font grows is a panel that never remembers how tall it was.
+        QQuickItem *shellItem = findItem(window->contentItem(), QStringLiteral("shellLayout"));
+        if (shellItem == nullptr || shellItem->height() <= 0.0) {
+            std::fprintf(stderr, "dj-ui: the shell has no height to divide\n");
+            return 1;
+        }
+        const double shellHeight = shellItem->height();
+        panel->setHeight(shellHeight * 0.45);
+        QMetaObject::invokeMethod(shellItem, "publishRowSizes");
+        QCoreApplication::processEvents();
+        const int browserPercent = qRound(layout.browserPercent());
+        if (layout.preset() != QStringLiteral("custom") || qAbs(browserPercent - 45) > 2) {
+            std::fprintf(stderr,
+                         "dj-ui: dropping the browser splitter did not reach the settings (preset "
+                         "\"%s\", browser %d%%)\n",
+                         qPrintable(layout.preset()), browserPercent);
+            return 1;
+        }
+        const double browserBeforeFont = panel->height();
+        QMetaObject::invokeMethod(plus, "clicked");
+        QCoreApplication::processEvents();
+        const double browserAfterFont = panel->height();
+        if (qAbs(browserAfterFont - browserBeforeFont) > 0.02 * shellHeight) {
+            std::fprintf(stderr,
+                         "dj-ui: the browser changed height when only the text grew (%.0f → %.0f of "
+                         "%.0f)\n",
+                         browserBeforeFont, browserAfterFont, shellHeight);
+            return 1;
+        }
+
+        // The view numbers outlive the run: they are written to the layout file and read back by a
+        // fresh instance, which is exactly what the next start does (DJP-UI-001).
         panel->setProperty("railWidth", 130);
         panel->setProperty("listFont", 14);
         QQuickItem *detail = findItem(window->contentItem(), QStringLiteral("deckDetail_A"));
@@ -7577,9 +7627,9 @@ int main(int argc, char *argv[])
         std::fprintf(stdout,
                      "dj-ui: browser selects and acts, selection follows the click, \"..\" goes up, "
                      "the text size moves the row and the sections (%d px), the rail is %.0f px wide, "
-                     "and the rail width, the font and the deck zoom come back after a restart "
-                     "(130 px, 14 px, 0.25)\n",
-                     small, railAfter);
+                     "the browser keeps %d%% of the window when the type grows, and the rail width, the "
+                     "font and the deck zoom come back after a restart (130 px, 14 px, 0.25)\n",
+                     small, railAfter, browserPercent);
         return 0;
     }
 

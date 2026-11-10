@@ -52,6 +52,20 @@ bool LayoutSettings::applyPreset(const QString &name)
     return true;
 }
 
+void LayoutSettings::setPreset(const QString &name)
+{
+    const QString normalised = name.trimmed().toLower();
+    if (normalised != QStringLiteral("traktor") && normalised != QStringLiteral("two-deck")
+        && normalised != QStringLiteral("custom")) {
+        return;
+    }
+    if (normalised == m_preset) {
+        return;
+    }
+    m_preset = normalised;
+    emit changed();
+}
+
 void LayoutSettings::setDeckRows(int rows)
 {
     const int bounded = std::clamp(rows, 1, 2);

@@ -31,6 +31,12 @@ cmake --build "$build_dir"
 case "${1:-}" in
   --build-only) exit 0 ;;
   --smoke)
+    # The checks must neither inherit nor rewrite what the person has arranged: their own config tree,
+    # thrown away with the shell. Without this a check opens the owner's layout and a check that
+    # changes a size writes it there.
+    smoke_dir="$(mktemp -d)"
+    export XDG_CONFIG_HOME="$smoke_dir/config"
+    trap 'rm -rf "$smoke_dir"' EXIT
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --smoke
     # The strip repaints every frame while scrolling: a frame must fit well inside 60 Hz.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --waveform-bench 60
@@ -104,6 +110,8 @@ case "${1:-}" in
     # beats and cues. The gate points that mirror at its own directory: a run must not inherit the grid
     # of the run before it, or of the check before it.
     export XDG_DATA_HOME="$run_dir/data"
+    # Same reason as in --smoke: the shell's own settings belong to a person, not to a gate run.
+    export XDG_CONFIG_HOME="$run_dir/config"
     socket="$run_dir/engine.sock"
     "$engine_bin" --null-sink --socket "$socket" --block 256 &
     engine_pid=$!

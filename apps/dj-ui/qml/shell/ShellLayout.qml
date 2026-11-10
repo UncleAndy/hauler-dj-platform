@@ -14,6 +14,7 @@ import "../browser"
 
 Item {
     id: shell
+    objectName: "shellLayout"
 
     // Which deck the browser loads into; shown there, never guessed.
     property string targetDeck: "A"
