@@ -391,7 +391,8 @@ fn loop_mode_repeats_every_saved_loop() {
     deck.play();
     let mut block = vec![0.0f32; 1_000 * 2];
     deck.render(&mut block);
-    assert!((block[0] - ramp(5_500)).abs() < 1e-6);
+    let rise = deck.loop_config().seam_frames(44_100);
+    assert!((block[rise * 2] - ramp(5_500 + rise as u64)).abs() < 1e-6);
     // The pad's loop wraps through the decoder (only the button's own loop is held in memory), and the
     // decoder seam is faded over two milliseconds: the material is there just after the fade.
     assert!(
@@ -451,8 +452,11 @@ fn a_loop_armed_while_playing_inside_it_has_no_silent_head() {
     let mut block = vec![0.0f32; 1_500 * 2];
     deck.render(&mut block);
 
+    // The first two milliseconds are the rise that keeps a jump from standing against silence; the
+    // playhead is the same one, so the material past the rise is the material of frame 2 088.
+    let rise = deck.loop_config().seam_frames(44_100);
     assert!(
-        (block[0] - ramp(2_000)).abs() < 1e-6,
+        (block[rise * 2] - ramp(2_000 + rise as u64)).abs() < 1e-6,
         "the armed loop must not move the playhead"
     );
     // The head is faded in over two milliseconds, so the first frame after the wrap is near zero by
@@ -546,14 +550,16 @@ fn a_loop_pad_takes_the_sound_with_it() {
     assert_eq!(deck.position(), 10_000);
 
     deck.play();
-    let mut block = vec![0.0f32; 64 * 2];
+    let mut block = vec![0.0f32; 256 * 2];
     deck.render(&mut block);
+    // Past the two-millisecond rise the material is exactly the loop start's, frame for frame.
+    let rise = deck.loop_config().seam_frames(44_100);
     assert!(
-        (block[0] - ramp(10_000)).abs() < 1e-6,
-        "the first sample after the press must come from the loop start, got {}",
-        block[0]
+        (block[rise * 2] - ramp(10_000 + rise as u64)).abs() < 1e-6,
+        "the first sample after the rise must come from the loop start, got {}",
+        block[rise * 2]
     );
-    assert!((block[63 * 2] - ramp(10_063)).abs() < 1e-6);
+    assert!((block[200 * 2] - ramp(10_200)).abs() < 1e-6);
 }
 
 #[test]
@@ -572,9 +578,10 @@ fn a_hotcue_jumps_to_the_stored_frame() {
     assert_eq!(deck.position(), 5_000);
 
     deck.play();
-    let mut block = vec![0.0f32; 128 * 2];
+    let mut block = vec![0.0f32; 256 * 2];
     deck.render(&mut block);
-    assert!((block[0] - ramp(5_000)).abs() < 1e-6);
+    let rise = deck.loop_config().seam_frames(44_100);
+    assert!((block[rise * 2] - ramp(5_000 + rise as u64)).abs() < 1e-6);
     assert_eq!(deck.stats().hotcue_jumps, 1);
 }
 
@@ -1062,6 +1069,55 @@ fn the_seam_under_the_key_lock_does_not_click() {
     assert!(
         worst < 0.05,
         "the keylocked seam steps by {worst:.3} — the stretcher was not told about the jump"
+    );
+}
+
+#[test]
+fn jumping_under_the_key_lock_does_not_click() {
+    // The owner hears the loop click "at its beginning, depending on the place". Pressing Loop asks for a
+    // loop on the grid, and when that region starts before the play head the deck jumps to its start — a
+    // jump of the read position under the stretcher's sixty-millisecond windows, which is the same thing
+    // that made the seam tick. This measures the jump, not the seam: seam length has nothing to do with it.
+    let mut deck = tone_deck(4_000_000);
+    deck.seek(200_000);
+    deck.play();
+    let mut block = vec![0.0f32; 256 * 2];
+    let mut before = Vec::new();
+    for _ in 0..40 {
+        deck.render(&mut block);
+        before.extend_from_slice(&block);
+    }
+    // The first frames of playback ramp up from silence, so the material's own step is taken past them.
+    let material = biggest_step(&before[4_000..]);
+    deck.seek(20_000);
+    let mut after = Vec::new();
+    for _ in 0..200 {
+        deck.render(&mut block);
+        after.extend_from_slice(&block);
+    }
+    // The stretcher refills after a jump, so the sound returns some frames in; the tick, if any, is where
+    // it returns. That is the frame to measure.
+    let mono: Vec<f32> = after.chunks_exact(2).map(|frame| frame[0]).collect();
+    let resume = mono
+        .iter()
+        .position(|value| value.abs() > 1e-4)
+        .unwrap_or(0);
+    let window = &mono[resume.saturating_sub(2)..(resume + 2_000).min(mono.len())];
+    let mut jump = 0.0f32;
+    let mut at = 0usize;
+    for index in 1..window.len() {
+        let step = (window[index] - window[index - 1]).abs();
+        if step > jump {
+            jump = step;
+            at = index;
+        }
+    }
+    println!(
+        "MEASURE jump: material {material:.4}, at the jump {jump:.4} (resume {resume}, at {at})"
+    );
+    assert!(
+        jump < 0.05,
+        "the jump steps by {jump:.3} against the material's {material:.3} — that is the click"
     );
 }
 
@@ -1634,10 +1690,20 @@ fn a_seek_drops_the_frames_carried_by_the_tempo_stage() {
 
     deck.seek(5_000);
     deck.render(&mut block);
-    let first = block[0] as f64;
-    let expected = f64::from(ramp(5_000));
+    // The first two milliseconds rise, so the material is read past them; what this test is about — the
+    // frames carried from before the seek must be gone — is answered by the frame the rise ends on.
+    let rise = deck.loop_config().seam_frames(48_000);
+    // The block may open with the prefetcher's silence; the rise starts where the sound does.
+    let start = (0..block.len() / 2)
+        .find(|index| block[index * 2].abs() > 1e-6)
+        .unwrap_or(0);
+    let first = block[(start + rise) * 2] as f64;
+    // The deck plays at 1,08, so the rise's worth of output covers that much more material.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let material = 5_000 + ((start + rise) as f64 * 1.08).round() as u64;
+    let expected = f64::from(ramp(material));
     assert!(
-        (first - expected).abs() < 1e-4,
+        (first - expected).abs() < 5e-3,
         "the block after the seek started at {first} instead of {expected}"
     );
 }

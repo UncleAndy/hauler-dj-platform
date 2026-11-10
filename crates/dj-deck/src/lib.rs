@@ -273,6 +273,13 @@ pub struct Deck {
     /// the far side to blend with, so it fades the tail out and the head in over the same two
     /// milliseconds: a dip instead of a click.
     seam_fade_in: usize,
+    /// Frames left of the ramp that hides the edge when sound appears after a jump or a start.
+    ///
+    /// The stretcher refills its windows after a jump and outputs silence meanwhile; when the material
+    /// comes back it does so at its own amplitude, and the first frame against silence is a step of the
+    /// whole waveform — measured at 0,497 on a half-scale tone, seventeen times the material's own step
+    /// of 0,0288. That edge is what the ear hears as a click when a loop starts with a jump.
+    resume_fade: usize,
     /// Where the captured buffer stops being used after the loop was switched off: the playhead keeps
     /// reading the copy it is in the middle of until it reaches this frame, and the decoder — which sits
     /// exactly there — takes over. That is the only way to leave a loop without a click.
@@ -370,6 +377,7 @@ impl Deck {
             reading_loop_buffer: false,
             seam_faded: 0,
             seam_fade_in: 0,
+            resume_fade: 0,
             drain_until: None,
             eq: ChannelEq::new(EQ_SAMPLE_RATE),
             output_rate: EQ_SAMPLE_RATE as u32,
@@ -704,6 +712,10 @@ impl Deck {
             Ok(landed) => {
                 self.stats.seeks += 1;
                 self.position = landed;
+                // The sound comes back after the stretcher's windows refill; it must not stand against
+                // silence as a step of the whole waveform. Armed by the command, because a mark that
+                // follows a musical gap is an attack and damping it would eat the material.
+                self.resume_fade = self.loop_config.seam_frames(self.output_rate);
                 // The caller asked for a frame and gets the frame that will be heard.
                 self.position()
             }
@@ -1263,7 +1275,52 @@ impl Deck {
         // Trim first, then the EQ: that is the order of a channel strip, and the order the mixer's
         // contract names when it says a deck arrives already gain-staged and equalised.
         self.eq.process(out);
+        self.rise_from_silence(out);
         self.levels = measure_levels(out, &mut self.level_decay);
+    }
+
+    /// Bring the sound up over a couple of milliseconds instead of letting the first frame stand against
+    /// silence.
+    ///
+    /// A block that is silent keeps the ramp armed: the stretcher is filling its windows and the material
+    /// has not started yet, so the ramp waits for it rather than being spent on the silence.
+    fn rise_from_silence(&mut self, out: &mut [f32]) {
+        let frames = out.len() / 2;
+        if frames == 0 {
+            return;
+        }
+        let total = self.loop_config.seam_frames(self.output_rate);
+        if total == 0 {
+            self.resume_fade = 0;
+            return;
+        }
+        // The sound does not resume at the block's first frame: the stretcher's windows take their time,
+        // and the block that carries the resume carries silence in front of it.
+        // Silence is a level, not an exact zero: the EQ and the mixer leave a noise floor far below
+        // anything the ear hears, and a ramp armed on "exactly zero" would never fire.
+        const SILENT: f32 = 1e-6;
+        let start = (0..frames)
+            .find(|index| out[index * 2].abs() > SILENT || out[index * 2 + 1].abs() > SILENT);
+        // A block that is still silent does not spend the ramp: the stretcher is filling its windows and
+        // the material has not arrived yet. Damping silence would only waste the two milliseconds.
+        let Some(start) = start else {
+            if self.resume_fade > 0 {
+                self.resume_fade = total;
+            }
+            return;
+        };
+        if self.resume_fade == 0 {
+            return;
+        }
+        let shown = self.resume_fade.min(total);
+        for index in start..frames.min(start + shown) {
+            let left = self.resume_fade - (index - start);
+            #[allow(clippy::cast_precision_loss)]
+            let gain = 1.0 - left as f32 / total as f32;
+            out[index * 2] *= gain;
+            out[index * 2 + 1] *= gain;
+        }
+        self.resume_fade = self.resume_fade.saturating_sub(frames - start);
     }
 
     /// Play `out` at the deck's tempo: pull more or less source material than the block holds and
