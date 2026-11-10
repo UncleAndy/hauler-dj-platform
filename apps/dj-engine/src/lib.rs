@@ -535,6 +535,9 @@ struct DeckCells {
     cached_bytes: AtomicU64,
     // What the deck follows (DJP-SYNC-002), as one byte: off, tempo, beat.
     sync: AtomicU8,
+    /// The follower's distance from the master's beat, in milliseconds, measured at the end of a render
+    /// block where both decks are in hand. `u32::MAX` means it has not been measured yet.
+    phase_error_ms: AtomicU32,
     // Whether the deck leads the others (DJP-SYNC-001).
     master: AtomicBool,
 }
@@ -567,6 +570,7 @@ impl DeckCells {
             cached: AtomicBool::new(false),
             cached_bytes: AtomicU64::new(0),
             sync: AtomicU8::new(0),
+            phase_error_ms: AtomicU32::new(u32::MAX),
             master: AtomicBool::new(false),
         }
     }
@@ -588,6 +592,45 @@ fn sync_from_index(index: u8) -> SyncMode {
         1 => SyncMode::Tempo,
         2 => SyncMode::Beat,
         _ => SyncMode::Off,
+    }
+}
+
+/// Every following deck's distance from the master's beat, measured where both decks are in hand.
+///
+/// A phase is a distance between two positions at *one* instant. Measured later, from a snapshot, it is a
+/// distance between two positions taken from different render blocks, and one block is 5,3 ms at 256
+/// frames: a deck standing on the beat then reads as five milliseconds off, at random, and a soak of
+/// perfectly good behaviour looks broken. So the number is taken here, at the end of the block, where the
+/// master and the follower have both been advanced.
+fn publish_phase_errors(decks: &[Deck], cells: &[DeckCells]) {
+    let master = decks.iter().position(Deck::master).or_else(|| {
+        decks
+            .iter()
+            .position(|deck| deck.is_playing() && deck.beat_grid().is_some())
+    });
+    let Some(master_index) = master else {
+        return;
+    };
+    let Some(leading) = master_reading(&decks[master_index]) else {
+        return;
+    };
+    for (index, deck) in decks.iter().enumerate() {
+        let Some(cell) = cells.get(index) else {
+            return;
+        };
+        if index == master_index || deck.sync().is_off() {
+            cell.phase_error_ms.store(u32::MAX, Ordering::Relaxed);
+            continue;
+        }
+        let Some(reading) = master_reading(deck) else {
+            cell.phase_error_ms.store(u32::MAX, Ordering::Relaxed);
+            continue;
+        };
+        let beats = dj_sync::error_beats(reading.phase, leading.phase);
+        let ms = beats * 60_000.0 / leading.tempo_bpm;
+        #[allow(clippy::cast_possible_truncation)]
+        let ms = ms as f32;
+        cell.phase_error_ms.store(ms.to_bits(), Ordering::Relaxed);
     }
 }
 
@@ -1059,6 +1102,9 @@ impl StateCells {
 
     pub fn publish(&self, decks: &[Deck], mixer: &Mixer, clock: u64) {
         self.clock.store(clock, Ordering::Relaxed);
+        // The phases first, at the instant the block ended. Everything else here is a reading of one deck;
+        // a phase is a distance between two, and it can only be honest while both are in hand.
+        publish_phase_errors(decks, &self.decks);
         self.crossfader
             .store(mixer.crossfader().to_bits(), Ordering::Relaxed);
         self.curve
@@ -1274,6 +1320,17 @@ impl StateCells {
             });
         }
         fill_phase_errors(&mut decks, self.beats_per_bar.load(Ordering::Relaxed));
+        // What the render loop measured at the end of a block wins over what the snapshot works out from
+        // numbers read at different moments: the first is a phase, the second is a phase plus a block.
+        for (index, deck) in decks.iter_mut().enumerate() {
+            let Some(cells) = self.decks.get(index) else {
+                break;
+            };
+            let bits = cells.phase_error_ms.load(Ordering::Relaxed);
+            if bits != u32::MAX && !deck.sync.is_off() {
+                deck.phase_error_ms = Some(f64::from(f32::from_bits(bits)));
+            }
+        }
         Snapshot {
             protocol: dj_domain::STATE_PROTOCOL.to_string(),
             cache_budget_bytes: self.cache_budget.load(Ordering::Relaxed),

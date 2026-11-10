@@ -304,6 +304,19 @@ case "${1:-}" in
         --sync-check --load "$sync_a" --load-b "$sync_b"
     kill "$sync_pid" 2>/dev/null || true
     wait "$sync_pid" 2>/dev/null || true
+    # S4: ten minutes of two decks is the soak the hand runs; the gate keeps a minute of the same shape —
+    # the same click tracks, the same hands on the master, the follower and the loop, a tenth of the time.
+    soak_socket="$run_dir/engine-soak.sock"
+    "$engine_bin" --null-sink --socket "$soak_socket" --block 256 &
+    soak_pid=$!
+    for _ in $(seq 1 100); do
+      [ -S "$soak_socket" ] && break
+      sleep 0.05
+    done
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$soak_socket" \
+        --sync-soak --soak-seconds 60
+    kill "$soak_pid" 2>/dev/null || true
+    wait "$soak_pid" 2>/dev/null || true
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --grid-here-check --load "$metronome_file"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
