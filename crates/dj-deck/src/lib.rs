@@ -835,8 +835,13 @@ impl Deck {
     /// region entirely behind the playhead is ignored until a seek brings the playhead back into it:
     /// activating a loop never moves the playhead by itself. Entering a loop at its beginning is the
     /// caller's job — the Loop button and a pad both seek to `start` after arming it.
+    /// Put a loop in force. The loop already in force is replaced, not defended.
+    ///
+    /// The owner's rule: only a loop on a pad is a loop to protect. A loop from the button lives until the
+    /// next one, so a DJ who wants a different loop presses it again — refusing because the new one
+    /// overlaps the old one refused the only way to change one's mind.
     pub fn set_loop(&mut self, region: Option<FrameRange>) -> bool {
-        self.set_loop_with(region, false)
+        self.set_loop_with(region, true)
     }
 
     /// `set_loop`, with permission to replace the loop in force.
@@ -875,8 +880,27 @@ impl Deck {
             self.loop_mode = true;
         }
         self.rebuild_armed();
+        // While the copy plays, the decoder stands where the loop's first pass ended. Switching to it
+        // without asking would replay from there — a jump of a whole loop, which is what the owner hears
+        // when he moves a loop that is already playing. The sound is at `heard`, so the decoder goes there.
+        let was_in_copy = self.reading_loop_buffer;
+        let heard = self.position();
+        // The copy itself holds the material just behind the sound, so the jump gets the same pre-roll the
+        // loop's wrap gets: without it the stretcher keeps the phases of the place it came from and the
+        // seam of the change is heard as a jump of a loop.
+        let pre_roll = if was_in_copy {
+            self.copy_before(heard)
+        } else {
+            Vec::new()
+        };
         self.reading_loop_buffer = false;
         self.drain_until = None;
+        if was_in_copy && region.is_some_and(|region| region.contains(SourceFrame(heard))) {
+            self.seek(heard);
+            if !pre_roll.is_empty() {
+                self.stretcher.seek(&pre_roll);
+            }
+        }
         self.loop_buffer = match region {
             Some(region) => self.buffer_for(region),
             None => None,
@@ -1000,6 +1024,33 @@ impl Deck {
         })
     }
 
+    /// The material of the copy just before `frame`, for the stretcher's pre-roll after a jump.
+    ///
+    /// The copy is the one place where the frames behind the play head are certainly in memory: the decoder
+    /// is ahead, and reading backwards from it is not something the audio callback may do.
+    fn copy_before(&self, frame: u64) -> Vec<f32> {
+        let Some(buffer) = self.loop_buffer.as_ref() else {
+            return Vec::new();
+        };
+        let want = self.stretcher.seek_frames();
+        let end = frame.min(buffer.start.saturating_add(buffer.frames()));
+        let start = end.saturating_sub(want as u64).max(buffer.start);
+        let Some(from) =
+            (start.checked_sub(buffer.start)).and_then(|offset| usize::try_from(offset).ok())
+        else {
+            return Vec::new();
+        };
+        let Some(to) =
+            (end.checked_sub(buffer.start)).and_then(|offset| usize::try_from(offset).ok())
+        else {
+            return Vec::new();
+        };
+        if to <= from || to * 2 > buffer.data.len() {
+            return Vec::new();
+        }
+        buffer.data[from * 2..to * 2].to_vec()
+    }
+
     /// Record freshly read source audio into the loop buffer.
     ///
     /// Capture is what makes the seam free: the first pass through the loop records the audio, and
@@ -1052,8 +1103,10 @@ impl Deck {
         if slot >= HOTCUE_SLOTS {
             return false;
         }
+        // Only another *saved* loop can stand in the way: the loop in force is not on a pad yet, and the
+        // region being saved is usually the loop in force itself.
         if let Some(region) = region
-            && self.loop_clash(region, Some(slot)).is_some()
+            && self.pad_clash(region, Some(slot)).is_some()
         {
             return false;
         }

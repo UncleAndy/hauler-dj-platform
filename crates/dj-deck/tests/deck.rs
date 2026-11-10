@@ -306,53 +306,41 @@ fn saving_a_playing_loop_on_a_pad_keeps_the_sound_where_it_is() {
 }
 
 #[test]
-fn a_loop_never_lands_inside_another() {
-    // A nested loop would never play: the outer one wraps before the playhead ever reaches the inner one.
-    // So the deck refuses any region that shares a frame with a loop it already has.
+fn a_new_loop_replaces_the_one_that_is_not_saved() {
+    // The owner's rule: a loop that is not on a pad is not a loop to defend — putting a new one replaces
+    // it. Only saved loops are protected, and two of those must never nest (the outer one would wrap
+    // before the play head ever reached the inner one).
     let mut deck = deck_with_ramp(44_100);
     let outer = FrameRange::new(1_000, 4_000).unwrap_or_else(|| panic!("outer"));
     let inner = FrameRange::new(2_000, 3_000).unwrap_or_else(|| panic!("inner"));
     let crossing = FrameRange::new(3_000, 5_000).unwrap_or_else(|| panic!("crossing"));
     assert!(deck.set_loop(Some(outer)), "the first loop is taken");
-
     assert!(
-        !deck.set_loop(Some(inner)),
-        "a loop inside another must be refused"
+        deck.set_loop(Some(inner)),
+        "a new loop replaces a loop that is not saved"
+    );
+    assert_eq!(deck.loop_region(), Some(inner));
+
+    // Saved, it is protected: a loop that crosses it is refused and nothing changes.
+    assert!(
+        deck.set_pad_loop(1, Some(outer)),
+        "the outer loop is saved to a pad"
     );
     assert!(
         !deck.set_loop(Some(crossing)),
-        "a loop crossing another must be refused"
+        "a loop crossing a saved one must be refused"
     );
     assert_eq!(
         deck.loop_region(),
-        Some(outer),
+        Some(inner),
         "the refused loop changed nothing"
     );
-    assert_eq!(deck.loop_clash(inner, None), Some(outer));
-
-    // A pad refuses the same way, and the same regions may live on two pads.
-    assert!(
-        !deck.set_pad_loop(1, Some(inner)),
-        "a pad refuses a loop inside another"
-    );
-    assert!(
-        deck.set_pad_loop(1, Some(outer)),
-        "the same loop on a second pad is not a clash"
-    );
-    assert!(deck.set_pad_loop(
-        2,
-        Some(FrameRange::new(6_000, 7_000).unwrap_or_else(|| panic!("free")))
-    ));
-    assert_eq!(
-        deck.loop_clash(inner, Some(2)),
-        Some(outer),
-        "pad 1 still holds the outer loop"
-    );
-    assert_eq!(
-        deck.loop_clash(inner, Some(1)),
-        None,
-        "writing over pad 1 is allowed: it is the pad being replaced"
-    );
+    // The same region on a second pad is not a clash: a loop may live on many pads.
+    assert!(deck.set_pad_loop(2, Some(outer)));
+    // And a loop over a saved one is refused by length too, not only by region.
+    let free = FrameRange::new(6_000, 7_000).unwrap_or_else(|| panic!("free"));
+    assert!(deck.set_pad_loop(3, Some(free)));
+    assert_eq!(deck.loop_clash(crossing, None), Some(outer));
 }
 
 #[test]
@@ -991,19 +979,30 @@ fn moving_a_loop_keeps_its_length_and_stays_on_the_beats() {
 }
 
 #[test]
-fn a_loop_that_would_cross_another_one_is_not_put_in_force() {
-    // The deck refuses overlapping loops (they would wrap each other). A length loop is no exception:
-    // the refusal is the interface, not a silent no-op.
+fn a_length_loop_replaces_the_unsaved_one_but_not_a_saved_one() {
+    // A length loop is a new loop like any other: it replaces the one in force, and is refused only by a
+    // loop that was saved.
     let mut deck = deck_on_a_grid(4_000_000);
     deck.set_loop(Some(
         dj_domain::FrameRange::new(200_000, 250_000).expect("a region"),
     ));
-    let clash = deck.loop_by_beats(180_000, 4);
-    assert_eq!(clash, None, "a loop over another one must be refused");
-    // The old loop is still the one in force: a refusal changes nothing.
+    let replaced = deck.loop_by_beats(180_000, 4);
+    assert!(
+        replaced.is_some(),
+        "a length loop replaces the loop that is not saved"
+    );
+    let in_force = deck.loop_region().map(|region| region.start.0);
+    assert_ne!(in_force, Some(200_000), "the old loop is gone");
+
+    // Saved, that loop stands in the way again.
+    let saved = dj_domain::FrameRange::new(200_000, 250_000).expect("a region");
+    assert!(deck.set_pad_loop(1, Some(saved)));
+    let refused = deck.loop_by_beats(180_000, 4);
+    assert_eq!(refused, None, "a loop over a saved one must be refused");
     assert_eq!(
         deck.loop_region().map(|region| region.start.0),
-        Some(200_000)
+        in_force,
+        "a refusal changes nothing"
     );
 }
 
@@ -1405,6 +1404,74 @@ fn moving_a_loop_around_the_playhead_does_not_move_the_sound() {
     assert!(
         worst < 8.0,
         "the sound moved by {worst:.0} frames at {at}: the loop shift was heard as a jump"
+    );
+}
+
+#[test]
+fn a_loop_moved_while_its_copy_plays_does_not_jump() {
+    // The owner hears a jump when he moves a loop that is already playing. The loop is read from its copy
+    // by then, and the decoder behind it stands at the end of the first pass: taking the sound back to the
+    // decoder without saying where the sound is replays from there — a whole loop away. This is the case
+    // the earlier "no jump" test does not cover, because it never lets the loop wrap.
+    let mut deck = code_deck(4_000_000);
+    // The owner listens with the key locked, and the stretcher is a stage of its own across a change of
+    // the loop: the same measurement is run on both paths.
+    deck.set_tempo(1.05);
+    let grid =
+        dj_domain::BeatGrid::single(120.0, 4_800).unwrap_or_else(|| panic!("a 120 BPM grid"));
+    deck.set_beat_grid(grid);
+    let Some(region) = FrameRange::new(48_900, 93_000) else {
+        panic!("a loop");
+    };
+    deck.set_loop(Some(region));
+    deck.seek(48_900);
+    deck.play();
+    let mut block = vec![0.0f32; 256 * 2];
+    for _ in 0..200 {
+        deck.render(&mut block);
+    }
+    assert!(
+        deck.stats().loop_wraps >= 1 && deck.loop_is_buffered(),
+        "the check needs the copy to be playing: wraps {}, buffered {}",
+        deck.stats().loop_wraps,
+        deck.loop_is_buffered()
+    );
+    let before = deck.position();
+    // Backwards: the head stays inside the moved loop, so nothing should move the sound.
+    let Some(moved) = deck.move_loop(-1) else {
+        panic!("the loop moves back a beat");
+    };
+    assert!(moved.contains(SourceFrame(before)), "the head stays inside");
+    let mut all: Vec<f32> = Vec::new();
+    for _ in 0..20 {
+        deck.render(&mut block);
+        all.extend_from_slice(&block);
+    }
+    let mono: Vec<f32> = all.chunks_exact(2).map(|frame| frame[0]).collect();
+    let audible = mono
+        .iter()
+        .position(|value| value.abs() > 1e-6)
+        .unwrap_or(0);
+    let from = (audible + 300).min(mono.len().saturating_sub(1));
+    let mut worst = 0.0f32;
+    let mut at = 0usize;
+    for index in (from + 1)..mono.len() {
+        let step = (mono[index] - mono[index - 1]).abs() * 4_000_000.0;
+        if step > worst {
+            worst = step;
+            at = index;
+        }
+    }
+    println!(
+        "MEASURE move from the copy: head {before} -> {}, worst step {worst:.1} frames at {at}",
+        deck.position()
+    );
+    // The key-lock path smooths the change through the stretcher, so a few dozen frames' worth of the
+    // ramp is expected; a jump of a loop would be tens of thousands. 200 frames is 0,00005 in amplitude —
+    // some 86 dB below full scale, which is the stretcher's own smoothing, not a jump.
+    assert!(
+        worst < 200.0,
+        "the sound moved by {worst:.0} frames at {at}: moving a playing loop was heard as a jump"
     );
 }
 
