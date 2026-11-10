@@ -51,7 +51,7 @@ MIDI-триггеры ритма (`D16`) — отправка из non-RT пот
 | `dj-ext` | audio-core | R3 (DJP-SYNC-010/011 — предложены) — non-RT мосты наружу: OSC-мост (`D17`), Pro DJ Link read-only (`D18`); аудиопоток сюда не входит |
 | `dj-display` | hardware | A09+ (состояние/события экрана и трейт рендера, ADR-0006) |
 | `dj-controller-s4mk3` | hardware | M3 (DJP-CTRL-003…007); драйвер пишется по `docs/hardware/s4mk3/protocol-notes.md` |
-| `dj-recording` | dsp | M2 (DJP-MIX-005) |
+| `dj-recording` | dsp | M4 (DJP-MIX-005); перенесено владельцем 2026-11-10 из M2 — запись идёт после FX |
 | `services/stem-worker` | ml | M5 |
 
 ## Правила зависимости
