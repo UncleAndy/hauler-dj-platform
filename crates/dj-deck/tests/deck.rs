@@ -112,15 +112,28 @@ fn a_loop_wraps_at_the_exact_sample() {
     let mut block = vec![0.0f32; 4_000 * 2];
     deck.render(&mut block);
 
-    // 0..3000 plays straight through, then the loop restarts at 1000.
+    // 0..3000 plays straight through, then the loop restarts at 1000. The seam itself is faded over
+    // two milliseconds (DJP-DECK-005): the tail runs out and the head comes up, so the frames inside
+    // that window are not the material at full level — the frames after it are.
     assert!((block[0] - ramp(0)).abs() < 1e-6);
-    assert!((block[(2_999) * 2] - ramp(2_999)).abs() < 1e-6);
+    assert!((block[(3_000 - 96) * 2] - ramp(2_904)).abs() < 1e-6);
     assert!(
-        (block[3_000 * 2] - ramp(1_000)).abs() < 1e-6,
-        "frame 3000 must be the loop start, got {}",
+        block[3_000 * 2] > 0.0 && block[3_000 * 2] < ramp(1_000) * 0.2,
+        "frame 3000 must be the loop start fading in, got {}",
         block[3_000 * 2]
     );
+    assert!(
+        (block[(3_000 + 96) * 2] - ramp(1_096)).abs() < 1e-6,
+        "two milliseconds after the wrap the material is back at full level"
+    );
     assert!((block[3_999 * 2] - ramp(1_999)).abs() < 1e-6);
+    // And the seam does not step: every frame of the fade is within the material's own step of the last.
+    let mut previous = block[(3_000 - 97) * 2];
+    for frame in (3_000 - 96)..(3_000 + 96) {
+        let step = (block[frame * 2] - previous).abs();
+        assert!(step < 0.01, "frame {frame}: the seam steps by {step:.4}");
+        previous = block[frame * 2];
+    }
     assert_eq!(deck.position(), 2_000);
     assert_eq!(deck.stats().loop_wraps, 1);
 }
@@ -374,11 +387,16 @@ fn loop_mode_repeats_every_saved_loop() {
     let mut block = vec![0.0f32; 1_000 * 2];
     deck.render(&mut block);
     assert!((block[0] - ramp(5_500)).abs() < 1e-6);
+    // The pad's loop wraps through the decoder (only the button's own loop is held in memory), and the
+    // decoder seam is faded over two milliseconds: the material is there just after the fade.
     assert!(
-        (block[500 * 2] - ramp(5_000)).abs() < 1e-6,
-        "the second loop must repeat: expected {}, got {}",
-        ramp(5_000),
+        block[500 * 2] < ramp(5_000) * 0.2,
+        "the second loop must repeat, fading in: expected a small head, got {}",
         block[500 * 2]
+    );
+    assert!(
+        (block[(500 + 96) * 2] - ramp(5_096)).abs() < 1e-6,
+        "two milliseconds after the wrap the loop's material is there"
     );
     assert!((block[999 * 2] - ramp(5_499)).abs() < 1e-6);
 
@@ -386,12 +404,17 @@ fn loop_mode_repeats_every_saved_loop() {
     deck.seek(500);
     let mut early = vec![0.0f32; 2_000 * 2];
     deck.render(&mut early);
-    assert!((early[1_499 * 2] - ramp(1_999)).abs() < 1e-6);
+    // The last two milliseconds of the loop fade out, and the two after the wrap fade in: what must be
+    // exact is the material just outside that window.
+    assert!((early[(1_500 - 97) * 2] - ramp(1_903)).abs() < 1e-6);
     assert!(
-        (early[1_500 * 2] - ramp(1_000)).abs() < 1e-6,
-        "the first loop must repeat too: expected {}, got {}",
-        ramp(1_000),
+        early[1_500 * 2] < ramp(1_000) * 0.2,
+        "the first loop must repeat, fading in: expected a small head, got {}",
         early[1_500 * 2]
+    );
+    assert!(
+        (early[(1_500 + 96) * 2] - ramp(1_096)).abs() < 1e-6,
+        "two milliseconds after the wrap the loop's material is there"
     );
 
     // Switched off, nothing repeats.
@@ -427,10 +450,22 @@ fn a_loop_armed_while_playing_inside_it_has_no_silent_head() {
         (block[0] - ramp(2_000)).abs() < 1e-6,
         "the armed loop must not move the playhead"
     );
+    // The head is faded in over two milliseconds, so the first frame after the wrap is near zero by
+    // design; what must not happen is a *silent* stretch of the buffer. Two milliseconds later the
+    // material is there at full level, and the fade itself carries real energy.
     assert!(
-        (block[1_000 * 2] - ramp(1_000)).abs() < 1e-6,
-        "the wrap must play the loop start, got {} (silence here means the buffer lied about itself)",
-        block[1_000 * 2]
+        (block[(1_000 + 96) * 2] - ramp(1_096)).abs() < 1e-6,
+        "two milliseconds after the wrap the loop start must be there at full level, got {}",
+        block[(1_000 + 96) * 2]
+    );
+    let mut energy = 0.0f64;
+    for frame in 1_000..1_096 {
+        energy += f64::from(block[frame * 2]) * f64::from(block[frame * 2]);
+    }
+    let fade_rms = (energy / 96.0).sqrt();
+    assert!(
+        fade_rms > 0.3 * f64::from(ramp(1_048)),
+        "the fade carries {fade_rms:.4}, which is silence, not a fade"
     );
     assert!((block[1_499 * 2] - ramp(1_499)).abs() < 1e-6);
 }
@@ -952,6 +987,43 @@ fn the_seam_of_a_loop_does_not_click() {
     assert!(
         worst < 0.2,
         "the seam steps by {worst:.3} — that is the click"
+    );
+}
+
+#[test]
+fn a_loop_that_wraps_through_the_decoder_does_not_click() {
+    // This is the seam the owner heard "depending on the place": a loop longer than the capture budget
+    // wraps by asking the decoder for its start, and there is no copy of the far side to crossfade with.
+    // The seam there is faded out and in over two milliseconds instead — a dip, not a step.
+    let mut deck = tone_deck(4_000_000);
+    deck.set_keylock(false);
+    // One second of a 440 Hz tone is a whole number of periods; the loop below is deliberately not.
+    deck.set_loop_config(dj_deck::LoopConfig {
+        buffer_max_seconds: 0.1,
+    });
+    let Some(region) = FrameRange::new(1_000, 48_000) else {
+        panic!("a loop of one second must be a valid region");
+    };
+    deck.set_loop(Some(region));
+    deck.seek(1_000);
+    deck.play();
+    let mut block = vec![0.0f32; 256 * 2];
+    let mut all = Vec::new();
+    for index in 0..400 {
+        deck.render(&mut block);
+        if index >= 2 {
+            all.extend_from_slice(&block);
+        }
+    }
+    assert!(
+        !deck.loop_is_buffered(),
+        "the check needs the decoder path, not the copy"
+    );
+    assert!(deck.stats().loop_wraps >= 1, "the loop must have wrapped");
+    let worst = biggest_step(&all);
+    assert!(
+        worst < 0.2,
+        "the decoder seam steps by {worst:.3} — that is the click"
     );
 }
 

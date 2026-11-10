@@ -264,6 +264,13 @@ pub struct Deck {
     reading_loop_buffer: bool,
     /// How far the seam crossfade has run, in frames: zero when the loop is playing its middle.
     seam_faded: usize,
+    /// Frames of the seam fade-in still owed when the loop wrapped through the decoder.
+    ///
+    /// The copy smooths its seam with a crossfade, but the first pass — and every loop longer than the
+    /// capture budget — wraps by asking the decoder for the loop's start. That path has no material from
+    /// the far side to blend with, so it fades the tail out and the head in over the same two
+    /// milliseconds: a dip instead of a click.
+    seam_fade_in: usize,
     /// Where the captured buffer stops being used after the loop was switched off: the playhead keeps
     /// reading the copy it is in the middle of until it reaches this frame, and the decoder — which sits
     /// exactly there — takes over. That is the only way to leave a loop without a click.
@@ -360,6 +367,7 @@ impl Deck {
             loop_buffer: None,
             reading_loop_buffer: false,
             seam_faded: 0,
+            seam_fade_in: 0,
             drain_until: None,
             eq: ChannelEq::new(EQ_SAMPLE_RATE),
             output_rate: EQ_SAMPLE_RATE as u32,
@@ -1475,7 +1483,19 @@ impl Deck {
                 Some(Ok(read)) => {
                     let from = self.position;
                     self.position += read as u64;
+                    // Captured unfaded: the copy is the material, and its own seam is crossfaded when it
+                    // plays. Only what leaves the deck is smoothed.
                     self.capture_loop(from, &out[written * 2..written * 2 + read * 2]);
+                    if self.seam_fade_in > 0 {
+                        let faded = read.min(self.seam_fade_in);
+                        for index in 0..faded {
+                            let share = (LOOP_SEAM_FRAMES - self.seam_fade_in + index + 1) as f32
+                                / LOOP_SEAM_FRAMES as f32;
+                            out[(written + index) * 2] *= share;
+                            out[(written + index) * 2 + 1] *= share;
+                        }
+                        self.seam_fade_in -= faded;
+                    }
                     written += read;
                 }
                 Some(Err(_)) => {
@@ -1505,6 +1525,15 @@ impl Deck {
                     // loop is saved or activated. The correction belongs to the wrap that repeats.
                     self.reading_loop_buffer = true;
                 } else {
+                    // No copy to blend with: the tail fades out and the head fades in over two
+                    // milliseconds, so the seam is a dip and not a step (DJP-DECK-005).
+                    let tail = written.min(LOOP_SEAM_FRAMES);
+                    for index in 0..tail {
+                        let share = (tail - index) as f32 / LOOP_SEAM_FRAMES as f32;
+                        out[(written - tail + index) * 2] *= share;
+                        out[(written - tail + index) * 2 + 1] *= share;
+                    }
+                    self.seam_fade_in = LOOP_SEAM_FRAMES;
                     let target = self.read_at(region.start.0);
                     if let Some(source) = self.source.as_mut() {
                         // Measured on the S4 run: a blocking wrap seek cost 3.8 ms inside the callback
