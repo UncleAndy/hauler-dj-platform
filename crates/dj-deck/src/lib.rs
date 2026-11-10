@@ -30,7 +30,10 @@ const RESAMPLE_KERNEL: Interpolation = Interpolation::KaiserSinc16;
 /// Frames of history reserved at the front of the scratch: the most any kernel asks for.
 const RESAMPLE_HISTORY_MAX: usize = 8;
 
+mod cached;
 mod stretch;
+
+pub use cached::CachedSource;
 
 use stretch::Stretcher;
 
@@ -915,6 +918,32 @@ impl Deck {
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let frame = target.round() as u64;
         Some(self.seek(frame))
+    }
+
+    /// Replace the reader without touching the sound: the track-cache handover.
+    ///
+    /// The DSP stages, the carried frames and the phase stay exactly where they are, and the new reader is
+    /// put on the **read** position — the frame the old source would have given next, which with the key
+    /// locked is ahead of what is heard by the stretcher's own delay. Nothing else changes, so the same
+    /// material keeps coming out of a different place; that is the whole point of the cache.
+    ///
+    /// Refused while the play head is inside a captured loop copy (the copy would be cut short) and for a
+    /// reader recorded at another rate (the deck's rate ratio belongs to the file it was attached with).
+    pub fn swap_source(&mut self, mut source: Box<dyn DeckSource>) -> bool {
+        let Some(current) = self.source.as_ref() else {
+            return false;
+        };
+        if current.sample_rate() != source.sample_rate() {
+            return false;
+        }
+        if self.reading_loop_buffer || self.drain_until.is_some() {
+            return false;
+        }
+        if source.seek(self.position).is_err() {
+            return false;
+        }
+        self.source = Some(source);
+        true
     }
 
     /// Turn loop mode on or off. With it off no region repeats; with it on every saved loop repeats.

@@ -4,7 +4,7 @@
 #![allow(clippy::expect_used)]
 
 use dj_codec::{PrefetchConfig, Prefetcher};
-use dj_deck::{Deck, DeckSource};
+use dj_deck::{CachedSource, Deck, DeckSource};
 use dj_domain::{BeatGrid, DeckId, DeckLoad, FrameRange, SourceFrame, TrackMeta};
 
 /// A source whose sample value encodes its own frame number, so any position is verifiable.
@@ -1673,6 +1673,78 @@ fn grid_deck() -> Deck {
     let mut deck = deck_with_ramp(4_000_000);
     deck.set_beat_grid(BeatGrid::single(120.0, 10_000).expect("a 120 BPM grid"));
     deck
+}
+
+/// The material a `CodeSource` generates, decoded once into memory: `value = frame / 4 000 000`.
+///
+/// The track cache exists to stop decoding during playback, so the first thing it owes is that the
+/// bytes a deck plays from it are the bytes it played from the stream — not "close", the same.
+fn code_material(frames: u64) -> std::sync::Arc<[f32]> {
+    let mut data = Vec::with_capacity(usize::try_from(frames).expect("a track that fits") * 2);
+    for frame in 0..frames {
+        #[allow(clippy::cast_precision_loss)]
+        let value = (frame as f32) / 4_000_000.0;
+        data.push(value);
+        data.push(value);
+    }
+    data.into()
+}
+
+#[test]
+fn a_deck_on_the_cache_plays_the_same_frames_as_a_deck_on_the_stream() {
+    let frames = 400_000;
+    let mut streamed = code_deck(frames);
+    let mut cached = code_deck(frames);
+    assert!(
+        cached.swap_source(Box::new(CachedSource::new(code_material(frames), 44_100))),
+        "the cache is a reader like any other"
+    );
+    streamed.play();
+    cached.play();
+    let mut block = vec![0.0f32; 512];
+    let mut reference = vec![0.0f32; 512];
+    for _ in 0..200 {
+        streamed.render(&mut block);
+        cached.render(&mut reference);
+        assert_eq!(
+            block, reference,
+            "the cache must not change a single sample"
+        );
+    }
+}
+
+#[test]
+fn swapping_to_the_cache_mid_play_keeps_the_next_frame() {
+    // The handover happens while the deck reads ahead of what is heard, so the new reader has to stand
+    // at the read position, not at the heard one: with the key locked those differ by the stretcher's
+    // own delay, and either would be heard as a jump.
+    for keylock in [false, true] {
+        let frames = 400_000;
+        let mut streamed = code_deck(frames);
+        let mut swapped = code_deck(frames);
+        streamed.set_keylock(keylock);
+        swapped.set_keylock(keylock);
+        streamed.play();
+        swapped.play();
+        let mut block = vec![0.0f32; 512];
+        let mut reference = vec![0.0f32; 512];
+        for _ in 0..20 {
+            streamed.render(&mut block);
+            swapped.render(&mut reference);
+        }
+        assert!(
+            swapped.swap_source(Box::new(CachedSource::new(code_material(frames), 44_100))),
+            "the switch has to be possible while the deck plays"
+        );
+        for round in 0..40 {
+            streamed.render(&mut block);
+            swapped.render(&mut reference);
+            assert_eq!(
+                block, reference,
+                "block {round} differs after the handover (keylock {keylock})"
+            );
+        }
+    }
 }
 
 #[test]
