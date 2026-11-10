@@ -755,7 +755,8 @@ fn a_prepared_track_is_attached_at_a_block_boundary_and_plays() {
     std::fs::create_dir_all(&dir).unwrap_or_else(|err| panic!("{err}"));
     let path = tone_wav(&dir, "tone", 2.0);
 
-    let prepared = prepare_track(&path, 48_000, 2.0, 1.0).unwrap_or_else(|err| panic!("{err}"));
+    let prepared =
+        prepare_track(&path, 48_000, 2.0, 1.0, None).unwrap_or_else(|err| panic!("{err}"));
     assert!(prepared.track.is_some(), "the loader describes the track");
     assert_eq!(
         prepared.static_info.load,
@@ -1099,6 +1100,8 @@ fn prepared_with(
             path: Some("/tmp/dj-engine-cue-test.wav".to_string()),
         },
         path: Some(std::path::PathBuf::from("/tmp/dj-engine-cue-test.wav")),
+        // Built by hand from a tone: it never went through the cache.
+        cache_key: None,
         cues,
         // Built by hand: the track has no measured grid, and the pads carry no names or colours here.
         grid: None,
@@ -1502,11 +1505,11 @@ fn the_correction_is_whole_and_the_level_is_taken_down() {
     // take that one level down — not a share of each correction, which would leave the loud files loud.
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav");
-    let full = match prepare_track(&path, 48_000, 2.0, 1.0) {
+    let full = match prepare_track(&path, 48_000, 2.0, 1.0, None) {
         Ok(track) => track,
         Err(message) => panic!("the fixture did not prepare: {message}"),
     };
-    let lowered = match prepare_track(&path, 48_000, 2.0, 0.9) {
+    let lowered = match prepare_track(&path, 48_000, 2.0, 0.9, None) {
         Ok(track) => track,
         Err(message) => panic!("the fixture did not prepare: {message}"),
     };
@@ -1540,7 +1543,7 @@ fn a_track_opens_at_the_level_the_loader_measured() {
     // because that is what the GAIN knob and the snapshot report.
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav");
-    let mut prepared = match prepare_track(&path, 48_000, 2.0, 1.0) {
+    let mut prepared = match prepare_track(&path, 48_000, 2.0, 1.0, None) {
         Ok(track) => track,
         Err(message) => panic!("the fixture did not prepare: {message}"),
     };
@@ -1595,7 +1598,7 @@ fn a_forty_four_one_file_plays_for_its_recorded_length() {
     // device time must consume one second of the file.
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../crates/dj-codec/tests/fixtures/audio/tone-1s-44100-cbr.mp3");
-    let mut prepared = match prepare_track(&path, 48_000, 2.0, 1.0) {
+    let mut prepared = match prepare_track(&path, 48_000, 2.0, 1.0, None) {
         Ok(track) => track,
         Err(message) => panic!("the fixture did not prepare: {message}"),
     };

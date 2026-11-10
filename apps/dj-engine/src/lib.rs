@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, AtomicUsize,
 use std::sync::mpsc::{Receiver, Sender};
 
 use dj_audio_io::Renderer;
-use dj_codec::{PrefetchConfig, Prefetcher};
+use dj_codec::{PcmCache, PrefetchConfig, Prefetcher};
 use dj_deck::{Deck, DeckSource};
 use dj_domain::CommandId;
 use dj_domain::{
@@ -1036,6 +1036,11 @@ pub struct PreparedTrack {
     pub auto_gain: f32,
     /// The same correction in decibels; `None` when the level was not measured.
     pub auto_gain_db: Option<f32>,
+    /// Key of this track in the PCM cache, when the deck reads from memory.
+    ///
+    /// The loader pins the entry while the deck holds the track: eviction must never take the material
+    /// out from under a deck that is playing it, and an unpinned entry is what a closed deck releases.
+    pub cache_key: Option<String>,
 }
 
 /// A change worth writing to the track's metadata file.
@@ -1203,6 +1208,7 @@ pub fn prepare_track(
     rate: u32,
     window_seconds: f64,
     auto_gain_share: f32,
+    cache: Option<&mut dj_codec::PcmCache>,
 ) -> Result<PreparedTrack, String> {
     let config = PrefetchConfig::for_sample_rate(rate, window_seconds);
     let mut prefetcher = Prefetcher::open(path, config).map_err(|err| err.to_string())?;
@@ -1276,9 +1282,46 @@ pub fn prepare_track(
     static_info.auto_gain = auto_gain;
     static_info.auto_gain_db = auto_gain_db;
 
+    // Where this deck will read from: memory when the cache accepts the file, the decode window
+    // otherwise. The decision is taken here, on the loader thread, after the measurements that already
+    // decoded the file — never in the middle of playback, where it would be a dropout.
+    //
+    // A cache that refuses (disabled, too large, not wanted) is not a failure: the file streams.
+    let (source, cache_key): (Box<dyn DeckSource>, Option<String>) = match cache {
+        Some(cache) => match cache.prepare(path) {
+            Ok(dj_codec::CacheOutcome::Built | dj_codec::CacheOutcome::Hit) => {
+                match PcmCache::key_for(path, &info, cache.config()) {
+                    Ok(key) => match cache.open_reader(&key) {
+                        Ok(reader) => (
+                            Box::new(dj_deck::CachedReaderSource::new(reader)),
+                            Some(key),
+                        ),
+                        Err(error) => {
+                            eprintln!(
+                                "dj-engine: the cache entry for {} cannot be read: {error}",
+                                path.display()
+                            );
+                            (Box::new(prefetcher), None)
+                        }
+                    },
+                    Err(error) => {
+                        eprintln!("dj-engine: no cache key for {}: {error}", path.display());
+                        (Box::new(prefetcher), None)
+                    }
+                }
+            }
+            Ok(_) => (Box::new(prefetcher), None),
+            Err(error) => {
+                eprintln!("dj-engine: the cache refused {}: {error}", path.display());
+                (Box::new(prefetcher), None)
+            }
+        },
+        None => (Box::new(prefetcher), None),
+    };
+
     Ok(PreparedTrack {
         deck: DeckId::A,
-        source: Box::new(prefetcher),
+        source,
         track: Some(track),
         grid: measured_grid,
         static_info,
@@ -1290,6 +1333,7 @@ pub fn prepare_track(
         loop_region: None,
         auto_gain,
         auto_gain_db,
+        cache_key,
     })
 }
 

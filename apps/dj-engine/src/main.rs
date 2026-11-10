@@ -692,6 +692,31 @@ fn run(argv: &[String]) -> Result<(), String> {
         let prepared = graph_loads.clone();
         let updates = deck_updates.clone();
         std::thread::spawn(move || {
+            // The track cache: whole files in memory. The budget is the owner's number — four ten-minute
+            // tracks at 48 kHz are 922 MB of stereo f32 — so a set of four decks fits with headroom.
+            //
+            // f32 and not i16: a cached track must play the same samples the stream played, and only f32
+            // keeps every bit of a decoded file. Memory and not disk: the point is a read path that
+            // cannot be late.
+            //
+            // No pinning: a reader taken from the cache owns its data (or its open file), so eviction
+            // can free the cache entry without pulling the material out from under a playing deck.
+            let mut cache = match dj_codec::PcmCache::new(
+                std::env::temp_dir().join("hauler-dj-pcm"),
+                dj_codec::CacheConfig {
+                    enabled: true,
+                    lossless: true,
+                    storage: dj_codec::CacheStorage::Memory,
+                    max_bytes: 1024 * 1024 * 1024,
+                    sample_format: dj_codec::PcmSampleFormat::F32,
+                },
+            ) {
+                Ok(cache) => Some(cache),
+                Err(error) => {
+                    eprintln!("dj-engine: no track cache: {error}");
+                    None
+                }
+            };
             while let Ok(request) = load_requests_rx.recv() {
                 let _ = updates.send(Published::Deck(Box::new(DeckUpdate {
                     deck: request.deck,
@@ -710,30 +735,32 @@ fn run(argv: &[String]) -> Result<(), String> {
                     },
                 })));
                 let path = std::path::PathBuf::from(&request.path);
-                match prepare_track(&path, rate, 2.0, auto_gain_share).map(|mut prepared| {
-                    if let Some(problem) =
-                        dj_engine::meta::restore(&mut prepared, &store, volume(), root())
-                    {
-                        eprintln!("dj-engine: {problem}");
-                    }
-                    // The grid is worth keeping: measuring it is a decode of the whole file, and the
-                    // next load should not pay for it again. A stored grid is left alone by the write.
-                    if let Some(grid) = prepared.grid.as_ref() {
-                        match dj_engine::meta::write_beatgrid(
-                            &store,
-                            volume(),
-                            root(),
-                            &path,
-                            grid,
-                            false,
-                        ) {
-                            Ok(true) => {}
-                            Ok(false) => {}
-                            Err(message) => eprintln!("dj-engine: {message}"),
+                match prepare_track(&path, rate, 2.0, auto_gain_share, cache.as_mut()).map(
+                    |mut prepared| {
+                        if let Some(problem) =
+                            dj_engine::meta::restore(&mut prepared, &store, volume(), root())
+                        {
+                            eprintln!("dj-engine: {problem}");
                         }
-                    }
-                    prepared
-                }) {
+                        // The grid is worth keeping: measuring it is a decode of the whole file, and the
+                        // next load should not pay for it again. A stored grid is left alone by the write.
+                        if let Some(grid) = prepared.grid.as_ref() {
+                            match dj_engine::meta::write_beatgrid(
+                                &store,
+                                volume(),
+                                root(),
+                                &path,
+                                grid,
+                                false,
+                            ) {
+                                Ok(true) => {}
+                                Ok(false) => {}
+                                Err(message) => eprintln!("dj-engine: {message}"),
+                            }
+                        }
+                        prepared
+                    },
+                ) {
                     Ok(mut prepared_track) => {
                         prepared_track.deck = request.deck;
                         prepared_track.static_info.deck = request.deck;

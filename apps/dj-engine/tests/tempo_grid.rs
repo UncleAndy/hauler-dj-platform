@@ -87,7 +87,7 @@ fn the_loader_measures_the_grid_of_a_file() {
     let track = dir.join("clicks.wav");
     write_click_track(&track, 16.0);
 
-    let prepared = dj_engine::prepare_track(&track, RATE, 2.0, 1.0).expect("prepared");
+    let prepared = dj_engine::prepare_track(&track, RATE, 2.0, 1.0, None).expect("prepared");
     let grid = prepared.grid.expect("a measured grid");
     assert!(
         (grid.bpm() - 128.0).abs() < 0.5,
@@ -212,7 +212,7 @@ fn a_stored_grid_comes_back_on_the_deck() {
     .expect("write");
 
     // A fresh load: the measurement may disagree, the stored grid must win.
-    let mut prepared = dj_engine::prepare_track(&track, RATE, 2.0, 1.0).expect("prepared");
+    let mut prepared = dj_engine::prepare_track(&track, RATE, 2.0, 1.0, None).expect("prepared");
     let problem = dj_engine::meta::restore(&mut prepared, &store, "vol", &dir);
     assert!(problem.is_none(), "unexpected problem: {problem:?}");
     let grid = prepared.grid.expect("a grid");
