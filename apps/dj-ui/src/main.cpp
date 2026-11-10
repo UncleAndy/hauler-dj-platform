@@ -943,6 +943,11 @@ int main(int argc, char *argv[])
         QStringLiteral("loop-beats-check"),
         QStringLiteral("Check that a loop of four beats is four beats of the grid, and that the arrows "
                        "move it by a beat without shortening it (DJP-DECK-005)."));
+    const QCommandLineOption transportExtrasOption(
+        QStringLiteral("transport-extras-check"),
+        QStringLiteral("With --connect and --load: press a jump and require the play head on a beat of "
+                       "the grid, hold and release the nudge, and switch slip on and off "
+                       "(DJP-DECK-006/007)."));
     const QCommandLineOption gridHereOption(
         QStringLiteral("grid-here-check"),
         QStringLiteral("With --connect and --load: seek off the grid, press the button between the arrows, "
@@ -1197,6 +1202,7 @@ int main(int argc, char *argv[])
     parser.addOption(gridLinesOption);
     parser.addOption(gridCheckOption);
     parser.addOption(loopBeatsOption);
+    parser.addOption(transportExtrasOption);
     parser.addOption(gridHereOption);
     parser.addOption(tempoRecheckOption);
     parser.addOption(cueWriteOption);
@@ -3497,6 +3503,173 @@ int main(int argc, char *argv[])
                      "loop lit the Loop button, and a press inside it put the mode out\n",
                      four, period, start, static_cast<double>(beatStep), snappedStart, snappedEnd,
                      snappedBeats, rawStart, onGrid(rawStart) ? "on" : "off");
+        return 0;
+    }
+
+    if (parser.isSet(transportExtrasOption)) {
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        const QString fixture = parser.value(loadOption);
+        if (fixture.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: --transport-extras-check needs --load\n");
+            return 1;
+        }
+        bridge->connectToEngine(parser.value(connectOption));
+        const auto waitFor = [](const std::function<bool()> &ready, int budget) {
+            QElapsedTimer timer;
+            timer.start();
+            while (timer.elapsed() < budget) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                if (ready()) {
+                    return true;
+                }
+                QThread::msleep(10);
+            }
+            return ready();
+        };
+        if (!waitFor([&]() { return bridge->isConnected(); }, 3000)) {
+            std::fprintf(stderr, "dj-ui: no engine\n");
+            return 1;
+        }
+        const auto deckA = [&]() {
+            const QVariantList decks = bridge->snapshot().value(QStringLiteral("decks")).toList();
+            for (const QVariant &entry : decks) {
+                const QVariantMap deck = entry.toMap();
+                if (deck.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                    return deck;
+                }
+            }
+            return QVariantMap();
+        };
+        const auto firstBeat = [&]() -> qint64 {
+            const QVariantList segments = deckA()
+                                              .value(QStringLiteral("track"))
+                                              .toMap()
+                                              .value(QStringLiteral("grid"))
+                                              .toMap()
+                                              .value(QStringLiteral("segments"))
+                                              .toList();
+            if (segments.isEmpty()) {
+                return -1;
+            }
+            return segments.first().toMap().value(QStringLiteral("frame")).toLongLong();
+        };
+        const auto playHead = [&]() -> qint64 {
+            return deckA().value(QStringLiteral("source_frame")).toLongLong();
+        };
+        const auto press = [&](const QString &name) {
+            auto *item = findItem(window->contentItem(), name);
+            if (item == nullptr) {
+                std::fprintf(stderr, "dj-ui: no %s to press\n", qPrintable(name));
+                return false;
+            }
+            QMetaObject::invokeMethod(item, "clicked");
+            QCoreApplication::processEvents();
+            return true;
+        };
+        const auto hold = [&](const QString &name, const char *signal) {
+            auto *item = findItem(window->contentItem(), name);
+            if (item == nullptr) {
+                std::fprintf(stderr, "dj-ui: no %s to hold\n", qPrintable(name));
+                return false;
+            }
+            QMetaObject::invokeMethod(item, signal);
+            QCoreApplication::processEvents();
+            return true;
+        };
+
+        bridge->load(QStringLiteral("A"), fixture);
+        const QString wantName = QFileInfo(fixture).fileName();
+        if (!waitFor(
+                [&]() {
+                    const QString held = deckA().value(QStringLiteral("path")).toString();
+                    return !held.isEmpty() && held.endsWith(wantName) && firstBeat() >= 0;
+                },
+                20000)) {
+            std::fprintf(stderr, "dj-ui: the deck published no grid to jump on\n");
+            return 1;
+        }
+        const qint64 rate = deckA().value(QStringLiteral("source_rate")).toLongLong();
+        const double bpm = deckA().value(QStringLiteral("local_bpm")).toDouble();
+        if (rate <= 0 || !(bpm > 0.0)) {
+            std::fprintf(stderr, "dj-ui: the deck published no rate or tempo\n");
+            return 1;
+        }
+        const double period = rate * 60.0 / bpm;
+        const qint64 first = firstBeat();
+        // Between two beats and not on a round frame: a jump that only looks right from a beat proves
+        // nothing about landing on one.
+        const qint64 start = first + static_cast<qint64>(period * 1.5) + 311;
+        bridge->seek(QStringLiteral("A"), start);
+        if (!waitFor([&]() { return std::llabs(playHead() - start) <= 2; }, 5000)) {
+            std::fprintf(stderr, "dj-ui: the play head did not reach frame %lld (%lld)\n", start,
+                         playHead());
+            return 1;
+        }
+        if (!press(QStringLiteral("jump_A_p1"))) {
+            return 1;
+        }
+        const auto onTheGrid = [&]() {
+            const double place = static_cast<double>(playHead() - first) / period;
+            return std::fabs(place - std::round(place)) * period <= 2.0;
+        };
+        if (!waitFor([&]() { return playHead() > start && onTheGrid(); }, 5000)) {
+            std::fprintf(stderr,
+                         "dj-ui: the jump did not land on a beat (start %lld, head %lld, period "
+                         "%.1f)\n",
+                         start, playHead(), period);
+            return 1;
+        }
+        const qint64 jump = playHead() - start;
+        // The platter: held, the state says the deck is bent; released, it says the bend is gone.
+        if (!hold(QStringLiteral("nudgeOn_A"), "pressed")) {
+            return 1;
+        }
+        if (!waitFor(
+                [&]() { return deckA().value(QStringLiteral("nudge")).toDouble() > 0.9; }, 3000)) {
+            std::fprintf(stderr, "dj-ui: the nudge never reached the deck (nudge %.3f)\n",
+                         deckA().value(QStringLiteral("nudge")).toDouble());
+            return 1;
+        }
+        if (!hold(QStringLiteral("nudgeOn_A"), "released")) {
+            return 1;
+        }
+        if (!waitFor(
+                [&]() { return std::fabs(deckA().value(QStringLiteral("nudge")).toDouble()) < 1e-6; },
+                3000)) {
+            std::fprintf(stderr, "dj-ui: letting go left the deck bent (nudge %.3f)\n",
+                         deckA().value(QStringLiteral("nudge")).toDouble());
+            return 1;
+        }
+        // Slip: on, the state carries a virtual head; off, it carries none.
+        if (!press(QStringLiteral("slip_A"))) {
+            return 1;
+        }
+        if (!waitFor(
+                [&]() {
+                    const QVariantMap deck = deckA();
+                    return deck.value(QStringLiteral("slip")).toBool()
+                           && deck.value(QStringLiteral("slip_frame")).isValid();
+                },
+                3000)) {
+            std::fprintf(stderr, "dj-ui: slip did not reach the state\n");
+            return 1;
+        }
+        if (!press(QStringLiteral("slip_A"))) {
+            return 1;
+        }
+        if (!waitFor(
+                [&]() { return !deckA().value(QStringLiteral("slip")).toBool(); }, 3000)) {
+            std::fprintf(stderr, "dj-ui: slip stayed on after the second press\n");
+            return 1;
+        }
+        std::fprintf(stdout,
+                     "dj-ui: a jump of one beat moved the play head %lld frames and landed on the "
+                     "grid, the nudge bent the deck and let go, and slip carried a virtual head\n",
+                     jump);
         return 0;
     }
 

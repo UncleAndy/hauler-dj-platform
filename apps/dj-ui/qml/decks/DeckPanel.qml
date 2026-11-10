@@ -838,6 +838,83 @@ Pane {
         // The grid editor: the measurement is a first answer, and this is where the DJ corrects it. Each
         // press is one edit, written into the track's metadata at once and locked against the next
         // automatic measurement (DJP-SYNC-003).
+        // Jumping and the platter (DJP-DECK-006), and slip beside them (DJP-DECK-007). A jump is
+        // measured in beats, so it lives on the same grid the loop sizes do: without a grid there is
+        // nothing to measure, and the row is not there.
+        RowLayout {
+            objectName: "jumproll_" + panel.deckId
+            Layout.fillWidth: true
+            visible: panel.gridReady
+            spacing: 3
+
+            Label {
+                text: qsTr("Jump")
+                font.pixelSize: 10
+                color: UiSettings.themeTextDim
+            }
+            Repeater {
+                model: [-8, -4, -1, 1, 4, 8]
+                Button {
+                    required property int modelData
+                    objectName: "jump_" + panel.deckId + "_" + (modelData > 0 ? "p" : "m")
+                                + Math.abs(modelData)
+                    text: (modelData > 0 ? "+" : "−") + Math.abs(modelData)
+                    font.pixelSize: 10
+                    Layout.preferredWidth: 30
+                    Layout.preferredHeight: 20
+                    enabled: panel.live
+                    focusPolicy: Qt.NoFocus
+                    ToolTip.visible: hovered
+                    ToolTip.text: panel.quantize
+                                  ? qsTr("%1 beat(s) ahead, on the grid").arg(Math.abs(modelData))
+                                  : qsTr("%1 beat(s), by time").arg(Math.abs(modelData))
+                    onClicked: Bridge.beatJump(panel.deckId, modelData, panel.quantize)
+                }
+            }
+            // A hand on the platter: held, the rate bends; released, it comes back. Two buttons, because
+            // a wheel is not on every desk and a bend is the one correction every mix needs.
+            Button {
+                objectName: "nudgeBack_" + panel.deckId
+                text: qsTr("‹ nudge")
+                font.pixelSize: 10
+                Layout.preferredHeight: 20
+                enabled: panel.live
+                focusPolicy: Qt.NoFocus
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Hold to bend the deck slower")
+                onPressed: Bridge.nudge(panel.deckId, -1.0)
+                onReleased: Bridge.nudge(panel.deckId, 0.0)
+                onCanceled: Bridge.nudge(panel.deckId, 0.0)
+            }
+            Button {
+                objectName: "nudgeOn_" + panel.deckId
+                text: qsTr("nudge ›")
+                font.pixelSize: 10
+                Layout.preferredHeight: 20
+                enabled: panel.live
+                focusPolicy: Qt.NoFocus
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Hold to bend the deck faster")
+                onPressed: Bridge.nudge(panel.deckId, 1.0)
+                onReleased: Bridge.nudge(panel.deckId, 0.0)
+                onCanceled: Bridge.nudge(panel.deckId, 0.0)
+            }
+            Item { Layout.fillWidth: true }
+            // Slip wears the same colour as Loop when it is on: a mode has to look like a mode.
+            Button {
+                objectName: "slip_" + panel.deckId
+                text: qsTr("Slip")
+                font.pixelSize: 11
+                Layout.preferredHeight: 20
+                enabled: panel.live
+                focusPolicy: Qt.NoFocus
+                highlighted: panel.deck.slip === true
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("The sound may jump or repeat; the track under it keeps running")
+                onClicked: Bridge.setSlip(panel.deckId, panel.deck.slip !== true)
+            }
+        }
+
         RowLayout {
             objectName: "gridedit_" + panel.deckId
             Layout.fillWidth: true

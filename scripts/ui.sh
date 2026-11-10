@@ -260,6 +260,13 @@ case "${1:-}" in
     cp crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav "$loop_file"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --loop-beats-check --load "$loop_file"
+    # Jumps, the platter and slip: a jump lands on a beat of the grid, a held nudge reaches the deck
+    # and lets go, and slip carries a virtual head the state can draw (DJP-DECK-006/007). Its own copy
+    # again: the checks share one engine and one deck.
+    jump_file="$run_dir/jump-track.wav"
+    cp crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav "$jump_file"
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
+        --transport-extras-check --load "$jump_file"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --grid-here-check --load "$metronome_file"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
