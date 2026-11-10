@@ -33,7 +33,7 @@ const RESAMPLE_HISTORY_MAX: usize = 8;
 mod cached;
 mod stretch;
 
-pub use cached::CachedSource;
+pub use cached::{CachedReaderSource, CachedSource};
 
 use stretch::Stretcher;
 

@@ -10,6 +10,8 @@
 
 use std::sync::Arc;
 
+use dj_codec::CachedReader;
+
 use crate::DeckSource;
 
 /// A deck's source over a decoded file.
@@ -68,5 +70,47 @@ impl DeckSource for CachedSource {
         // an empty file is not a frame at all.
         self.position = frame.min(self.frames().saturating_sub(1));
         Ok(self.position)
+    }
+}
+
+/// A deck's source over a cache entry: the same material the reader holds, in the deck's own terms.
+///
+/// The cache stores samples in its own format, so this adapter is where bytes become the `f32` the deck
+/// works in — once per block, off the decision path, and never a decode.
+pub struct CachedReaderSource {
+    reader: CachedReader,
+}
+
+impl CachedReaderSource {
+    /// A reader standing where the cache entry's reader stands.
+    pub fn new(reader: CachedReader) -> Self {
+        Self { reader }
+    }
+
+    /// The entry behind this reader, for reports and for pinning.
+    pub fn info(&self) -> &dj_codec::MediaInfo {
+        self.reader.info()
+    }
+}
+
+impl DeckSource for CachedReaderSource {
+    fn sample_rate(&self) -> u32 {
+        self.reader.info().sample_rate
+    }
+
+    fn frames(&self) -> Option<u64> {
+        self.reader.frames_expected()
+    }
+
+    fn read(&mut self, out: &mut [f32]) -> Result<usize, String> {
+        self.reader
+            .read_frames(out)
+            .map_err(|error| format!("cache: {error}"))
+    }
+
+    fn seek(&mut self, frame: u64) -> Result<u64, String> {
+        self.reader
+            .seek(frame)
+            .map_err(|error| format!("cache: {error}"))
     }
 }

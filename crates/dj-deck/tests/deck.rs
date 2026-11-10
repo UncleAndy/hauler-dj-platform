@@ -4,7 +4,7 @@
 #![allow(clippy::expect_used)]
 
 use dj_codec::{PrefetchConfig, Prefetcher};
-use dj_deck::{CachedSource, Deck, DeckSource};
+use dj_deck::{CachedReaderSource, CachedSource, Deck, DeckSource};
 use dj_domain::{BeatGrid, DeckId, DeckLoad, FrameRange, SourceFrame, TrackMeta};
 
 /// A source whose sample value encodes its own frame number, so any position is verifiable.
@@ -1688,6 +1688,42 @@ fn code_material(frames: u64) -> std::sync::Arc<[f32]> {
         data.push(value);
     }
     data.into()
+}
+
+#[test]
+fn a_deck_on_a_cache_entry_plays_the_same_frames_as_a_deck_on_the_stream() {
+    // The cache stores the entry in its own sample format, so the adapter that turns bytes back into f32
+    // is part of the promise: it must be the same material, not a close relative.
+    let frames = 200_000;
+    let mut bytes = Vec::with_capacity(usize::try_from(frames).expect("a track that fits") * 8);
+    for frame in 0..frames {
+        #[allow(clippy::cast_precision_loss)]
+        let value = (frame as f32) / 4_000_000.0;
+        bytes.extend_from_slice(&value.to_le_bytes());
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    let reader = dj_codec::CachedReader::open_memory(
+        std::sync::Arc::new(bytes),
+        44_100,
+        2,
+        dj_codec::PcmSampleFormat::F32,
+    );
+
+    let mut streamed = code_deck(frames);
+    let mut cached = code_deck(frames);
+    assert!(cached.swap_source(Box::new(CachedReaderSource::new(reader))));
+    streamed.play();
+    cached.play();
+    let mut block = vec![0.0f32; 512];
+    let mut reference = vec![0.0f32; 512];
+    for _ in 0..100 {
+        streamed.render(&mut block);
+        cached.render(&mut reference);
+        assert_eq!(
+            block, reference,
+            "the cache entry must be the same material, sample for sample"
+        );
+    }
 }
 
 #[test]

@@ -110,6 +110,12 @@ impl PcmSampleFormat {
 pub struct CacheConfig {
     /// Cache lossy formats at all.
     pub enabled: bool,
+    /// Cache **lossless** formats too: the whole file decoded into memory, played from there.
+    ///
+    /// A lossless file can be streamed with an index, so this is a trade: memory for a playback path that
+    /// cannot be late, a seek that cannot wait and a reverse that is a walk backwards. When the budget runs
+    /// out the file streams as it always did — the policy refuses, it does not fail.
+    pub lossless: bool,
     /// Disk or memory.
     pub storage: CacheStorage,
     /// Hard size limit; entries beyond it are evicted least-recently-used first.
@@ -122,6 +128,9 @@ impl Default for CacheConfig {
     fn default() -> Self {
         Self {
             enabled: true,
+            // Lossy is what the cache was built for; a DJ who wants everything in memory says so with
+            // `lossless`, and the engine does (its budget is sized for four ten-minute tracks).
+            lossless: false,
             storage: CacheStorage::Disk,
             max_bytes: 8 * 1_000_000_000,
             sample_format: PcmSampleFormat::I16,
@@ -158,8 +167,13 @@ pub enum PlaybackSource {
 }
 
 /// Decide the playback strategy from the file alone (ADR-0008: never from the moment).
+///
+/// Lossy formats always want the cache (they cannot be seeked exactly). A lossless file wants it only when
+/// the policy says so: `CacheConfig::lossless` is the switch the engine turns on to keep whole tracks in
+/// memory.
 pub fn playback_source(info: &MediaInfo, config: &CacheConfig) -> PlaybackSource {
-    if info.format.needs_pcm_cache() && config.enabled {
+    let wanted = info.format.needs_pcm_cache() || config.lossless;
+    if wanted && config.enabled {
         PlaybackSource::PcmCache {
             format: info.format,
         }
@@ -265,7 +279,9 @@ impl PcmCache {
         }
         let mut decoder = StreamDecoder::open(path)?;
         let info = decoder.info().clone();
-        if !info.format.needs_pcm_cache() {
+        // The same rule the playback decision makes: lossy always, lossless only when the policy asks.
+        // One rule in two places would be a bug waiting for the day the two disagree.
+        if !(info.format.needs_pcm_cache() || self.config.lossless) {
             return Ok(CacheOutcome::NotNeeded);
         }
         let key = Self::key_for(path, &info, &self.config)?;

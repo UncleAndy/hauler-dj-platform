@@ -21,10 +21,64 @@ fn cache_root(name: &str) -> PathBuf {
 fn config(storage: CacheStorage, max_bytes: u64) -> CacheConfig {
     CacheConfig {
         enabled: true,
+        lossless: false,
         storage,
         max_bytes,
         sample_format: PcmSampleFormat::I16,
     }
+}
+
+#[test]
+fn a_lossless_file_is_cached_only_when_the_policy_asks() {
+    // Lossless can be streamed with an index, so caching it is a choice: the engine makes that choice to
+    // keep whole tracks in memory. The default policy leaves lossless alone.
+    let file = fixture("tone-1s-44100.flac");
+    let mut refusing = PcmCache::new(
+        cache_root("lossless-off"),
+        config(CacheStorage::Memory, 1_000_000_000),
+    )
+    .unwrap_or_else(|err| panic!("cache: {err}"));
+    assert_eq!(
+        refusing
+            .prepare(&file)
+            .unwrap_or_else(|err| panic!("prepare: {err}")),
+        CacheOutcome::NotNeeded,
+        "the default policy streams lossless files"
+    );
+
+    let mut asking = PcmCache::new(
+        cache_root("lossless-on"),
+        CacheConfig {
+            lossless: true,
+            ..config(CacheStorage::Memory, 1_000_000_000)
+        },
+    )
+    .unwrap_or_else(|err| panic!("cache: {err}"));
+    assert_eq!(
+        asking
+            .prepare(&file)
+            .unwrap_or_else(|err| panic!("prepare: {err}")),
+        CacheOutcome::Built,
+        "a policy that asks for lossless gets it"
+    );
+    let info = StreamDecoder::open(&file)
+        .unwrap_or_else(|err| panic!("open: {err}"))
+        .info()
+        .clone();
+    let key =
+        PcmCache::key_for(&file, &info, asking.config()).unwrap_or_else(|err| panic!("key: {err}"));
+    let mut reader = asking
+        .open_reader(&key)
+        .unwrap_or_else(|err| panic!("reader: {err}"));
+    let mut block = vec![0.0f32; 512];
+    let read = reader
+        .read_frames(&mut block)
+        .unwrap_or_else(|err| panic!("read: {err}"));
+    assert!(read > 0, "the entry holds audio");
+    assert!(
+        block[..read * 2].iter().any(|sample| *sample != 0.0),
+        "the cached tone is not silence"
+    );
 }
 
 #[test]

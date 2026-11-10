@@ -304,6 +304,7 @@ fn measure_cache(
     };
     let config = CacheConfig {
         enabled: true,
+        lossless: false,
         storage: CacheStorage::Disk,
         max_bytes: 64 * 1_000_000_000,
         sample_format: PcmSampleFormat::I16,
