@@ -152,6 +152,14 @@ pub struct LoopConfig {
     /// 30 s is ~11.5 MB) and the benefit stops mattering once the loop is long enough that the seam
     /// falls where nobody plays.
     pub buffer_max_seconds: f64,
+    /// Shape of the seam crossfade.
+    ///
+    /// An equal-gain fade keeps the sum of the two sides at one, which is right for correlated material (the
+    /// same track a millisecond apart). An equal-power fade keeps the *power* at one, which is right for
+    /// uncorrelated material: a decaying tail against a fresh attack. The ear hears the difference at a
+    /// seam where the two sides are different notes; it is measured, not chosen.
+    pub seam_shape: SeamShape,
+
     /// Length of the seam crossfade, in milliseconds. Zero plays the seam as a cut.
     ///
     /// A setting because the right length is a matter of the material: a millisecond hides a step in a
@@ -169,9 +177,20 @@ impl Default for LoopConfig {
     fn default() -> Self {
         Self {
             buffer_max_seconds: 30.0,
+            seam_shape: SeamShape::EqualGain,
             seam_ms: 1.0,
         }
     }
+}
+
+/// How the two sides of a loop's seam are mixed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum SeamShape {
+    /// `out = 1 − s`, `in = s`: the sum stays at one.
+    #[default]
+    EqualGain,
+    /// `out = cos(s·π/2)`, `in = sin(s·π/2)`: the power stays at one.
+    EqualPower,
 }
 
 impl LoopConfig {
@@ -1771,9 +1790,19 @@ impl Deck {
                 // shaped as a raised cosine rather than a straight line: a linear fade meets its ends at a
                 // corner, and that corner is a step in the slope that the ear hears as a tick. The cosine
                 // leaves and arrives with zero slope.
-                let shaped = 0.5 - 0.5 * (share * std::f32::consts::PI).cos();
-                let out_gain = 1.0 - shaped;
-                let in_gain = shaped;
+                let (out_gain, in_gain) = match self.loop_config.seam_shape {
+                    // Equal *gain*, raised cosine: the sum is one and the ends meet with no corner.
+                    SeamShape::EqualGain => {
+                        let shaped = 0.5 - 0.5 * (share * std::f32::consts::PI).cos();
+                        (1.0 - shaped, shaped)
+                    }
+                    // Equal *power*, the classic micro-crossfade: two sides that are different material do
+                    // not dip in level while they are mixed.
+                    SeamShape::EqualPower => {
+                        let angle = share * std::f32::consts::FRAC_PI_2;
+                        (angle.cos(), angle.sin())
+                    }
+                };
                 for channel in 0..2 {
                     out[index * 2 + channel] = buffer.data[tail * 2 + channel] * out_gain
                         + buffer.data[head * 2 + channel] * in_gain;

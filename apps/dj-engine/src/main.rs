@@ -291,8 +291,16 @@ fn run(argv: &[String]) -> Result<(), String> {
             && let Ok(milliseconds) = value.trim().parse::<f64>()
             && milliseconds.is_finite()
         {
+            // The shape is measurable but not yet in the settings file either: `DJ_LOOP_SEAM_SHAPE=power`
+            // mixes the two sides by power (the classic micro-crossfade for uncorrelated material),
+            // anything else by gain (the sum stays at one, right for the same track a millisecond apart).
+            let shape = match std::env::var("DJ_LOOP_SEAM_SHAPE").as_deref() {
+                Ok("power") => dj_deck::SeamShape::EqualPower,
+                _ => dj_deck::SeamShape::EqualGain,
+            };
             deck.set_loop_config(dj_deck::LoopConfig {
                 buffer_max_seconds: 30.0,
+                seam_shape: shape,
                 seam_ms: milliseconds.max(0.0),
             });
         }
