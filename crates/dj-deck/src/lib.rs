@@ -763,6 +763,57 @@ impl Deck {
         }
     }
 
+    /// Jump by a musical distance (DJP-DECK-006): `beats` may be fractional (1/4, 1/2) and negative.
+    ///
+    /// With `quantize` the play head lands on a line of the grid — the nearest one to the beat it was
+    /// aiming at — so a jump of one beat from mid-beat hits the beat instead of carrying the offset for
+    /// ever. Without it the jump is a plain step of time, `beats` beat lengths from where the play head
+    /// stands, and the offset inside the beat is kept: that is the jump a DJ uses while the mix is
+    /// already playing.
+    ///
+    /// A deck with no grid refuses a quantized jump. A jump that promises a beat and has nowhere to land
+    /// is better refused, with the refusal the shell can show, than silently guessed.
+    pub fn beat_jump(&mut self, beats: f64, quantize: bool) -> Option<u64> {
+        if !beats.is_finite() || beats == 0.0 {
+            return None;
+        }
+        let rate = f64::from(self.source_rate());
+        if rate <= 0.0 {
+            return None;
+        }
+        let here = self.position();
+        let target = match &self.grid {
+            Some(grid) => {
+                let wanted = grid.beat_at(here, rate) + beats;
+                // The line the jump aims at is a multiple of its own length: a bar landed on a bar, a
+                // quarter on a quarter. Rounding every jump to whole beats would make 1/4 impossible.
+                let landed = if quantize {
+                    (wanted / beats).round() * beats
+                } else {
+                    wanted
+                };
+                grid.frame_of_beat(landed, rate)
+            }
+            None if quantize => return None,
+            None => {
+                // No grid, but a measured tempo: a beat is still a length of time, and a plain step of
+                // that length is what "quantize off" means.
+                let bpm = self.track.as_ref().and_then(|track| track.bpm)?;
+                if !bpm.is_finite() || bpm <= 0.0 {
+                    return None;
+                }
+                let period = 60.0 / bpm * rate;
+                here as f64 + beats * period
+            }
+        };
+        if !target.is_finite() || target < 0.0 {
+            return None;
+        }
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let frame = target.round() as u64;
+        Some(self.seek(frame))
+    }
+
     /// Turn loop mode on or off. With it off no region repeats; with it on every saved loop repeats.
     pub fn set_loop_mode(&mut self, enabled: bool) {
         self.loop_mode = enabled;

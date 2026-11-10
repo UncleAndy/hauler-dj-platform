@@ -52,6 +52,7 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
         | DjCommand::LoopBeats { deck, .. }
         | DjCommand::LoopMove { deck, .. }
         | DjCommand::SetTempoRatio { deck, .. }
+        | DjCommand::BeatJump { deck, .. }
         | DjCommand::Metronome { deck, .. }
         | DjCommand::Eject { deck }
         | DjCommand::Load { deck, .. } => Some(*deck),
@@ -203,6 +204,17 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
                     }
                 }
             }
+            // A jump is measured on the deck's own grid: the DJ asks for beats, not for frames, and a
+            // deck without a grid has no beats to give — that refusal is the honest answer.
+            DjCommand::BeatJump {
+                beats, quantize, ..
+            } => match target.beat_jump(*beats, *quantize) {
+                Some(_) => Ack::applied(id, at),
+                None => Ack {
+                    command_id: id,
+                    status: AckStatus::Rejected(RejectReason::InvalidValue),
+                },
+            },
             _ => unreachable!("only deck commands reach here"),
         };
     }

@@ -219,6 +219,7 @@ impl Engine {
             | DjCommand::SetLoop { .. }
             | DjCommand::LoopBeats { .. }
             | DjCommand::LoopMove { .. }
+            | DjCommand::BeatJump { .. }
             | DjCommand::Load { .. }
             | DjCommand::AnalyzeTempo { .. }
             | DjCommand::EditGrid { .. }

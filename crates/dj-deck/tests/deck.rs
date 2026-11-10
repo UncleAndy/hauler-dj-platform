@@ -5,7 +5,7 @@
 
 use dj_codec::{PrefetchConfig, Prefetcher};
 use dj_deck::{Deck, DeckSource};
-use dj_domain::{DeckId, DeckLoad, FrameRange, SourceFrame, TrackMeta};
+use dj_domain::{BeatGrid, DeckId, DeckLoad, FrameRange, SourceFrame, TrackMeta};
 
 /// A source whose sample value encodes its own frame number, so any position is verifiable.
 struct RampSource {
@@ -1663,6 +1663,85 @@ fn crossings(block: &[f32]) -> usize {
         last = value;
     }
     count
+}
+
+/// A deck with a metronome-tight grid: 120 BPM at 44,1 kHz, first beat on frame 10 000.
+///
+/// At this rate one beat is 22 050 frames, so every expected position below is a whole number the eye
+/// can check against the beat count.
+fn grid_deck() -> Deck {
+    let mut deck = deck_with_ramp(4_000_000);
+    deck.set_beat_grid(BeatGrid::single(120.0, 10_000).expect("a 120 BPM grid"));
+    deck
+}
+
+#[test]
+fn a_beat_jump_lands_on_the_beat_it_promised() {
+    // Mid-beat start: the jump is asked for one beat, and the grid says where that beat is. Landing
+    // 22 050 frames on would keep the playhead off the beat for ever, which is what a DJ hears as
+    // "the jump does not hit".
+    let mut deck = grid_deck();
+    let inside = 10_000 + 3 * 22_050 + 7_000;
+    deck.seek(inside);
+    let landed = deck.beat_jump(1.0, true).expect("a jump forward");
+    assert_eq!(
+        landed,
+        10_000 + 4 * 22_050,
+        "the jump must land on the next beat, not a beat-length past the play head"
+    );
+    assert_eq!(deck.position(), landed);
+}
+
+#[test]
+fn a_fractional_jump_lands_on_the_sub_beat() {
+    // A quarter is a real DJ step, and quantizing it to whole beats would make it impossible.
+    let mut deck = grid_deck();
+    deck.seek(10_000 + 4 * 22_050);
+    let landed = deck.beat_jump(0.25, true).expect("a quarter of a beat");
+    assert_eq!(landed, 10_000 + 93_713, "a quarter past the fourth beat");
+}
+
+#[test]
+fn a_jump_backwards_stays_on_the_grid() {
+    let mut deck = grid_deck();
+    deck.seek(10_000 + 8 * 22_050 + 1_000);
+    let landed = deck.beat_jump(-4.0, true).expect("a jump back");
+    assert_eq!(landed, 10_000 + 4 * 22_050);
+}
+
+#[test]
+fn a_jump_without_quantize_moves_by_exactly_the_distance_asked() {
+    // Quantize off means a plain step of time: the playhead keeps whatever offset it had inside the
+    // beat, which is what a DJ nudging a mix by ear relies on.
+    let mut deck = grid_deck();
+    let start = 10_000 + 3 * 22_050 + 7_000;
+    deck.seek(start);
+    let landed = deck.beat_jump(1.5, false).expect("a jump forward");
+    assert_eq!(landed, start + 33_075);
+}
+
+#[test]
+fn a_deck_without_a_grid_refuses_a_quantized_jump() {
+    // A jump that promises a beat and has no grid to land on is a lie: better a refusal the shell can
+    // show than a jump to nowhere.
+    let mut deck = deck_with_ramp(4_000_000);
+    deck.seek(100_000);
+    assert!(
+        deck.beat_jump(1.0, true).is_none(),
+        "a jump on the grid needs a grid"
+    );
+}
+
+#[test]
+fn a_jump_past_the_end_stops_at_the_last_frame() {
+    let mut deck = grid_deck();
+    let total = 4_000_000;
+    deck.seek(total - 50_000);
+    let landed = deck.beat_jump(32.0, false).expect("a long jump forward");
+    // With the key locked the last frames are the stretcher's look-ahead: they are read, not heard, so
+    // the furthest the play head can go is that much short of the end.
+    let last = total - 1 - deck.keylock_latency() as u64;
+    assert_eq!(landed, last, "the play head cannot leave the track");
 }
 
 #[test]

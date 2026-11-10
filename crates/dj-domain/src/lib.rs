@@ -433,6 +433,20 @@ pub enum DjCommand {
         /// Destination in source frames.
         frame: SourceFrame,
     },
+    /// Beatjump: move the play head by a musical distance (DJP-DECK-006).
+    ///
+    /// Fractions and multiples of a beat are one command: `beats` is a number and its sign says which
+    /// way. With `quantize` the jump lands on a line of the deck's grid — the grid the loop button and
+    /// the wave already obey — and without it the jump is a plain step of time from where the play head
+    /// stands, offset inside the beat kept.
+    BeatJump {
+        /// Target deck.
+        deck: DeckId,
+        /// Beats to move: `0.25`, `0.5`, `1`, `2`, `4`, `8`, `32`; negative jumps back.
+        beats: f64,
+        /// Land on the grid instead of a plain step of time.
+        quantize: bool,
+    },
     /// Tempo change, 1.0 is the source tempo.
     SetTempoRatio {
         /// Target deck.
@@ -534,6 +548,7 @@ impl DjCommand {
             | DjCommand::SetLoop { .. }
             | DjCommand::LoopBeats { .. }
             | DjCommand::LoopMove { .. }
+            | DjCommand::BeatJump { .. }
             | DjCommand::Load { .. }
             | DjCommand::AnalyzeTempo { .. }
             | DjCommand::EditGrid { .. }

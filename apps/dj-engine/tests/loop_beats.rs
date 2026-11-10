@@ -1,4 +1,4 @@
-//! Loops asked for by length, and moving them (DJP-DECK-005).
+//! Loops asked for by length, moving them (DJP-DECK-005), and jumps by beats (DJP-DECK-006).
 //!
 //! Both commands are decided by the engine against the deck's grid: the DJ asks for "four beats", not for
 //! a pair of frames, and a deck without a grid has no four beats to give. The tests drive the real graph,
@@ -8,7 +8,9 @@
 #![allow(clippy::expect_used)]
 
 use dj_deck::Deck;
-use dj_domain::{Ack, AckStatus, CommandId, DeckId, DjCommand, RejectReason, ScheduledCommand};
+use dj_domain::{
+    Ack, AckStatus, CommandId, DeckId, DjCommand, RejectReason, ScheduledCommand, SourceFrame,
+};
 use dj_engine::{DeckStatic, EngineGraph, StateCells, Submission};
 use dj_mixer::{ChannelSettings, CrossAssign, Mixer};
 use std::sync::Arc;
@@ -134,6 +136,66 @@ fn render_one(graph: &mut EngineGraph) {
     let mut master = vec![0.0f32; BLOCK * 2];
     let mut cue = vec![0.0f32; BLOCK * 2];
     graph.render_pair(&mut master, &mut cue, BLOCK);
+}
+
+#[test]
+fn a_beat_jump_is_decided_against_the_grid() {
+    // The play head sits a third of a beat past the fourth: a jump of one beat must land on the fifth
+    // beat, not a beat-length past where it stood. The state document is what the shell draws.
+    let (mut graph, cells, submissions) = graph_for(deck_on_grid(true));
+    render_one(&mut graph);
+    let _ = apply(
+        &mut graph,
+        &submissions,
+        1,
+        DjCommand::SeekFrames {
+            deck: DeckId::A,
+            frame: SourceFrame(ANCHOR + 3 * BEAT_FRAMES + 7_000),
+        },
+    );
+    let ack = apply(
+        &mut graph,
+        &submissions,
+        2,
+        DjCommand::BeatJump {
+            deck: DeckId::A,
+            beats: 1.0,
+            quantize: true,
+        },
+    );
+    assert!(
+        matches!(ack.status, AckStatus::Applied { .. }),
+        "a grid is there to obey, got {:?}",
+        ack.status
+    );
+    render_one(&mut graph);
+    assert_eq!(
+        deck_state(&cells).source_frame.0,
+        ANCHOR + 4 * BEAT_FRAMES,
+        "the jump lands on the beat"
+    );
+}
+
+#[test]
+fn a_beat_jump_without_a_grid_is_refused() {
+    // Nothing to land on: a refusal the shell can show beats a jump to nowhere.
+    let (mut graph, _cells, submissions) = graph_for(deck_on_grid(false));
+    render_one(&mut graph);
+    let ack = apply(
+        &mut graph,
+        &submissions,
+        1,
+        DjCommand::BeatJump {
+            deck: DeckId::A,
+            beats: 4.0,
+            quantize: true,
+        },
+    );
+    assert!(
+        matches!(ack.status, AckStatus::Rejected(RejectReason::InvalidValue)),
+        "a quantized jump needs a grid, got {:?}",
+        ack.status
+    );
 }
 
 #[test]
