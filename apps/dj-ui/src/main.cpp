@@ -1142,6 +1142,11 @@ int main(int argc, char *argv[])
         QStringLiteral("browser-check"),
         QStringLiteral("Load the shell, pick a track in the browser and act on it, the way a click "
                        "does, then print what happened."));
+    const QCommandLineOption browserRestoreOption(
+        QStringLiteral("browser-restore-check"),
+        QStringLiteral("Start the shell on a layout file written by an earlier run and require the "
+                       "browser's rail, the browser's text and the deck's zoom to be what that file "
+                       "says."));
     const QCommandLineOption screenshotOption(
         QStringLiteral("ui-screenshot"),
         QStringLiteral("Load the shell, wait, grab it into OUT.png and exit. Verifies the theme "
@@ -1219,6 +1224,7 @@ int main(int argc, char *argv[])
     parser.addOption(spanOption);
     parser.addOption(screenshotOption);
     parser.addOption(browserCheckOption);
+    parser.addOption(browserRestoreOption);
     parser.addOption(browserStartOption);
     parser.addOption(themeCheckOption);
     parser.addOption(benchOption);
@@ -7266,6 +7272,39 @@ int main(int argc, char *argv[])
         return 0;
     }
 
+    if (parser.isSet(browserRestoreOption)) {
+        // The second start: a new process, a layout file left by the first one, and no other hint. What
+        // the panel and the deck hold now is what a person would see, not what the file says.
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        QQuickItem *panel = findItem(window->contentItem(), QStringLiteral("browserPanel"));
+        QQuickItem *detail = findItem(window->contentItem(), QStringLiteral("deckDetail_A"));
+        if (panel == nullptr || detail == nullptr) {
+            std::fprintf(stderr, "dj-ui: the shell has no browser panel or no deck waveform\n");
+            return 1;
+        }
+        const int rail = panel->property("railWidth").toInt();
+        const int font = panel->property("listFont").toInt();
+        const double span = detail->property("zoomSpan").toDouble();
+        if (rail != layout.browserRailWidth() || font != layout.browserFont()
+            || qAbs(span - layout.waveformSpan()) > 1e-6) {
+            std::fprintf(stderr,
+                         "dj-ui: the shell did not come back as it was left (rail %d of %d, font %d "
+                         "of %d, span %.3f of %.3f)\n",
+                         rail, layout.browserRailWidth(), font, layout.browserFont(), span,
+                         layout.waveformSpan());
+            return 1;
+        }
+        std::fprintf(stdout,
+                     "dj-ui: a new run opens with the rail at %d px, the browser text at %d px and "
+                     "the deck zoom at a span of %s, the numbers the last run left\n",
+                     rail, font, qPrintable(QString::number(span, 'f', 3)));
+        return 0;
+    }
+
     if (parser.isSet(browserCheckOption)) {
         // A list you cannot pick from is a picture of a list, so the check goes through the same
         // function the mouse does: select a track, activate it, read what the panel says happened.
@@ -7483,23 +7522,8 @@ int main(int argc, char *argv[])
         // The section text is the same type as the list: one control for the browser, not two.
         // Measured on the label the rail actually renders, not on the property that feeds it.
         // Delegates of a Repeater are item children of the rail but not QObject children of the
-        // panel, so the search walks the item tree instead of findChild.
-        std::function<QQuickItem *(QQuickItem *, const QString &)> findInItems =
-            [&](QQuickItem *root, const QString &name) -> QQuickItem * {
-            if (root == nullptr) {
-                return nullptr;
-            }
-            if (root->objectName() == name) {
-                return root;
-            }
-            for (QQuickItem *child : root->childItems()) {
-                if (QQuickItem *hit = findInItems(child, name)) {
-                    return hit;
-                }
-            }
-            return nullptr;
-        };
-        QQuickItem *sectionRow = findInItems(panel, QStringLiteral("section_files"));
+        // panel, so the search walks the item tree (findItem) instead of findChild.
+        QQuickItem *sectionRow = findItem(panel, QStringLiteral("section_files"));
         if (sectionRow == nullptr || sectionRow->childItems().isEmpty()) {
             std::fprintf(stderr, "dj-ui: the sections rail has no label to measure\n");
             return 1;
@@ -7518,10 +7542,43 @@ int main(int argc, char *argv[])
             return 1;
         }
 
+        // The three view numbers outlive the run: they are written to the layout file and read back by
+        // a fresh instance, which is exactly what the next start does (DJP-UI-001).
+        panel->setProperty("railWidth", 130);
+        panel->setProperty("listFont", 14);
+        QQuickItem *detail = findItem(window->contentItem(), QStringLiteral("deckDetail_A"));
+        if (detail == nullptr) {
+            std::fprintf(stderr, "dj-ui: the deck has no main waveform to zoom\n");
+            return 1;
+        }
+        detail->setProperty("zoomSpan", 0.25);
+        QCoreApplication::processEvents();
+        if (!layout.save()) {
+            std::fprintf(stderr, "dj-ui: the layout file could not be written (%s)\n",
+                         qPrintable(layout.file()));
+            return 1;
+        }
+        LayoutSettings reloaded;
+        reloaded.setFile(layout.file());
+        if (!reloaded.load()) {
+            std::fprintf(stderr, "dj-ui: the layout file could not be read back\n");
+            return 1;
+        }
+        if (reloaded.browserRailWidth() != 130 || reloaded.browserFont() != 14
+            || qAbs(reloaded.waveformSpan() - 0.25) > 1e-9) {
+            std::fprintf(stderr,
+                         "dj-ui: the view did not come back as it was left (rail %d, font %d, span "
+                         "%.3f)\n",
+                         reloaded.browserRailWidth(), reloaded.browserFont(),
+                         reloaded.waveformSpan());
+            return 1;
+        }
+
         std::fprintf(stdout,
                      "dj-ui: browser selects and acts, selection follows the click, \"..\" goes up, "
-                     "the text size moves the row and the sections (%d px), and the rail is "
-                     "%.0f px wide\n",
+                     "the text size moves the row and the sections (%d px), the rail is %.0f px wide, "
+                     "and the rail width, the font and the deck zoom come back after a restart "
+                     "(130 px, 14 px, 0.25)\n",
                      small, railAfter);
         return 0;
     }

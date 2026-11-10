@@ -37,7 +37,10 @@ Pane {
 
     // Size of the list's text, in pixels. The range is generous on purpose: 8 is a dense list for a
     // wide screen, 20 is a list read from across the booth.
-    property int listFont: 11
+    // The list's text size and the rail's width are the DJ's settings, not the file's: they are read
+    // from the layout file at start and written back when they change (DJP-UI-001).
+    property int listFont: LayoutState.browserFont
+    onListFontChanged: LayoutState.browserFont = browser.listFont
     readonly property int minListFont: 8
     readonly property int maxListFont: 20
     // The row grows with its text: a bigger font in a fixed row is a clipped font.
@@ -45,7 +48,8 @@ Pane {
 
     // Width of the sections rail, in pixels, and the range a drag may leave it in: a rail narrower
     // than its longest word is a smudge, a rail wider than the download is a list with no room.
-    property int railWidth: 92
+    property int railWidth: LayoutState.browserRailWidth
+    onRailWidthChanged: LayoutState.browserRailWidth = browser.railWidth
     readonly property int minRailWidth: 72
     readonly property int maxRailWidth: 260
 

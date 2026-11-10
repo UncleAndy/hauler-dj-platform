@@ -51,7 +51,16 @@ case "${1:-}" in
         --session-file "${TMPDIR:-/tmp}/dj-window-check.json" --window-check
     # The browser must select a row with a click and act on it: a list you cannot pick from is a
     # picture of a list.
-    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --browser-check
+    # Its own layout file, thrown away first: the check moves the rail, the text and the deck zoom, so
+    # a gate run must neither rewrite the layout the person is working in nor inherit the numbers the
+    # previous run wrote there.
+    rm -f "${TMPDIR:-/tmp}/dj-browser-layout.json"
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --browser-check \
+        --layout-file "${TMPDIR:-/tmp}/dj-browser-layout.json"
+    # And the next start reads them back: the check above leaves rail, text and zoom in the file, this
+    # run is a different process that must open the way the last one was left.
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --browser-restore-check \
+        --layout-file "${TMPDIR:-/tmp}/dj-browser-layout.json"
     # The arrangement must be the one the settings describe: a layout setting the shell silently
     # ignores is worse than none.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --layout traktor \

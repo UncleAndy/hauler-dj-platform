@@ -11,6 +11,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QTimer>
 
 class LayoutSettings : public QObject
 {
@@ -24,6 +25,13 @@ class LayoutSettings : public QObject
     Q_PROPERTY(double browserPercent READ browserPercent WRITE setBrowserPercent NOTIFY changed)
     Q_PROPERTY(double mixerPercent READ mixerPercent WRITE setMixerPercent NOTIFY changed)
     Q_PROPERTY(QString channelOrder READ channelOrder WRITE setChannelOrder NOTIFY changed)
+    // The browser's own numbers: how wide its rail of sections is and how large its text. They are
+    // view sizes like any other, so they live with the layout and not in the folder the engine owns.
+    Q_PROPERTY(int browserFont READ browserFont WRITE setBrowserFont NOTIFY changed)
+    Q_PROPERTY(int browserRailWidth READ browserRailWidth WRITE setBrowserRailWidth NOTIFY changed)
+    // Visible fraction of a track in a deck's main waveform. Zero means "the deck's own default", so a
+    // file that has never held a value still opens at the built-in zoom.
+    Q_PROPERTY(double waveformSpan READ waveformSpan WRITE setWaveformSpan NOTIFY changed)
     Q_PROPERTY(QString file READ file NOTIFY changed)
 
 public:
@@ -42,6 +50,13 @@ public:
     void setBrowserPercent(double percent);
     double mixerPercent() const { return m_mixerPercent; }
     void setMixerPercent(double percent);
+
+    int browserFont() const { return m_browserFont; }
+    void setBrowserFont(int pixels);
+    int browserRailWidth() const { return m_browserRailWidth; }
+    void setBrowserRailWidth(int pixels);
+    double waveformSpan() const { return m_waveformSpan; }
+    void setWaveformSpan(double span);
 
     // The order of channel strips in the mixer, left to right, e.g. "CABD".
     QString channelOrder() const { return m_channelOrder; }
@@ -64,6 +79,9 @@ private:
     // Clamp to what the shell can draw and keep the three row shares inside one window.
     void normalise();
 
+    // A dragged splitter emits a value per mouse move: the file is written once the hand stops.
+    void scheduleSave();
+
     QString m_preset = QStringLiteral("traktor");
     int m_deckRows = 2;
     double m_globalPercent = 8.0;
@@ -71,5 +89,9 @@ private:
     double m_browserPercent = 28.5;
     double m_mixerPercent = 14.5;
     QString m_channelOrder = QStringLiteral("CABD");
+    int m_browserFont = 11;
+    int m_browserRailWidth = 92;
+    double m_waveformSpan = 0.0;
+    QTimer *m_saveTimer = nullptr;
     QString m_file;
 };

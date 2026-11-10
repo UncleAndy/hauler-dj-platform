@@ -22,6 +22,22 @@ Item {
     readonly property real defaultSpan: 1.0 / Math.max(1.0, UiSettings.waveformZoom)
     property real zoomSpan: view.defaultSpan
 
+    // The zoom is a view setting, so it outlives the track: the deck opens at the scale it was left
+    // at. The guard matters because zoomSpan is initialised (and announced) before the saved value
+    // has been read, and an unguarded write would replace the saved span with the built-in one.
+    property bool zoomRestored: false
+    onZoomSpanChanged: {
+        if (view.zoomRestored) {
+            LayoutState.waveformSpan = view.zoomSpan;
+        }
+    }
+    Component.onCompleted: {
+        if (LayoutState.waveformSpan > 0) {
+            view.zoomSpan = LayoutState.waveformSpan;
+        }
+        view.zoomRestored = true;
+    }
+
     readonly property real columnsPerPixel: (envelope.buckets * zoomSpan) / Math.max(1, width)
     readonly property bool atEnvelopeLimit: columnsPerPixel < 1.0 && envelope.buckets > 0
 
