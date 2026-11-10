@@ -787,32 +787,51 @@ Pane {
             }
             Item { Layout.fillWidth: true }
             // Snap puts a loop point on the nearest line of the grid; quantize makes the loop end a whole
-            // number of beats after its start. Both are the DJ's switches, not the engine's policy.
-            Button {
+            // number of beats after its start. Both are the DJ's switches, and they wear the same colour
+            // as Loop when they are on: a switch has to look like a switch at a glance.
+            Rectangle {
                 objectName: "snap_" + panel.deckId
-                text: qsTr("snap")
-                font.pixelSize: 10
+                readonly property bool on: panel.snap
+                Layout.preferredWidth: snapLabel.implicitWidth + 12
                 Layout.preferredHeight: 20
-                checkable: true
-                checked: panel.snap
-                enabled: panel.live && panel.gridReady
-                focusPolicy: Qt.NoFocus
-                ToolTip.visible: hovered
-                ToolTip.text: qsTr("Put loop points on the beat grid")
-                onClicked: panel.snap = checked
+                radius: 2
+                color: on ? UiSettings.themeAccent : UiSettings.themeRaised
+                border.width: 1
+                border.color: UiSettings.themeBorder
+                Text {
+                    id: snapLabel
+                    anchors.centerIn: parent
+                    text: qsTr("snap")
+                    font.pixelSize: 10
+                    color: parent.on ? UiSettings.themeTextOnAccent : UiSettings.themeText
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    enabled: panel.live && panel.gridReady
+                    onClicked: panel.snap = !panel.snap
+                }
             }
-            Button {
+            Rectangle {
                 objectName: "quantize_" + panel.deckId
-                text: qsTr("quant")
-                font.pixelSize: 10
+                readonly property bool on: panel.quantize
+                Layout.preferredWidth: quantLabel.implicitWidth + 12
                 Layout.preferredHeight: 20
-                checkable: true
-                checked: panel.quantize
-                enabled: panel.live && panel.gridReady
-                focusPolicy: Qt.NoFocus
-                ToolTip.visible: hovered
-                ToolTip.text: qsTr("Make a loop a whole number of beats long")
-                onClicked: panel.quantize = checked
+                radius: 2
+                color: on ? UiSettings.themeAccent : UiSettings.themeRaised
+                border.width: 1
+                border.color: UiSettings.themeBorder
+                Text {
+                    id: quantLabel
+                    anchors.centerIn: parent
+                    text: qsTr("quant")
+                    font.pixelSize: 10
+                    color: parent.on ? UiSettings.themeTextOnAccent : UiSettings.themeText
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    enabled: panel.live && panel.gridReady
+                    onClicked: panel.quantize = !panel.quantize
+                }
             }
         }
 

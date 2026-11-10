@@ -60,6 +60,15 @@ const TEMPO_GLIDE_SECONDS: f64 = 0.03;
 /// rate change never allocates inside the callback.
 const MAX_TEMPO_BLOCK_FRAMES: usize = 8192;
 
+/// How long a step at the loop's seam is evened out, in frames.
+///
+/// A copy that jumps from the last frame of the loop to the first is a step: the material stops in the
+/// middle of a waveform and starts in the middle of another one, and the ear hears the step as a click.
+/// The fix is the oldest one in audio — the copy starts at the level the sound had a frame ago and walks
+/// to its own level over two milliseconds. Not a crossfade: nothing is repeated, the loop keeps its
+/// length, and the correction decays to nothing.
+const LOOP_DECLICK_FRAMES: usize = 96;
+
 /// Where a deck reads frames from. Implemented by the prefetcher; tests provide their own.
 pub trait DeckSource: Send {
     /// Sample rate of the material.
@@ -248,6 +257,11 @@ pub struct Deck {
     loop_buffer: Option<LoopBuffer>,
     /// True while the playhead reads the captured loop instead of the source.
     reading_loop_buffer: bool,
+    /// Frames left of the seam correction, and the step it is even out, per channel.
+    declick_left: usize,
+    declick_step: [f32; 2],
+    /// The last frame this deck put out, so a copy can start where the sound was instead of jumping.
+    last_out: [f32; 2],
     /// Where the captured buffer stops being used after the loop was switched off: the playhead keeps
     /// reading the copy it is in the middle of until it reaches this frame, and the decoder — which sits
     /// exactly there — takes over. That is the only way to leave a loop without a click.
@@ -344,6 +358,9 @@ impl Deck {
             loop_buffer: None,
             reading_loop_buffer: false,
             drain_until: None,
+            declick_left: 0,
+            declick_step: [0.0; 2],
+            last_out: [0.0; 2],
             eq: ChannelEq::new(EQ_SAMPLE_RATE),
             output_rate: EQ_SAMPLE_RATE as u32,
             rate_ratio: 1.0,
@@ -1227,6 +1244,13 @@ impl Deck {
             self.render_keylocked(out);
         }
 
+        // What the material ended on, before any gain or EQ: the seam correction is a correction of the
+        // material, and mixing the two domains would compare a quiet frame with a loud one.
+        if let Some(last) = out.len().checked_sub(2)
+            && out.len() >= 2
+        {
+            self.last_out = [out[last], out[last + 1]];
+        }
         // Trim, then the measured correction: both are gain staging before the EQ, and neither one is
         // visible on the knob.
         let staging = self.gain * self.auto_gain;
@@ -1480,7 +1504,12 @@ impl Deck {
                         .as_ref()
                         .is_some_and(LoopBuffer::is_complete);
                 if buffered {
-                    // Nothing to ask the decoder: the loop is in memory from here on.
+                    // Nothing to ask the decoder: the loop is in memory from here on. The first frame
+                    // of the copy is a step from the last decoded frame, and it is evened out the same
+                    // way every wrap is.
+                    // Entering the copy is not corrected: it happens once, when the loop is made, and a
+                    // DJ expects the cut there — the sound must also stay exactly where it was when a
+                    // loop is saved or activated. The correction belongs to the wrap that repeats.
                     self.reading_loop_buffer = true;
                 } else {
                     let target = self.read_at(region.start.0);
@@ -1546,13 +1575,49 @@ impl Deck {
         }
         let take = want.min(frames - offset);
         out[..take * 2].copy_from_slice(&buffer.data[offset * 2..(offset + take) * 2]);
+        // A copy that is being drained (the loop was switched off) must come out exactly as it was
+        // recorded: the correction belongs to a seam that repeats, not to the last pass.
+        if !wrapping {
+            self.declick_left = 0;
+        }
+        // The seam: the copy starts where the material is, but the sound was somewhere else a frame ago.
+        // The correction walks the first two milliseconds from that somewhere else to the copy's own
+        // level, so nothing steps.
+        for index in 0..take {
+            if self.declick_left == 0 {
+                break;
+            }
+            let share = self.declick_left as f32 / LOOP_DECLICK_FRAMES as f32;
+            out[index * 2] += self.declick_step[0] * share;
+            out[index * 2 + 1] += self.declick_step[1] * share;
+            self.declick_left -= 1;
+        }
         self.position += take as u64;
         heard += take as u64;
         if wrapping && heard >= end {
             self.position = self.read_at(start);
             self.stats.loop_wraps += 1;
+            // The next frame out is the loop's first, and the one before it was the loop's last.
+            let frames_of_loop = usize::try_from(buffer.frames()).unwrap_or(0);
+            if frames_of_loop > 0 {
+                let tail = (frames_of_loop - 1) * 2;
+                self.arm_declick(
+                    [buffer.data[tail], buffer.data[tail + 1]],
+                    [buffer.data[0], buffer.data[1]],
+                );
+            }
         }
         Some(take)
+    }
+
+    /// Arm the seam correction from the copy's own tail: `tail` is its last frame, `head` its first.
+    ///
+    /// The reference is the loop's last frame, not the last frame that happened to leave the deck: both
+    /// the wrap and the first entry into the copy jump from that tail, and taking it from the material
+    /// keeps the correction right even when the block in between was cut short.
+    fn arm_declick(&mut self, tail: [f32; 2], head: [f32; 2]) {
+        self.declick_step = [tail[0] - head[0], tail[1] - head[1]];
+        self.declick_left = LOOP_DECLICK_FRAMES;
     }
 
     /// Read-only state for displays and the UI (fields ordered by display priority, ADR-0006).

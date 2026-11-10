@@ -3246,6 +3246,17 @@ int main(int argc, char *argv[])
         const auto loopRegion = [&]() {
             return deckA().value(QStringLiteral("loop_region")).toMap();
         };
+        // A Rectangle with a MouseArea has no `clicked` signal: the press is a mouse event at its centre.
+        const auto clickAt = [](QQuickItem *item) {
+            const QPointF centre = item->mapToScene(QPointF(item->width() / 2.0, item->height() / 2.0));
+            QMouseEvent press(QEvent::MouseButtonPress, centre, centre, Qt::LeftButton,
+                              Qt::LeftButton, Qt::NoModifier);
+            QMouseEvent release(QEvent::MouseButtonRelease, centre, centre, Qt::LeftButton,
+                                Qt::NoButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(item->window(), &press);
+            QCoreApplication::sendEvent(item->window(), &release);
+            QCoreApplication::processEvents();
+        };
         const auto click = [&](const QString &name) {
             auto *item = findItem(window->contentItem(), name);
             if (item == nullptr) {
@@ -3352,12 +3363,64 @@ int main(int argc, char *argv[])
             return 1;
         }
         const auto snappedBeats = static_cast<qint64>(std::llround(beats));
+        // The switches are the DJ's: turned off, the very same pair must land where the hand was and not
+        // on the grid. A switch that only looks lit is worse than none.
+        auto *snapSwitch = findItem(window->contentItem(), QStringLiteral("snap_A"));
+        auto *quantSwitch = findItem(window->contentItem(), QStringLiteral("quantize_A"));
+        if (snapSwitch == nullptr || quantSwitch == nullptr) {
+            std::fprintf(stderr, "dj-ui: no snap or quantize switch\n");
+            return 1;
+        }
+        if (!snapSwitch->property("on").toBool() || !quantSwitch->property("on").toBool()) {
+            std::fprintf(stderr, "dj-ui: the switches do not start on\n");
+            return 1;
+        }
+        clickAt(snapSwitch);
+        clickAt(quantSwitch);
+        if (snapSwitch->property("on").toBool() || quantSwitch->property("on").toBool()) {
+            std::fprintf(stderr, "dj-ui: the switches did not turn off\n");
+            return 1;
+        }
         // Clear it, so the size loop below is not refused for crossing this one.
         bridge->setLoop(QStringLiteral("A"), false, 0, 0);
         if (!waitFor([&]() { return loopStart() < 0; }, 5000)) {
             std::fprintf(stderr, "dj-ui: the loop outlived the clear\n");
             return 1;
         }
+        const qint64 rawFrom = anchor + static_cast<qint64>(period * 2.3) + 211;
+        const qint64 rawTo = anchor + static_cast<qint64>(period * 5.7) - 173;
+        if (!seekTo(rawFrom)) {
+            return 1;
+        }
+        if (!pressLoop()) {
+            return 1;
+        }
+        if (!seekTo(rawTo)) {
+            return 1;
+        }
+        if (!pressLoop()) {
+            return 1;
+        }
+        if (!waitFor([&]() { return loopStart() >= 0; }, 5000)) {
+            std::fprintf(stderr, "dj-ui: the two presses with the switches off made no loop\n");
+            return 1;
+        }
+        const qint64 rawStart = loopStart();
+        if (onGrid(rawStart)) {
+            std::fprintf(stderr,
+                         "dj-ui: the loop snapped to %lld with snap and quantize off — the switches do "
+                         "nothing\n",
+                         rawStart);
+            return 1;
+        }
+        const qint64 rawEnd = loopRegion().value(QStringLiteral("end")).toLongLong();
+        bridge->setLoop(QStringLiteral("A"), false, 0, 0);
+        if (!waitFor([&]() { return loopStart() < 0; }, 5000)) {
+            return 1;
+        }
+        // Back on for the rest of the check, as a deck starts.
+        clickAt(snapSwitch);
+        clickAt(quantSwitch);
         const auto four = static_cast<qint64>(std::llround(4.0 * period));
         if (!click(QStringLiteral("loopSize_A_4"))) {
             return 1;
@@ -3430,9 +3493,10 @@ int main(int argc, char *argv[])
                      "dj-ui: a four beat loop is %lld frames of the grid (a beat is %.1f), it starts on a "
                      "beat at frame %lld, and one press of the arrow moved it %.1f frames without "
                      "changing its length; two presses off the grid snapped to %lld..%lld (%lld whole "
-                     "beats), the size loop lit the Loop button, and a press inside it put the mode out\n",
+                     "beats), with the switches off the same pair landed on %lld (%s the grid), the size "
+                     "loop lit the Loop button, and a press inside it put the mode out\n",
                      four, period, start, static_cast<double>(beatStep), snappedStart, snappedEnd,
-                     snappedBeats);
+                     snappedBeats, rawStart, onGrid(rawStart) ? "on" : "off");
         return 0;
     }
 

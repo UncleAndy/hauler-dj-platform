@@ -198,6 +198,9 @@ fn saving_a_playing_loop_on_a_pad_keeps_the_sound_where_it_is() {
 
     let mut after = vec![0.0f32; 1_000 * 2];
     deck.render(&mut after);
+    // The wrap is where the deck evens out the step of the seam (two milliseconds, DJP-DECK-005): the
+    // copy is the material everywhere else, and at the seam itself it must not step.
+    let seam = 2_000u64.saturating_sub(1_400) as usize;
     for frame in 0..1_000usize {
         let position = 1_400 + frame as u64;
         let wrapped = if position < 2_000 {
@@ -206,11 +209,23 @@ fn saving_a_playing_loop_on_a_pad_keeps_the_sound_where_it_is() {
             1_000 + (position - 2_000)
         };
         let expected = ramp(wrapped);
+        if (seam..seam + 96).contains(&frame) {
+            continue;
+        }
         assert!(
             (after[frame * 2] - expected).abs() < 1e-6,
             "frame {frame}: saving the loop moved the sound, expected {expected}, got {}",
             after[frame * 2]
         );
+    }
+    let mut previous = after[(seam - 1) * 2];
+    for frame in seam..(seam + 96).min(1_000) {
+        let step = (after[frame * 2] - previous).abs();
+        assert!(
+            step < 0.01,
+            "frame {frame}: the seam steps by {step:.4} — the copy is cut, not joined"
+        );
+        previous = after[frame * 2];
     }
     assert_eq!(
         deck.stats().seeks,
@@ -888,6 +903,50 @@ fn a_loop_that_would_cross_another_one_is_not_put_in_force() {
     assert_eq!(
         deck.loop_region().map(|region| region.start.0),
         Some(200_000)
+    );
+}
+
+#[test]
+fn the_seam_of_a_loop_does_not_click() {
+    // A loop that does not meet itself: one and a half periods of a 440 Hz tone, so the copy jumps from
+    // the crest to the trough — half a volt in one frame, which the ear hears as a click on the seam.
+    // The deck evens the step out over two milliseconds, so the worst jump it puts out is a normal one.
+    let mut deck = tone_deck(4_000_000);
+    // The seam is the copy's own business: with the key locked, the stretcher's latency would put three
+    // thousand frames of silence in front of the material and its windows would smear the step anyway.
+    deck.set_keylock(false);
+    let period = 48_000.0 / 440.0;
+    let start = 1_000u64;
+    let end = start + (period * 1.5) as u64;
+    let Some(region) = FrameRange::new(start, end) else {
+        panic!("a loop of one and a half periods must be a valid region");
+    };
+    deck.set_loop(Some(region));
+    deck.seek(start);
+    deck.play();
+    let mut block = vec![0.0f32; 256 * 2];
+    let mut all = Vec::new();
+    // Three passes of the loop: the seam twice, and the copy in force by then. The first two blocks are
+    // the start of playback — a step from silence that is not the seam — so they are not measured.
+    for index in 0..64 {
+        deck.render(&mut block);
+        // The first blocks are the start of playback: a step from silence, not the seam.
+        if index >= 2 {
+            all.extend_from_slice(&block);
+        }
+    }
+    assert!(
+        deck.loop_is_buffered(),
+        "the loop must be playing from its copy"
+    );
+    assert!(
+        deck.stats().loop_wraps >= 2,
+        "the check needs a seam to look at"
+    );
+    let worst = biggest_step(&all);
+    assert!(
+        worst < 0.2,
+        "the seam steps by {worst:.3} — that is the click"
     );
 }
 
