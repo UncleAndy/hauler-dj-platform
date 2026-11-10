@@ -6744,6 +6744,11 @@ int main(int argc, char *argv[])
         }
         const double held_at = frameOf(QStringLiteral("B"));
         const double needle_held = needle->x();
+        const auto phaseOfB = [&]() {
+            const QVariant phase = deckOf(QStringLiteral("B")).value(QStringLiteral("phase_error_ms"));
+            return phase.isValid() ? phase.toDouble() : 0.0;
+        };
+        const double phase_held = phaseOfB();
         QElapsedTimer creep;
         creep.start();
         while (creep.elapsed() < 1200) {
@@ -6758,10 +6763,21 @@ int main(int argc, char *argv[])
                          held_after - held_at);
             return 1;
         }
-        if (std::abs(needle_after_stop - needle_held) > 1.0) {
+        // A stopped deck says where its head stands, and the number moves while the master plays: the
+        // head stays, the distance does not. A meter that parks in the centre over a deck a beat and a
+        // half off reads as "aligned", which is worse than no meter at all.
+        const double phase_after_stop = phaseOfB();
+        if (std::abs(phase_after_stop - phase_held) < 5.0) {
             std::fprintf(stderr,
-                         "dj-ui: the needle moved %.1f px over a stopped deck\n",
-                         needle_after_stop - needle_held);
+                         "dj-ui: a stopped deck reported %.3f ms before and %.3f ms after the master "
+                         "played on\n",
+                         phase_held, phase_after_stop);
+            return 1;
+        }
+        if (std::abs(needle_after_stop - needle_held) < 1.0) {
+            std::fprintf(stderr,
+                         "dj-ui: the needle did not follow a stopped deck's distance (%.1f -> %.1f)\n",
+                         needle_held, needle_after_stop);
             return 1;
         }
 
@@ -6913,12 +6929,13 @@ int main(int argc, char *argv[])
 
         std::fprintf(stdout,
                      "dj-ui: sync — MASTER on A and SYNC on B put the follower on the beat (phase %.3f "
-                     "ms), a stopped follower held its head at %.0f frames for 1,2 s while the needle "
-                     "stood still, one beat along the bar (%.3f beats) moved the needle %.0f px off "
-                     "centre, and putting the master down cleared the mode while the deck kept its "
-                     "speed %.9f and played %.0f frames on\n",
-                     phase_playing, held_at, bar_along, offCentre, ratio_after,
-                     head_later - head_at_release);
+                     "ms), a stopped follower held its head at %.0f frames for 1,2 s while its "
+                     "distance from the master went %.3f -> %.3f ms and the needle followed it, one beat "
+                     "along the bar (%.3f beats) moved the needle %.0f px off centre, and putting the "
+                     "master down cleared the mode while the deck kept its speed %.9f and played %.0f "
+                     "frames on\n",
+                     phase_playing, held_at, phase_held, phase_after_stop, bar_along, offCentre,
+                     ratio_after, head_later - head_at_release);
         return 0;
     }
 

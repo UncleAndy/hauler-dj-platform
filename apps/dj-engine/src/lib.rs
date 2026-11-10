@@ -618,12 +618,11 @@ pub fn fill_phase_errors(decks: &mut [DeckSnapshot], beats_per_bar: u8) {
         if index == master_index || deck.sync.is_off() {
             continue;
         }
-        // A deck that stands still has no phase to report: its beat is a place, not a position in time,
-        // and the distance to a master that keeps playing grows every block. Publishing that number
-        // would make the meter sweep over a deck nobody is playing, which is a clock, not a phase.
-        if !deck.playing {
-            continue;
-        }
+        // A deck that stands still publishes its distance too, and the number moves as the master plays:
+        // that is what it means. "Where the head stands against the master's beat right now" is the
+        // question a hand asks before pressing play, and a meter parked in the centre answers it wrongly
+        // — it reads as "aligned" over a deck that is a beat and a half off. The loop never acts on this
+        // number for a stopped deck; it is a reading, not an instruction.
         if let Some((beat, _)) = beat_of(deck) {
             deck.phase_error_ms =
                 Some(dj_sync::error_beats(Phase::of(beat), master_phase) * 60_000.0 / master_bpm);

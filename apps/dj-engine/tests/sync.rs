@@ -590,3 +590,46 @@ fn a_lone_deck_does_not_lead_itself() {
     assert_eq!(decks[0].position(), frames);
     assert!((decks[0].tempo_ratio() - 1.0).abs() < 1e-12);
 }
+
+#[test]
+fn a_stopped_follower_still_says_where_its_head_stands() {
+    // A deck that is not playing has no position in time, but it has a place: the distance from its head
+    // to the master's beat is what a hand asks before pressing play. So it is published, and it moves
+    // with the master while the head itself stays where it was left.
+    let seeks = Arc::new(AtomicU32::new(0));
+    let mut decks = vec![
+        deck_with_grid(DeckId::A, 120.0, 0, Arc::clone(&seeks)),
+        deck_with_grid(DeckId::B, 120.0, 0, Arc::clone(&seeks)),
+    ];
+    decks[0].play();
+    decks[1].seek(48_000);
+    let mut mixer = mixer();
+    lock_b_to_a(&mut decks, &mut mixer);
+    let mut memory = SyncMemory::default();
+    sync_step(&mut decks, &mut memory, STEP_SECONDS);
+
+    let head = decks[1].position();
+    let read = |decks: &[Deck]| {
+        let state = dj_engine::snapshot(decks, &mixer, 1, 0, RATE, 1);
+        state
+            .decks
+            .iter()
+            .find(|deck| deck.deck == DeckId::B)
+            .and_then(|deck| deck.phase_error_ms)
+            .expect("a stopped follower still says where it stands")
+    };
+    let first = read(&decks);
+    // The master moves a quarter of a beat on: 6000 frames at 120 BPM.
+    let master_head = decks[0].position();
+    decks[0].seek(master_head + 6_000);
+    let second = read(&decks);
+    println!(
+        "stopped follower: {first:.3} ms then {second:.3} ms, head {head} -> {}",
+        decks[1].position()
+    );
+    assert!(
+        (second - first).abs() > 100.0,
+        "the distance moves with the master: {first:.3} then {second:.3}"
+    );
+    assert_eq!(decks[1].position(), head, "and the head itself stays put");
+}

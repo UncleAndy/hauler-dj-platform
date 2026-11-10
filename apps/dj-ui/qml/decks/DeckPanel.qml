@@ -659,9 +659,9 @@ Pane {
                 // distance in pixels.
                 Item {
                     objectName: "phaseMeter_" + panel.deckId
-                    // Shown while a mode is on, with or without a phase: a deck that stands still
-                    // publishes no distance, and the needle parks in the centre rather than the meter
-                    // vanishing and taking the deck's state with it.
+                    // Shown while a mode is on. A deck that stands still still has a distance to the
+                    // master's beat, and it moves with the master: the needle says where this head would
+                    // land if the deck were started now.
                     visible: panel.deck !== null && panel.syncMode !== "off"
                     Layout.preferredWidth: 72
                     Layout.preferredHeight: 12
@@ -702,8 +702,9 @@ Pane {
                     ToolTip.visible: hovered
                     // Sync holds the beat; which beat of the bar the deck stands on is the DJ's call,
                     // so the bar is shown and not forced (owner's decision, 2026-11-10).
-                    ToolTip.text: qsTr("%1 ms from the master's beat, %2 beats along the bar — sync "
-                                       + "holds the beat, the bar is yours")
+                    ToolTip.text: panel.playing
+                                  ? qsTr("%1 ms from the master's beat, %2 beats along the bar — sync holds the beat, the bar is yours")
+                                  : qsTr("This head would land %1 ms from the master's beat, %2 beats along the bar — start it to take the beat")
                                       .arg(panel.phaseMs.toFixed(1))
                                       .arg(panel.barErrorBeats.toFixed(2))
                 }
