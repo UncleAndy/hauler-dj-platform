@@ -4,11 +4,12 @@
 //! measured here is the code that runs in the engine, not a copy of its arithmetic.
 #![allow(clippy::expect_used)]
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+
 use dj_deck::Deck;
-use dj_domain::{
-    AckStatus, BeatGrid, DeckId, DjCommand, ScheduledCommand, SourceFrame, SyncMode, TrackMeta,
-};
-use dj_engine::{apply, sync_step};
+use dj_domain::{AckStatus, BeatGrid, DeckId, DjCommand, ScheduledCommand, SyncMode, TrackMeta};
+use dj_engine::{SyncMemory, apply, sync_step};
 use dj_mixer::{ChannelSettings, CrossAssign, Mixer};
 
 const RATE: u32 = 48_000;
@@ -16,8 +17,13 @@ const RATE: u32 = 48_000;
 const STEP_SECONDS: f64 = 8.0 * 256.0 / 48_000.0;
 
 /// A deck playing a tone, with a grid, so it has a beat to follow and a tempo to match.
-fn deck_with_grid(id: DeckId, bpm: f64, first_beat: u64) -> Deck {
-    struct Tone;
+///
+/// `seeks` counts what the deck asked its source for: a jump is the sync loop's only reason to seek, so
+/// the counter is how a test tells "one correction" from "a seek every step".
+fn deck_with_grid(id: DeckId, bpm: f64, first_beat: u64, seeks: Arc<AtomicU32>) -> Deck {
+    struct Tone {
+        seeks: Arc<AtomicU32>,
+    }
     impl dj_deck::DeckSource for Tone {
         fn sample_rate(&self) -> u32 {
             RATE
@@ -31,13 +37,18 @@ fn deck_with_grid(id: DeckId, bpm: f64, first_beat: u64) -> Deck {
             Ok(take)
         }
         fn seek(&mut self, frame: u64) -> Result<u64, String> {
+            self.seeks.fetch_add(1, Ordering::Relaxed);
+            Ok(frame)
+        }
+        fn request_seek(&mut self, frame: u64) -> Result<u64, String> {
+            self.seeks.fetch_add(1, Ordering::Relaxed);
             Ok(frame)
         }
     }
     let grid = BeatGrid::single(bpm, first_beat).expect("a grid of one tempo");
     let mut deck = Deck::new(id);
     deck.attach(
-        Box::new(Tone),
+        Box::new(Tone { seeks }),
         Some(TrackMeta {
             title: String::from("Tone"),
             artist: String::new(),
@@ -114,16 +125,18 @@ fn phase_of(deck: &Deck) -> f64 {
 
 #[test]
 fn a_follower_takes_the_master_s_tempo() {
+    let seeks = Arc::new(AtomicU32::new(0));
     let mut decks = vec![
-        deck_with_grid(DeckId::A, 128.0, 0),
-        deck_with_grid(DeckId::B, 120.0, 0),
+        deck_with_grid(DeckId::A, 128.0, 0, Arc::clone(&seeks)),
+        deck_with_grid(DeckId::B, 120.0, 0, Arc::clone(&seeks)),
     ];
     let mut mixer = mixer();
     lock_b_to_a(&mut decks, &mut mixer);
 
     // Two seconds of control ticks: the trim allows four percent a second, and the move is 6.67 %.
+    let mut memory = SyncMemory::default();
     for _ in 0..50 {
-        sync_step(&mut decks, STEP_SECONDS);
+        sync_step(&mut decks, &mut memory, STEP_SECONDS);
     }
     let ratio = decks[1].tempo_ratio();
     println!("follower ratio after two seconds: {ratio:.9}");
@@ -137,17 +150,23 @@ fn a_follower_takes_the_master_s_tempo() {
 
 #[test]
 fn beat_sync_puts_the_follower_on_the_master_s_beat() {
+    let seeks = Arc::new(AtomicU32::new(0));
     let mut decks = vec![
-        deck_with_grid(DeckId::A, 128.0, 0),
-        deck_with_grid(DeckId::B, 120.0, 0),
+        deck_with_grid(DeckId::A, 128.0, 0, Arc::clone(&seeks)),
+        deck_with_grid(DeckId::B, 120.0, 0, Arc::clone(&seeks)),
     ];
+    let master_seeks = Arc::clone(&seeks);
+    // The master is running: a beat that stands still is not a beat to move onto.
+    decks[0].play();
     // A quarter of a beat ahead of the master: 6000 frames at 120 BPM and 48 kHz.
     decks[1].seek(6_000);
     assert!((phase_of(&decks[1]) - 0.25).abs() < 1e-9);
     let mut mixer = mixer();
     lock_b_to_a(&mut decks, &mut mixer);
+    let before = master_seeks.load(Ordering::Relaxed);
 
-    sync_step(&mut decks, STEP_SECONDS);
+    let mut memory = SyncMemory::default();
+    sync_step(&mut decks, &mut memory, STEP_SECONDS);
 
     let master = phase_of(&decks[0]);
     let follower = phase_of(&decks[1]);
@@ -160,13 +179,82 @@ fn beat_sync_puts_the_follower_on_the_master_s_beat() {
         apart_ms.abs() < 1.0,
         "after one step the follower stands {apart_ms:.3} ms from the master"
     );
+    assert_eq!(
+        master_seeks.load(Ordering::Relaxed) - before,
+        1,
+        "one correction is one seek"
+    );
+}
+
+#[test]
+fn a_stopped_master_sets_the_tempo_but_never_drags_the_beat_back() {
+    // The defect this test exists for: a paused master stands still, so a follower pulled onto its beat
+    // is pulled back every step. Four seeks a second leave a deck reading from disk permanently silent
+    // — the sound never arrives because the buffer is dropped before it can be played.
+    let seeks = Arc::new(AtomicU32::new(0));
+    let master_seeks = Arc::clone(&seeks);
+    let mut decks = vec![
+        deck_with_grid(DeckId::A, 128.0, 0, Arc::clone(&seeks)),
+        deck_with_grid(DeckId::B, 120.0, 0, Arc::clone(&seeks)),
+    ];
+    // A is the master and it is paused; B follows.
+    decks[1].seek(6_000);
+    let mut mixer = mixer();
+    lock_b_to_a(&mut decks, &mut mixer);
+    let before = master_seeks.load(Ordering::Relaxed);
+
+    let mut memory = SyncMemory::default();
+    for _ in 0..50 {
+        sync_step(&mut decks, &mut memory, STEP_SECONDS);
+    }
+    let made = master_seeks.load(Ordering::Relaxed) - before;
+    println!(
+        "stopped master: {made} seeks over fifty steps, follower ratio {:.6}",
+        decks[1].tempo_ratio()
+    );
+    assert_eq!(made, 0, "a beat that does not move is not a beat to follow");
+    assert!(
+        (decks[1].tempo_ratio() - 128.0 / 120.0).abs() < 1e-6,
+        "the tempo is still the master's: {} ",
+        decks[1].tempo_ratio()
+    );
+}
+
+#[test]
+fn one_jump_lands_before_another_is_asked_for() {
+    // A jump is a seek, and a seek on a deck reading from disk is silence until the decoder catches up.
+    // Asking again inside that window keeps the deck silent for as long as the loop runs.
+    let seeks = Arc::new(AtomicU32::new(0));
+    let counter = Arc::clone(&seeks);
+    let mut decks = vec![
+        deck_with_grid(DeckId::A, 128.0, 0, Arc::clone(&seeks)),
+        deck_with_grid(DeckId::B, 120.0, 0, Arc::clone(&seeks)),
+    ];
+    decks[0].play();
+    decks[1].play();
+    decks[1].seek(6_000);
+    let mut mixer = mixer();
+    lock_b_to_a(&mut decks, &mut mixer);
+    let before = counter.load(Ordering::Relaxed);
+
+    let mut memory = SyncMemory::default();
+    for _ in 0..50 {
+        sync_step(&mut decks, &mut memory, STEP_SECONDS);
+    }
+    let made = counter.load(Ordering::Relaxed) - before;
+    println!("jumps over fifty steps: {made}");
+    assert_eq!(
+        made, 1,
+        "the first jump stands the deck on the beat; the rest hold it there"
+    );
 }
 
 #[test]
 fn sync_off_leaves_the_follower_alone() {
+    let seeks = Arc::new(AtomicU32::new(0));
     let mut decks = vec![
-        deck_with_grid(DeckId::A, 128.0, 0),
-        deck_with_grid(DeckId::B, 120.0, 0),
+        deck_with_grid(DeckId::A, 128.0, 0, Arc::clone(&seeks)),
+        deck_with_grid(DeckId::B, 120.0, 0, Arc::clone(&seeks)),
     ];
     let mut mixer = mixer();
     // A master but no follower: nothing is asked of B.
@@ -176,8 +264,9 @@ fn sync_off_leaves_the_follower_alone() {
         &command(1, DjCommand::Master { deck: DeckId::A }),
         0,
     );
+    let mut memory = SyncMemory::default();
     for _ in 0..50 {
-        sync_step(&mut decks, STEP_SECONDS);
+        sync_step(&mut decks, &mut memory, STEP_SECONDS);
     }
     assert!(
         (decks[1].tempo_ratio() - 1.0).abs() < 1e-12,
@@ -190,23 +279,26 @@ fn sync_off_leaves_the_follower_alone() {
 fn a_tempo_the_fader_cannot_reach_leaves_the_follower_at_its_own_speed() {
     // 150 against 120 needs 25 %, and the fader allows 16: the deck keeps its speed rather than
     // stopping at the edge, and the phase meter is left to show the distance.
+    let seeks = Arc::new(AtomicU32::new(0));
     let mut decks = vec![
-        deck_with_grid(DeckId::A, 150.0, 0),
-        deck_with_grid(DeckId::B, 120.0, 0),
+        deck_with_grid(DeckId::A, 150.0, 0, Arc::clone(&seeks)),
+        deck_with_grid(DeckId::B, 120.0, 0, Arc::clone(&seeks)),
     ];
     let mut mixer = mixer();
     lock_b_to_a(&mut decks, &mut mixer);
+    let mut memory = SyncMemory::default();
     for _ in 0..50 {
-        sync_step(&mut decks, STEP_SECONDS);
+        sync_step(&mut decks, &mut memory, STEP_SECONDS);
     }
     assert!((decks[1].tempo_ratio() - 1.0).abs() < 1e-12);
 }
 
 #[test]
 fn one_deck_leads_at_a_time() {
+    let seeks = Arc::new(AtomicU32::new(0));
     let mut decks = vec![
-        deck_with_grid(DeckId::A, 128.0, 0),
-        deck_with_grid(DeckId::B, 120.0, 0),
+        deck_with_grid(DeckId::A, 128.0, 0, Arc::clone(&seeks)),
+        deck_with_grid(DeckId::B, 120.0, 0, Arc::clone(&seeks)),
     ];
     let mut mixer = mixer();
     apply(
@@ -228,15 +320,18 @@ fn one_deck_leads_at_a_time() {
 
 #[test]
 fn the_snapshot_says_who_leads_and_how_far_apart_the_beats_stand() {
+    let seeks = Arc::new(AtomicU32::new(0));
     let mut decks = vec![
-        deck_with_grid(DeckId::A, 128.0, 0),
-        deck_with_grid(DeckId::B, 120.0, 0),
+        deck_with_grid(DeckId::A, 128.0, 0, Arc::clone(&seeks)),
+        deck_with_grid(DeckId::B, 120.0, 0, Arc::clone(&seeks)),
     ];
+    decks[0].play();
     decks[1].seek(6_000);
     let mut mixer = mixer();
     lock_b_to_a(&mut decks, &mut mixer);
+    let mut memory = SyncMemory::default();
     for _ in 0..50 {
-        sync_step(&mut decks, STEP_SECONDS);
+        sync_step(&mut decks, &mut memory, STEP_SECONDS);
     }
 
     let state = dj_engine::snapshot(&decks, &mixer, 1, 0, RATE, 1);
@@ -268,10 +363,10 @@ fn the_snapshot_says_who_leads_and_how_far_apart_the_beats_stand() {
 fn the_deck_state_survives_a_command_round_trip() {
     // The mode is a deck's own state, so it comes back in the deck's snapshot even when nothing else
     // changed: a button that draws a mode the deck forgot would be a lit button over silence.
-    let mut deck = deck_with_grid(DeckId::B, 120.0, 0);
+    let seeks = Arc::new(AtomicU32::new(0));
+    let mut deck = deck_with_grid(DeckId::B, 120.0, 0, seeks);
     deck.set_sync(SyncMode::Tempo);
     assert_eq!(deck.snapshot().sync, SyncMode::Tempo);
     deck.set_sync(SyncMode::Off);
     assert_eq!(deck.snapshot().sync, SyncMode::Off);
-    let _ = SourceFrame(0);
 }

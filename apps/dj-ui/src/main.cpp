@@ -6679,6 +6679,85 @@ int main(int argc, char *argv[])
             return 1;
         }
 
+        // Sound, not only numbers. A follow that keeps the deck silent looks perfect in a snapshot and
+        // is useless in a mix. The meter is a peak that decays between the hits of a drum loop, so it has
+        // to be watched over a window: one reading in a gap says nothing about a deck.
+        const auto peakOf = [&](const QString &id) {
+            return deckOf(id)
+                .value(QStringLiteral("levels"))
+                .toMap()
+                .value(QStringLiteral("peak_left"))
+                .toDouble();
+        };
+        const auto loudestOver = [&](const QString &id, int budget_ms) {
+            double loudest = 0.0;
+            QElapsedTimer window;
+            window.start();
+            while (window.elapsed() < budget_ms) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                loudest = std::max(loudest, peakOf(id));
+                QThread::msleep(10);
+            }
+            return loudest;
+        };
+
+        // The follower first, alone: a deck that cannot sound on its own makes the rest of this stage
+        // measure nothing. The master has not played yet, so this is the deck and nothing else.
+        bridge->play(QStringLiteral("B"), true);
+        const double bare = loudestOver(QStringLiteral("B"), 2500);
+        if (bare <= 0.01) {
+            std::fprintf(stderr,
+                         "dj-ui: the follower makes no sound on its own (deck peak %.4f)\n",
+                         bare);
+            return 1;
+        }
+        bridge->play(QStringLiteral("A"), true);
+        const double master_heard = loudestOver(QStringLiteral("A"), 2500);
+        if (master_heard <= 0.01) {
+            std::fprintf(stderr, "dj-ui: the master makes no sound (deck peak %.4f)\n", master_heard);
+            return 1;
+        }
+        const double rate_b = deckOf(QStringLiteral("B")).value(QStringLiteral("source_rate")).toDouble();
+        const double heard_before = deckOf(QStringLiteral("B")).value(QStringLiteral("source_frame")).toDouble();
+        // The master stops. Its beat stands still, so anything that keeps jumping onto it asks for a seek
+        // every step — and a deck asked to seek that often never gets its material read. That is the
+        // defect this stage exists for: the follower stayed on the beat and made no sound.
+        bridge->play(QStringLiteral("A"), false);
+        const bool stopped = waitFor(
+            [&]() {
+                return !deckOf(QStringLiteral("A")).value(QStringLiteral("playing")).toBool();
+            },
+            5000);
+        if (!stopped) {
+            std::fprintf(stderr, "dj-ui: the master would not stop\n");
+            return 1;
+        }
+        const double heard_after_stop = loudestOver(QStringLiteral("B"), 1500);
+        const double heard_after = deckOf(QStringLiteral("B")).value(QStringLiteral("source_frame")).toDouble();
+        const double travelled = heard_after - heard_before;
+        if (heard_after_stop <= 0.01 || travelled < 0.5 * rate_b) {
+            std::fprintf(stderr,
+                         "dj-ui: with the master stopped the follower went quiet (deck peak %.4f, %.0f "
+                         "frames in 1,5 s)\n",
+                         heard_after_stop, travelled);
+            return 1;
+        }
+
+        // The master plays again before the meter is used as a control arm: against a stopped beat the
+        // follower drifts away by itself, and twenty milliseconds added to a distance that is already
+        // unknown measures the drift, not the needle.
+        bridge->play(QStringLiteral("A"), true);
+        const bool realigned = waitFor(
+            [&]() {
+                const QVariant phase = deckOf(QStringLiteral("B")).value(QStringLiteral("phase_error_ms"));
+                return phase.isValid() && std::abs(phase.toDouble()) < 2.0;
+            },
+            8000);
+        if (!realigned) {
+            std::fprintf(stderr, "dj-ui: the follower did not come back onto the master's beat\n");
+            return 1;
+        }
+
         // Tempo only: the deck follows the speed and keeps its own beat. That is also the control arm
         // for the meter — with the beat left alone, a deck moved twenty milliseconds off shows a needle
         // twenty milliseconds off, so a needle wired to the centre cannot pass this.
@@ -6730,11 +6809,23 @@ int main(int argc, char *argv[])
             return 1;
         }
 
+        // Both decks back to quiet: the next check loads its own file, and a deck that is still playing
+        // does not take a load.
+        bridge->play(QStringLiteral("A"), false);
+        bridge->play(QStringLiteral("B"), false);
+        waitFor(
+            [&]() {
+                return !deckOf(QStringLiteral("A")).value(QStringLiteral("playing")).toBool()
+                       && !deckOf(QStringLiteral("B")).value(QStringLiteral("playing")).toBool();
+            },
+            5000);
+
         std::fprintf(stdout,
                      "dj-ui: sync — MASTER on A and SYNC on B locked the decks (phase %.3f ms, needle %.0f of "
-                     "%.0f), TEMPO followed the speed alone, and twenty milliseconds off moved the needle "
-                     "%.0f px off centre before it let go\n",
-                     phase, needle_x, centre, offCentre);
+                     "%.0f), it sounded and kept playing with the master stopped (peak %.4f, %.0f "
+                     "frames in 1,5 s), TEMPO followed the speed alone, and twenty milliseconds off "
+                     "moved the needle %.0f px off centre before it let go\n",
+                     phase, needle_x, centre, heard_after_stop, travelled, offCentre);
         return 0;
     }
 

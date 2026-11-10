@@ -621,6 +621,50 @@ fn beat_of(deck: &DeckSnapshot) -> Option<(Phase, f64)> {
     (heard.is_finite() && heard > 0.0).then(|| (Phase::of(beat), heard))
 }
 
+/// What the sync loop remembers between two steps (DJP-SYNC-002).
+///
+/// A jump does not land in the same block it is asked for: a deck reading from disk is silent until its
+/// decoder catches up, and asking again before that happens keeps it silent for good. So the loop
+/// remembers how long ago each deck was moved, and waits.
+#[derive(Debug, Clone)]
+pub struct SyncMemory {
+    steps_since_jump: [u16; MAX_DECKS],
+}
+
+impl Default for SyncMemory {
+    /// A deck that was never moved may be moved at once: the wait exists for a jump that is still
+    /// landing, and at the start there is none.
+    fn default() -> Self {
+        Self {
+            steps_since_jump: [Self::QUIET_STEPS; MAX_DECKS],
+        }
+    }
+}
+
+impl SyncMemory {
+    /// Steps to wait after a jump: at one step per 43 ms this is half a second. A seek needs that long
+    /// before the material arrives and the time-stretch stage settles; a jump asked for inside that
+    /// window measures a transient and lands on a deck that has not yet played from the new place.
+    const QUIET_STEPS: u16 = 12;
+
+    /// Whether a deck may be moved onto the beat now.
+    fn allows_jump(&self, index: usize) -> bool {
+        self.steps_since_jump[index] >= Self::QUIET_STEPS
+    }
+
+    /// Remember that a deck was just moved.
+    fn note_jump(&mut self, index: usize) {
+        self.steps_since_jump[index] = 0;
+    }
+
+    /// One control step has passed.
+    fn tick(&mut self) {
+        for steps in &mut self.steps_since_jump {
+            *steps = steps.saturating_add(1);
+        }
+    }
+}
+
 /// Which deck leads: the one a hand made master, else the first playing deck with a beat, else the
 /// first deck that has one. Deterministic, so the phase meter cannot flicker between two masters.
 fn master_index(decks: &[Deck]) -> Option<usize> {
@@ -664,12 +708,18 @@ fn master_reading(deck: &Deck) -> Option<Reading> {
 /// Pure arithmetic on decks: no allocation, no locks, no I/O, so it runs inside the audio callback. It
 /// is idempotent — a second step moves the tempo no further than the trim allows and a deck already on
 /// the beat asks for no seek.
-pub fn sync_step(decks: &mut [Deck], seconds: f64) {
+pub fn sync_step(decks: &mut [Deck], memory: &mut SyncMemory, seconds: f64) {
     let limits = PitchLimits::default();
     let trim = RateTrim::default();
+    memory.tick();
     let Some(master_index) = master_index(decks) else {
         return;
     };
+    // A stopped deck still says what the tempo is, and following its speed is legal. Its beat, though,
+    // stands still: a follower pulled onto a beat that is not moving is pulled back every step, and a
+    // deck asked to seek four times a second never gets to play its material. So the beat is only
+    // followed while the master is running.
+    let master_running = decks[master_index].is_playing();
     let Some(master) = master_reading(&decks[master_index]) else {
         return;
     };
@@ -705,12 +755,19 @@ pub fn sync_step(decks: &mut [Deck], seconds: f64) {
         // A beat is a jump, not a pull: the hand asked for the beat, and a slow correction is heard as a
         // deck losing the mix. One frame is below what anybody can hear, so it is not worth a seek.
         if mode == SyncMode::Beat
+            && master_running
+            && memory.allows_jump(index)
             && let Some(jump) = planned.jump
-            && jump.frames.unsigned_abs() >= 2
         {
-            let target = i128::from(deck.position()) + i128::from(jump.frames);
-            if let Ok(target) = u64::try_from(target.max(0)) {
-                deck.seek(target);
+            // One millisecond is the smallest error a person can hear in a mix, and a deck cannot be
+            // moved by less than a frame: below the band a jump is noise, not a correction.
+            let audible = f64::from(deck.source_rate()) / 1000.0;
+            if jump.frames.unsigned_abs() as f64 > audible {
+                let target = i128::from(deck.position()) + i128::from(jump.frames);
+                if let Ok(target) = u64::try_from(target.max(0)) {
+                    deck.seek(target);
+                    memory.note_jump(index);
+                }
             }
         }
     }
@@ -1686,6 +1743,8 @@ pub struct EngineGraph {
     metronome: metronome::Metronome,
     /// Blocks since the last sync step: the loop runs every [`SYNC_BLOCKS`], not every block.
     sync_blocks: u32,
+    /// What the sync loop remembers between steps: which decks were just moved.
+    sync_memory: SyncMemory,
 }
 
 impl EngineGraph {
@@ -1719,6 +1778,7 @@ impl EngineGraph {
             paths: vec![None; decks_len],
             metronome: metronome::Metronome::new(mixer_sample_rate),
             sync_blocks: 0,
+            sync_memory: SyncMemory::default(),
         }
     }
 
@@ -2100,7 +2160,7 @@ impl EngineGraph {
             } else {
                 0.05
             };
-            sync_step(&mut self.decks, seconds);
+            sync_step(&mut self.decks, &mut self.sync_memory, seconds);
         }
 
         self.mixer.begin_block(frames);
