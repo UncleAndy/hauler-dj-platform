@@ -3609,6 +3609,17 @@ int main(int argc, char *argv[])
                          playHead());
             return 1;
         }
+        // Every length the panel promises is a button: twelve of them, and a missing one is a jump a DJ
+        // cannot make.
+        for (const QString &name : {QStringLiteral("m64"), QStringLiteral("m32"), QStringLiteral("m16"),
+                                    QStringLiteral("m8"), QStringLiteral("m4"), QStringLiteral("m1"),
+                                    QStringLiteral("p1"), QStringLiteral("p4"), QStringLiteral("p8"),
+                                    QStringLiteral("p16"), QStringLiteral("p32"), QStringLiteral("p64")}) {
+            if (findItem(window->contentItem(), QStringLiteral("jump_A_") + name) == nullptr) {
+                std::fprintf(stderr, "dj-ui: the panel has no jump button for %s\n", qPrintable(name));
+                return 1;
+            }
+        }
         if (!press(QStringLiteral("jump_A_p1"))) {
             return 1;
         }

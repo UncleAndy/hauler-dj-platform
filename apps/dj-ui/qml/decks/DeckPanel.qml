@@ -840,33 +840,38 @@ Pane {
         // automatic measurement (DJP-SYNC-003).
         // Jumping and the platter (DJP-DECK-006), and slip beside them (DJP-DECK-007). A jump is
         // measured in beats, so it lives on the same grid the loop sizes do: without a grid there is
-        // nothing to measure, and the row is not there.
-        RowLayout {
+        // nothing to measure, and the row is not there. Twelve lengths do not fit one line on a deck
+        // panel, so the row wraps instead of squeezing the buttons into unreadable slivers.
+        Flow {
             objectName: "jumproll_" + panel.deckId
             Layout.fillWidth: true
+            Layout.preferredHeight: implicitHeight
             visible: panel.gridReady
             spacing: 3
 
             Label {
                 text: qsTr("Jump")
+                width: 32
+                height: 20
+                verticalAlignment: Text.AlignVCenter
                 font.pixelSize: 10
                 color: UiSettings.themeTextDim
             }
             Repeater {
-                model: [-8, -4, -1, 1, 4, 8]
+                model: [-64, -32, -16, -8, -4, -1, 1, 4, 8, 16, 32, 64]
                 Button {
                     required property int modelData
                     objectName: "jump_" + panel.deckId + "_" + (modelData > 0 ? "p" : "m")
                                 + Math.abs(modelData)
                     text: (modelData > 0 ? "+" : "−") + Math.abs(modelData)
                     font.pixelSize: 10
-                    Layout.preferredWidth: 30
-                    Layout.preferredHeight: 20
+                    width: 30
+                    height: 20
                     enabled: panel.live
                     focusPolicy: Qt.NoFocus
                     ToolTip.visible: hovered
                     ToolTip.text: panel.quantize
-                                  ? qsTr("%1 beat(s) ahead, on the grid").arg(Math.abs(modelData))
+                                  ? qsTr("%1 beat(s), on the grid").arg(Math.abs(modelData))
                                   : qsTr("%1 beat(s), by time").arg(Math.abs(modelData))
                     onClicked: Bridge.beatJump(panel.deckId, modelData, panel.quantize)
                 }
@@ -877,7 +882,8 @@ Pane {
                 objectName: "nudgeBack_" + panel.deckId
                 text: qsTr("‹ nudge")
                 font.pixelSize: 10
-                Layout.preferredHeight: 20
+                width: 64
+                height: 20
                 enabled: panel.live
                 focusPolicy: Qt.NoFocus
                 ToolTip.visible: hovered
@@ -890,7 +896,8 @@ Pane {
                 objectName: "nudgeOn_" + panel.deckId
                 text: qsTr("nudge ›")
                 font.pixelSize: 10
-                Layout.preferredHeight: 20
+                width: 64
+                height: 20
                 enabled: panel.live
                 focusPolicy: Qt.NoFocus
                 ToolTip.visible: hovered
@@ -899,13 +906,13 @@ Pane {
                 onReleased: Bridge.nudge(panel.deckId, 0.0)
                 onCanceled: Bridge.nudge(panel.deckId, 0.0)
             }
-            Item { Layout.fillWidth: true }
             // Slip wears the same colour as Loop when it is on: a mode has to look like a mode.
             Button {
                 objectName: "slip_" + panel.deckId
                 text: qsTr("Slip")
                 font.pixelSize: 11
-                Layout.preferredHeight: 20
+                width: 52
+                height: 20
                 enabled: panel.live
                 focusPolicy: Qt.NoFocus
                 highlighted: panel.deck.slip === true
