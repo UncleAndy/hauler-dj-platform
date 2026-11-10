@@ -180,6 +180,24 @@ Pane {
         return true;
     }
 
+    /// What this deck follows (DJP-SYNC-002), exactly as the engine reports it: `off`, `tempo` or `beat`.
+    readonly property string syncMode: panel.deck !== null && panel.deck.sync !== undefined
+                                       ? panel.deck.sync : "off"
+
+    /// Whether this deck is the one the others follow (DJP-SYNC-001).
+    readonly property bool isMaster: panel.deck !== null && panel.deck.master === true
+
+    /// Distance from the master's beat in milliseconds: positive means this deck is behind and has to
+    /// move forward. Null when the deck follows nothing, which is not the same as being on the beat.
+    readonly property bool hasPhase: panel.deck !== null
+                                     && panel.deck.phase_error_ms !== undefined
+                                     && panel.deck.phase_error_ms !== null
+    readonly property real phaseMs: panel.hasPhase ? panel.deck.phase_error_ms : 0.0
+
+    /// How far the needle may swing: a window of ±50 ms is about a tenth of a beat at 120 BPM, which is
+    /// the range a hand can hear and a beat can be nudged in.
+    readonly property int phaseWindowMs: 50
+
     /// The tempo under the play head, falling back to the track's own number for a client that talks to
     /// an engine which does not publish one (DJP-SYNC-003).
     readonly property real localBpm: {
@@ -583,6 +601,90 @@ Pane {
                     text: panel.barInSquare
                     color: UiSettings.themeTextDim
                     font.pixelSize: 10
+                }
+                // Master and the two ways of following it. The buttons say which mode is in force
+                // rather than folding three states into one: a lit SYNC that only matched the tempo
+                // would be a button lying about what it does (DJP-SYNC-001/002).
+                Button {
+                    objectName: "syncMaster_" + panel.deckId
+                    text: qsTr("MASTER")
+                    font.pixelSize: 8
+                    Layout.preferredWidth: 50
+                    Layout.preferredHeight: 16
+                    enabled: panel.live && panel.localBpm > 0
+                    focusPolicy: Qt.NoFocus
+                    highlighted: panel.isMaster
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("The deck the others follow")
+                    onClicked: Bridge.setMaster(panel.deckId)
+                }
+                Button {
+                    objectName: "syncBeat_" + panel.deckId
+                    text: qsTr("SYNC")
+                    font.pixelSize: 8
+                    Layout.preferredWidth: 40
+                    Layout.preferredHeight: 16
+                    enabled: panel.live && panel.localBpm > 0
+                    focusPolicy: Qt.NoFocus
+                    highlighted: panel.syncMode === "beat"
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Follow the master's beat: same tempo and the same beat")
+                    onClicked: Bridge.setSync(panel.deckId,
+                                              panel.syncMode === "beat" ? "off" : "beat")
+                }
+                Button {
+                    objectName: "syncTempo_" + panel.deckId
+                    text: qsTr("TEMPO")
+                    font.pixelSize: 8
+                    Layout.preferredWidth: 44
+                    Layout.preferredHeight: 16
+                    enabled: panel.live && panel.localBpm > 0
+                    focusPolicy: Qt.NoFocus
+                    highlighted: panel.syncMode === "tempo"
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Follow the master's tempo and keep this deck's beat where it is")
+                    onClicked: Bridge.setSync(panel.deckId,
+                                              panel.syncMode === "tempo" ? "off" : "tempo")
+                }
+                // The phase meter: the button says sync is on, the meter says whether it is true. A
+                // needle past the window is a beat that has been lost, not a beat that needs nudging.
+                Item {
+                    objectName: "phaseMeter_" + panel.deckId
+                    visible: panel.hasPhase && panel.syncMode !== "off"
+                    Layout.preferredWidth: 54
+                    Layout.preferredHeight: 12
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: 2
+                        color: "#20242b"
+                        border.color: UiSettings.themeBorder
+                        border.width: 1
+                    }
+                    Rectangle {
+                        objectName: "phaseCentre_" + panel.deckId
+                        width: 1
+                        height: parent.height
+                        x: Math.round(parent.width / 2)
+                        color: UiSettings.themeTextDim
+                        opacity: 0.6
+                    }
+                    Rectangle {
+                        objectName: "phaseNeedle_" + panel.deckId
+                        width: 2
+                        height: parent.height - 2
+                        y: 1
+                        // Clamped to the window: a needle drawn outside the bar would say the size of
+                        // the error, and the bar is there to say whether there is one.
+                        x: Math.max(1, Math.min(parent.width - 3,
+                                                Math.round(parent.width / 2
+                                                           + (panel.phaseMs / panel.phaseWindowMs)
+                                                             * (parent.width / 2 - 2))))
+                        // Amber while it is off the beat, accent while it is on it: the same language the
+                        // loops use for "this is a decision about the beat".
+                        color: Math.abs(panel.phaseMs) <= 2.0 ? UiSettings.themeAccent : "#ffb300"
+                    }
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("%1 ms from the master's beat").arg(panel.phaseMs.toFixed(1))
                 }
                 Label {
                     objectName: "cached_" + panel.deckId

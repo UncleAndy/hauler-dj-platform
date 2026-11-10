@@ -527,6 +527,25 @@ int BridgeClient::setReverse(const QString &deck, bool enabled)
     return sendCommand(deck, command);
 }
 
+int BridgeClient::setSync(const QString &deck, const QString &mode)
+{
+    QJsonObject options;
+    options.insert(QStringLiteral("deck"), deck);
+    options.insert(QStringLiteral("mode"), mode);
+    QJsonObject command;
+    command.insert(QStringLiteral("Sync"), options);
+    return sendCommand(deck, command);
+}
+
+int BridgeClient::setMaster(const QString &deck)
+{
+    QJsonObject options;
+    options.insert(QStringLiteral("deck"), deck);
+    QJsonObject command;
+    command.insert(QStringLiteral("Master"), options);
+    return sendCommand(deck, command);
+}
+
 int BridgeClient::setCrossfader(double position)
 {
     QJsonObject options;

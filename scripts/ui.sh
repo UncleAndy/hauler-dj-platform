@@ -284,6 +284,14 @@ case "${1:-}" in
     cp crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav "$jump_file"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --transport-extras-check --load "$jump_file"
+    # Sync, end to end: the buttons reach the engine, the state comes back, and the phase meter stands
+    # where the engine says the beats are (DJP-SYNC-001/002). Two decks, two copies of the same music.
+    sync_a="$run_dir/sync-a.wav"
+    sync_b="$run_dir/sync-b.wav"
+    cp crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav "$sync_a"
+    cp crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav "$sync_b"
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
+        --sync-check --load "$sync_a" --load-b "$sync_b"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --grid-here-check --load "$metronome_file"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \

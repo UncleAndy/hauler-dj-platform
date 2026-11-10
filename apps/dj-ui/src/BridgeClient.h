@@ -121,6 +121,13 @@ public:
     /// Slip: the sound may jump or repeat while the track under it keeps running (DJP-DECK-007).
     Q_INVOKABLE int setSlip(const QString &deck, bool enabled);
     Q_INVOKABLE int setReverse(const QString &deck, bool enabled);
+    /// Follow another deck's beat, or stop following it (DJP-SYNC-002).
+    ///
+    /// The mode is a word the protocol uses: `off`, `tempo` or `beat`. The engine refuses anything else,
+    /// so a misspelling reaches it as a refused command rather than a silent no-op here.
+    Q_INVOKABLE int setSync(const QString &deck, const QString &mode);
+    /// Make this deck the one the others follow (DJP-SYNC-001).
+    Q_INVOKABLE int setMaster(const QString &deck);
     Q_INVOKABLE int setCrossfader(double position);
     Q_INVOKABLE int setChannelGain(const QString &deck, double gain);
     /// Playback rate of a deck: 1.0 is the file's own speed, and the pitch moves with it.

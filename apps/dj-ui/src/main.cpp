@@ -943,6 +943,10 @@ int main(int argc, char *argv[])
         QStringLiteral("loop-beats-check"),
         QStringLiteral("Check that a loop of four beats is four beats of the grid, and that the arrows "
                        "move it by a beat without shortening it (DJP-DECK-005)."));
+    const QCommandLineOption syncCheckOption(
+        QStringLiteral("sync-check"),
+        QStringLiteral("Load two decks, make one the master through its button, put the other on its "
+                       "beat, and require the state and the phase meter to agree with the engine."));
     const QCommandLineOption transportExtrasOption(
         QStringLiteral("transport-extras-check"),
         QStringLiteral("With --connect and --load: press a jump and require the play head on a beat of "
@@ -1207,6 +1211,7 @@ int main(int argc, char *argv[])
     parser.addOption(gridLinesOption);
     parser.addOption(gridCheckOption);
     parser.addOption(loopBeatsOption);
+    parser.addOption(syncCheckOption);
     parser.addOption(transportExtrasOption);
     parser.addOption(gridHereOption);
     parser.addOption(tempoRecheckOption);
@@ -6547,6 +6552,189 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: the clock does not show the time left\n");
             return 1;
         }
+        return 0;
+    }
+
+    if (parser.isSet(syncCheckOption)) {
+        // The engine's own measure of sync is in S2 and lives in cargo tests; what is checked here is
+        // that a hand can reach it and read it: two buttons, a snapshot and a needle (DJP-SYNC-001/002).
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        const QString first = parser.value(loadOption);
+        const QString second = parser.value(loadSecondOption);
+        if (first.isEmpty() || second.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: --sync-check needs --load and --load-b\n");
+            return 1;
+        }
+        bridge->connectToEngine(parser.value(connectOption));
+        const auto waitFor = [](const std::function<bool()> &ready, int budget) {
+            QElapsedTimer timer;
+            timer.start();
+            while (timer.elapsed() < budget) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                if (ready()) {
+                    return true;
+                }
+                QThread::msleep(10);
+            }
+            return ready();
+        };
+        if (!waitFor([&]() { return bridge->isConnected(); }, 3000)) {
+            std::fprintf(stderr, "dj-ui: no engine\n");
+            return 1;
+        }
+        const auto deckOf = [&](const QString &id) {
+            const QVariantList decks = bridge->snapshot().value(QStringLiteral("decks")).toList();
+            for (const QVariant &entry : decks) {
+                const QVariantMap deck = entry.toMap();
+                if (deck.value(QStringLiteral("deck")).toString() == id) {
+                    return deck;
+                }
+            }
+            return QVariantMap();
+        };
+        // A mode of `off` is left off the wire, so an absent field is the deck following nothing — not a
+        // missing answer. Reading it as an empty string would make "stop following" untestable.
+        const auto modeOf = [&](const QString &id) {
+            const QString mode = deckOf(id).value(QStringLiteral("sync")).toString();
+            return mode.isEmpty() ? QStringLiteral("off") : mode;
+        };
+        const auto press = [&](const QString &name) {
+            auto *item = findItem(window->contentItem(), name);
+            if (item == nullptr) {
+                std::fprintf(stderr, "dj-ui: no %s to press\n", qPrintable(name));
+                return false;
+            }
+            QMetaObject::invokeMethod(item, "clicked");
+            QCoreApplication::processEvents();
+            return true;
+        };
+
+        bridge->load(QStringLiteral("A"), first);
+        bridge->load(QStringLiteral("B"), second);
+        const QString first_name = QFileInfo(first).fileName();
+        const QString second_name = QFileInfo(second).fileName();
+        const bool loaded = waitFor(
+            [&]() {
+                return deckOf(QStringLiteral("A")).value(QStringLiteral("path")).toString().endsWith(first_name)
+                       && deckOf(QStringLiteral("B")).value(QStringLiteral("path")).toString().endsWith(second_name)
+                       && deckOf(QStringLiteral("A")).value(QStringLiteral("beat")).isValid();
+            },
+            20000);
+        if (!loaded) {
+            std::fprintf(stderr, "dj-ui: the two decks did not both come up with a beat\n");
+            return 1;
+        }
+
+        if (!press(QStringLiteral("syncMaster_A")) || !press(QStringLiteral("syncBeat_B"))) {
+            return 1;
+        }
+        const bool locked = waitFor(
+            [&]() {
+                return deckOf(QStringLiteral("A")).value(QStringLiteral("master")).toBool()
+                       && modeOf(QStringLiteral("B")) == QStringLiteral("beat");
+            },
+            5000);
+        if (!locked) {
+            std::fprintf(stderr, "dj-ui: the master and sync buttons did not reach the engine (A master %d, "
+                                 "B sync %s)\n",
+                         deckOf(QStringLiteral("A")).value(QStringLiteral("master")).toBool(),
+                         qPrintable(modeOf(QStringLiteral("B"))));
+            return 1;
+        }
+        // Same file on both decks: the phase is on the beat, and the meter has to say so rather than
+        // showing a needle parked at an edge.
+        const bool settled = waitFor(
+            [&]() {
+                const QVariant phase = deckOf(QStringLiteral("B")).value(QStringLiteral("phase_error_ms"));
+                return phase.isValid() && !phase.isNull();
+            },
+            5000);
+        if (!settled) {
+            std::fprintf(stderr, "dj-ui: a following deck published no phase\n");
+            return 1;
+        }
+        const double phase = deckOf(QStringLiteral("B")).value(QStringLiteral("phase_error_ms")).toDouble();
+        auto *meter = findItem(window->contentItem(), QStringLiteral("phaseMeter_B"));
+        auto *needle = findItem(window->contentItem(), QStringLiteral("phaseNeedle_B"));
+        if (meter == nullptr || needle == nullptr || !meter->isVisible()) {
+            std::fprintf(stderr, "dj-ui: the phase meter is missing or hidden while sync is on\n");
+            return 1;
+        }
+        // The meter is laid out with the rest of the strip, so its width is zero until a frame has
+        // passed: measuring before that would compare a needle with a bar that has no length.
+        const bool drawn = waitFor([&]() { return meter->width() > 20.0; }, 3000);
+        if (!drawn) {
+            std::fprintf(stderr, "dj-ui: the phase meter was never laid out (%.0f px)\n", meter->width());
+            return 1;
+        }
+        const double needle_x = needle->x();
+        const double centre = meter->width() / 2.0;
+        if (std::abs(phase) <= 5.0 && std::abs(needle_x - centre) > 8.0) {
+            std::fprintf(stderr, "dj-ui: the needle stands at %.0f of %.0f while the beats are %.1f ms apart\n",
+                         needle_x, centre, phase);
+            return 1;
+        }
+
+        // Tempo only: the deck follows the speed and keeps its own beat. That is also the control arm
+        // for the meter — with the beat left alone, a deck moved twenty milliseconds off shows a needle
+        // twenty milliseconds off, so a needle wired to the centre cannot pass this.
+        if (!press(QStringLiteral("syncBeat_B")) || !press(QStringLiteral("syncTempo_B"))) {
+            return 1;
+        }
+        const bool tempo_only = waitFor(
+            [&]() {
+                return modeOf(QStringLiteral("B")) == QStringLiteral("tempo");
+            },
+            5000);
+        if (!tempo_only) {
+            std::fprintf(stderr, "dj-ui: the tempo button did not take\n");
+            return 1;
+        }
+        const QVariantMap follower = deckOf(QStringLiteral("B"));
+        const double rate = follower.value(QStringLiteral("source_rate")).toDouble();
+        const double here = follower.value(QStringLiteral("source_frame")).toDouble();
+        // Twenty milliseconds, which is a quarter of the window and well inside it: the needle should
+        // stand a quarter of the way to the edge, not at the edge.
+        const double shift = rate * 0.020;
+        bridge->seek(QStringLiteral("B"), static_cast<qulonglong>(here + shift));
+        const bool moved = waitFor(
+            [&]() {
+                const QVariant phase = deckOf(QStringLiteral("B")).value(QStringLiteral("phase_error_ms"));
+                return phase.isValid() && std::abs(phase.toDouble()) > 5.0;
+            },
+            5000);
+        if (!moved) {
+            std::fprintf(stderr, "dj-ui: moving the follower left the phase at zero\n");
+            return 1;
+        }
+        const bool needleMoved = waitFor([&]() { return std::abs(needle->x() - centre) > 5.0; }, 3000);
+        if (!needleMoved) {
+            std::fprintf(stderr, "dj-ui: the needle stayed at %.0f while the beats are apart\n", needle->x());
+            return 1;
+        }
+        const double offCentre = needle->x() - centre;
+        if (!press(QStringLiteral("syncTempo_B"))) {
+            return 1;
+        }
+        const bool released = waitFor(
+            [&]() {
+                return modeOf(QStringLiteral("B")) == QStringLiteral("off");
+            },
+            5000);
+        if (!released) {
+            std::fprintf(stderr, "dj-ui: the deck would not stop following\n");
+            return 1;
+        }
+
+        std::fprintf(stdout,
+                     "dj-ui: sync — MASTER on A and SYNC on B locked the decks (phase %.3f ms, needle %.0f of "
+                     "%.0f), TEMPO followed the speed alone, and twenty milliseconds off moved the needle "
+                     "%.0f px off centre before it let go\n",
+                     phase, needle_x, centre, offCentre);
         return 0;
     }
 
