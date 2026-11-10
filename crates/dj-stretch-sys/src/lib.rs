@@ -32,6 +32,12 @@ mod ffi {
         pub fn dj_stretch_latency(handle: *mut c_void) -> i32;
         pub fn dj_stretch_input_latency(handle: *mut c_void) -> i32;
         pub fn dj_stretch_block(handle: *mut c_void) -> i32;
+        pub fn dj_stretch_seek(
+            handle: *mut c_void,
+            input: *const f32,
+            input_frames: i32,
+            playback_rate: f64,
+        );
         pub fn dj_stretch_process(
             handle: *mut c_void,
             input: *const f32,
@@ -108,6 +114,28 @@ impl Stretch {
     /// The library's own analysis block, in frames. Exposed for tests and for the deck's buffer sizes.
     pub fn block(&self) -> usize {
         self.block
+    }
+
+    /// Tell the library the read position jumped, and give it the material just behind the new one.
+    ///
+    /// A loop wraps from its end to its start; without this the phase vocoder continues the phases it
+    /// had and the jump is heard as a tick whose loudness depends on the material at the seam. `input` is
+    /// the music that played a few milliseconds ago — the loop's own tail — fed as pre-roll.
+    pub fn seek(&mut self, input: &[f32], playback_rate: f64) {
+        let frames = i32::try_from(input.len() / 2).unwrap_or(0);
+        if frames <= 0 {
+            return;
+        }
+        // SAFETY: the slice is at least `frames * 2` longs, the handle is live, and the library only
+        // reads the input.
+        unsafe {
+            ffi::dj_stretch_seek(self.handle, input.as_ptr(), frames, playback_rate);
+        }
+    }
+
+    /// Frames of pre-roll a seek wants, at this block: the library's own window plus one interval.
+    pub fn seek_frames(&self) -> usize {
+        self.block + self.block / 4
     }
 
     /// Forget the history: the playhead jumped, and material from before it is not part of the sound.

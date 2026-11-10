@@ -42,6 +42,19 @@ impl Stretcher {
         self.stretch.input_latency() + self.stretch.latency()
     }
 
+    /// Tell the stretcher the read position jumped, and hand it the music that played just before.
+    ///
+    /// A loop wrap is a jump: without the pre-roll the phase vocoder continues the phases of the old
+    /// position and the ear hears a tick whose loudness depends on the material at the seam.
+    pub(crate) fn seek(&mut self, pre_roll: &[f32]) {
+        self.stretch.seek(pre_roll, 1.0);
+    }
+
+    /// Frames of pre-roll a jump wants.
+    pub(crate) fn seek_frames(&self) -> usize {
+        self.stretch.seek_frames()
+    }
+
     /// Forget the history: the playhead jumped, and the material before it is not part of the sound.
     pub(crate) fn reset(&mut self) {
         self.stretch.reset();

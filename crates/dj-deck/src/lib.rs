@@ -1632,6 +1632,16 @@ impl Deck {
             // The head has been played during the fade: the next pass starts past it.
             self.position = self.read_at(start + LOOP_SEAM_FRAMES as u64);
             self.stats.loop_wraps += 1;
+            if self.keylock_engaged {
+                // The stretcher is in the path: a jump it is not told about is a tick inside its windows.
+                // It gets the loop's own tail as pre-roll — the same music that was playing a moment ago.
+                let want = self.stretcher.seek_frames().min(frames);
+                if want > 0 {
+                    let from = (frames - want) * 2;
+                    let tail: Vec<f32> = buffer.data[from..].to_vec();
+                    self.stretcher.seek(&tail);
+                }
+            }
         }
         Some(take)
     }

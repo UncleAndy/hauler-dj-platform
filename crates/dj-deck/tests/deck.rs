@@ -1028,6 +1028,37 @@ fn a_loop_that_wraps_through_the_decoder_does_not_click() {
 }
 
 #[test]
+fn the_seam_under_the_key_lock_does_not_click() {
+    // The owner listens with the key locked, so this is the path his ears take: the material goes through
+    // the stretcher, and a jump of the read position lands inside its sixty-millisecond windows. Without
+    // the pre-roll the phase vocoder continues the old phases and the seam ticks (measured 0.214); with
+    // it the seam is as smooth as the copy's own (0.006).
+    let mut deck = tone_deck(4_000_000);
+    let period = 48_000.0 / 440.0;
+    let start = 1_000u64;
+    let end = start + (period * 1.5) as u64;
+    let Some(region) = FrameRange::new(start, end) else {
+        panic!("a loop of one and a half periods must be a valid region");
+    };
+    deck.set_loop(Some(region));
+    deck.seek(start);
+    deck.play();
+    let mut block = vec![0.0f32; 256 * 2];
+    let mut all = Vec::new();
+    for index in 0..400 {
+        deck.render(&mut block);
+        if index >= 40 {
+            all.extend_from_slice(&block);
+        }
+    }
+    let worst = biggest_step(&all);
+    assert!(
+        worst < 0.05,
+        "the keylocked seam steps by {worst:.3} — the stretcher was not told about the jump"
+    );
+}
+
+#[test]
 fn a_short_loop_plays_through_its_seam_without_a_gap() {
     // A loop that fits the capture budget must wrap by copying, not by asking the source for a
     // seek: that seek is where the audible block of silence came from (ADR-0009).

@@ -147,6 +147,40 @@ void dj_stretch_process(void *raw, const float *input, int input_frames, float *
     }
 }
 
+// Tell the library the read position jumped, and hand it the material just behind the new position.
+//
+// A loop wraps from the end of the region to its start: the input jumps, and a phase vocoder that is not
+// told about the jump tries to continue the phases it had — the ear hears that as a tick whose loudness
+// depends on the material at the seam. The library asks for pre-roll so it can move the position without
+// interrupting the output; this passes the same music that was playing a few milliseconds ago.
+void dj_stretch_seek(void *raw, const float *input, int input_frames, double playback_rate)
+{
+    auto *handle = static_cast<Handle *>(raw);
+    if (handle == nullptr || input_frames <= 0) {
+        return;
+    }
+    const auto needed = static_cast<size_t>(input_frames);
+    if (needed > handle->capacity) {
+        handle->capacity = needed;
+        handle->planar.assign(static_cast<size_t>(handle->channels) * needed, 0.0f);
+        handle->produced.assign(static_cast<size_t>(handle->channels) * needed, 0.0f);
+        for (int channel = 0; channel < handle->channels; ++channel) {
+            handle->pointers[static_cast<size_t>(channel)] =
+                handle->planar.data() + static_cast<size_t>(channel) * needed;
+            handle->out_pointers[static_cast<size_t>(channel)] =
+                handle->produced.data() + static_cast<size_t>(channel) * needed;
+        }
+    }
+    for (int channel = 0; channel < handle->channels; ++channel) {
+        float *line = handle->pointers[static_cast<size_t>(channel)];
+        const size_t from = static_cast<size_t>(channel);
+        for (int frame = 0; frame < input_frames; ++frame) {
+            line[frame] = input[static_cast<size_t>(frame) * 2 + from];
+        }
+    }
+    handle->stretch.seek(handle->pointers, input_frames, playback_rate);
+}
+
 // Frames of history the analysis side holds. The material is delayed by this plus the output latency,
 // so the deck needs both numbers to know how far its read head leads what is heard.
 int dj_stretch_input_latency(void *raw)
