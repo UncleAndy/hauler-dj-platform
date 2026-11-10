@@ -54,6 +54,54 @@ impl DeckSource for RampSource {
     }
 }
 
+/// A source whose every sample says which frame it is: `value = frame / 4 000 000`.
+///
+/// Unlike the ramp above, this one does not repeat, so an output frame can be traced back to exactly one
+/// place in the file. Used to ask whether a loop plays the material it says it does.
+struct CodeSource {
+    frames: u64,
+    position: u64,
+}
+
+impl DeckSource for CodeSource {
+    fn sample_rate(&self) -> u32 {
+        44_100
+    }
+    fn frames(&self) -> Option<u64> {
+        Some(self.frames)
+    }
+    fn read(&mut self, out: &mut [f32]) -> Result<usize, String> {
+        let want = out.len() / 2;
+        let available = self.frames.saturating_sub(self.position);
+        let take = want.min(usize::try_from(available).unwrap_or(want));
+        for index in 0..take {
+            #[allow(clippy::cast_precision_loss)]
+            let value = ((self.position + index as u64) as f32) / 4_000_000.0;
+            out[index * 2] = value;
+            out[index * 2 + 1] = value;
+        }
+        self.position += take as u64;
+        Ok(take)
+    }
+    fn seek(&mut self, frame: u64) -> Result<u64, String> {
+        self.position = frame.min(self.frames.saturating_sub(1));
+        Ok(self.position)
+    }
+}
+
+fn code_deck(frames: u64) -> Deck {
+    let mut deck = Deck::new(DeckId::A);
+    deck.set_output_rate(44_100);
+    deck.attach(
+        Box::new(CodeSource {
+            frames,
+            position: 0,
+        }),
+        None,
+    );
+    deck
+}
+
 fn deck_with_ramp(frames: u64) -> Deck {
     let mut deck = Deck::new(DeckId::A);
     // The ramp is 44.1 kHz material on a deck that plays 44.1 kHz: these tests are about transport and
@@ -1119,6 +1167,180 @@ fn jumping_under_the_key_lock_does_not_click() {
         jump < 0.05,
         "the jump steps by {jump:.3} against the material's {material:.3} — that is the click"
     );
+}
+
+#[test]
+fn a_loop_plays_only_its_own_material() {
+    // The owner hears "other parts of the composition" inside a loop. The ramp says which frame each
+    // sample came from — value = frame / 20 000 * 0,5 — so the whole output of a loop can be checked
+    // against the loop's own frame range instead of being listened to.
+    let mut deck = deck_with_ramp(4_000_000);
+    deck.set_keylock(false);
+    let Some(region) = FrameRange::new(1_000, 3_000) else {
+        panic!("a 1 000..3 000 loop must be valid");
+    };
+    deck.set_loop(Some(region));
+    deck.seek(1_000);
+    deck.play();
+    let mut block = vec![0.0f32; 256 * 2];
+    let mut low = f32::MAX;
+    let mut high = f32::MIN;
+    let mut frame_index = 0usize;
+    let mut outside: Vec<(usize, f32)> = Vec::new();
+    for _ in 0..400 {
+        deck.render(&mut block);
+        for frame in block.chunks_exact(2) {
+            let value = frame[0];
+            low = low.min(value);
+            high = high.max(value);
+            // The first two milliseconds rise from silence, so the very start is not the material.
+            if frame_index > 200 && !(0.0249..=0.0751).contains(&value) {
+                outside.push((frame_index, value));
+            }
+            frame_index += 1;
+        }
+    }
+    let sample: Vec<String> = outside
+        .iter()
+        .take(8)
+        .map(|(at, value)| format!("{at}:{value:.5}"))
+        .collect();
+    println!(
+        "MEASURE outside: {} of {frame_index} frames, first {sample:?}",
+        outside.len()
+    );
+    // The loop's own material spans these two values (with a little room for the seam's crossfade).
+    println!(
+        "MEASURE loop range: {low:.5}..{high:.5} as frames {:.0}..{:.0}",
+        low / 0.5 * 20_000.0,
+        high / 0.5 * 20_000.0
+    );
+    // The first two milliseconds are the rise after the jump, not the material.
+    assert!(
+        outside.is_empty(),
+        "the loop played {} frames from outside 1 000..3 000: {sample:?}",
+        outside.len()
+    );
+}
+
+#[test]
+fn a_loop_keeps_the_playhead_inside_itself() {
+    // "Other parts of the composition play inside the loop" is a claim about the transport, so this
+    // traces where the play head actually is on every block, with the key lock both off and on. A loop
+    // whose head leaves 1 000..3 000 is playing something that is not the loop.
+    for keylock in [false, true] {
+        let mut deck = deck_with_ramp(4_000_000);
+        if keylock {
+            deck.set_tempo(1.05);
+        } else {
+            deck.set_keylock(false);
+        }
+        let Some(region) = FrameRange::new(1_000, 3_000) else {
+            panic!("a 1 000..3 000 loop must be valid");
+        };
+        deck.set_loop(Some(region));
+        deck.seek(1_000);
+        deck.play();
+        let mut block = vec![0.0f32; 256 * 2];
+        let mut low = u64::MAX;
+        let mut high = 0u64;
+        let mut wraps = 0usize;
+        let mut previous = deck.position();
+        let mut first_after_wrap: Vec<u64> = Vec::new();
+        for _ in 0..400 {
+            deck.render(&mut block);
+            let position = deck.position();
+            if position < previous {
+                wraps += 1;
+                if first_after_wrap.len() < 4 {
+                    first_after_wrap.push(position);
+                }
+            }
+            low = low.min(position);
+            high = high.max(position);
+            previous = position;
+        }
+        println!(
+            "MEASURE loop transport (keylock {keylock}): head {low}..{high}, {wraps} wraps, back to {first_after_wrap:?}"
+        );
+        assert!(
+            low >= 1_000 && high <= 3_000,
+            "the head left the loop: {low}..{high} instead of 1 000..3 000"
+        );
+        assert!(wraps >= 1, "the loop must wrap");
+    }
+}
+
+#[test]
+fn a_moved_loop_plays_only_the_material_it_says() {
+    // The owner hears "the beats just outside the loop" after moving a loop with the arrows several
+    // times. The region and the play head were already checked; this checks the audio: every output
+    // frame must come from inside the region the deck reports.
+    let mut deck = code_deck(4_000_000);
+    deck.set_keylock(false);
+    let grid =
+        dj_domain::BeatGrid::single(120.0, 4_800).unwrap_or_else(|| panic!("a 120 BPM grid"));
+    deck.set_beat_grid(grid);
+    deck.seek(44_100);
+    deck.play();
+    let mut block = vec![0.0f32; 256 * 2];
+    let Some(region) = deck.loop_by_beats(44_100, 2) else {
+        panic!("a two-beat loop on the grid");
+    };
+    // A handful of frames at the wrap boundary are the resampler's own blend of the two sides; they are
+    // not material from elsewhere. Everything else must be the loop's own.
+    let check = |block: &[f32], region: FrameRange, when: &str| {
+        let low = region.start.0 as f32 / 4_000_000.0;
+        let high = region.end.0 as f32 / 4_000_000.0;
+        let slack = 16.0 / 4_000_000.0;
+        let outside = block
+            .chunks_exact(2)
+            .filter(|frame| {
+                let value = frame[0];
+                value != 0.0 && !((low - slack)..=(high + slack)).contains(&value)
+            })
+            .count();
+        assert!(
+            outside <= block.len() / 2 / 50,
+            "{when}: {outside} frames of {} came out of a loop of {:.0}..{:.0}",
+            block.len() / 2,
+            region.start.0,
+            region.end.0
+        );
+    };
+    // The first blocks after the seek still carry what the prefetcher had from before it — that is the
+    // "no silent head" behaviour, and it is not the loop.
+    for _ in 0..20 {
+        deck.render(&mut block);
+    }
+    for _ in 0..40 {
+        deck.render(&mut block);
+        check(&block, region, "first pass");
+    }
+    for move_index in 0..4 {
+        let Some(moved) = deck.move_loop(1) else {
+            panic!("the loop moves a beat");
+        };
+        println!(
+            "MEASURE moved loop {move_index}: {}..{}, head {}",
+            moved.start.0,
+            moved.end.0,
+            deck.position()
+        );
+        // The stretch after the move may open with silence and then rises from it; the rise's frames are
+        // the material scaled down, and a scaled frame decodes as a wrong one. The check starts past it.
+        let mut all: Vec<f32> = Vec::new();
+        for _ in 0..40 {
+            deck.render(&mut block);
+            all.extend_from_slice(&block);
+        }
+        let audible = all
+            .chunks_exact(2)
+            .position(|frame| frame[0].abs() > 1e-6)
+            .unwrap_or(all.len() / 2);
+        let from = ((audible + 200) * 2).min(all.len());
+        check(&all[from..], moved, &format!("after move {move_index}"));
+    }
 }
 
 #[test]

@@ -374,6 +374,11 @@ impl Prefetcher {
             return Ok(SeekOutcome::InsideWindow);
         }
         self.ring.seek_request.store(frame, Ordering::Release);
+        // The window holds the place the play head is leaving. Keeping it would hand the deck the
+        // material the jump was away from — a loop moved by a beat played the beat outside itself, and
+        // the same window would be read as if it were the new position's. Dropping it makes the reader
+        // wait for the producer, which is silence for a block and then the right material.
+        self.ring.consumed.store(end, Ordering::Release);
         Ok(SeekOutcome::Requested)
     }
 

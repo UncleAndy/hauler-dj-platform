@@ -183,6 +183,13 @@ fn moving_the_loop_takes_the_play_head_with_it() {
         },
     );
     let first = deck_state(&cells).loop_region.expect("a loop");
+    // Where inside the loop the sound is before the move: the loop takes that place with it, so the
+    // groove does not restart at the new beginning (and the head is never left outside the loop, which
+    // played the beats between the old and the new region).
+    let place = deck_state(&cells)
+        .source_frame
+        .0
+        .saturating_sub(first.start.0);
     let ack = apply(
         &mut graph,
         &submissions,
@@ -198,8 +205,13 @@ fn moving_the_loop_takes_the_play_head_with_it() {
     assert_eq!(moved.start.0, first.start.0 + BEAT_FRAMES, "one beat on");
     assert_eq!(moved.len(), first.len(), "the length is the loop's own");
     assert_eq!(
-        state.source_frame.0, moved.start.0,
-        "the play head came along"
+        state.source_frame.0,
+        moved.start.0 + place,
+        "the play head came along, at its own place in the loop"
+    );
+    assert!(
+        moved.start.0 <= state.source_frame.0 && state.source_frame.0 < moved.end.0,
+        "the head must be inside the moved loop"
     );
 }
 

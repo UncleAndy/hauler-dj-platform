@@ -911,10 +911,15 @@ impl Deck {
         }
     }
 
-    /// Move the active loop by `beats` beats, keeping its length (DJP-DECK-005).
+    /// Move the active loop by `beats` beats, keeping its length and the play head's place in it
+    /// (DJP-DECK-005).
     ///
     /// The length is kept in frames rather than recomputed from two coordinates: a loop that is moved ten
     /// times must be the same loop at the end, not a slightly shorter one each time.
+    ///
+    /// The head moves with the loop, at the same place inside it. Leaving it behind would play whatever
+    /// sits between the old and the new region — the beats just outside the loop, which is exactly what
+    /// the owner heard after moving a loop with the arrows a few times.
     pub fn move_loop(&mut self, beats: i32) -> Option<FrameRange> {
         if beats == 0 {
             return None;
@@ -929,7 +934,17 @@ impl Deck {
         }
         let start = moved.round() as u64;
         let region = FrameRange::new(start, start + current.len())?;
+        // Where inside the loop the *sound* is now — not the read head, which leads it by the scratch and
+        // the stretcher's delay. A head outside the loop has no place in it and starts from the new
+        // beginning.
+        let place = self
+            .position()
+            .checked_sub(current.start.0)
+            .filter(|offset| *offset < current.len())
+            .unwrap_or(0);
         if self.set_loop_with(Some(region), true) {
+            let target = region.start.0.saturating_add(place).min(region.end.0 - 1);
+            self.seek(target);
             Some(region)
         } else {
             None
