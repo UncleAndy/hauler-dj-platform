@@ -15,6 +15,10 @@ serde_json.workspace = true
 rusqlite = { version = "0.32", features = ["bundled"] }
 # Writing tags back into the copy that lands in the collection (MIT, DJP-LIC-001).
 lofty.workspace = true
+# Identity of a track: the whole file is decoded and fingerprinted to tell a duplicate from a version
+# (DJP-MEDIA-005). The same two crates the probe measures with.
+dj-codec = { path = "../dj-codec" }
+dj-fingerprint = { path = "../dj-fingerprint" }
 # The import reads tags in production code, not only in the probe.
 symphonia = { version = "0.6", default-features = false, features = [
     "wav",
@@ -32,9 +36,7 @@ symphonia = { version = "0.6", default-features = false, features = [
 ] }
 
 [dev-dependencies]
-# The probe decodes and fingerprints; the import itself does not (yet).
-dj-codec = { path = "../dj-codec" }
-dj-fingerprint = { path = "../dj-fingerprint" }
+# Nothing test-only: decode and fingerprint moved to the real dependencies with the duplicate check.
 
 [lints]
 workspace = true

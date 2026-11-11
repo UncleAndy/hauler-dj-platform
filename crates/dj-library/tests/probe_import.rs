@@ -17,6 +17,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use dj_library::identity::Catalog;
 use dj_library::queue::{Run, threads_for};
 
 const AUDIO: [&str; 4] = ["flac", "mp3", "wav", "ogg"];
@@ -71,8 +72,18 @@ fn probe_import() {
         threads_for(requested)
     );
 
+    let check = std::env::var("DJ_IMPORT_CHECK").is_ok_and(|value| value == "1");
     let started = Instant::now();
-    let run = Run::start(&to, files.clone(), requested, 1_000);
+    let run = if check {
+        let catalog = Catalog::scan(&to);
+        println!(
+            "PROBE: в коллекции уже {} треков с отпечатком",
+            catalog.len()
+        );
+        Run::start_checked(&to, files.clone(), requested, 1_000, catalog)
+    } else {
+        Run::start(&to, files.clone(), requested, 1_000)
+    };
     let mut ticks = 0_u32;
     let mut last_share = -1.0_f64;
     while run.progress().running {
@@ -127,10 +138,44 @@ fn probe_import() {
         .iter()
         .filter(|item| item.named_from_file)
         .count();
+    for duplicate in &report.duplicates {
+        println!(
+            "DUPLICATE {} | уже есть {} | совпадение {:.4}",
+            duplicate
+                .source
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            duplicate
+                .existing
+                .strip_prefix(&to)
+                .unwrap_or(&duplicate.existing)
+                .display(),
+            duplicate.agreement
+        );
+    }
+    for version in &report.versions {
+        println!(
+            "VERSION {} | другая версия {} | совпадение {:.4}",
+            version
+                .source
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            version
+                .existing
+                .strip_prefix(&to)
+                .unwrap_or(&version.existing)
+                .display(),
+            version.agreement
+        );
+    }
     println!(
-        "PROBE summary: файлов {} | легло {} | починено кодировок {repaired} | имя из файла {named} | отказов {} | отменено {} | {elapsed:.1} с на всё ({:.1} мс на файл) | обновлений прогресса {ticks}",
+        "PROBE summary: файлов {} | легло {} | дублей {} | версий {} | починено кодировок {repaired} | имя из файла {named} | отказов {} | отменено {} | {elapsed:.1} с на всё ({:.1} мс на файл) | обновлений прогресса {ticks}",
         files.len(),
         report.imported.len(),
+        report.duplicates.len(),
+        report.versions.len(),
         report.failures.len(),
         report.cancelled,
         elapsed * 1_000.0 / files.len().max(1) as f64
