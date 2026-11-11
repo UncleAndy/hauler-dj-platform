@@ -27,6 +27,22 @@ use dj_mixer::{ChannelSettings, CrossAssign, Mixer};
 
 /// Which volume the mirror is filed under. One label for the machine's own files: the sidecar beside
 /// the music is the source of truth, and this only keeps the mirror path stable.
+/// The deck a command is about to stop, if it is about stopping.
+///
+/// A load is refused for a deck that is playing, and the flag that says so is refreshed at display
+/// rate — slower than the block boundary a stop is applied at. The two commands that end playback are
+/// named here so the flag can follow the intent at once.
+fn stopping_deck(command: &dj_domain::DjCommand) -> Option<dj_domain::DeckId> {
+    match command {
+        dj_domain::DjCommand::Play {
+            deck,
+            enabled: false,
+        }
+        | dj_domain::DjCommand::Eject { deck } => Some(*deck),
+        _ => None,
+    }
+}
+
 fn volume() -> &'static str {
     "root"
 }
@@ -1332,11 +1348,26 @@ fn serve_client(
                     dj_engine::Routed::Render => {}
                 }
                 let (reply, answer) = std::sync::mpsc::channel();
+                // Read before the command is handed over: after the send it belongs to the graph.
+                let stopping = stopping_deck(&command.command);
                 if submissions.send(Submission { command, reply }).is_err() {
                     return;
                 }
                 match answer.recv_timeout(Duration::from_millis(500)) {
                     Ok(ack) => {
+                        // A deck that is playing refuses a load, and that refusal reads a flag the
+                        // publisher refreshes at display rate. A stop is applied by the audio thread at
+                        // the next block boundary, so between this ack and that block the flag still
+                        // says "playing" — and a load sent right after a stop is refused as Busy. The
+                        // DJ presses stop, then loads, and the load is dropped for a state that no
+                        // longer exists. The command was accepted, so the deck is going to stop: say so
+                        // now. The publisher corrects the flag either way, so a refusal cannot leak.
+                        if matches!(ack.status, dj_domain::AckStatus::Applied { .. })
+                            && let Some(deck) = stopping
+                            && let Some(flag) = playing.get(deck.index())
+                        {
+                            flag.store(false, Ordering::Relaxed);
+                        }
                         if alerts.send(ServerMessage::Ack(ack)).is_err() {
                             return;
                         }

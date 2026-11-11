@@ -139,17 +139,6 @@ case "${1:-}" in
       # A different length for deck B: two decks must not share one envelope.
       "$headless_bin" sine --frames 288000 --rate 48000 --out "$second" >/dev/null
     fi
-    # The key is measured first, on a deck nothing has played yet: a later check leaves deck A
-    # playing, and the engine refuses a load into a playing deck as Busy — a defect of its own that
-    # has nothing to do with the key and must not decide whether this one passes.
-    # Its own file, not a copy: the store keeps a mirror keyed by the file's fingerprint, so a copy of
-    # the fixture shares its metadata and the check would look for a sidecar nothing had to write.
-    key_track="$run_dir/key-track.wav"
-    if [ -x "$headless_bin" ]; then
-      "$headless_bin" sine --frames 96000 --rate 48000 --out "$key_track" >/dev/null
-    fi
-    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --key-check \
-      --load "$key_track"
     if [ -f "$fixture" ] && [ -f "$second" ]; then
       QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --self-check \
         --load "$fixture" --load-b "$second"
@@ -181,6 +170,18 @@ case "${1:-}" in
     # it. A waveform that never arrives looks exactly like a track that never loaded.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --strip-check \
       --load "$fixture"
+    # The key: measured on load, written beside the file, shown in the deck's header. A key that never
+    # reaches the file is a key the next load forgets, so the check reads both. It runs after a check
+    # that leaves deck A playing on purpose: a load sent right after a stop used to be refused as
+    # Busy, and this is the case that proves it is not any more.
+    # Its own file, not a copy: the store keeps a mirror keyed by the file's fingerprint, so a copy of
+    # the fixture shares its metadata and the check would look for a sidecar nothing had to write.
+    key_track="$run_dir/key-track.wav"
+    if [ -x "$headless_bin" ]; then
+      "$headless_bin" sine --frames 96000 --rate 48000 --out "$key_track" >/dev/null
+    fi
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --key-check \
+      --load "$key_track"
     # The master knob and meter: the knob must move the published gain, the meter must see the
     # signal, and the knob must sit above a shorter meter in the middle of the mixer.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --master-check \
