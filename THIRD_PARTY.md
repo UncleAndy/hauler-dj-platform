@@ -12,6 +12,7 @@ ALSA) допустимы только через динамическую лин
 | Компонент | Версия | Лицензия | Способ связи | Обязанности | Патентный риск | Статус |
 |---|---|---|---|---|---|---|
 | Qt 6 (`qtbase`, `qtdeclarative`, `qtwayland`) | 6.11.2 (nixpkgs) | набор по `meta.license`: LGPL-2.1-or-later, LGPL-3.0, GPL-2.0-or-later, GPL-3.0, GFDL-1.3 | динамическая линковка UI | уведомления, возможность замены библиотеки, состав модулей проверить до поставки (DJP-LIC-005) | нет данных | в сборке (dev shell + `apps/dj-ui`) |
+| Chromaprint, порт на Rust (`chromaprint-next`, vendored) | 0.1.0 | MIT (© 2010–2016 Lukas Lalinsky — оригинал, © 2026 Attila Györffy — порт) | статическая линковка (Rust, `crates/dj-fingerprint`) | сохранить текст MIT (`crates/dj-fingerprint/vendor/chromaprint-next/LICENSE-MIT`) | нет данных | в сборке: отпечатки для поиска дублей в коллекции. Исходный ресемплер порта (`src/audio/resample.rs`, порт FFmpeg `av_resample`, LGPL-2.1-or-later) **удалён и заменён** своим полифазным Kaiser-sinc ресемплером, поэтому LGPL-кода в дереве нет и комбинированная работа остаётся MIT |
 | PipeWire | 1.6.6 | MIT | динамическая линковка (аудиобэкенд) | сохранение уведомлений | нет данных | в dev shell |
 | ALSA lib | системная (nixpkgs) | LGPL-2.1-or-later | динамическая линковка | уведомления | нет данных | в dev shell |
 | OpenSSL | nixpkgs | Apache-2.0 | динамическая линковка | уведомления | нет данных | в dev shell |

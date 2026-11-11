@@ -1,0 +1,37 @@
+[package]
+name = "chromaprint-next"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+description = "Audio fingerprinting library (MIT-licensed Rust port of Chromaprint, resampler replaced)"
+license = "MIT"
+authors = ["Attila Györffy <oss@attilagyorffy.com>"]
+repository = "https://github.com/attilagyorffy/chromaprint-next"
+homepage = "https://github.com/attilagyorffy/chromaprint-next"
+documentation = "https://docs.rs/chromaprint-next"
+readme = "README.md"
+keywords = ["audio", "fingerprint", "chromaprint", "acoustid", "music"]
+categories = ["multimedia::audio"]
+
+[lib]
+name = "chromaprint"
+
+[features]
+default = []
+parallel = ["dep:rayon"]
+# Per-stage timing via `chromaprint::profile`. Adds a timer around each stage;
+# leave it off for production builds.
+profiling = []
+
+[[example]]
+name = "profile_stages"
+required-features = ["profiling"]
+
+[dependencies]
+rustfft = "6"
+rayon = { version = "1", optional = true }
+thiserror = "2"
+
+[dev-dependencies]
+# Reference for the fused real FFT in `fft::real`.
+realfft = "3"

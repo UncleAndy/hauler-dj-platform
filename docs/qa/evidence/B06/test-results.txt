@@ -1,0 +1,37 @@
+original.wav: 302 frames of fingerprint from 40 s at 44100 Hz, 21.8 ms
+copy-320.mp3: 302 frames of fingerprint from 40 s at 44100 Hz, 21.8 ms
+copy-128.mp3: 302 frames of fingerprint from 40 s at 44100 Hz, 21.8 ms
+copy-q5.ogg: 302 frames of fingerprint from 40 s at 44100 Hz, 21.8 ms
+copy-trimmed.wav: 302 frames of fingerprint from 40 s at 44100 Hz, 21.7 ms
+copy-quieter.wav: 302 frames of fingerprint from 40 s at 44100 Hz, 21.6 ms
+other-one-love.wav: 302 frames of fingerprint from 40 s at 44100 Hz, 21.7 ms
+other-endless.wav: 302 frames of fingerprint from 40 s at 44100 Hz, 21.7 ms
+
+    0.0007 bits differ at lag   0   original.wav  ~  copy-320.mp3
+    0.0035 bits differ at lag   0   original.wav  ~  copy-128.mp3
+    0.0054 bits differ at lag   0   original.wav  ~  copy-q5.ogg
+    0.0649 bits differ at lag -15   original.wav  ~  copy-trimmed.wav
+    0.0000 bits differ at lag   0   original.wav  ~  copy-quieter.wav
+    0.4902 bits differ at lag  20   original.wav  ~  other-one-love.wav
+    0.4947 bits differ at lag  13   original.wav  ~  other-endless.wav
+    0.0038 bits differ at lag   0   copy-320.mp3  ~  copy-128.mp3
+    0.0053 bits differ at lag   0   copy-320.mp3  ~  copy-q5.ogg
+    0.0650 bits differ at lag -15   copy-320.mp3  ~  copy-trimmed.wav
+    0.0007 bits differ at lag   0   copy-320.mp3  ~  copy-quieter.wav
+    0.4901 bits differ at lag  20   copy-320.mp3  ~  other-one-love.wav
+    0.4946 bits differ at lag  13   copy-320.mp3  ~  other-endless.wav
+    0.0064 bits differ at lag   0   copy-128.mp3  ~  copy-q5.ogg
+    0.0647 bits differ at lag -15   copy-128.mp3  ~  copy-trimmed.wav
+    0.0035 bits differ at lag   0   copy-128.mp3  ~  copy-quieter.wav
+    0.4912 bits differ at lag  20   copy-128.mp3  ~  other-one-love.wav
+    0.4948 bits differ at lag  13   copy-128.mp3  ~  other-endless.wav
+    0.0638 bits differ at lag -15   copy-q5.ogg  ~  copy-trimmed.wav
+    0.0054 bits differ at lag   0   copy-q5.ogg  ~  copy-quieter.wav
+    0.4910 bits differ at lag  20   copy-q5.ogg  ~  other-one-love.wav
+    0.4943 bits differ at lag  13   copy-q5.ogg  ~  other-endless.wav
+    0.0649 bits differ at lag  15   copy-trimmed.wav  ~  copy-quieter.wav
+    0.4962 bits differ at lag   6   copy-trimmed.wav  ~  other-one-love.wav
+    0.4942 bits differ at lag -16   copy-trimmed.wav  ~  other-endless.wav
+    0.4902 bits differ at lag  20   copy-quieter.wav  ~  other-one-love.wav
+    0.4947 bits differ at lag  13   copy-quieter.wav  ~  other-endless.wav
+    0.4835 bits differ at lag  21   other-one-love.wav  ~  other-endless.wav
