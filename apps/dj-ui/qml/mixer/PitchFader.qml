@@ -23,7 +23,14 @@ Item {
     readonly property real maximum: 1.0 + fader.range
     readonly property real shown: fader.dragging ? fader.dragged : fader.ratio
     /// Where the handle stands from the top: the top of the throw is the fastest rate.
-    readonly property real fraction: (fader.maximum - fader.shown) / (fader.maximum - fader.minimum)
+    ///
+    /// The throw is where the *hand* can go, not where the deck is: a sync matches a tempo the fader
+    /// cannot reach (DJP-SYNC-002, `PitchLimits::beyond_the_fader`), and the deck then plays at 1.28
+    /// while the fader tops out at 1.16. Such a rate pins the handle to the end of its travel — a
+    /// handle drawn past the strip is a handle outside its own control — and the label under it keeps
+    /// saying the real rate, so nothing is hidden.
+    readonly property real fraction: Math.max(0.0, Math.min(1.0, (fader.maximum - fader.shown)
+                                                            / (fader.maximum - fader.minimum)))
     readonly property real unityFraction: (fader.maximum - 1.0) / (fader.maximum - fader.minimum)
     readonly property int inset: 6
     /// Rate change per pixel: the whole throw is the whole range.

@@ -7904,6 +7904,47 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: a double click did not return the deck to its own speed\n");
             return 1;
         }
+        // A rate the fader cannot reach. The sync matches a tempo beyond the fader's travel
+        // (`PitchLimits::beyond_the_fader`): the deck then runs at a rate the hand could never ask for,
+        // and the handle must still be a handle — pinned at the end of its travel, not drawn past the
+        // strip it belongs to.
+        {
+            QQuickItem *handle = findItem(window->contentItem(), QStringLiteral("pitchHandle_A"));
+            if (handle == nullptr) {
+                std::fprintf(stderr, "dj-ui: the pitch fader has no handle\n");
+                return 1;
+            }
+            const double top_of_throw = pitch->property("maximum").toDouble();
+            const double bottom_of_throw = pitch->property("minimum").toDouble();
+            const double beyond = top_of_throw + (top_of_throw - bottom_of_throw) * 0.4;
+            bridge->setTempo(QStringLiteral("A"), beyond);
+            QElapsedTimer waiting;
+            waiting.start();
+            while (waiting.elapsed() < 2000 && std::abs(tempoOf("A") - beyond) > 0.005) {
+                pump(1);
+            }
+            if (std::abs(tempoOf("A") - beyond) > 0.005) {
+                std::fprintf(stderr,
+                             "dj-ui: the deck did not take a rate beyond the fader (%.4f wanted, "
+                             "%.4f playing)\n",
+                             beyond, tempoOf("A"));
+                return 1;
+            }
+            const double top = handle->y();
+            const double bottom = top + handle->height();
+            std::fprintf(stdout,
+                         "dj-ui: at %.4f, past the fader's %.3f, the handle sits at %.1f…%.1f px of "
+                         "%.1f\n",
+                         beyond, top_of_throw, top, bottom, pitch->height());
+            if (top < 0.0 || bottom > pitch->height()) {
+                std::fprintf(stderr,
+                             "dj-ui: the handle leaves its fader at %.4f: %.1f…%.1f of %.1f px\n",
+                             beyond, top, bottom, pitch->height());
+                return 1;
+            }
+            bridge->setTempo(QStringLiteral("A"), 1.0);
+            pump(20);
+        }
         return 0;
     }
 
