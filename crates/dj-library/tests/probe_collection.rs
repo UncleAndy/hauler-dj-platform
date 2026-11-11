@@ -374,6 +374,79 @@ fn decode_all(path: &Path) -> Result<(Vec<i16>, u32, u16, f64), String> {
     Ok((samples, rate, channels, started.elapsed().as_secs_f64()))
 }
 
+/// Words that name an edition rather than a credit.
+///
+/// Audio answers "same recording", tags answer "same edition": `(Dub Mix)` and `(Extended Mix)` of the
+/// same track agree in the fingerprint even when their lengths match, and `(Bassboost …)` is another
+/// mastering of the same take. `(feat. …)`, `(prod. …)` and `(Original Mix)` are not editions — the
+/// first two credit people, the third is what a bare title means.
+const EDITION_WORDS: [&str; 24] = [
+    "dub",
+    "extended",
+    "radio",
+    "club",
+    "instrumental",
+    "acoustic",
+    "live",
+    "remix",
+    "remixed",
+    "edit",
+    "rework",
+    "remaster",
+    "remastered",
+    "bassboost",
+    "sped",
+    "slowed",
+    "vip",
+    "bootleg",
+    "mashup",
+    "flip",
+    "cover",
+    "demo",
+    "reprise",
+    "orchestral",
+];
+
+/// The set of edition words a title mentions, matched by whole words.
+///
+/// Whole words, not substrings: `Alive` contains `live` as letters and is not a live recording.
+fn edition_markers(title: &str) -> Vec<&'static str> {
+    let lowered = title.to_lowercase();
+    let mut found: Vec<&'static str> = Vec::new();
+    for token in lowered.split(|character: char| !character.is_alphanumeric()) {
+        if let Some(word) = EDITION_WORDS.iter().find(|word| **word == token)
+            && !found.contains(word)
+        {
+            found.push(word);
+        }
+    }
+    found.sort_unstable();
+    found
+}
+
+/// The verdict of one candidate pair, decided by audio first and by tags second.
+fn pair_verdict(
+    agreement: f64,
+    delta_ms: u64,
+    tolerance_ms: u64,
+    trimmed: bool,
+    same_edition: bool,
+) -> &'static str {
+    if agreement < 0.90 {
+        return "разные";
+    }
+    if !same_edition {
+        return "ВЕРСИЯ (издание)";
+    }
+    if delta_ms <= tolerance_ms {
+        "ДУБЛЬ"
+    } else if trimmed {
+        "ДУБЛЬ (обрезан)"
+    } else {
+        "ВЕРСИЯ"
+    }
+}
+
 fn verdict_name(verdict: Verdict) -> &'static str {
     match verdict {
         Verdict::Ascii => "ascii",
@@ -577,7 +650,14 @@ fn probe_collection() {
         let longer = measured[first]
             .duration_ms
             .max(measured[second].duration_ms);
-        (longer / 200).max(1_500)
+        // An encoder pads: mp3 rounds the length to whole frames and keeps its delay. A lossy file
+        // against a lossless one of the same recording therefore differs by a second or two without
+        // being another edition, while radio and extended mixes differ by tens of seconds.
+        if measured[first].quality.lossless == measured[second].quality.lossless {
+            (longer / 200).max(1_500)
+        } else {
+            (longer / 100).max(3_000)
+        }
     };
     let mut duplicates = 0;
     for (first, second, same, lag, shared) in &pairs {
@@ -589,18 +669,12 @@ fn probe_collection() {
         // the same recording, not another version — a radio edit and an extended mix do not line up.
         let shifted_ms = (f64::from(lag.unsigned_abs()) * FRAME_SECONDS * 1_000.0) as u64;
         let trimmed = delta.abs_diff(shifted_ms) <= SHIFT_TOLERANCE_MS;
-        let verdict = if *same >= 0.90 && (delta <= tolerance || trimmed) {
+        let same_edition = edition_markers(&measured[*first].repaired_title)
+            == edition_markers(&measured[*second].repaired_title);
+        let verdict = pair_verdict(*same, delta, tolerance, trimmed, same_edition);
+        if verdict.starts_with("ДУБЛЬ") {
             duplicates += 1;
-            if delta <= tolerance {
-                "ДУБЛЬ"
-            } else {
-                "ДУБЛЬ (обрезан)"
-            }
-        } else if *same >= 0.90 {
-            "ВЕРСИЯ"
-        } else {
-            "разные"
-        };
+        }
         println!(
             "PROBE pair {verdict} | {} <-> {} | совпадение {same:.4} лаг {lag} (сдвиг {shifted_ms} мс) | общих окон {shared} | дельта длительности {delta} мс (допуск {tolerance})",
             measured[*first].path.display(),
@@ -759,5 +833,58 @@ mod encoding {
         assert!(single_script("Käärijä"));
         assert!(single_script("Steve Levi - Lost"));
         assert!(single_script("Ёжик — Туман"));
+    }
+}
+mod duplicates {
+    use super::*;
+
+    #[test]
+    fn an_edition_is_told_from_a_credit() {
+        // Credit: the same recording, tagged with who is on it.
+        assert_eq!(
+            edition_markers("touch grass (feat. Yung Gravy)"),
+            edition_markers("Touch Grass")
+        );
+        assert_eq!(
+            edition_markers("C’est La Vie"),
+            edition_markers("C'est La Vie (feat. Rich Brian)")
+        );
+        // An original mix is what a bare title means.
+        assert_eq!(edition_markers("X (Original Mix)"), edition_markers("X"));
+        // Editions: the same take, sold as another thing.
+        assert_ne!(
+            edition_markers("Bones (Dub Mix)"),
+            edition_markers("Bones (Extended Mix)")
+        );
+        assert_ne!(
+            edition_markers("ПЫХ-ПЫХ (Bassboost для глухонемых)"),
+            edition_markers("ПЫХ-ПЫХ")
+        );
+        assert_ne!(
+            edition_markers("Dance All Night (Extended Mix)"),
+            edition_markers("Dance All Night")
+        );
+        assert_ne!(edition_markers("X (Radio Edit)"), edition_markers("X"));
+        // Whole words: `Alive` is not a live recording, `Slowed` is an edition.
+        assert_eq!(edition_markers("Alive"), edition_markers(""));
+        assert_ne!(edition_markers("Slowed + Reverb"), edition_markers(""));
+    }
+
+    #[test]
+    fn audio_decides_the_recording_and_tags_decide_the_edition() {
+        // Two mixes of one track: the fingerprints agree, the tags do not, and the tags win.
+        assert_eq!(
+            pair_verdict(0.9086, 20, 1_500, false, false),
+            "ВЕРСИЯ (издание)"
+        );
+        // The same recording in FLAC and mp3, 1,69 с apart: encoder padding, not another edition.
+        assert_eq!(pair_verdict(0.9707, 1_689, 3_000, false, true), "ДУБЛЬ");
+        // The same recording, one copy trimmed by two seconds: the shift explains the difference.
+        assert_eq!(
+            pair_verdict(0.9751, 2_000, 1_500, true, true),
+            "ДУБЛЬ (обрезан)"
+        );
+        // Different recordings stay different whatever the tags say.
+        assert_eq!(pair_verdict(0.5312, 0, 1_500, false, true), "разные");
     }
 }
