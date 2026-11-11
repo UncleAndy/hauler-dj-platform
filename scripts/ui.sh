@@ -139,6 +139,17 @@ case "${1:-}" in
       # A different length for deck B: two decks must not share one envelope.
       "$headless_bin" sine --frames 288000 --rate 48000 --out "$second" >/dev/null
     fi
+    # The key is measured first, on a deck nothing has played yet: a later check leaves deck A
+    # playing, and the engine refuses a load into a playing deck as Busy — a defect of its own that
+    # has nothing to do with the key and must not decide whether this one passes.
+    # Its own file, not a copy: the store keeps a mirror keyed by the file's fingerprint, so a copy of
+    # the fixture shares its metadata and the check would look for a sidecar nothing had to write.
+    key_track="$run_dir/key-track.wav"
+    if [ -x "$headless_bin" ]; then
+      "$headless_bin" sine --frames 96000 --rate 48000 --out "$key_track" >/dev/null
+    fi
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --key-check \
+      --load "$key_track"
     if [ -f "$fixture" ] && [ -f "$second" ]; then
       QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --self-check \
         --load "$fixture" --load-b "$second"

@@ -21,7 +21,7 @@ use dj_deck::{Deck, DeckSource};
 use dj_domain::DeckId;
 use dj_engine::{
     DeckStatic, DeckUpdate, EngineGraph, GraphLoad, LoadRequest, Published, StateCells, Submission,
-    prepare_track,
+    prepare_track_with_key,
 };
 use dj_mixer::{ChannelSettings, CrossAssign, Mixer};
 
@@ -788,7 +788,21 @@ fn run(argv: &[String]) -> Result<(), String> {
                 // Stream first, cache behind: a ten-minute file is two decodes, and the deck should
                 // not wait for the second one to start playing. The entry is handed over at a block
                 // boundary once it exists (GraphLoad::CacheReady).
-                match prepare_track(&path, rate, 2.0, auto_gain_share, None).map(|mut prepared| {
+                // What the file already says about its key saves a whole decode below: a track with a
+                // stored key is not measured again.
+                let known_key = store
+                    .load(volume(), root(), &path)
+                    .ok()
+                    .and_then(|loaded| loaded.meta.key);
+                match prepare_track_with_key(
+                    &path,
+                    rate,
+                    2.0,
+                    auto_gain_share,
+                    None,
+                    known_key.as_deref(),
+                )
+                .map(|mut prepared| {
                     if let Some(problem) =
                         dj_engine::meta::restore(&mut prepared, &store, volume(), root())
                     {
@@ -809,6 +823,14 @@ fn run(argv: &[String]) -> Result<(), String> {
                             Ok(false) => {}
                             Err(message) => eprintln!("dj-engine: {message}"),
                         }
+                    }
+                    // The key is worth keeping for the same reason: measuring it is a decode of the
+                    // whole file. A key already in the file is left alone by the write.
+                    if let Some(key) = prepared.track.as_ref().and_then(|track| track.key.clone())
+                        && let Err(message) =
+                            dj_engine::meta::write_key(&store, volume(), root(), &path, &key, false)
+                    {
+                        eprintln!("dj-engine: {message}");
                     }
                     prepared
                 }) {

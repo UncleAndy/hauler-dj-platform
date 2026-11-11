@@ -914,6 +914,10 @@ int main(int argc, char *argv[])
         QStringLiteral("strip-check"),
         QStringLiteral("With --connect and --load: load the track into deck A and require the deck's "
                        "strip to receive the envelope the engine published."));
+    const QCommandLineOption keyCheckOption(
+        QStringLiteral("key-check"),
+        QStringLiteral("With --connect and --load: require the deck's header to show the track's key "
+                       "and the engine to have written the same key beside the file."));
     const QCommandLineOption exitAfterOption(
         QStringLiteral("exit-after"),
         QStringLiteral("Close the window after this many milliseconds: the shutdown path, exercised "
@@ -1238,6 +1242,7 @@ int main(int argc, char *argv[])
     parser.addOption(cueReadOption);
     parser.addOption(exitAfterOption);
     parser.addOption(stripCheckOption);
+    parser.addOption(keyCheckOption);
     parser.addOption(loadOption);
     parser.addOption(loadSecondOption);
     parser.addOption(outsideColorOption);
@@ -8362,6 +8367,121 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: the strip never received an envelope\n");
             return 1;
         }
+        return 0;
+    }
+
+    if (parser.isSet(keyCheckOption)) {
+        // The key is a measurement, so the check reads the two places a person reads it: the label in
+        // the deck's header, and the file the engine wrote beside the track. A key that only exists in
+        // memory is a key the next load forgets.
+        const QString track = parser.value(loadOption);
+        if (track.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: --key-check needs --load\n");
+            return 2;
+        }
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        if (parser.isSet(connectOption)) {
+            bridge->connectToEngine(parser.value(connectOption));
+            QElapsedTimer linking;
+            linking.start();
+            while (!bridge->isConnected() && linking.elapsed() < 3000) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                QThread::msleep(10);
+            }
+        }
+        if (!bridge->isConnected()) {
+            std::fprintf(stderr, "dj-ui: --key-check needs a running engine\n");
+            return 1;
+        }
+        // The engine outlives one check: a deck that already holds a track would show the key of the
+        // track before this one, and the check would read a stale answer as a fresh one. The wait is on
+        // the deck's own state, not on the label: a label that has not been repainted yet is not a
+        // load that has not happened.
+        // What the engine said about the commands this check sends: a refusal is the reason a load
+        // leaves the deck as it was, and a check that only reports "no key" hides it.
+        QString lastAck;
+        QObject::connect(bridge.get(), &BridgeClient::acked,
+                         [&lastAck](int id, bool applied, bool rejected, QString reason) {
+                             lastAck = QStringLiteral("command %1: %2%3")
+                                           .arg(id)
+                                           .arg(applied ? QStringLiteral("applied")
+                                                        : (rejected ? QStringLiteral("rejected")
+                                                                    : QStringLiteral("unknown")))
+                                           .arg(reason.isEmpty() ? QString()
+                                                                 : QStringLiteral(" (%1)").arg(reason));
+                         });
+        const auto deckNow = [&]() { return deckById(bridge->snapshot(), QStringLiteral("A")); };
+        const auto trackOf = [&]() { return deckNow().value(QStringLiteral("track")).toMap(); };
+        const auto keyOf = [&]() { return trackOf().value(QStringLiteral("key")).toString().trimmed(); };
+        // A deck that is playing refuses a load, and that refusal is right: cutting the track the room
+        // is dancing to is the mistake a DJ never forgives. An earlier check in the suite leaves deck A
+        // playing, so the deck is stopped first — a check that assumed silence would fail on the order
+        // of the suite rather than on the thing it measures.
+        bridge->play(QStringLiteral("A"), false);
+        QElapsedTimer stopping;
+        stopping.start();
+        while (stopping.elapsed() < 5000 && deckNow().value(QStringLiteral("playing")).toBool()) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QThread::msleep(10);
+        }
+        bridge->load(QStringLiteral("A"), track);
+        // The title says which track the deck is describing: the key of the one before it is not an
+        // answer about this one.
+        const QString wanted = QFileInfo(track).completeBaseName();
+        QElapsedTimer waited;
+        waited.start();
+        QString shown;
+        while (waited.elapsed() < 30000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+            const QVariantMap current = trackOf();
+            const QString title = current.value(QStringLiteral("title")).toString();
+            if (title == wanted && !keyOf().isEmpty()) {
+                shown = keyOf();
+                break;
+            }
+            QThread::msleep(20);
+        }
+        std::fprintf(stdout, "dj-ui: deck A shows the key \"%s\" after %lld ms\n", qPrintable(shown),
+                     static_cast<long long>(waited.elapsed()));
+        if (shown.isEmpty()) {
+            const QVariantMap current = trackOf();
+            std::fprintf(stderr,
+                         "dj-ui: the deck never showed a key (wanted \"%s\", deck says load %s, title "
+                         "\"%s\", key \"%s\")\n",
+                         qPrintable(wanted),
+                         qPrintable(deckNow().value(QStringLiteral("load")).toString()),
+                         qPrintable(current.value(QStringLiteral("title")).toString()),
+                         qPrintable(current.value(QStringLiteral("key")).toString()));
+            std::fprintf(stderr, "dj-ui: the engine last said %s\n", qPrintable(lastAck));
+            return 1;
+        }
+        // The file beside the track: `.djmeta/<name>.json`, the same place the cues go.
+        const QFileInfo info(track);
+        const QString sidecar = info.absolutePath() + QStringLiteral("/.djmeta/") + info.fileName()
+                                + QStringLiteral(".json");
+        QFile stored(sidecar);
+        if (!stored.open(QIODevice::ReadOnly)) {
+            std::fprintf(stderr, "dj-ui: no metadata at %s\n", qPrintable(sidecar));
+            return 1;
+        }
+        const QJsonObject meta = QJsonDocument::fromJson(stored.readAll()).object();
+        const QString written = meta.value(QStringLiteral("key")).toString();
+        std::fprintf(stdout, "dj-ui: %s records the key \"%s\"\n", qPrintable(sidecar),
+                     qPrintable(written));
+        if (written.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: the engine did not write the key beside the track\n");
+            return 1;
+        }
+        if (written != shown) {
+            std::fprintf(stderr, "dj-ui: the header says \"%s\" and the file says \"%s\"\n",
+                         qPrintable(shown), qPrintable(written));
+            return 1;
+        }
+        std::fprintf(stdout, "dj-ui: the key is measured, stored and shown\n");
         return 0;
     }
 

@@ -144,6 +144,14 @@ pub fn restore(
                     prepared.static_info.track = prepared.track.clone();
                 }
             }
+            // A key in the file is a decision — the DJ's ear, or another program's — and outranks the
+            // measurement the loader has just made.
+            if let Some(stored) = loaded.meta.key.clone() {
+                if let Some(track) = prepared.track.as_mut() {
+                    track.key = Some(stored);
+                }
+                prepared.static_info.track = prepared.track.clone();
+            }
             loaded.conflict.map(|(loser, winner)| {
                 format!(
                     "{}: metadata disagreed (revision {} vs {}), used {}",
@@ -207,6 +215,46 @@ pub fn write_beatgrid(
             .map(|(frame, beat)| dj_library::Anchor { frame, beat })
             .collect(),
     });
+    if existed {
+        meta.bump(now_ms);
+    }
+    store
+        .save(volume, root, path, &meta)
+        .map(|_| true)
+        .map_err(|error| error.to_string())
+}
+
+/// Store the measured key, unless the file already carries one.
+///
+/// A key already in the file is a decision — the DJ's ear, or another program's — and a detector does
+/// not overrule it. `force` is the DJ asking for the measurement again.
+pub fn write_key(
+    store: &Store,
+    volume: &str,
+    root: &Path,
+    path: &Path,
+    key: &str,
+    force: bool,
+) -> Result<bool, String> {
+    if key.trim().is_empty() {
+        return Ok(false);
+    }
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or_default();
+    let (mut meta, existed) = match store.load(volume, root, path) {
+        Ok(loaded) => (loaded.meta, true),
+        Err(_) => {
+            let print = fingerprint::of_path(path)
+                .map_err(|error| format!("{}: {error}", path.display()))?;
+            (TrackMeta::new(print, now_ms), false)
+        }
+    };
+    if !force && meta.key.is_some() {
+        return Ok(false);
+    }
+    meta.key = Some(key.to_owned());
     if existed {
         meta.bump(now_ms);
     }

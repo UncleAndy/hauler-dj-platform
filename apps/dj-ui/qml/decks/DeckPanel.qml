@@ -600,6 +600,18 @@ Pane {
                     font.pixelSize: 10
                 }
                 Label {
+                    objectName: "key_" + panel.deckId
+                    // The key sits beside the tempo because those are the two numbers a DJ reads to
+                    // pick the next track. Nothing shows until something measured it, and a track
+                    // with no key shows nothing rather than an empty slot (DJP-MEDIA-006).
+                    visible: panel.track !== null && panel.track.key !== undefined
+                             && panel.track.key !== null
+                    text: panel.track !== null && panel.track.key !== undefined
+                          && panel.track.key !== null ? panel.track.key : ""
+                    color: UiSettings.themeText
+                    font.pixelSize: 10
+                }
+                Label {
                     objectName: "bar_" + panel.deckId
                     visible: panel.localBpm > 0
                     text: panel.barInSquare

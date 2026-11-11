@@ -108,12 +108,50 @@ impl Key {
         };
         format!("{number}{side}")
     }
+
+    /// The key in Traktor's own notation: `1d` is C major, `1m` is A minor.
+    ///
+    /// Traktor numbers the keys along the circle of fifths, not around the chromatic wheel: `12m` is D
+    /// minor, where Camelot's `12A` is C# minor. The two notations share the letters and disagree on
+    /// every number, so reading one as the other puts the answer a fourth away — which is exactly what
+    /// happened when the reference files were first compared.
+    pub fn traktor(&self) -> String {
+        const LABEL_MAJOR: [u8; 12] = [1, 8, 3, 10, 5, 12, 7, 2, 9, 4, 11, 6];
+        const LABEL_MINOR: [u8; 12] = [10, 5, 12, 7, 2, 9, 4, 11, 6, 1, 8, 3];
+        let (number, side) = match self.mode {
+            Mode::Major => (LABEL_MAJOR[usize::from(self.tonic % 12)], 'd'),
+            Mode::Minor => (LABEL_MINOR[usize::from(self.tonic % 12)], 'm'),
+        };
+        format!("{number}{side}")
+    }
+
+    /// Read back a name this type wrote: `A minor`, `F# major`.
+    ///
+    /// The score, the margin and the tuning of a stored key are not measurements — the file kept the
+    /// answer, not the evidence for it — so they come back as zero and 440 Hz. Anything this type did
+    /// not write is `None` rather than a guess.
+    pub fn from_name(name: &str) -> Option<Self> {
+        let mut words = name.split_whitespace();
+        let written = words.next()?;
+        let tonic = NAMES.iter().position(|known| *known == written)?;
+        let mode = match words.next()? {
+            "major" => Mode::Major,
+            "minor" => Mode::Minor,
+            _ => return None,
+        };
+        if words.next().is_some() {
+            return None;
+        }
+        Some(Self {
+            tonic: u8::try_from(tonic).ok()?,
+            mode,
+            score: 0.0,
+            margin: 0.0,
+            tuning_hz: 440.0,
+        })
+    }
 }
 
-/// Lowest frequency that counts as a note: below it is rumble, not pitch.
-const LOWEST_HZ: f64 = 55.0;
-/// Highest frequency that counts as a note: above it a cymbal's noise says nothing about the key.
-const HIGHEST_HZ: f64 = 5_000.0;
 /// The analysis window, in frames. At 48 kHz this is 341 ms — 2,9 Hz between bins, which separates
 /// neighbouring semitones down to the bottom of a bass line. A 170 ms window (5,9 Hz) did not: a C3
 /// triad's leakage spread over nine pitch classes and the answer came out as its relative minor.
@@ -122,6 +160,21 @@ const WINDOW: usize = 16_384;
 const HOP: usize = 4_096;
 /// How much an onset counts against a sustained frame: an onset carries five times the weight.
 const ONSET_WEIGHT: f64 = 4.0;
+/// A peak has to reach this share of its frame's loudest bin to count as a note.
+const PEAK_FLOOR: f64 = 0.05;
+/// How many harmonics of each peak are folded into the profile.
+///
+/// One: a partial that is present in the spectrum is a peak of its own and is counted where it stands.
+/// Adding harmonics that are *not* there invents notes — a pure triad has none, and the phantom fifths
+/// turned a C major triad into E minor.
+const HARMONICS: usize = 1;
+/// How fast the weight of a harmonic falls: `1 / h^1.5` keeps the fundamental in charge without
+/// silencing the fifth and the octave that carry a chord.
+const HARMONIC_FALLOFF: f64 = 1.5;
+/// The band peaks are read from: below it a bass drum is a thud, not a note.
+const PEAK_LOWEST_HZ: f64 = 55.0;
+/// Above it a cymbal is noise, not a note.
+const PEAK_HIGHEST_HZ: f64 = 5_000.0;
 /// The band the tuning is read from: below it the bins are too close together to place a semitone,
 /// above it a cymbal says nothing about tuning.
 const TUNING_LOWEST_HZ: f64 = 80.0;
@@ -199,38 +252,15 @@ fn tuning_of(mono: &[f32], rate: f64) -> Option<([f64; 12], f64)> {
             0.0
         };
         let weight = 1.0 + ONSET_WEIGHT * onset;
-        let mut frame_chroma = [0.0_f64; 12];
-        for (bin, magnitude) in half.iter().enumerate() {
-            if *magnitude <= 0.0 {
-                continue;
-            }
-            let frequency = bin as f64 * rate / WINDOW as f64;
-            if !(LOWEST_HZ..=HIGHEST_HZ).contains(&frequency) {
-                continue;
-            }
-            // The bin's pitch against the tuning the track is actually in, as a fractional class, so
-            // energy between two semitones is split between them instead of being thrown at the nearer.
-            let midi = 69.0 + 12.0 * (frequency / tuning_hz).log2();
-            let class = midi.rem_euclid(12.0);
-            let lower = class.floor();
-            let fraction = class - lower;
-            let first = lower as usize % 12;
-            let second = (first + 1) % 12;
-            // Energy, not amplitude: squaring pushes the window's sidelobes down while a fundamental
-            // keeps its weight, which is what separates a triad from the smear around it.
-            let energy = magnitude * magnitude;
-            frame_chroma[first] += energy * (1.0 - fraction);
-            frame_chroma[second] += energy * fraction;
+        let frame = frame_chroma(half, rate, tuning_hz);
+        let frame_total: f64 = frame.iter().sum();
+        if frame_total <= 0.0 {
+            continue;
         }
-        // Each frame says what *it* sounds like, whatever its level: a quiet bridge and a loud drop
-        // weigh the same, and the bass of one bar cannot outvote the chords of the next.
-        let frame_total: f64 = frame_chroma.iter().sum();
-        if frame_total > 0.0 {
-            for (class, value) in frame_chroma.iter().enumerate() {
-                chroma[class] += weight * value / frame_total;
-            }
-            total_weight += weight;
+        for (class, value) in frame.iter().enumerate() {
+            chroma[class] += weight * value / frame_total;
         }
+        total_weight += weight;
     }
     if total_weight <= 0.0 {
         return None;
@@ -246,6 +276,62 @@ fn tuning_of(mono: &[f32], rate: f64) -> Option<([f64; 12], f64)> {
         *value /= total;
     }
     Some((chroma, tuning_hz))
+}
+
+/// The pitch classes of one frame, from its spectral peaks and their harmonics.
+///
+/// Folding every bin into a class counts the bass, the cymbals and the noise as if they were notes. A
+/// peak, on the other hand, is a note: it says what it is at its own frequency and again at each of its
+/// harmonics, which is what a listener hears as one pitch. This is the harmonic pitch class profile,
+/// and it is what makes a real mix readable at all.
+fn frame_chroma(half: &[f64], rate: f64, tuning_hz: f64) -> [f64; 12] {
+    let mut frame = [0.0_f64; 12];
+    let loudest = half.iter().cloned().fold(0.0_f64, f64::max);
+    if loudest <= 0.0 {
+        return frame;
+    }
+    // A peak has to stand out of its own frame: a quarter of the loudest bin keeps the noise floor and
+    // the tail of a cymbal out of the profile.
+    let floor = loudest * PEAK_FLOOR;
+    for bin in 1..half.len().saturating_sub(1) {
+        let magnitude = half[bin];
+        if magnitude < floor || magnitude < half[bin - 1] || magnitude < half[bin + 1] {
+            continue;
+        }
+        let frequency = bin as f64 * rate / WINDOW as f64;
+        if !(PEAK_LOWEST_HZ..=PEAK_HIGHEST_HZ).contains(&frequency) {
+            continue;
+        }
+        // Parabolic interpolation over the three bins: the peak of a Hann window sits between bins, and
+        // half a bin at the bottom of the band is most of a semitone.
+        let left = half[bin - 1];
+        let right = half[bin + 1];
+        let denominator = left - 2.0 * magnitude + right;
+        let offset = if denominator.abs() > f64::EPSILON {
+            0.5 * (left - right) / denominator
+        } else {
+            0.0
+        };
+        let refined = (bin as f64 + offset.clamp(-0.5, 0.5)) * rate / WINDOW as f64;
+        for harmonic in 1..=HARMONICS {
+            let partial = refined * harmonic as f64;
+            if !(PEAK_LOWEST_HZ..=PEAK_HIGHEST_HZ).contains(&partial) {
+                continue;
+            }
+            let midi = 69.0 + 12.0 * (partial / tuning_hz).log2();
+            let class = midi.rem_euclid(12.0);
+            let lower = class.floor();
+            let fraction = class - lower;
+            let first = lower as usize % 12;
+            let second = (first + 1) % 12;
+            // The fundamental counts most; each harmonic less, because a harmonic is also a partial of
+            // its own fundamental and counting it in full would double the notes below it.
+            let strength = magnitude / (harmonic as f64).powf(HARMONIC_FALLOFF);
+            frame[first] += strength * (1.0 - fraction);
+            frame[second] += strength * fraction;
+        }
+    }
+    frame
 }
 
 /// The short-time spectra of a slice of audio: Hann window, half the bins, hop `HOP`.
@@ -419,6 +505,34 @@ fn fft(real: &mut [f64], imaginary: &mut [f64]) {
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 mod tests {
+    /// The keys the reference set is in, written the way Traktor writes them.
+    ///
+    /// These are the eight answers from `tmp/refmusic/*.traktor.txt`, so the notation and the detector
+    /// are checked against the same numbers the measurement used: a shift in either shows up here.
+    #[test]
+    fn traktor_notation_matches_the_reference_files() {
+        let cases = [
+            ("C major", "1d"),
+            ("A minor", "1m"),
+            ("F major", "12d"),
+            ("D minor", "12m"),
+            ("A major", "4d"),
+            ("G minor", "11m"),
+            ("F minor", "9m"),
+            ("C minor", "10m"),
+            ("E minor", "2m"),
+            ("C# minor", "5m"),
+        ];
+        for (name, expected) in cases {
+            let key = Key::from_name(name).expect(name);
+            assert_eq!(key.traktor(), expected, "{name}");
+            assert_eq!(key.name(), name, "{name} did not survive the round trip");
+        }
+        assert!(Key::from_name("Fm").is_none());
+        assert!(Key::from_name("F dorian").is_none());
+        assert!(Key::from_name("").is_none());
+    }
+
     use super::*;
 
     const RATE: f64 = 48_000.0;

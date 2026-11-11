@@ -1713,6 +1713,22 @@ pub fn prepare_track(
     auto_gain_share: f32,
     cache: Option<&mut dj_codec::PcmCache>,
 ) -> Result<PreparedTrack, String> {
+    prepare_track_with_key(path, rate, window_seconds, auto_gain_share, cache, None)
+}
+
+/// Prepare a track, told the key the file already records.
+///
+/// Measuring a key is a decode of the whole file. A track whose metadata already states one is not
+/// measured again: the answer is in the file, and a load that pays four seconds for it is a load the
+/// DJ waits through twice for nothing.
+pub fn prepare_track_with_key(
+    path: &std::path::Path,
+    rate: u32,
+    window_seconds: f64,
+    auto_gain_share: f32,
+    cache: Option<&mut dj_codec::PcmCache>,
+    known_key: Option<&str>,
+) -> Result<PreparedTrack, String> {
     let config = PrefetchConfig::for_sample_rate(rate, window_seconds);
     let mut prefetcher = Prefetcher::open(path, config).map_err(|err| err.to_string())?;
     let info = prefetcher.info().clone();
@@ -1778,6 +1794,16 @@ pub fn prepare_track(
         track.first_beat_frame = Some(grid.first_beat_frame());
         track.grid = Some(grid);
     }
+    // The key is measured here as well, on the same thread and for the same reason: it is another full
+    // decode of the file, and the audio callback must never see one. A key already stored in the file
+    // outranks this answer — the caller restores it right after this returns.
+    track.key = match known_key {
+        Some(known) => Some(known.to_owned()),
+        None => dj_analysis::key::analyse(path)
+            .ok()
+            .flatten()
+            .map(|key| key.name()),
+    };
     static_info.track = Some(track.clone());
     static_info.grid = track.grid.clone();
     // The published deck description carries the correction too: the shell reads the snapshot, and a
