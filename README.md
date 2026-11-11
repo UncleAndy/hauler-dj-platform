@@ -167,3 +167,21 @@ Dual-licensed under **MIT OR Apache-2.0**, at your option: `LICENSE` (pointer), 
 The policy is recorded in `docs/adr/0001-license.md` (accepted): GPL/AGPL dependencies are excluded
 (so Encdr and Ableton Link are out), LGPL components (Qt, ALSA) only through dynamic linking with the
 usual notices. Third-party inventory: `THIRD_PARTY.md`.
+
+## Ableton Link Integration & Licensing (draft)
+
+~~Hauler DJ Platform supports optional integration with **Ableton Link** for tempo and beat synchronization with compatible applications and devices.~~
+
+Hauler DJ Platform is developing optional integration with Ableton Link for tempo and beat synchronization with compatible applications and devices.
+
+**Important licensing notice:**
+
+- **Hauler DJ Platform**, including its original Ableton Link integration code, is licensed under **MIT OR Apache-2.0**.
+- **Ableton Link** is third-party software developed by Ableton AG and is subject to its own separate licensing terms. It is **not covered by the MIT or Apache-2.0 licenses** of this project.
+- The Ableton Link source code is not copied into or redistributed as part of this repository. Instead, it is referenced through a Git submodule pointing to the official [Ableton Link repository](https://github.com/Ableton/link).
+- Any use, modification, or redistribution of Ableton Link, including distribution of binaries incorporating it, must comply with the applicable Ableton Link license or a separate agreement with Ableton.
+- Any separate license agreement granted to the maintainers of Hauler DJ Platform does **not automatically grant the same rights** to third-party developers, distributors, or forks.
+
+For further information about Ableton Link licensing, please refer to the [official Ableton Link repository](https://github.com/Ableton/link) or contact Ableton directly.
+
+**Ableton Link remains the intellectual property of Ableton AG.**
