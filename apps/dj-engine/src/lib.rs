@@ -1697,6 +1697,11 @@ pub enum Routed {
         /// What to do with the file in question.
         answer: dj_domain::DuplicateAnswer,
     },
+    /// Handed to the worker that measures a file which is not on a deck: it owns the file write.
+    AnalyzeFile {
+        /// The file to measure.
+        path: String,
+    },
     /// Handed to the worker that edits grids: it owns the file write and the publication.
     EditGrid {
         /// Target deck.
@@ -1734,6 +1739,7 @@ pub fn route(command: &ScheduledCommand) -> Routed {
             command_id: command.id,
             answer: *answer,
         },
+        DjCommand::AnalyzeTrack { path } => Routed::AnalyzeFile { path: path.clone() },
         DjCommand::AnalyzeTempo { deck, path } => Routed::Analyze {
             deck: *deck,
             path: path.clone(),
@@ -2491,6 +2497,7 @@ pub fn run_import(
     answers: Receiver<dj_domain::DuplicateAnswer>,
     cancel: Arc<AtomicBool>,
     running: Arc<AtomicBool>,
+    after_place: Box<dyn Fn(&std::path::Path) + Send>,
 ) {
     let root = std::path::PathBuf::from(&request.root);
     let files = collect_audio(&request.paths);
@@ -2511,6 +2518,9 @@ pub fn run_import(
         if cancel.load(Ordering::Relaxed) {
             break;
         }
+        // The copy that landed, so the caller can finish what an import cannot: measuring the tempo
+        // and the key of a file that arrived without them.
+        let mut landed: Option<std::path::PathBuf> = None;
         state.current = Some(file.display().to_string());
         cells.set_import(Some(state.clone()));
 
@@ -2527,16 +2537,19 @@ pub fn run_import(
                 Ok(dj_library::import::Outcome::Placed(imported)) => {
                     state.placed += 1;
                     catalog.add(imported.path.clone(), imported.identity.clone());
+                    landed = Some(imported.path.clone());
                     break;
                 }
                 Ok(dj_library::import::Outcome::Version { imported, .. }) => {
                     state.placed += 1;
                     catalog.add(imported.path.clone(), imported.identity.clone());
+                    landed = Some(imported.path.clone());
                     break;
                 }
                 Ok(dj_library::import::Outcome::Replaced { imported, .. }) => {
                     state.placed += 1;
                     catalog.add(imported.path.clone(), imported.identity.clone());
+                    landed = Some(imported.path.clone());
                     break;
                 }
                 Ok(dj_library::import::Outcome::Rejected { .. }) => {
@@ -2587,6 +2600,11 @@ pub fn run_import(
                     break;
                 }
             }
+        }
+        // A file that arrived without a grid or a key is measured now, while the DJ still sees it in
+        // the progress window: a collection row with no tempo is a row he cannot mix from.
+        if let Some(path) = landed {
+            after_place(&path);
         }
         state.done += 1;
         state.current = None;

@@ -83,9 +83,80 @@ Pane {
         return true;
     }
 
+    /// Measure the chosen tracks: one command each, then the list is read again until the numbers
+    /// land in the files.
+    function analyzeSelection() {
+        const chosen = browser.selection.slice();
+        if (chosen.length === 0) {
+            browser.lastAction = "nothing to analyse";
+            return false;
+        }
+        Bridge.analyzeTrack(chosen);
+        browser.lastAction = "analysing " + chosen.length;
+        analyzePoll.ticks = 0;
+        analyzePoll.running = true;
+        return true;
+    }
+
     function startImport(paths, parallel) {
         Bridge.importPaths(paths, LayoutState.roomiestRoot(), parallel);
         browser.lastAction = "import " + paths.length + " into " + LayoutState.roomiestRoot();
+    }
+
+    // The collection's columns: order and widths are a setting, because what matters in a table is
+    // the DJ's business. Widths are shares of the list, so a wider window does not lose the shape.
+    readonly property var columns: LayoutState.collectionColumns
+    function columnId(index) {
+        return index < columns.length ? columns[index].id : "";
+    }
+    function columnShare(index) {
+        return index < columns.length ? columns[index].width : 0;
+    }
+    function columnWidth(index, total) {
+        return columnShare(index) * total;
+    }
+    function columnX(index, total) {
+        let x = 0;
+        for (let i = 0; i < index && i < columns.length; ++i) {
+            x += columns[i].width * total;
+        }
+        return x;
+    }
+    // Which column the pointer is over: the drop target of a dragged header.
+    function columnIndexAt(x, total) {
+        let edge = 0;
+        for (let i = 0; i < columns.length; ++i) {
+            edge += columns[i].width * total;
+            if (x < edge) {
+                return i;
+            }
+        }
+        return Math.max(0, columns.length - 1);
+    }
+    function columnTitle(id) {
+        switch (id) {
+        case "artist": return qsTr("Исполнитель");
+        case "album": return qsTr("Альбом");
+        case "title": return qsTr("Название");
+        case "time": return qsTr("Время");
+        case "bpm": return "BPM";
+        case "key": return "Key";
+        }
+        return "";
+    }
+    function columnAlign(id) {
+        return (id === "time" || id === "bpm" || id === "key") ? Text.AlignRight : Text.AlignLeft;
+    }
+    function columnText(entry, id) {
+        switch (id) {
+        case "artist": return entry.artist !== undefined ? entry.artist : "";
+        case "album": return entry.album !== undefined ? entry.album : "";
+        case "title": return entry.title !== undefined ? entry.title : "";
+        case "time": return browser.clock(entry.duration_ms);
+        case "bpm": return entry.bpm !== undefined ? Math.round(entry.bpm) : "";
+        case "key": return entry.key !== undefined ? entry.key : "";
+        }
+        return "";
     }
 
     /// A length in milliseconds as a DJ reads it: `3:21`. Empty when nothing measured it.
@@ -249,8 +320,39 @@ Pane {
         MenuItem {
             objectName: "addToCollection"
             text: qsTr("Add files to collection…")
+            // A file that is already in the collection cannot be added to it: the entry belongs to the
+            // file list, and a menu that offers the impossible is a menu that lies.
+            visible: browser.section !== "collection"
             enabled: browser.selection.length > 0
             onClicked: browser.askImport()
+        }
+        MenuItem {
+            objectName: "analyzeSelection"
+            text: qsTr("Analyze…")
+            // Tempo and key, measured again: what an import could not measure, or what the DJ wants
+            // re-measured after a remaster.
+            visible: browser.section === "collection"
+            enabled: browser.selection.length > 0
+            onClicked: browser.analyzeSelection()
+        }
+    }
+
+    // The analysis writes the file, not a snapshot: the numbers appear when the worker is done, so
+    // the list is read again a few times instead of being waited on once.
+    Timer {
+        id: analyzePoll
+        objectName: "analyzePoll"
+        interval: 800
+        repeat: true
+        running: false
+        property int ticks: 0
+        onTriggered: {
+            analyzePoll.ticks += 1;
+            if (analyzePoll.ticks > 25) {
+                analyzePoll.running = false;
+                return;
+            }
+            Browser.refreshCollection();
         }
     }
 
@@ -659,75 +761,144 @@ Pane {
             // The collection's columns, named: a row of numbers with no header is a puzzle. The file
             // name is not among them — a DJ looks for the artist, the album and the title.
             Item {
+                id: header
                 objectName: "collectionHeader"
                 visible: browser.section === "collection"
                 Layout.fillWidth: true
                 Layout.preferredHeight: Math.round(browser.rowHeight * 0.85)
-                RowLayout {
+
+                // Where a column ends, in pixels: the line the pointer catches to change a width.
+                function boundaryAt(x) {
+                    for (let index = 0; index < browser.columns.length; ++index) {
+                        const edge = browser.columnX(index, header.width)
+                            + browser.columnWidth(index, header.width);
+                        if (Math.abs(x - edge) <= 4) {
+                            return index;
+                        }
+                    }
+                    return -1;
+                }
+
+                Label {
+                    objectName: "collectionHeaderCell_0"
+                    x: browser.columnX(0, header.width) + 6
+                    width: Math.max(0, browser.columnWidth(0, header.width) - 12)
+                    visible: browser.columnId(0) !== ""
+                    text: browser.columnTitle(browser.columnId(0))
+                    horizontalAlignment: browser.columnAlign(browser.columnId(0))
+                    color: UiSettings.themeTextDim
+                    font.pixelSize: browser.listFont
+                    elide: Text.ElideRight
+                }
+                Label {
+                    objectName: "collectionHeaderCell_1"
+                    x: browser.columnX(1, header.width) + 6
+                    width: Math.max(0, browser.columnWidth(1, header.width) - 12)
+                    visible: browser.columnId(1) !== ""
+                    text: browser.columnTitle(browser.columnId(1))
+                    horizontalAlignment: browser.columnAlign(browser.columnId(1))
+                    color: UiSettings.themeTextDim
+                    font.pixelSize: browser.listFont
+                    elide: Text.ElideRight
+                }
+                Label {
+                    objectName: "collectionHeaderCell_2"
+                    x: browser.columnX(2, header.width) + 6
+                    width: Math.max(0, browser.columnWidth(2, header.width) - 12)
+                    visible: browser.columnId(2) !== ""
+                    text: browser.columnTitle(browser.columnId(2))
+                    horizontalAlignment: browser.columnAlign(browser.columnId(2))
+                    color: UiSettings.themeTextDim
+                    font.pixelSize: browser.listFont
+                    elide: Text.ElideRight
+                }
+                Label {
+                    objectName: "collectionHeaderCell_3"
+                    x: browser.columnX(3, header.width) + 6
+                    width: Math.max(0, browser.columnWidth(3, header.width) - 12)
+                    visible: browser.columnId(3) !== ""
+                    text: browser.columnTitle(browser.columnId(3))
+                    horizontalAlignment: browser.columnAlign(browser.columnId(3))
+                    color: UiSettings.themeTextDim
+                    font.pixelSize: browser.listFont
+                    elide: Text.ElideRight
+                }
+                Label {
+                    objectName: "collectionHeaderCell_4"
+                    x: browser.columnX(4, header.width) + 6
+                    width: Math.max(0, browser.columnWidth(4, header.width) - 12)
+                    visible: browser.columnId(4) !== ""
+                    text: browser.columnTitle(browser.columnId(4))
+                    horizontalAlignment: browser.columnAlign(browser.columnId(4))
+                    color: UiSettings.themeTextDim
+                    font.pixelSize: browser.listFont
+                    elide: Text.ElideRight
+                }
+                Label {
+                    objectName: "collectionHeaderCell_5"
+                    x: browser.columnX(5, header.width) + 6
+                    width: Math.max(0, browser.columnWidth(5, header.width) - 12)
+                    visible: browser.columnId(5) !== ""
+                    text: browser.columnTitle(browser.columnId(5))
+                    horizontalAlignment: browser.columnAlign(browser.columnId(5))
+                    color: UiSettings.themeTextDim
+                    font.pixelSize: browser.listFont
+                    elide: Text.ElideRight
+                }
+
+                // One pointer does both jobs: on a column's edge it changes the width, anywhere else
+                // it moves the column. Two targets on a fifteen-pixel strip would fight each other.
+                MouseArea {
+                    id: headerDrag
+                    objectName: "collectionHeaderDrag"
                     anchors.fill: parent
-                    anchors.leftMargin: 6
-                    anchors.rightMargin: 6
-                    spacing: 8
-                    // Six labels, not a Repeater over an array of objects: a header is six fixed
-                    // words, and a table whose header is built by a model is a table with one more
-                    // thing that can fail.
-                    Label {
-                        objectName: "collectionHeaderArtist"
-                        text: qsTr("Исполнитель")
-                        Layout.preferredWidth: list.width * 0.22
-                        Layout.maximumWidth: list.width * 0.22
-                        color: UiSettings.themeTextDim
-                        font.pixelSize: browser.listFont
-                        elide: Text.ElideRight
+                    property int resizeIndex: -1
+                    property real startX: 0
+                    property real startShare: 0
+                    property int dragIndex: -1
+                    property int dropIndex: -1
+                    cursorShape: resizeIndex >= 0 ? Qt.SizeHorCursor
+                                 : (dragIndex >= 0 ? Qt.ClosedHandCursor : Qt.ArrowCursor)
+                    onPressed: function (mouse) {
+                        const edge = header.boundaryAt(mouse.x);
+                        if (edge >= 0) {
+                            resizeIndex = edge;
+                            startX = mouse.x;
+                            startShare = browser.columnShare(edge);
+                            dragIndex = -1;
+                        } else {
+                            resizeIndex = -1;
+                            dragIndex = browser.columnIndexAt(mouse.x, header.width);
+                            dropIndex = dragIndex;
+                        }
                     }
-                    Label {
-                        objectName: "collectionHeaderAlbum"
-                        text: qsTr("Альбом")
-                        Layout.preferredWidth: list.width * 0.20
-                        Layout.maximumWidth: list.width * 0.20
-                        color: UiSettings.themeTextDim
-                        font.pixelSize: browser.listFont
-                        elide: Text.ElideRight
+                    onPositionChanged: function (mouse) {
+                        if (resizeIndex >= 0) {
+                            LayoutState.setCollectionColumnWidth(
+                                browser.columnId(resizeIndex),
+                                startShare + (mouse.x - startX) / Math.max(1, header.width));
+                        } else if (dragIndex >= 0) {
+                            dropIndex = browser.columnIndexAt(mouse.x, header.width);
+                        }
                     }
-                    Label {
-                        objectName: "collectionHeaderTitle"
-                        text: qsTr("Название")
-                        Layout.preferredWidth: list.width * 0.30
-                        Layout.maximumWidth: list.width * 0.30
-                        color: UiSettings.themeTextDim
-                        font.pixelSize: browser.listFont
-                        elide: Text.ElideRight
+                    onReleased: {
+                        if (dragIndex >= 0 && dropIndex >= 0 && dropIndex !== dragIndex) {
+                            LayoutState.moveCollectionColumn(browser.columnId(dragIndex), dropIndex);
+                        }
+                        resizeIndex = -1;
+                        dragIndex = -1;
+                        dropIndex = -1;
                     }
-                    Label {
-                        objectName: "collectionHeaderTime"
-                        text: qsTr("Время")
-                        horizontalAlignment: Text.AlignRight
-                        Layout.preferredWidth: list.width * 0.08
-                        Layout.maximumWidth: list.width * 0.08
-                        color: UiSettings.themeTextDim
-                        font.pixelSize: browser.listFont
-                        elide: Text.ElideRight
-                    }
-                    Label {
-                        objectName: "collectionHeaderBpm"
-                        text: qsTr("BPM")
-                        horizontalAlignment: Text.AlignRight
-                        Layout.preferredWidth: list.width * 0.07
-                        Layout.maximumWidth: list.width * 0.07
-                        color: UiSettings.themeTextDim
-                        font.pixelSize: browser.listFont
-                        elide: Text.ElideRight
-                    }
-                    Label {
-                        objectName: "collectionHeaderKey"
-                        text: qsTr("Key")
-                        horizontalAlignment: Text.AlignRight
-                        Layout.preferredWidth: list.width * 0.05
-                        Layout.maximumWidth: list.width * 0.05
-                        color: UiSettings.themeTextDim
-                        font.pixelSize: browser.listFont
-                        elide: Text.ElideRight
-                    }
+                }
+
+                // Where the column will land: a line at the edge it would take.
+                Rectangle {
+                    objectName: "collectionDropMark"
+                    visible: headerDrag.dragIndex >= 0 && headerDrag.dropIndex >= 0
+                    x: browser.columnX(headerDrag.dropIndex, header.width)
+                    width: 2
+                    height: parent.height
+                    color: UiSettings.themeAccent
                 }
             }
 
@@ -773,64 +944,73 @@ Pane {
 
                     // A collection row is about the track, not about the file: artist, album, title,
                     // how long it plays, its tempo and its key. The file name says none of that.
-                    RowLayout {
+                    Item {
                         objectName: "collectionRow_" + row.index
                         anchors.fill: parent
-                        anchors.leftMargin: 6
-                        anchors.rightMargin: 6
-                        spacing: 8
                         visible: browser.section === "collection" && !row.isFolder
 
                         Label {
-                            objectName: "collectionArtist_" + row.index
-                            Layout.preferredWidth: list.width * 0.22
-                            Layout.maximumWidth: list.width * 0.22
-                            text: row.modelData.artist !== undefined ? row.modelData.artist : ""
+                            objectName: "collectionCell_artist_" + row.index
+                            x: browser.columnX(0, row.width) + 6
+                            width: Math.max(0, browser.columnWidth(0, row.width) - 12)
+                            visible: browser.columnId(0) === "artist"
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: browser.columnText(row.modelData, "artist")
                             elide: Text.ElideRight
                             font.pixelSize: browser.listFont
                             color: row.current ? UiSettings.themePlayhead : UiSettings.themeText
                         }
                         Label {
-                            objectName: "collectionAlbum_" + row.index
-                            Layout.preferredWidth: list.width * 0.20
-                            Layout.maximumWidth: list.width * 0.20
-                            text: row.modelData.album !== undefined ? row.modelData.album : ""
+                            objectName: "collectionCell_album_" + row.index
+                            x: browser.columnX(1, row.width) + 6
+                            width: Math.max(0, browser.columnWidth(1, row.width) - 12)
+                            visible: browser.columnId(1) === "album"
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: browser.columnText(row.modelData, "album")
                             elide: Text.ElideRight
                             font.pixelSize: browser.listFont
                             color: row.current ? UiSettings.themePlayhead : UiSettings.themeTextDim
                         }
                         Label {
-                            objectName: "collectionTitle_" + row.index
-                            Layout.preferredWidth: list.width * 0.30
-                            Layout.maximumWidth: list.width * 0.30
-                            text: row.modelData.title !== undefined ? row.modelData.title : ""
+                            objectName: "collectionCell_title_" + row.index
+                            x: browser.columnX(2, row.width) + 6
+                            width: Math.max(0, browser.columnWidth(2, row.width) - 12)
+                            visible: browser.columnId(2) === "title"
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: browser.columnText(row.modelData, "title")
                             elide: Text.ElideRight
                             font.pixelSize: browser.listFont
                             color: row.current ? UiSettings.themePlayhead : UiSettings.themeText
                         }
                         Label {
-                            objectName: "collectionTime_" + row.index
-                            Layout.preferredWidth: list.width * 0.08
-                            Layout.maximumWidth: list.width * 0.08
-                            text: browser.clock(row.modelData.duration_ms)
+                            objectName: "collectionCell_time_" + row.index
+                            x: browser.columnX(3, row.width) + 6
+                            width: Math.max(0, browser.columnWidth(3, row.width) - 12)
+                            visible: browser.columnId(3) === "time"
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: browser.columnText(row.modelData, "time")
                             horizontalAlignment: Text.AlignRight
                             font.pixelSize: browser.listFont
                             color: row.current ? UiSettings.themePlayhead : UiSettings.themeTextDim
                         }
                         Label {
-                            objectName: "collectionBpm_" + row.index
-                            Layout.preferredWidth: list.width * 0.07
-                            Layout.maximumWidth: list.width * 0.07
-                            text: row.modelData.bpm !== undefined ? Math.round(row.modelData.bpm) : ""
+                            objectName: "collectionCell_bpm_" + row.index
+                            x: browser.columnX(4, row.width) + 6
+                            width: Math.max(0, browser.columnWidth(4, row.width) - 12)
+                            visible: browser.columnId(4) === "bpm"
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: browser.columnText(row.modelData, "bpm")
                             horizontalAlignment: Text.AlignRight
                             font.pixelSize: browser.listFont
                             color: row.current ? UiSettings.themePlayhead : UiSettings.themeTextDim
                         }
                         Label {
-                            objectName: "collectionKey_" + row.index
-                            Layout.preferredWidth: list.width * 0.05
-                            Layout.maximumWidth: list.width * 0.05
-                            text: row.modelData.key !== undefined ? row.modelData.key : ""
+                            objectName: "collectionCell_key_" + row.index
+                            x: browser.columnX(5, row.width) + 6
+                            width: Math.max(0, browser.columnWidth(5, row.width) - 12)
+                            visible: browser.columnId(5) === "key"
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: browser.columnText(row.modelData, "key")
                             horizontalAlignment: Text.AlignRight
                             font.pixelSize: browser.listFont
                             color: row.current ? UiSettings.themePlayhead : UiSettings.themeTextDim

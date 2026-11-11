@@ -9,7 +9,7 @@ use std::sync::mpsc::{self, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use dj_domain::BeatGrid;
+use dj_domain::{BeatGrid, BeatSegment};
 use dj_library::{Cue, Store, TrackMeta, fingerprint};
 
 use crate::{MetaEdit, PreparedTrack};
@@ -229,6 +229,46 @@ pub fn write_beatgrid(
         .save(volume, root, path, &meta)
         .map(|_| true)
         .map_err(|error| error.to_string())
+}
+
+/// Measure a file's tempo and key and keep them beside it (DJP-MEDIA-004).
+///
+/// Both measurements are full decodes, so this never runs on a client thread: the import worker calls
+/// it for a file that arrived without metadata, and the analysis worker calls it when the DJ asks.
+/// Without `force` only the missing half is measured — a stored grid or a key is a decision, and
+/// measuring it again would cost a decode and could answer differently.
+pub fn analyze_file(store: &Store, volume: &str, root: &Path, path: &Path, force: bool) -> bool {
+    let known = store
+        .load(volume, root, path)
+        .ok()
+        .map(|loaded| loaded.meta);
+    let needs_grid = force || known.as_ref().is_none_or(|meta| meta.beatgrid.is_none());
+    let needs_key = force || known.as_ref().is_none_or(|meta| meta.key.is_none());
+    let mut measured = false;
+    if needs_grid && let Ok(Some(found)) = dj_analysis::tempo::analyse(path) {
+        let segments: Vec<BeatSegment> = found
+            .segments
+            .iter()
+            .map(|segment| BeatSegment {
+                frame: segment.first_beat_frame,
+                beat: segment.beat,
+                bpm: segment.bpm,
+            })
+            .collect();
+        if let Some(grid) =
+            BeatGrid::from_segments(segments).map(|grid| grid.with_beats_per_bar(found.metre))
+            && write_beatgrid(store, volume, root, path, &grid, force).is_ok()
+        {
+            measured = true;
+        }
+    }
+    if needs_key
+        && let Ok(Some(key)) = dj_analysis::key::analyse(path)
+        && write_key(store, volume, root, path, &key.traktor(), force).is_ok()
+    {
+        measured = true;
+    }
+    measured
 }
 
 /// Fill the names a collection list reads, once per file.

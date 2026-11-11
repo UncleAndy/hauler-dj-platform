@@ -100,6 +100,7 @@ fn a_duplicate_is_asked_about_and_the_answer_is_obeyed() {
             answers_rx,
             cancel,
             running_flag,
+            Box::new(|_| {}),
         );
     });
 
@@ -171,6 +172,7 @@ fn a_stopped_batch_takes_no_more_files() {
             answers_rx,
             cancel,
             running_flag,
+            Box::new(|_| {}),
         );
     });
     handle.join().expect("работник закончил");

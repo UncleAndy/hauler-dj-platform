@@ -177,7 +177,10 @@ impl Engine {
             // here, and saying so is better than pretending the flag did something.
             // The library is not the audio engine's business: this renderer holds one tone and no
             // collection, and the import is run by the engine process itself.
-            DjCommand::Import { .. } | DjCommand::ImportCancel | DjCommand::ImportAnswer { .. } => {
+            DjCommand::Import { .. }
+            | DjCommand::ImportCancel
+            | DjCommand::ImportAnswer { .. }
+            | DjCommand::AnalyzeTrack { .. } => {
                 Some(Ack::rejected(command_id, RejectReason::NotSupported))
             }
             DjCommand::Sync { .. } | DjCommand::Master { .. } | DjCommand::MasterOff => Some(Ack {

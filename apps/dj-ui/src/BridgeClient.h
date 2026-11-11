@@ -56,6 +56,9 @@ public:
     Q_INVOKABLE QString defaultCollectionRoot() const;
     /// Back to the folder the file list was showing.
     Q_INVOKABLE void showFiles();
+    /// Read the collection again without losing the search: an analysis that lands while the DJ is
+    /// looking at a filtered list must not throw the list away.
+    Q_INVOKABLE void refreshCollection();
     /// Remember where a load came from: the file list opens there next time, and a load made from the
     /// collection does not throw the list out of the collection.
     Q_INVOKABLE void rememberFolder(const QString &folder);
@@ -80,6 +83,8 @@ private:
     int m_total = 0;
     // The collection's tracks before the filter, and the folder the file list was showing.
     QVariantList m_all;
+    // The roots the collection section was opened with: a refresh reads the same disks.
+    QStringList m_roots;
     QString m_filesFolder;
 };
 
@@ -129,6 +134,9 @@ public:
     Q_INVOKABLE int cancelImport();
     /// Answer the duplicate question: `skip`, `replace`, `add` or `add_marked`.
     Q_INVOKABLE int answerImport(const QString &answer);
+    /// Measure tempo and key of files already in the collection (DJP-MEDIA-004). One command each:
+    /// the engine answers at once and the numbers reach the file when the worker is done.
+    Q_INVOKABLE int analyzeTrack(const QStringList &paths);
 
     // Called with the folder a track was loaded from, so the browser can open there next time.
     void setLoadFolderHandler(std::function<void(const QString &)> handler) {

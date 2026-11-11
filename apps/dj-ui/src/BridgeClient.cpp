@@ -151,9 +151,23 @@ QString FileBrowser::defaultCollectionRoot() const
     return base + QStringLiteral("/hauler-dj/collection");
 }
 
+void FileBrowser::refreshCollection()
+{
+    if (m_mode != QLatin1String("collection")) {
+        return;
+    }
+    // The roots are the ones the section was opened with, and the search is the DJ's: both stay.
+    const QString filter = m_filter;
+    openCollection(m_roots);
+    if (!filter.isEmpty()) {
+        setFilter(filter);
+    }
+}
+
 void FileBrowser::openCollection(const QStringList &roots)
 {
     m_mode = QStringLiteral("collection");
+    m_roots = roots;
     m_filter.clear();
     m_all.clear();
     m_total = 0;
@@ -593,6 +607,20 @@ int BridgeClient::answerImport(const QString &answer)
     QJsonObject command;
     command.insert(QStringLiteral("ImportAnswer"), options);
     return sendCommand(QString(), command);
+}
+
+int BridgeClient::analyzeTrack(const QStringList &paths)
+{
+    int sent = 0;
+    for (const QString &path : paths) {
+        QJsonObject options;
+        options.insert(QStringLiteral("path"), path);
+        QJsonObject command;
+        command.insert(QStringLiteral("AnalyzeTrack"), options);
+        sendCommand(QString(), command);
+        ++sent;
+    }
+    return sent;
 }
 
 int BridgeClient::load(const QString &deck, const QString &path)

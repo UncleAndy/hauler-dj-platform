@@ -20,6 +20,9 @@
 | колонки коллекции | строка модели `A \| Track \| 20000 ms`, на экране `"A"` и `0:20`, шапка `Исполнитель` |
 | имена в записи | `dj-library/tests/import.rs`: `tags.artist`/`tags.album`/`tags.title` в `.djmeta` после импорта |
 | дописывание имён при загрузке | файл из коллекции владельца: `.djmeta` получил `tags {artist "Waka Flocka Flame", album "Mr. Miyagi (feat. Waka Flocka Flame)", title …}`, `key 8d`, `bpm 136.99` |
+| анализ при импорте | реальный трек 2:22 → строка `Waka Flocka Flame \| Mr. Miyagi … \| 142315 ms \| 137.0 BPM \| 8d` |
+| метаданные исходника | `the_metadata_beside_the_source_travels_with_the_copy`: сетка 128 BPM и `8m` переехали в запись копии |
+| колонки: порядок и ширина | `key` первым, ширина artist 0,22 → 0,27; на экране ячейка artist уехала вправо; в layout-файле `collection_columns[0].id = key`, `[1].width = 0.27` |
 | файл без тегов | `Shadow Rhythm - Aura of Oresa - Treblo.flac` — теги пусты, запись имён не пишется; строка покажет исполнителя и название из имени файла |
 
 Тесты: `apps/dj-engine/tests/import.rs` — `a_duplicate_is_asked_about_and_the_answer_is_obeyed`,

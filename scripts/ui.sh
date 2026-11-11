@@ -208,7 +208,8 @@ case "${1:-}" in
       "$headless_bin" sine --frames 960000 --rate 48000 --out "$import_track" >/dev/null
     fi
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
-        --collection-root "$run_dir/collection" --import-check --import-fixture "$import_track"
+        --collection-root "$run_dir/collection" --import-check --import-fixture "$import_track" \
+        --layout-file "$run_dir/import-layout.json"
     # Every crossfader law must reach the engine and come back in the snapshot, and the selector must
     # show the one in force — a selector that lights up on the click is a selector that lies.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --curve-check

@@ -4030,7 +4030,8 @@ static int runLayoutCheck(QQmlApplicationEngine &engine,
 /// duplicate question, and require the files to be in the collection. Runs against a real engine,
 /// because the import is the engine's work and a shell that only draws dialogs proves nothing.
 static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
-                          const QString &fixture, const QString &collectionRoot)
+                          LayoutSettings &layout, const QString &fixture,
+                          const QString &collectionRoot)
 {
     if (fixture.isEmpty() || !QFile::exists(fixture)) {
         std::fprintf(stderr, "dj-ui: --import-check needs a real track in --import-fixture\n");
@@ -4302,18 +4303,21 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     const QString artist = row.value(QStringLiteral("artist")).toString();
     const QString title = row.value(QStringLiteral("title")).toString();
     const qint64 length = row.value(QStringLiteral("duration_ms")).toLongLong();
-    std::fprintf(stdout, "dj-ui: collection row -> %s | %s | %lld ms\n", qPrintable(artist),
-                 qPrintable(title), static_cast<long long>(length));
-    if (artist != QStringLiteral("A")) {
-        std::fprintf(stderr, "dj-ui: the collection row has no artist (%s)\n", qPrintable(artist));
+    const double rowBpm = row.value(QStringLiteral("bpm")).toDouble();
+    const QString rowKey = row.value(QStringLiteral("key")).toString();
+    std::fprintf(stdout, "dj-ui: collection row -> %s | %s | %lld ms | %s BPM | %s\n",
+                 qPrintable(artist), qPrintable(title), static_cast<long long>(length),
+                 rowBpm > 0.0 ? qPrintable(QString::number(rowBpm, 'f', 1)) : "-",
+                 rowKey.isEmpty() ? "-" : qPrintable(rowKey));
+    // The fixture may be a generated tone or a real track: what matters is that the row carries the
+    // names the file was filed under, not which names those are.
+    if (artist.isEmpty() || title.isEmpty()) {
+        std::fprintf(stderr, "dj-ui: the collection row has no names (%s | %s)\n", qPrintable(artist),
+                     qPrintable(title));
         return 1;
     }
-    if (!title.startsWith(QStringLiteral("Track"))) {
-        std::fprintf(stderr, "dj-ui: the collection row has no title (%s)\n", qPrintable(title));
-        return 1;
-    }
-    if (length < 15000 || length > 25000) {
-        std::fprintf(stderr, "dj-ui: the collection row says %lld ms, wanted about 20000\n",
+    if (length < 15000) {
+        std::fprintf(stderr, "dj-ui: the collection row says %lld ms, wanted a track longer than 15 s\n",
                      static_cast<long long>(length));
         return 1;
     }
@@ -4336,9 +4340,9 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         }
         return nullptr;
     };
-    QQuickItem *artistLabel = byName(window->contentItem(), QStringLiteral("collectionArtist_0"));
-    QQuickItem *timeLabel = byName(window->contentItem(), QStringLiteral("collectionTime_0"));
-    QQuickItem *headerArtist = byName(window->contentItem(), QStringLiteral("collectionHeaderArtist"));
+    QQuickItem *artistLabel = byName(window->contentItem(), QStringLiteral("collectionCell_artist_0"));
+    QQuickItem *timeLabel = byName(window->contentItem(), QStringLiteral("collectionCell_time_0"));
+    QQuickItem *headerArtist = byName(window->contentItem(), QStringLiteral("collectionHeaderCell_0"));
     if (artistLabel == nullptr || timeLabel == nullptr || headerArtist == nullptr) {
         std::fprintf(stderr,
                      "dj-ui: the collection has no columns (mode %s, artist %d, time %d, header %d)\n",
@@ -4351,9 +4355,68 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     std::fprintf(stdout, "dj-ui: collection columns -> \"%s\" %s, header \"%s\"\n",
                  qPrintable(shownArtist), qPrintable(shownTime),
                  qPrintable(headerArtist->property("text").toString()));
-    if (shownArtist != QStringLiteral("A") || shownTime != QStringLiteral("0:20")) {
-        std::fprintf(stderr, "dj-ui: the collection row shows \"%s\" %s\n", qPrintable(shownArtist),
-                     qPrintable(shownTime));
+    const int seconds = static_cast<int>((length + 500) / 1000);
+    const QString expectedTime =
+        QStringLiteral("%1:%2").arg(seconds / 60).arg(seconds % 60, 2, 10, QLatin1Char('0'));
+    if (shownArtist != artist || shownTime != expectedTime) {
+        std::fprintf(stderr, "dj-ui: the collection row shows \"%s\" %s, wanted \"%s\" %s\n",
+                     qPrintable(shownArtist), qPrintable(shownTime), qPrintable(artist),
+                     qPrintable(expectedTime));
+        return 1;
+    }
+
+    // The columns are the DJ's: a width he drags and an order he moves, and both survive a restart.
+    const QVariantList before = layout.collectionColumns();
+    if (before.size() != 6) {
+        std::fprintf(stderr, "dj-ui: the collection has %d columns, wanted 6\n",
+                     static_cast<int>(before.size()));
+        return 1;
+    }
+    const double artistWidth = before.at(0).toMap().value(QStringLiteral("width")).toDouble();
+    layout.setCollectionColumnWidth(QStringLiteral("artist"), artistWidth + 0.05);
+    layout.moveCollectionColumn(QStringLiteral("key"), 0);
+    QCoreApplication::processEvents();
+    const QVariantList after = layout.collectionColumns();
+    const QString firstId = after.at(0).toMap().value(QStringLiteral("id")).toString();
+    const double widened =
+        after.at(1).toMap().value(QStringLiteral("width")).toDouble();
+    std::fprintf(stdout, "dj-ui: columns -> %s first, artist at %.2f of the list\n",
+                 qPrintable(firstId), widened);
+    if (firstId != QStringLiteral("key")) {
+        std::fprintf(stderr, "dj-ui: the column did not move (%s first)\n", qPrintable(firstId));
+        return 1;
+    }
+    if (qAbs(widened - (artistWidth + 0.05)) > 1e-6) {
+        std::fprintf(stderr, "dj-ui: the width did not change (%.3f)\n", widened);
+        return 1;
+    }
+    // The window follows the setting: the artist cell sits where its column now is.
+    QQuickItem *movedArtist = byName(window->contentItem(), QStringLiteral("collectionCell_artist_0"));
+    if (movedArtist == nullptr || movedArtist->x() <= 1.0) {
+        std::fprintf(stderr, "dj-ui: the artist column did not move on screen\n");
+        return 1;
+    }
+    // And the arrangement is written: a table that forgets its shape is a table to rebuild.
+    if (!layout.save()) {
+        std::fprintf(stderr, "dj-ui: the layout could not be saved\n");
+        return 1;
+    }
+    QFile saved(layout.file());
+    if (!saved.open(QIODevice::ReadOnly)) {
+        std::fprintf(stderr, "dj-ui: the layout file is not there\n");
+        return 1;
+    }
+    const QJsonObject stored = QJsonDocument::fromJson(saved.readAll()).object();
+    const QJsonArray storedColumns =
+        stored.value(QStringLiteral("collection_columns")).toArray();
+    const QString storedFirst =
+        storedColumns.at(0).toObject().value(QStringLiteral("id")).toString();
+    const double storedWidth =
+        storedColumns.at(1).toObject().value(QStringLiteral("width")).toDouble();
+    std::fprintf(stdout, "dj-ui: saved columns -> %s first, artist %.2f\n",
+                 qPrintable(storedFirst), storedWidth);
+    if (storedFirst != QStringLiteral("key") || qAbs(storedWidth - widened) > 1e-6) {
+        std::fprintf(stderr, "dj-ui: the arrangement was not saved as it was set\n");
         return 1;
     }
 
@@ -9986,7 +10049,7 @@ int main(int argc, char *argv[])
             return 1;
         }
         bridge->connectToEngine(parser.value(connectOption));
-        return runImportCheck(engine, browser, parser.value(importFixtureOption),
+        return runImportCheck(engine, browser, layout, parser.value(importFixtureOption),
                               parser.values(collectionRootOption).value(0));
     }
 

@@ -414,6 +414,15 @@ pub enum DjCommand {
     },
     /// Stop the running import between files: the file in hand is finished.
     ImportCancel,
+    /// Measure a file that is not on a deck: tempo and key, written beside it (DJP-MEDIA-004).
+    ///
+    /// The collection asks for this when a track arrived without metadata, and when the DJ asks for the
+    /// answer again. Acknowledged as `Accepted`: the measurement is a full decode and runs on a worker,
+    /// so the new numbers appear in the file and in the next listing, not in this snapshot.
+    AnalyzeTrack {
+        /// The file to measure.
+        path: String,
+    },
     /// Answer the duplicate question the engine is waiting on.
     ImportAnswer {
         /// What to do with the file in question.
@@ -656,6 +665,7 @@ impl DjCommand {
             | DjCommand::EditGrid { .. }
             | DjCommand::Import { .. }
             | DjCommand::ImportCancel
+            | DjCommand::AnalyzeTrack { .. }
             | DjCommand::ImportAnswer { .. }
             | DjCommand::Eject { .. } => true,
             DjCommand::SetTempoRatio { .. }

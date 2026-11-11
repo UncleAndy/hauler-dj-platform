@@ -5,7 +5,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use dj_library::{import, meta, sidecar, tags};
+use dj_library::{BeatGrid, import, meta, sidecar, tags};
 
 /// Эталонный файл; тесты его только читают и копируют.
 fn fixture(name: &str) -> PathBuf {
@@ -37,6 +37,41 @@ fn tagged_copy(root: &Path, artist: &str, title: &str) -> PathBuf {
         "тег не записался"
     );
     copy
+}
+
+#[test]
+fn the_metadata_beside_the_source_travels_with_the_copy() {
+    let root = scratch("carry");
+    let source = tagged_copy(&root, "Moderat", "A New Error");
+    // A grid and a key measured where the file lies: the import keeps them instead of measuring again,
+    // because a measurement that has already been made is a decision, not a guess.
+    let meta_path = sidecar::file_of(&source).expect("путь записи");
+    let mut record = meta::TrackMeta::new(
+        dj_library::fingerprint::of_path(&source).expect("отпечаток"),
+        1_000,
+    );
+    record.beatgrid = Some(BeatGrid {
+        bpm: 128.0,
+        first_beat_frame: 4_410,
+        beats_per_bar: 4,
+        anchors: Vec::new(),
+    });
+    record.key = Some("8m".to_owned());
+    sidecar::write(&meta_path, &record).expect("запись");
+
+    let imported = import(&source, &root.join("collection"), 2_000).expect("импорт");
+    let carried = sidecar::read(&imported.meta).expect("запись копии");
+    assert_eq!(
+        carried.key.as_deref(),
+        Some("8m"),
+        "тональность не переехала"
+    );
+    let grid = carried.beatgrid.expect("сетка");
+    assert!((grid.bpm - 128.0).abs() < 1e-9, "темп не переехал");
+    assert_eq!(grid.first_beat_frame, 4_410);
+    // And the copy's own identity is fresh: the fingerprint is the copy's, not the old record's.
+    assert!(carried.fingerprint.size > 0);
+    let _ = fs::remove_dir_all(&root);
 }
 
 #[test]

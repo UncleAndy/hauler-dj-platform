@@ -192,6 +192,105 @@ QString LayoutSettings::roomiestRoot() const
     return best;
 }
 
+namespace {
+/// The columns a collection list starts with, in this order. A DJ who never touched them sees the
+/// table the import was designed for.
+struct ColumnDefault {
+    const char *id;
+    double width;
+};
+constexpr ColumnDefault kColumnDefaults[] = {
+    {"artist", 0.22}, {"album", 0.20}, {"title", 0.30},
+    {"time", 0.08},   {"bpm", 0.07},   {"key", 0.05},
+};
+} // namespace
+
+void LayoutSettings::normaliseColumns()
+{
+    QVector<QPair<QString, double>> kept;
+    for (const auto &column : m_columns) {
+        bool known = false;
+        for (const ColumnDefault &entry : kColumnDefaults) {
+            if (column.first == QLatin1String(entry.id)) {
+                known = true;
+                break;
+            }
+        }
+        if (!known) {
+            continue;
+        }
+        bool duplicate = false;
+        for (const auto &other : kept) {
+            if (other.first == column.first) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (duplicate) {
+            continue;
+        }
+        kept.append({column.first, qBound(0.04, column.second, 0.60)});
+    }
+    for (const ColumnDefault &entry : kColumnDefaults) {
+        const QString id = QString::fromLatin1(entry.id);
+        bool present = false;
+        for (const auto &other : kept) {
+            if (other.first == id) {
+                present = true;
+                break;
+            }
+        }
+        if (!present) {
+            kept.append({id, entry.width});
+        }
+    }
+    m_columns = kept;
+}
+
+QVariantList LayoutSettings::collectionColumns() const
+{
+    QVariantList list;
+    for (const auto &column : m_columns) {
+        list.append(QVariantMap{{QStringLiteral("id"), column.first},
+                                {QStringLiteral("width"), column.second}});
+    }
+    return list;
+}
+
+void LayoutSettings::setCollectionColumnWidth(const QString &id, double width)
+{
+    for (auto &column : m_columns) {
+        if (column.first == id) {
+            // A column narrower than this is a column nobody can read; a wider one hides the rest.
+            column.second = qBound(0.04, width, 0.60);
+            emit changed();
+            return;
+        }
+    }
+}
+
+void LayoutSettings::moveCollectionColumn(const QString &id, int toIndex)
+{
+    for (int index = 0; index < m_columns.size(); ++index) {
+        if (m_columns.at(index).first != id) {
+            continue;
+        }
+        const QPair<QString, double> column = m_columns.takeAt(index);
+        // Dropping to the right of where the column was shifts it by one, because it left the row.
+        const int target = qBound(0, toIndex > index ? toIndex - 1 : toIndex, m_columns.size());
+        m_columns.insert(target, column);
+        emit changed();
+        return;
+    }
+}
+
+void LayoutSettings::resetCollectionColumns()
+{
+    m_columns.clear();
+    normaliseColumns();
+    emit changed();
+}
+
 void LayoutSettings::scheduleSave()
 {
     if (m_saveTimer->isActive()) {
@@ -273,6 +372,18 @@ bool LayoutSettings::load()
         roots.append(root.value(QStringLiteral("collection_root")).toString());
     }
     m_collectionRoots = normalisedRoots(roots);
+    // The columns the file knows, in the order it has them; anything missing joins at the end.
+    const QJsonValue storedColumns = root.value(QStringLiteral("collection_columns"));
+    if (storedColumns.isArray()) {
+        for (const QJsonValue &value : storedColumns.toArray()) {
+            const QJsonObject column = value.toObject();
+            const QString id = column.value(QStringLiteral("id")).toString();
+            if (!id.isEmpty()) {
+                m_columns.append({id, column.value(QStringLiteral("width")).toDouble()});
+            }
+        }
+    }
+    normaliseColumns();
     normalise();
     emit changed();
     return true;
@@ -299,6 +410,14 @@ bool LayoutSettings::save() const
         roots.append(path);
     }
     root.insert(QStringLiteral("collection_roots"), roots);
+    QJsonArray columns;
+    for (const auto &column : m_columns) {
+        QJsonObject entry;
+        entry.insert(QStringLiteral("id"), column.first);
+        entry.insert(QStringLiteral("width"), column.second);
+        columns.append(entry);
+    }
+    root.insert(QStringLiteral("collection_columns"), columns);
     root.insert(QStringLiteral("waveform_span"), m_waveformSpan);
     QFile file(m_file);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {

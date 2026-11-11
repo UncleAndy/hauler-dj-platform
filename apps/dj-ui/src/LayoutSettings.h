@@ -39,6 +39,8 @@ class LayoutSettings : public QObject
     // file that has never held a value still opens at the built-in zoom.
     Q_PROPERTY(double waveformSpan READ waveformSpan WRITE setWaveformSpan NOTIFY changed)
     Q_PROPERTY(QString file READ file NOTIFY changed)
+    // The collection's columns, in the DJ's order: a table he arranges once and finds again.
+    Q_PROPERTY(QVariantList collectionColumns READ collectionColumns NOTIFY changed)
 
 public:
     explicit LayoutSettings(QObject *parent = nullptr);
@@ -67,6 +69,11 @@ public:
     void setCollectionRoots(const QStringList &roots);
     /// The root with the most free space: an import goes where there is room for it.
     Q_INVOKABLE QString roomiestRoot() const;
+    /// The collection's columns in the DJ's order: `[{id, width}]`, the width a share of the list.
+    QVariantList collectionColumns() const;
+    Q_INVOKABLE void setCollectionColumnWidth(const QString &id, double width);
+    Q_INVOKABLE void moveCollectionColumn(const QString &id, int toIndex);
+    Q_INVOKABLE void resetCollectionColumns();
     double waveformSpan() const { return m_waveformSpan; }
     void setWaveformSpan(double span);
 
@@ -93,6 +100,9 @@ private:
 
     // Clamp to what the shell can draw and keep the three row shares inside one window.
     void normalise();
+    /// Keep the known columns, one of each, in a sane width range; a column the file forgot joins at
+    /// the end with its default share.
+    void normaliseColumns();
 
     // A dragged splitter emits a value per mouse move: the file is written once the hand stops.
     void scheduleSave();
@@ -107,6 +117,13 @@ private:
     int m_browserFont = 11;
     int m_browserRailWidth = 92;
     QStringList m_collectionRoots;
+    /// The collection's columns, in order: id and its share of the list. These are the defaults; a
+    /// saved arrangement replaces them, and a column the file forgot joins at the end.
+    QVector<QPair<QString, double>> m_columns = {
+        {QStringLiteral("artist"), 0.22}, {QStringLiteral("album"), 0.20},
+        {QStringLiteral("title"), 0.30},  {QStringLiteral("time"), 0.08},
+        {QStringLiteral("bpm"), 0.07},    {QStringLiteral("key"), 0.05},
+    };
     double m_waveformSpan = 0.0;
     QTimer *m_saveTimer = nullptr;
     QString m_file;

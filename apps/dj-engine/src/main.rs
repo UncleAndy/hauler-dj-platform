@@ -549,12 +549,29 @@ fn run(argv: &[String]) -> Result<(), String> {
         });
     }
 
+    // Files the collection asks to measure: a full decode each, so a worker of their own, never a
+    // client thread and never the audio callback.
+    let (file_requests, file_requests_rx) = std::sync::mpsc::channel::<String>();
+    {
+        let store = store.clone();
+        std::thread::spawn(move || {
+            while let Ok(path) = file_requests_rx.recv() {
+                let path = std::path::PathBuf::from(path);
+                if !dj_engine::meta::analyze_file(&store, volume(), root(), &path, true) {
+                    eprintln!("dj-engine: {} could not be analysed", path.display());
+                }
+            }
+        });
+    }
+
     // Client threads: they never touch a deck, only the channel.
     {
         let subscribers = Arc::clone(&subscribers);
         let cells = Arc::clone(&cells);
         let work = Workers {
             cells: Arc::clone(&cells),
+            store: store.clone(),
+            files: file_requests.clone(),
             loads: load_requests.clone(),
             analyses: analysis_requests.clone(),
             grids: grid_edits.clone(),
@@ -1255,6 +1272,10 @@ struct DeckFlags {
 struct Workers {
     /// The publisher's cells: the import worker publishes its progress through them.
     cells: Arc<StateCells>,
+    /// The metadata store: the import worker writes the analysis of what it placed through it.
+    store: dj_library::Store,
+    /// Files to measure that are not on a deck (DJP-MEDIA-004).
+    files: Sender<String>,
     /// Decodes a track and prepares a deck.
     loads: Sender<LoadRequest>,
     /// Measures a deck's tempo again (B02).
@@ -1372,6 +1393,7 @@ fn serve_client(
                             root,
                             parallel,
                         };
+                        let worker_store = work.store.clone();
                         std::thread::spawn(move || {
                             dj_engine::run_import(
                                 request,
@@ -1379,6 +1401,17 @@ fn serve_client(
                                 answers_rx,
                                 cancel,
                                 running,
+                                Box::new(move |path: &std::path::Path| {
+                                    // `self::root`, not `root`: the import request's collection root
+                                    // shadows the function of that name in this arm.
+                                    dj_engine::meta::analyze_file(
+                                        &worker_store,
+                                        volume(),
+                                        self::root(),
+                                        path,
+                                        false,
+                                    );
+                                }),
                             );
                         });
                         if alerts
@@ -1459,6 +1492,21 @@ fn serve_client(
                         // written: an edit is a decision about the track, and the deck shows it when the
                         // worker has written and published it.
                         let ack = match work.grids.send(GridEditRequest { deck, path, edit }) {
+                            Ok(()) => dj_domain::Ack::accepted(command.id),
+                            Err(_) => dj_domain::Ack::rejected(
+                                command.id,
+                                dj_domain::RejectReason::InvalidValue,
+                            ),
+                        };
+                        if alerts.send(ServerMessage::Ack(ack)).is_err() {
+                            return;
+                        }
+                        continue;
+                    }
+                    dj_engine::Routed::AnalyzeFile { path } => {
+                        // Answered at once: the measurement takes as long as a decode, and the new
+                        // numbers reach the file and the next listing, not this snapshot.
+                        let ack = match work.files.send(path) {
                             Ok(()) => dj_domain::Ack::accepted(command.id),
                             Err(_) => dj_domain::Ack::rejected(
                                 command.id,

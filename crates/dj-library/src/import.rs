@@ -307,6 +307,20 @@ fn place(
         print.sample_rate = Some(prepared.identity.sample_rate);
     }
     let mut record = TrackMeta::new(print, now_ms);
+    // The file may already carry its metadata where it lies — a collection being moved, a folder
+    // imported twice. A grid or a key measured once is a decision: measuring it again would cost a
+    // decode and could answer differently. What belongs to this copy — its fingerprint, its names,
+    // its identity — is written over the old record below.
+    if let Some(existing) = sidecar::file_of(source).and_then(|path| sidecar::read(&path).ok()) {
+        record.beatgrid = existing.beatgrid;
+        record.key = existing.key;
+        record.cues = existing.cues;
+        record.loops = existing.loops;
+        record.gain = existing.gain;
+        record.rating = existing.rating;
+        record.notes = existing.notes;
+        record.analysis_lock = existing.analysis_lock;
+    }
     if !prepared.identity.chromaprint.is_empty() {
         record.chromaprint = Some(meta::encode_print(&prepared.identity.chromaprint));
     }
