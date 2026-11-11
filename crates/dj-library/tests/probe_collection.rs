@@ -347,11 +347,98 @@ fn decode_all(path: &Path) -> (Vec<i16>, u32, u16, f64) {
     (samples, rate, channels, started.elapsed().as_secs_f64())
 }
 
+fn verdict_name(verdict: Verdict) -> &'static str {
+    match verdict {
+        Verdict::Ascii => "ascii",
+        Verdict::Clean => "чисто",
+        Verdict::Repaired("cp1251") => "починено из cp1251",
+        Verdict::Repaired(_) => "починено из двойного UTF-8",
+        Verdict::Lost => "байты потеряны",
+    }
+}
+
+fn measure(path: &Path) -> Measured {
+    let (tags, mut quality) = read_tags(path);
+    let (samples, rate, channels, decode_s) = decode_all(path);
+    let frames = samples.len() / usize::from(channels.max(1));
+    let duration_ms = if rate > 0 {
+        u64::try_from(frames).unwrap_or(0) * 1_000 / u64::from(rate)
+    } else {
+        0
+    };
+    let size = std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
+    quality.bitrate = size
+        .saturating_mul(8)
+        .saturating_mul(1_000)
+        .checked_div(duration_ms);
+    let fingerprint_started = Instant::now();
+    let fingerprint = dj_fingerprint::of_samples(&samples, rate, channels).unwrap_or_default();
+    let fingerprint_s = fingerprint_started.elapsed().as_secs_f64();
+    let (artist, artist_verdict) = repair(&tags.artist);
+    let (title, title_verdict) = repair(&tags.title);
+    let verdict = match (artist_verdict, title_verdict) {
+        (Verdict::Repaired(encoding), _) | (_, Verdict::Repaired(encoding)) => {
+            Verdict::Repaired(encoding)
+        }
+        (Verdict::Lost, _) | (_, Verdict::Lost) => Verdict::Lost,
+        (Verdict::Ascii, Verdict::Ascii) => Verdict::Ascii,
+        _ => Verdict::Clean,
+    };
+    Measured {
+        path: path.to_path_buf(),
+        tags,
+        quality,
+        verdict,
+        duration_ms,
+        fingerprint,
+        decode_s,
+        fingerprint_s,
+        repaired_artist: artist,
+        repaired_title: title,
+    }
+}
+
+/// Measure every file, `workers` of them at a time, and keep the order of the paths.
+fn measure_all(files: &[PathBuf], workers: usize) -> Vec<Measured> {
+    let workers = workers.clamp(1, files.len().max(1));
+    let mut measured: Vec<Measured> = Vec::with_capacity(files.len());
+    if workers == 1 {
+        for path in files {
+            measured.push(measure(path));
+        }
+        return measured;
+    }
+    // Round-robin, so a folder of small files does not land on one thread and a folder of long ones on
+    // another: the work is per file, and the file sizes are not known before opening them.
+    let mut chunks: Vec<Vec<&PathBuf>> = vec![Vec::new(); workers];
+    for (index, path) in files.iter().enumerate() {
+        chunks[index % workers].push(path);
+    }
+    std::thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(workers);
+        for chunk in chunks {
+            handles.push(scope.spawn(move || {
+                chunk
+                    .into_iter()
+                    .map(|path| measure(path))
+                    .collect::<Vec<Measured>>()
+            }));
+        }
+        for handle in handles {
+            measured.extend(handle.join().expect("worker"));
+        }
+    });
+    measured.sort_by(|left, right| left.path.cmp(&right.path));
+    measured
+}
+
 struct Measured {
     path: PathBuf,
     tags: Tags,
     quality: Quality,
     verdict: Verdict,
+    repaired_artist: String,
+    repaired_title: String,
     duration_ms: u64,
     fingerprint: Vec<u32>,
     decode_s: f64,
@@ -370,69 +457,41 @@ fn probe_collection() {
     files.sort();
     println!("PROBE: {} files under {}", files.len(), root.display());
 
-    let mut measured: Vec<Measured> = Vec::new();
+    // Files are independent, and the work is a decode plus a fingerprint: the only shared thing is the
+    // disk. Threads are what turns 111 hours on a hundred thousand tracks into a working evening, and
+    // the count is the operator's choice — `DJ_THREADS=1` is a legitimate answer on a spinning disk.
+    let workers = std::env::var("DJ_THREADS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|count| *count > 0)
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|count| count.get())
+                .unwrap_or(4)
+        });
+    println!("PROBE: {} threads", workers);
+
     let started = Instant::now();
-    for path in &files {
-        let (tags, mut quality) = read_tags(path);
-        let (samples, rate, channels, decode_s) = decode_all(path);
-        let frames = samples.len() / usize::from(channels.max(1));
-        let duration_ms = if rate > 0 {
-            u64::try_from(frames).unwrap_or(0) * 1_000 / u64::from(rate)
-        } else {
-            0
-        };
-        let size = std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
-        quality.bitrate = size
-            .saturating_mul(8)
-            .saturating_mul(1_000)
-            .checked_div(duration_ms);
-        let fingerprint_started = Instant::now();
-        let fingerprint = dj_fingerprint::of_samples(&samples, rate, channels).unwrap_or_default();
-        let fingerprint_s = fingerprint_started.elapsed().as_secs_f64();
-        let (artist, artist_verdict) = repair(&tags.artist);
-        let (title, title_verdict) = repair(&tags.title);
-        let verdict = match (artist_verdict, title_verdict) {
-            (Verdict::Repaired(encoding), _) | (_, Verdict::Repaired(encoding)) => {
-                Verdict::Repaired(encoding)
-            }
-            (Verdict::Lost, _) | (_, Verdict::Lost) => Verdict::Lost,
-            (Verdict::Ascii, Verdict::Ascii) => Verdict::Ascii,
-            _ => Verdict::Clean,
-        };
-        let verdict_name = match verdict {
-            Verdict::Ascii => "ascii",
-            Verdict::Clean => "чисто",
-            Verdict::Repaired("cp1251") => "починено из cp1251",
-            Verdict::Repaired(_) => "починено из двойного UTF-8",
-            Verdict::Lost => "байты потеряны",
-        };
+    let measured = measure_all(&files, workers);
+    let total_s = started.elapsed().as_secs_f64();
+    for track in &measured {
         println!(
             "PROBE file {} | {} {} Hz {} ch {:?} бит {:?} кбит/с | {:.1} с | тегов {} | «{}» — «{}» | {} | отпечаток {} | декод {:.1} с + отпечаток {:.1} с",
-            path.display(),
-            quality.codec,
-            quality.rate,
-            quality.channels,
-            quality.bits,
-            quality.bitrate.map(|bitrate| bitrate / 1_000),
-            duration_ms as f64 / 1_000.0,
-            tags.count,
-            artist,
-            title,
-            verdict_name,
-            fingerprint.len(),
-            decode_s,
-            fingerprint_s,
+            track.path.display(),
+            track.quality.codec,
+            track.quality.rate,
+            track.quality.channels,
+            track.quality.bits,
+            track.quality.bitrate.map(|bitrate| bitrate / 1_000),
+            track.duration_ms as f64 / 1_000.0,
+            track.tags.count,
+            track.repaired_artist,
+            track.repaired_title,
+            verdict_name(track.verdict),
+            track.fingerprint.len(),
+            track.decode_s,
+            track.fingerprint_s,
         );
-        measured.push(Measured {
-            path: path.clone(),
-            tags,
-            quality,
-            verdict,
-            duration_ms,
-            fingerprint,
-            decode_s,
-            fingerprint_s,
-        });
     }
     let total_s = started.elapsed().as_secs_f64();
 
