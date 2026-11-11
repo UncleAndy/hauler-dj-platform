@@ -24,6 +24,8 @@ use symphonia::core::formats::{FormatOptions, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::{MetadataOptions, StandardTag};
 
+use dj_library::tags::{Verdict as TextVerdict, repair};
+
 const AUDIO: [&str; 4] = ["wav", "flac", "mp3", "ogg"];
 /// Shared subfingerprints below this are not worth a full comparison.
 const MIN_SHARED: u32 = 8;
@@ -69,6 +71,17 @@ enum Verdict {
     Undecodable,
 }
 
+impl From<TextVerdict> for Verdict {
+    fn from(verdict: TextVerdict) -> Self {
+        match verdict {
+            TextVerdict::Ascii => Self::Ascii,
+            TextVerdict::Clean => Self::Clean,
+            TextVerdict::Repaired(encoding) => Self::Repaired(encoding),
+            TextVerdict::Lost => Self::Lost,
+        }
+    }
+}
+
 fn main_root() -> PathBuf {
     if let Ok(dir) = std::env::var("DJ_COLLECTION") {
         return PathBuf::from(dir);
@@ -99,176 +112,6 @@ fn walk(root: &Path, out: &mut Vec<PathBuf>) {
 ///
 /// These are letters too, so a score that only asks "is it alphabetic" calls mojibake clean — that is
 /// exactly how the first version of this check passed `Ìîñêâà` through untouched.
-fn suspicious(character: char) -> bool {
-    ('\u{00A0}'..='\u{017F}').contains(&character) || ('\u{2000}'..='\u{2030}').contains(&character)
-}
-
-fn suspicious_ratio(text: &str) -> f64 {
-    let total = text.chars().count();
-    if total == 0 {
-        return 0.0;
-    }
-    let bad = text
-        .chars()
-        .filter(|character| suspicious(*character))
-        .count();
-    bad as f64 / total as f64
-}
-
-/// How much a string looks like text: Latin and Cyrillic letters good, mojibake and controls bad.
-fn text_score(text: &str) -> f64 {
-    let mut good = 0.0_f64;
-    let mut bad = 0.0_f64;
-    for character in text.chars() {
-        if character.is_ascii_alphanumeric() || ('\u{0400}'..='\u{04FF}').contains(&character) {
-            good += 1.0;
-        } else if character == ' ' || ".,'-&()/+:".contains(character) {
-            good += 0.8;
-        } else if character.is_control() || character == '\u{FFFD}' {
-            bad += 3.0;
-        } else if suspicious(character) {
-            bad += 1.5;
-        } else if character.is_alphabetic() {
-            // Another alphabet: not evidence of damage, not evidence of health either.
-            good += 0.5;
-        } else {
-            bad += 0.5;
-        }
-    }
-    good / (good + bad).max(1.0)
-}
-
-fn cp1251(bytes: &[u8]) -> String {
-    bytes
-        .iter()
-        .map(|&byte| match byte {
-            0x00..=0x7F => byte as char,
-            0xA8 => 'Ё',
-            0xB8 => 'ё',
-            0xC0..=0xFF => char::from_u32(0x0410 + u32::from(byte - 0xC0)).unwrap_or('?'),
-            _ => '?',
-        })
-        .collect()
-}
-
-fn latin1_bytes(text: &str) -> Option<Vec<u8>> {
-    text.chars()
-        .map(|character| u8::try_from(u32::from(character)).ok())
-        .collect()
-}
-
-/// The bytes a cp1252 reader would have produced for these characters.
-fn cp1252_bytes(text: &str) -> Option<Vec<u8>> {
-    const HIGH: [(char, u8); 27] = [
-        ('\u{20AC}', 0x80),
-        ('\u{201A}', 0x82),
-        ('\u{0192}', 0x83),
-        ('\u{201E}', 0x84),
-        ('\u{2026}', 0x85),
-        ('\u{2020}', 0x86),
-        ('\u{2021}', 0x87),
-        ('\u{02C6}', 0x88),
-        ('\u{2030}', 0x89),
-        ('\u{0160}', 0x8A),
-        ('\u{2039}', 0x8B),
-        ('\u{0152}', 0x8C),
-        ('\u{017D}', 0x8E),
-        ('\u{2018}', 0x91),
-        ('\u{2019}', 0x92),
-        ('\u{201C}', 0x93),
-        ('\u{201D}', 0x94),
-        ('\u{2022}', 0x95),
-        ('\u{2013}', 0x96),
-        ('\u{2014}', 0x97),
-        ('\u{02DC}', 0x98),
-        ('\u{2122}', 0x99),
-        ('\u{0161}', 0x9A),
-        ('\u{203A}', 0x9B),
-        ('\u{0153}', 0x9C),
-        ('\u{017E}', 0x9E),
-        ('\u{0178}', 0x9F),
-    ];
-    let mut bytes = Vec::with_capacity(text.len());
-    for character in text.chars() {
-        if let Ok(byte) = u8::try_from(u32::from(character)) {
-            bytes.push(byte);
-            continue;
-        }
-        let (_, byte) = HIGH.iter().find(|(known, _)| *known == character)?;
-        bytes.push(*byte);
-    }
-    Some(bytes)
-}
-
-/// Repair a tag string: cp1251 read as Latin-1, or UTF-8 read as cp1252 (the `ÐœÐ¾ÑÐºÐ²Ð°` case).
-/// True when no single word mixes Latin and Cyrillic letters.
-///
-/// The two repairs that matter — cp1251 read as Latin-1 and UTF-8 read as cp1252 — produce text in one
-/// alphabet, word by word. A candidate that turns `Käärijä` into `Kддrijд` mixes them inside a word,
-/// and that is the signature of a guess rather than of a repair.
-fn single_script(text: &str) -> bool {
-    for word in text.split_whitespace() {
-        let mut latin = false;
-        let mut cyrillic = false;
-        for character in word.chars() {
-            if character.is_ascii_alphabetic() {
-                latin = true;
-            } else if ('\u{0400}'..='\u{04FF}').contains(&character) {
-                cyrillic = true;
-            }
-        }
-        if latin && cyrillic {
-            return false;
-        }
-    }
-    true
-}
-
-fn repair(text: &str) -> (String, Verdict) {
-    if text.is_empty() {
-        return (String::new(), Verdict::Clean);
-    }
-    if text.is_ascii() {
-        return (text.to_owned(), Verdict::Ascii);
-    }
-    if text.contains('\u{FFFD}') {
-        return (text.to_owned(), Verdict::Lost);
-    }
-    // One accented letter in a title is a title, not damage: repair is attempted only when a good
-    // share of the string is made of the characters broken bytes produce.
-    if suspicious_ratio(text) < 0.3 {
-        return (text.to_owned(), Verdict::Clean);
-    }
-    let original = text_score(text);
-    let mut best = (text.to_owned(), Verdict::Clean, original);
-    let consider =
-        |candidate: Option<String>, verdict: Verdict, best: &mut (String, Verdict, f64)| {
-            let Some(candidate) = candidate else {
-                return;
-            };
-            if suspicious_ratio(&candidate) > 0.0 || !single_script(&candidate) {
-                return;
-            }
-            let score = text_score(&candidate);
-            if score > best.2 + 0.05 {
-                *best = (candidate, verdict, score);
-            }
-        };
-    if let Some(bytes) = latin1_bytes(text) {
-        consider(Some(cp1251(&bytes)), Verdict::Repaired("cp1251"), &mut best);
-    }
-    if let Some(bytes) = cp1252_bytes(text)
-        && let Ok(candidate) = std::str::from_utf8(&bytes)
-    {
-        consider(
-            Some(candidate.to_owned()),
-            Verdict::Repaired("utf8"),
-            &mut best,
-        );
-    }
-    (best.0, best.1)
-}
-
 fn read_tags(path: &Path) -> (Tags, Quality) {
     let file = std::fs::File::open(path).expect("open");
     let source = MediaSourceStream::new(Box::new(file), Default::default());
@@ -493,7 +336,9 @@ fn measure(path: &Path) -> Measured {
     let fingerprint = dj_fingerprint::of_samples(&samples, rate, channels).unwrap_or_default();
     let fingerprint_s = fingerprint_started.elapsed().as_secs_f64();
     let (artist, artist_verdict) = repair(&tags.artist);
+    let artist_verdict: Verdict = artist_verdict.into();
     let (title, title_verdict) = repair(&tags.title);
+    let title_verdict: Verdict = title_verdict.into();
     let verdict = match (artist_verdict, title_verdict) {
         (Verdict::Repaired(encoding), _) | (_, Verdict::Repaired(encoding)) => {
             Verdict::Repaired(encoding)
@@ -727,114 +572,6 @@ fn probe_collection() {
     );
 }
 
-#[cfg(test)]
-mod encoding {
-    use super::*;
-
-    /// What a cp1252 reader shows for these bytes; undefined slots keep their control character, which
-    /// is exactly what makes the mojibake recognisable.
-    fn cp1252_decode(bytes: &[u8]) -> String {
-        const HIGH: [(u8, char); 27] = [
-            (0x80, '\u{20AC}'),
-            (0x82, '\u{201A}'),
-            (0x83, '\u{0192}'),
-            (0x84, '\u{201E}'),
-            (0x85, '\u{2026}'),
-            (0x86, '\u{2020}'),
-            (0x87, '\u{2021}'),
-            (0x88, '\u{02C6}'),
-            (0x89, '\u{2030}'),
-            (0x8A, '\u{0160}'),
-            (0x8B, '\u{2039}'),
-            (0x8C, '\u{0152}'),
-            (0x8E, '\u{017D}'),
-            (0x91, '\u{2018}'),
-            (0x92, '\u{2019}'),
-            (0x93, '\u{201C}'),
-            (0x94, '\u{201D}'),
-            (0x95, '\u{2022}'),
-            (0x96, '\u{2013}'),
-            (0x97, '\u{2014}'),
-            (0x98, '\u{02DC}'),
-            (0x99, '\u{2122}'),
-            (0x9A, '\u{0161}'),
-            (0x9B, '\u{203A}'),
-            (0x9C, '\u{0153}'),
-            (0x9E, '\u{017E}'),
-            (0x9F, '\u{0178}'),
-        ];
-        bytes
-            .iter()
-            .map(|byte| {
-                HIGH.iter()
-                    .find(|(known, _)| known == byte)
-                    .map(|(_, character)| *character)
-                    .unwrap_or(*byte as char)
-            })
-            .collect()
-    }
-
-    #[test]
-    fn a_cp1251_artist_read_as_latin1_is_repaired() {
-        // «Москва» in cp1251, read by a reader that assumed Latin-1.
-        let broken = cp1252_decode(b"\xcc\xee\xf1\xea\xe2\xe0");
-        let (fixed, verdict) = repair(&broken);
-        assert_eq!(fixed, "Москва", "получилось «{fixed}»");
-        assert_eq!(verdict, Verdict::Repaired("cp1251"));
-    }
-
-    #[test]
-    fn utf8_read_as_cp1252_is_repaired() {
-        // «Москва» in UTF-8, shown by a cp1252 reader: the `ÐœÐ¾ÑÐºÐ²Ð°` case.
-        let broken = cp1252_decode("Москва".as_bytes());
-        let (fixed, verdict) = repair(&broken);
-        assert_eq!(fixed, "Москва", "получилось «{fixed}»");
-        assert_eq!(verdict, Verdict::Repaired("utf8"));
-    }
-
-    #[test]
-    fn clean_text_is_left_alone() {
-        for text in [
-            "Москва",
-            "Abba",
-            "Ёжик — Туман",
-            "Track 12",
-            "Édith Piaf",
-            "Björk — Jóga",
-            "Sigur Rós",
-        ] {
-            let (fixed, verdict) = repair(text);
-            assert_eq!(fixed, text, "испортили «{text}»");
-            assert!(matches!(verdict, Verdict::Clean | Verdict::Ascii), "{text}");
-        }
-    }
-
-    #[test]
-    fn lost_bytes_are_reported_rather_than_guessed() {
-        let (fixed, verdict) = repair("Москва\u{FFFD}");
-        assert_eq!(fixed, "Москва\u{FFFD}");
-        assert_eq!(verdict, Verdict::Lost);
-    }
-
-    #[test]
-    fn a_correct_name_with_accents_is_not_repaired_into_cyrillic() {
-        // Käärijä is a Finnish artist. Read as Latin-1 his four `ä` are 0xE4, and 0xE4 in cp1251 is
-        // `д`, so a repair that only asks "does this look like text?" turns the name into `Kддrijд` —
-        // a word in two alphabets at once, which a repair never produces.
-        let (artist, verdict) = repair("Käärijä");
-        assert_eq!(artist, "Käärijä", "испортили имя: «{artist}»");
-        assert_eq!(verdict, Verdict::Clean);
-    }
-
-    #[test]
-    fn a_guess_that_mixes_alphabets_is_rejected() {
-        assert!(!single_script("Kддrijд"));
-        assert!(single_script("Москва"));
-        assert!(single_script("Käärijä"));
-        assert!(single_script("Steve Levi - Lost"));
-        assert!(single_script("Ёжик — Туман"));
-    }
-}
 mod duplicates {
     use super::*;
 
