@@ -14,5 +14,19 @@ serde_json.workspace = true
 # build does not depend on a system libsqlite3.
 rusqlite = { version = "0.32", features = ["bundled"] }
 
+[dev-dependencies]
+# The probe reads tags (symphonia), decodes (dj-codec) and fingerprints (dj-fingerprint); the import
+# itself will need the same three, so they are not test-only in spirit.
+dj-codec = { path = "../dj-codec" }
+dj-fingerprint = { path = "../dj-fingerprint" }
+symphonia = { version = "0.6", default-features = false, features = [
+    "wav",
+    "flac",
+    "mp3",
+    "ogg",
+    "vorbis",
+    "pcm",
+] }
+
 [lints]
 workspace = true
