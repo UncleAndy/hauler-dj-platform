@@ -71,6 +71,35 @@ Pane {
     property var taps: []
 
     /// Move the grid by ten milliseconds: one press is one step, and the ear is the judge.
+    /// The tempo the buttons last asked for and the engine has not published yet.
+    ///
+    /// A snapshot arrives at display rate, so two presses in the same frame both read the tempo from
+    /// before the first one — and the second press then asks for the same number, so the tempo moves by
+    /// one tenth instead of two. This is not a copy of the state for display: nothing draws it, and it is
+    /// dropped the moment the published tempo agrees with it.
+    property real pendingBpm: 0
+    onLocalBpmChanged: {
+        if (panel.pendingBpm > 0 && Math.abs(panel.localBpm - panel.pendingBpm) < 0.05) {
+            panel.pendingBpm = 0;
+        }
+    }
+    /// Trim the tempo by a fraction of a beat per minute.
+    ///
+    /// The base is the tempo under the play head, rounded to a tenth first: a measured 128.00037 plus a
+    /// tenth has to read 128.1 and then 128.2, not 128.10037 and 128.20037. A track with no grid has no
+    /// tempo at all, and the nudge starts one from the number a deck shows when nothing is measured —
+    /// the same 120 the beat button uses.
+    function nudgeTempo(delta) {
+        const shown = panel.pendingBpm > 0 ? panel.pendingBpm : panel.localBpm;
+        const base = shown > 0 ? Math.round(shown * 10) / 10 : 120.0;
+        const wanted = Math.round((base + delta) * 10) / 10;
+        if (wanted < 20 || wanted > 400) {
+            return;
+        }
+        panel.pendingBpm = wanted;
+        Bridge.setGridTempo(panel.deckId, wanted);
+    }
+
     function shiftGrid(direction) {
         Bridge.shiftGrid(panel.deckId, direction * Math.round(panel.gridRate * 0.010));
     }
@@ -551,7 +580,11 @@ Pane {
 
     // The property is `deck`; `onStateChanged` would listen to every Item's built-in state and
     // fire never, which is how the strip lost its picture.
-    onDeckChanged: reload()
+    onDeckChanged: {
+        // A new deck means a new track: a tempo asked for on the old one means nothing here.
+        panel.pendingBpm = 0;
+        reload();
+    }
     Component.onCompleted: reload()
 
     ColumnLayout {
@@ -1275,6 +1308,31 @@ Pane {
                 ToolTip.text: qsTr("Type the tempo")
                 onClicked: tempoEdit.open()
             }
+            // A tenth of a beat per minute either way: the number a DJ trims by ear against the other
+            // deck, where a whole beat is far too much and the arrows below are a different job (they
+            // move the grid, these move the tempo).
+            Button {
+                objectName: "gridTempoDown_" + panel.deckId
+                text: qsTr("▼")
+                font.pixelSize: 9
+                Layout.preferredWidth: 18
+                Layout.preferredHeight: 18
+                focusPolicy: Qt.NoFocus
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Tempo down by 0.1 BPM")
+                onClicked: panel.nudgeTempo(-0.1)
+            }
+            Button {
+                objectName: "gridTempoUp_" + panel.deckId
+                text: qsTr("▲")
+                font.pixelSize: 9
+                Layout.preferredWidth: 18
+                Layout.preferredHeight: 18
+                focusPolicy: Qt.NoFocus
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Tempo up by 0.1 BPM")
+                onClicked: panel.nudgeTempo(0.1)
+            }
             Button {
                 objectName: "gridTap_" + panel.deckId
                 text: qsTr("Tap")
@@ -1464,7 +1522,12 @@ Pane {
                 Layout.fillWidth: true
                 font.pixelSize: 11
                 selectByMouse: true
-                validator: DoubleValidator { bottom: 20.0; top: 400.0; decimals: 3 }
+                // Both separators, because the field is filled with a dot (`128.0`) and a `DoubleValidator`
+                // accepts only the one its locale uses — in a comma locale the number the dialog itself
+                // wrote was refused. The range is checked on apply, where it can say no.
+                validator: RegularExpressionValidator {
+                    regularExpression: /^\d{0,3}([.,]\d{0,3})?$/
+                }
                 onAccepted: {
                     // Either separator: a DJ types 128.0 or 128,0 and means the same thing.
                     Bridge.setGridTempo(panel.deckId, parseFloat(text.replace(",", ".")));
@@ -1487,7 +1550,7 @@ Pane {
                     focusPolicy: Qt.NoFocus
                     onClicked: {
                         const typed = parseFloat(tempoField.text.replace(",", "."));
-                        if (typed > 0) {
+                        if (typed >= 20 && typed <= 400) {
                             Bridge.setGridTempo(panel.deckId, typed);
                         }
                         tempoEdit.close();

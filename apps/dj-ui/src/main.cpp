@@ -5110,6 +5110,67 @@ int main(int argc, char *argv[])
             return 1;
         }
         std::fprintf(stdout, "dj-ui: a typed tempo of 174 BPM started the grid at the file start\n");
+
+        // A tenth of a beat per minute, up and down, from the tempo the grid now has.
+        const auto tempoAfter = [&](double want) {
+            return waitFor([&]() { return std::abs(tempoOfB() - want) < 0.005; }, 5000);
+        };
+        for (int press = 0; press < 2; ++press) {
+            if (itemByName(QStringLiteral("gridTempoUp_B")) == nullptr) {
+                std::fprintf(stderr, "dj-ui: deck B has no tempo-up button\n");
+                return 1;
+            }
+            QMetaObject::invokeMethod(itemByName(QStringLiteral("gridTempoUp_B")), "clicked");
+        }
+        if (!tempoAfter(174.2)) {
+            std::fprintf(stderr, "dj-ui: two presses up left the tempo at %.3f, not 174.2\n",
+                         tempoOfB());
+            return 1;
+        }
+        if (itemByName(QStringLiteral("gridTempoDown_B")) == nullptr) {
+            std::fprintf(stderr, "dj-ui: deck B has no tempo-down button\n");
+            return 1;
+        }
+        QMetaObject::invokeMethod(itemByName(QStringLiteral("gridTempoDown_B")), "clicked");
+        if (!tempoAfter(174.1)) {
+            std::fprintf(stderr, "dj-ui: a press down left the tempo at %.3f, not 174.1\n",
+                         tempoOfB());
+            return 1;
+        }
+        if (firstBeatB() != 0) {
+            std::fprintf(stderr, "dj-ui: trimming the tempo moved the first beat to %lld\n",
+                         static_cast<long long>(firstBeatB()));
+            return 1;
+        }
+        std::fprintf(stdout, "dj-ui: the tempo buttons move it by 0.1 BPM and keep the first beat\n");
+
+        // Both separators are accepted by the field the dialog itself fills with a dot: in a comma
+        // locale the old validator refused the number it had just written.
+        auto *editButton = itemByName(QStringLiteral("gridTempo_A"));
+        if (editButton == nullptr) {
+            std::fprintf(stderr, "dj-ui: no tempo field button on deck A\n");
+            return 1;
+        }
+        QMetaObject::invokeMethod(editButton, "clicked");
+        QCoreApplication::processEvents();
+        auto *field = itemByName(QStringLiteral("tempoField_A"));
+        if (field == nullptr) {
+            std::fprintf(stderr, "dj-ui: the tempo field never appeared\n");
+            return 1;
+        }
+        for (const auto &[typed, accepted] :
+             {std::pair<const char *, bool>{"174.5", true}, {"174,5", true}, {"174.5.5", false},
+              {"174,5,5", false}}) {
+            field->setProperty("text", QString::fromLatin1(typed));
+            QCoreApplication::processEvents();
+            const bool ok = field->property("acceptableInput").toBool();
+            if (ok != accepted) {
+                std::fprintf(stderr, "dj-ui: the tempo field %s \"%s\"\n",
+                             ok ? "accepted" : "refused", typed);
+                return 1;
+            }
+        }
+        std::fprintf(stdout, "dj-ui: the tempo field takes a dot and a comma alike\n");
         std::fprintf(stdout, "dj-ui: a track with no grid can be given one by hand\n");
         return 0;
     }
