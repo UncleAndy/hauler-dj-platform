@@ -930,6 +930,11 @@ pub struct StateCells {
     /// Whether loop mode repeats each deck's loops, one flag per deck.
     loop_mode: std::sync::Mutex<Vec<bool>>,
     active_loops: std::sync::Mutex<Vec<Vec<(u64, u64)>>>,
+    /// The import the DJ started from the browser: progress and the question it waits on.
+    ///
+    /// The worker writes here and the publisher reads; neither is the audio callback, and a batch of
+    /// files never blocks the mix.
+    import: std::sync::Mutex<Option<dj_domain::ImportState>>,
 }
 
 impl Default for StateCells {
@@ -1092,6 +1097,23 @@ impl StateCells {
             .unwrap_or_else(|| std::array::from_fn(|_| (None, None)))
     }
 
+    /// What the import worker published, for the snapshot.
+    pub fn set_import(&self, state: Option<dj_domain::ImportState>) {
+        let mut guard = self
+            .import
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        *guard = state;
+    }
+
+    /// What the import worker published, for a test or a reader that needs nothing else.
+    pub fn import(&self) -> Option<dj_domain::ImportState> {
+        self.import
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+
     /// Empty state, room for [`MAX_DECKS`] decks.
     pub fn new() -> Self {
         Self {
@@ -1110,6 +1132,7 @@ impl StateCells {
             pad_loops: std::sync::Mutex::new(Vec::new()),
             loop_mode: std::sync::Mutex::new(Vec::new()),
             active_loops: std::sync::Mutex::new(Vec::new()),
+            import: std::sync::Mutex::new(None),
         }
     }
 
@@ -1361,7 +1384,11 @@ impl StateCells {
             }
         }
         Snapshot {
-            import: None,
+            import: self
+                .import
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .clone(),
             protocol: dj_domain::STATE_PROTOCOL.to_string(),
             cache_budget_bytes: self.cache_budget.load(Ordering::Relaxed),
             revision,
@@ -1646,6 +1673,30 @@ pub enum Routed {
         /// The file to measure.
         path: String,
     },
+    /// Start adding files to the collection (DJP-MEDIA-004). The engine runs the batch: the
+    /// collection is written by one process, and the browser only says what the DJ picked.
+    Import {
+        /// The command being answered.
+        command_id: u64,
+        /// Files and folders, as the browser spells them.
+        paths: Vec<String>,
+        /// The collection root to add them to.
+        root: String,
+        /// Run the batch on several workers.
+        parallel: bool,
+    },
+    /// Stop the running import between files.
+    ImportCancel {
+        /// The command being answered.
+        command_id: u64,
+    },
+    /// Answer the duplicate question the import is waiting on.
+    ImportAnswer {
+        /// The command being answered.
+        command_id: u64,
+        /// What to do with the file in question.
+        answer: dj_domain::DuplicateAnswer,
+    },
     /// Handed to the worker that edits grids: it owns the file write and the publication.
     EditGrid {
         /// Target deck.
@@ -1666,6 +1717,23 @@ pub fn route(command: &ScheduledCommand) -> Routed {
             path: path.clone(),
         }),
         DjCommand::Eject { deck } => Routed::Eject { deck: *deck },
+        DjCommand::Import {
+            paths,
+            root,
+            parallel,
+        } => Routed::Import {
+            command_id: command.id,
+            paths: paths.clone(),
+            root: root.clone(),
+            parallel: *parallel,
+        },
+        DjCommand::ImportCancel => Routed::ImportCancel {
+            command_id: command.id,
+        },
+        DjCommand::ImportAnswer { answer } => Routed::ImportAnswer {
+            command_id: command.id,
+            answer: *answer,
+        },
         DjCommand::AnalyzeTempo { deck, path } => Routed::Analyze {
             deck: *deck,
             path: path.clone(),
@@ -2390,4 +2458,255 @@ impl Renderer for EngineGraph {
     fn render(&mut self, master: &mut [f32], cue: &mut [f32], frames: usize) {
         self.render_pair(master, cue, frames);
     }
+}
+
+/// One batch of files the DJ asked to add to the collection.
+pub struct ImportRequest {
+    /// Files and folders, as the browser spells them.
+    pub paths: Vec<String>,
+    /// The collection root to add them to.
+    pub root: String,
+    /// Run the batch on several workers. Kept for the protocol: the engine runs one file at a time
+    /// today, because a duplicate question pauses the batch anyway.
+    pub parallel: bool,
+}
+
+/// What the client thread keeps of a running import: how to answer it and how to stop it.
+pub struct ImportJob {
+    /// Answers to the duplicate question the worker is waiting on.
+    pub answers: Sender<dj_domain::DuplicateAnswer>,
+    /// Set to stop the batch between files.
+    pub cancel: Arc<AtomicBool>,
+    /// False once the worker has finished, whatever the reason.
+    pub running: Arc<AtomicBool>,
+}
+
+/// Add the DJ's files to the collection, publishing progress and asking about duplicates.
+///
+/// Runs on its own thread: a batch of files must not block the mix, and a question must not block the
+/// audio either. The state goes to the publisher's cells, which is what the browser draws.
+pub fn run_import(
+    request: ImportRequest,
+    cells: Arc<StateCells>,
+    answers: Receiver<dj_domain::DuplicateAnswer>,
+    cancel: Arc<AtomicBool>,
+    running: Arc<AtomicBool>,
+) {
+    let root = std::path::PathBuf::from(&request.root);
+    let files = collect_audio(&request.paths);
+    let mut state = dj_domain::ImportState {
+        total: files.len(),
+        done: 0,
+        placed: 0,
+        skipped: 0,
+        failed: 0,
+        running: true,
+        current: None,
+        question: None,
+    };
+    cells.set_import(Some(state.clone()));
+
+    let mut catalog = dj_library::identity::Catalog::scan(&root);
+    for file in files {
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
+        state.current = Some(file.display().to_string());
+        cells.set_import(Some(state.clone()));
+
+        let mut policy = dj_library::import::Policy::Ask;
+        loop {
+            let lookup = |identity: &dj_library::identity::Identity| {
+                catalog
+                    .find(identity)
+                    .map(|(path, found, verdict)| (path.to_path_buf(), found.clone(), verdict))
+            };
+            let outcome =
+                dj_library::import::import_checked(&file, &root, now_ms(), lookup, policy);
+            match outcome {
+                Ok(dj_library::import::Outcome::Placed(imported)) => {
+                    state.placed += 1;
+                    catalog.add(imported.path.clone(), imported.identity.clone());
+                    break;
+                }
+                Ok(dj_library::import::Outcome::Version { imported, .. }) => {
+                    state.placed += 1;
+                    catalog.add(imported.path.clone(), imported.identity.clone());
+                    break;
+                }
+                Ok(dj_library::import::Outcome::Replaced { imported, .. }) => {
+                    state.placed += 1;
+                    catalog.add(imported.path.clone(), imported.identity.clone());
+                    break;
+                }
+                Ok(dj_library::import::Outcome::Rejected { .. }) => {
+                    state.skipped += 1;
+                    break;
+                }
+                Ok(dj_library::import::Outcome::Duplicate {
+                    existing,
+                    candidate,
+                    verdict,
+                    ..
+                }) => {
+                    if policy != dj_library::import::Policy::Ask {
+                        state.skipped += 1;
+                        break;
+                    }
+                    let existing_identity = catalog
+                        .find(&candidate)
+                        .map(|(_, found, _)| found.clone())
+                        .unwrap_or_default();
+                    state.question = Some(dj_domain::DuplicateQuestion {
+                        incoming: track_facts(&file, &candidate),
+                        existing: track_facts(&existing, &existing_identity),
+                        agreement: agreement_of(&verdict),
+                    });
+                    cells.set_import(Some(state.clone()));
+                    let answer = wait_for_answer(&answers, &cancel);
+                    state.question = None;
+                    cells.set_import(Some(state.clone()));
+                    match answer {
+                        Some(dj_domain::DuplicateAnswer::Skip) | None => {
+                            state.skipped += 1;
+                            break;
+                        }
+                        Some(dj_domain::DuplicateAnswer::Replace) => {
+                            policy = dj_library::import::Policy::Replace;
+                        }
+                        Some(dj_domain::DuplicateAnswer::Add) => {
+                            policy = dj_library::import::Policy::KeepBothUnmarked;
+                        }
+                        Some(dj_domain::DuplicateAnswer::AddMarked) => {
+                            policy = dj_library::import::Policy::KeepBoth;
+                        }
+                    }
+                }
+                Err(_) => {
+                    state.failed += 1;
+                    break;
+                }
+            }
+        }
+        state.done += 1;
+        state.current = None;
+        cells.set_import(Some(state.clone()));
+    }
+
+    state.running = false;
+    state.current = None;
+    cells.set_import(Some(state));
+    running.store(false, Ordering::Relaxed);
+}
+
+/// The DJ's answer, or nothing while the batch is stopped: a stop is not a decision about the file.
+fn wait_for_answer(
+    answers: &Receiver<dj_domain::DuplicateAnswer>,
+    cancel: &Arc<AtomicBool>,
+) -> Option<dj_domain::DuplicateAnswer> {
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return None;
+        }
+        match answers.recv_timeout(std::time::Duration::from_millis(100)) {
+            Ok(answer) => return Some(answer),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return None,
+        }
+    }
+}
+
+/// Every audio file the DJ pointed at, folders walked: what a batch actually tries.
+pub fn collect_audio(paths: &[String]) -> Vec<std::path::PathBuf> {
+    fn walk(directory: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(directory) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                // The metadata folder holds records and `_duplicates` holds files the collection
+                // refused: neither is music to add.
+                let name = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or_default();
+                if name == ".djmeta" || name == "_duplicates" {
+                    continue;
+                }
+                walk(&path, out);
+                continue;
+            }
+            if is_audio(&path) {
+                out.push(path);
+            }
+        }
+    }
+
+    let mut files = Vec::new();
+    for path in paths {
+        let path = std::path::PathBuf::from(path);
+        if path.is_dir() {
+            walk(&path, &mut files);
+        } else if path.is_file() {
+            files.push(path);
+        }
+    }
+    files.sort();
+    files
+}
+
+/// True for the containers the decoder opens.
+pub fn is_audio(path: &std::path::Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .map(|extension| extension.to_ascii_lowercase())
+            .as_deref(),
+        Some("wav" | "flac" | "mp3" | "ogg" | "m4a" | "aiff" | "aif")
+    )
+}
+
+/// What the duplicate dialog shows about one file.
+pub fn track_facts(
+    path: &std::path::Path,
+    identity: &dj_library::identity::Identity,
+) -> dj_domain::TrackFacts {
+    dj_domain::TrackFacts {
+        path: path.display().to_string(),
+        name: path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().to_string())
+            .unwrap_or_default(),
+        format: path
+            .extension()
+            .map(|extension| extension.to_string_lossy().to_uppercase())
+            .unwrap_or_default(),
+        sample_rate: identity.sample_rate,
+        bits: identity.bits.unwrap_or(0),
+        bitrate_kbps: identity
+            .bitrate()
+            .map(|bits| bits as f64 / 1000.0)
+            .unwrap_or(0.0),
+        duration_ms: identity.duration_ms,
+        size_bytes: identity.bytes,
+        lossless: identity.lossless,
+    }
+}
+
+/// How much two fingerprints agree, from the verdict that already compared them.
+fn agreement_of(verdict: &dj_library::identity::Verdict) -> f32 {
+    match verdict {
+        dj_library::identity::Verdict::Duplicate { agreement, .. }
+        | dj_library::identity::Verdict::Version { agreement, .. } => *agreement as f32,
+        dj_library::identity::Verdict::Different => 0.0,
+    }
+}
+
+/// Wall clock in milliseconds, for the metadata a new copy carries.
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(0)
 }

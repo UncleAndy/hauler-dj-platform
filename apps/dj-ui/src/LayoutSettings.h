@@ -65,6 +65,8 @@ public:
     void setBrowserRailWidth(int pixels);
     QStringList collectionRoots() const { return m_collectionRoots; }
     void setCollectionRoots(const QStringList &roots);
+    /// The root with the most free space: an import goes where there is room for it.
+    Q_INVOKABLE QString roomiestRoot() const;
     double waveformSpan() const { return m_waveformSpan; }
     void setWaveformSpan(double span);
 

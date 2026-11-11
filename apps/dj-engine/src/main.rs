@@ -554,6 +554,7 @@ fn run(argv: &[String]) -> Result<(), String> {
         let subscribers = Arc::clone(&subscribers);
         let cells = Arc::clone(&cells);
         let work = Workers {
+            cells: Arc::clone(&cells),
             loads: load_requests.clone(),
             analyses: analysis_requests.clone(),
             grids: grid_edits.clone(),
@@ -1249,6 +1250,8 @@ struct DeckFlags {
 /// The background work a client connection may ask for: a decode, or a second measurement.
 #[derive(Clone)]
 struct Workers {
+    /// The publisher's cells: the import worker publishes its progress through them.
+    cells: Arc<StateCells>,
     /// Decodes a track and prepares a deck.
     loads: Sender<LoadRequest>,
     /// Measures a deck's tempo again (B02).
@@ -1275,6 +1278,7 @@ fn serve_client(
     stop: Arc<AtomicBool>,
     flags: DeckFlags,
 ) {
+    let cells = Arc::clone(&work.cells);
     let (mut reader, mut writer) = connection.split();
 
     // The writer only writes: it blocks on the channel, never polls with a deadline.
@@ -1285,6 +1289,10 @@ fn serve_client(
             }
         }
     });
+
+    // The import this client started, if any: the answer channel and the stop flag. One batch at a
+    // time, because a second batch would ask questions the DJ never sees.
+    let mut import: Option<dj_engine::ImportJob> = None;
 
     // The reader only reads, so a quiet client cannot starve the snapshot stream.
     let alerts = alerts;
@@ -1323,6 +1331,86 @@ fn serve_client(
                                 command.id,
                                 dj_domain::RejectReason::InvalidValue,
                             ),
+                        };
+                        if alerts.send(ServerMessage::Ack(ack)).is_err() {
+                            return;
+                        }
+                        continue;
+                    }
+                    dj_engine::Routed::Import {
+                        command_id,
+                        paths,
+                        root,
+                        parallel,
+                    } => {
+                        // One batch at a time: two workers would ask the DJ two questions at once.
+                        if import
+                            .as_ref()
+                            .is_some_and(|job| job.running.load(Ordering::Relaxed))
+                        {
+                            let ack =
+                                dj_domain::Ack::rejected(command_id, dj_domain::RejectReason::Busy);
+                            if alerts.send(ServerMessage::Ack(ack)).is_err() {
+                                return;
+                            }
+                            continue;
+                        }
+                        let (answers_tx, answers_rx) = std::sync::mpsc::channel();
+                        let cancel = Arc::new(AtomicBool::new(false));
+                        let running = Arc::new(AtomicBool::new(true));
+                        import = Some(dj_engine::ImportJob {
+                            answers: answers_tx,
+                            cancel: Arc::clone(&cancel),
+                            running: Arc::clone(&running),
+                        });
+                        let worker_cells = Arc::clone(&cells);
+                        let request = dj_engine::ImportRequest {
+                            paths,
+                            root,
+                            parallel,
+                        };
+                        std::thread::spawn(move || {
+                            dj_engine::run_import(
+                                request,
+                                worker_cells,
+                                answers_rx,
+                                cancel,
+                                running,
+                            );
+                        });
+                        if alerts
+                            .send(ServerMessage::Ack(dj_domain::Ack::accepted(command_id)))
+                            .is_err()
+                        {
+                            return;
+                        }
+                        continue;
+                    }
+                    dj_engine::Routed::ImportCancel { command_id } => {
+                        if let Some(job) = import.as_ref() {
+                            job.cancel.store(true, Ordering::Relaxed);
+                        }
+                        if alerts
+                            .send(ServerMessage::Ack(dj_domain::Ack::accepted(command_id)))
+                            .is_err()
+                        {
+                            return;
+                        }
+                        continue;
+                    }
+                    dj_engine::Routed::ImportAnswer { command_id, answer } => {
+                        // An answer nobody asked for is refused: the DJ's click must not be applied to
+                        // the next question, which he has not seen.
+                        let sent = import
+                            .as_ref()
+                            .is_some_and(|job| job.answers.send(answer).is_ok());
+                        let ack = if sent {
+                            dj_domain::Ack::accepted(command_id)
+                        } else {
+                            dj_domain::Ack::rejected(
+                                command_id,
+                                dj_domain::RejectReason::InvalidValue,
+                            )
                         };
                         if alerts.send(ServerMessage::Ack(ack)).is_err() {
                             return;

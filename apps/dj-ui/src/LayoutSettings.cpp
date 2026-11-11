@@ -5,6 +5,7 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QStorageInfo>
 #include <QJsonObject>
 #include <QStandardPaths>
 
@@ -164,6 +165,31 @@ void LayoutSettings::setWaveformSpan(double span)
     m_waveformSpan = bounded;
     emit changed();
     scheduleSave();
+}
+
+QString LayoutSettings::roomiestRoot() const
+{
+    QString best;
+    qint64 most = -1;
+    for (const QString &path : m_collectionRoots) {
+        // A root that does not exist yet is judged by the closest parent that does: the import will
+        // create it, and its disk is the one that matters.
+        QString probe = path;
+        while (!probe.isEmpty() && !QFileInfo(probe).exists()) {
+            const QString parent = QFileInfo(probe).absolutePath();
+            if (parent == probe) {
+                break;
+            }
+            probe = parent;
+        }
+        const QStorageInfo storage(probe);
+        const qint64 free = storage.isValid() ? storage.bytesAvailable() : -1;
+        if (free > most) {
+            most = free;
+            best = path;
+        }
+    }
+    return best;
 }
 
 void LayoutSettings::scheduleSave()

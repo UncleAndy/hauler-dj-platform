@@ -6,6 +6,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFileInfoList>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
@@ -191,6 +192,11 @@ void FileBrowser::openCollection(const QStringList &roots)
     }
     collect(listed);
     applyFilter();
+}
+
+bool FileBrowser::entryIsFile(const QString &path) const
+{
+    return QFileInfo(path).isFile();
 }
 
 void FileBrowser::showFiles()
@@ -511,6 +517,39 @@ int BridgeClient::cue(const QString &deck, const QString &action, int slot)
     QJsonObject command;
     command.insert(QStringLiteral("Cue"), options);
     return sendCommand(deck, command);
+}
+
+int BridgeClient::importPaths(const QStringList &paths, const QString &root, bool parallel)
+{
+    QJsonArray list;
+    for (const QString &path : paths) {
+        list.append(path);
+    }
+    QJsonObject options;
+    options.insert(QStringLiteral("paths"), list);
+    options.insert(QStringLiteral("root"), root);
+    options.insert(QStringLiteral("parallel"), parallel);
+    QJsonObject command;
+    command.insert(QStringLiteral("Import"), options);
+    return sendCommand(QString(), command);
+}
+
+int BridgeClient::cancelImport()
+{
+    QJsonObject command;
+    command.insert(QStringLiteral("ImportCancel"), QJsonObject());
+    return sendCommand(QString(), command);
+}
+
+int BridgeClient::answerImport(const QString &answer)
+{
+    // The words are the protocol's own: a misspelling reaches the engine as a refused command rather
+    // than as a silent no-op here.
+    QJsonObject options;
+    options.insert(QStringLiteral("answer"), answer);
+    QJsonObject command;
+    command.insert(QStringLiteral("ImportAnswer"), options);
+    return sendCommand(QString(), command);
 }
 
 int BridgeClient::load(const QString &deck, const QString &path)

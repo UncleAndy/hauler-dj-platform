@@ -61,6 +61,8 @@ public:
     Q_INVOKABLE void rememberFolder(const QString &folder);
     /// Keep only the collection's tracks whose name contains `text`, in either case.
     Q_INVOKABLE void setFilter(const QString &text);
+    /// True when `path` is a file rather than a folder: a batch of one file needs no confirmation.
+    Q_INVOKABLE bool entryIsFile(const QString &path) const;
 
 signals:
     void changed();
@@ -119,6 +121,14 @@ public:
     // Prepare a file into a deck. Acknowledged as accepted, not applied: the deck is playable when
     // a snapshot reports `Ready` (ADR-0008).
     Q_INVOKABLE int load(const QString &deck, const QString &path);
+
+    /// Add files and folders to the collection (DJP-MEDIA-004). The engine runs the batch and
+    /// publishes progress; this only says what the DJ picked.
+    Q_INVOKABLE int importPaths(const QStringList &paths, const QString &root, bool parallel);
+    /// Stop the running import between files.
+    Q_INVOKABLE int cancelImport();
+    /// Answer the duplicate question: `skip`, `replace`, `add` or `add_marked`.
+    Q_INVOKABLE int answerImport(const QString &answer);
 
     // Called with the folder a track was loaded from, so the browser can open there next time.
     void setLoadFolderHandler(std::function<void(const QString &)> handler) {

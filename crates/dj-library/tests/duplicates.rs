@@ -435,20 +435,35 @@ fn replacing_a_worse_copy_is_the_djs_choice() {
     // The same melody at half the rate: the same recording, and the worse copy by the numbers.
     let worse = tagged(&root, "A - Track 22k.wav", "A", "Track", 30, 220.0, 22_050);
 
-    let Outcome::Placed(placed) =
-        import_checked(&better, &collection, 1_000, find_in(&Catalog::new()), Policy::Ask)
-            .expect("первый")
-    else {
+    let Outcome::Placed(placed) = import_checked(
+        &better,
+        &collection,
+        1_000,
+        find_in(&Catalog::new()),
+        Policy::Ask,
+    )
+    .expect("первый") else {
         panic!("первый не лёг");
     };
     let catalog = catalogue(&placed.path, &placed.identity);
-    let outcome = import_checked(&worse, &collection, 2_000, find_in(&catalog), Policy::Replace)
-        .expect("замена");
+    let outcome = import_checked(
+        &worse,
+        &collection,
+        2_000,
+        find_in(&catalog),
+        Policy::Replace,
+    )
+    .expect("замена");
     match outcome {
-        Outcome::Replaced { imported, rejected, .. } => {
+        Outcome::Replaced {
+            imported, rejected, ..
+        } => {
             assert!(imported.path.exists(), "нового файла нет в коллекции");
-            assert!(!rejected.exists() || rejected.starts_with(collection.join("_duplicates")),
-                    "старая копия не уехала в _duplicates: {}", rejected.display());
+            assert!(
+                !rejected.exists() || rejected.starts_with(collection.join("_duplicates")),
+                "старая копия не уехала в _duplicates: {}",
+                rejected.display()
+            );
             assert!(!placed.path.exists(), "старая копия осталась в коллекции");
         }
         other => panic!("замена не произошла: {other:?}"),

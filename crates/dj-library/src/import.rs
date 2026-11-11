@@ -31,6 +31,9 @@ pub enum Policy {
     Replace,
     /// Keep both: the new file lands with a suffix and is marked as a variant.
     KeepBoth,
+    /// Keep both without the marker: the DJ wants the copy, but not the promise that the pair will
+    /// never be a duplicate again — the next addition will ask about it once more.
+    KeepBothUnmarked,
 }
 
 /// Why an import did not happen.
@@ -176,6 +179,9 @@ pub fn import_checked(
                     ..imported
                 }))
             }
+            Policy::KeepBothUnmarked => Ok(Outcome::Placed(place(
+                source, root, prepared, now_ms, None,
+            )?)),
             Policy::Replace => {
                 // No comparison: the question was asked and answered, and the answer was this file.
                 let rejected = retire(root, &existing)?;

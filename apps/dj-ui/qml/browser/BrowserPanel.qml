@@ -24,6 +24,97 @@ Pane {
     // rail can light the row the list belongs to instead of guessing.
     readonly property string section: Browser.mode === "collection" ? "collection" : "files"
 
+    // The rows the DJ picked: a list of paths, so a folder and a file can travel to the collection
+    // together. Ctrl toggles one, Shift takes the run between the anchor and the click.
+    property var selection: []
+    property int anchorIndex: -1
+
+    // What the engine says about the import, if one was started since it came up.
+    readonly property var importState: Bridge.snapshot !== undefined && Bridge.snapshot.import !== undefined
+                                       ? Bridge.snapshot.import : null
+    readonly property var importQuestion: browser.importState !== null
+                                          && browser.importState.question !== undefined
+                                          ? browser.importState.question : null
+
+    function isChosen(path) {
+        return browser.selection.indexOf(path) >= 0;
+    }
+
+    function choose(index, modifiers) {
+        if (index < 0 || index >= Browser.entries.length) {
+            return;
+        }
+        const path = Browser.entries[index].path;
+        let chosen = browser.selection.slice();
+        if ((modifiers & Qt.ShiftModifier) !== 0 && browser.anchorIndex >= 0) {
+            const from = Math.min(browser.anchorIndex, index);
+            const to = Math.max(browser.anchorIndex, index);
+            chosen = [];
+            for (let row = from; row <= to; ++row) {
+                chosen.push(Browser.entries[row].path);
+            }
+        } else if ((modifiers & Qt.ControlModifier) !== 0) {
+            const at = chosen.indexOf(path);
+            if (at >= 0) {
+                chosen.splice(at, 1);
+            } else {
+                chosen.push(path);
+            }
+            browser.anchorIndex = index;
+        } else {
+            chosen = [path];
+            browser.anchorIndex = index;
+        }
+        browser.selection = chosen;
+    }
+
+    // One file goes straight in: the confirmation exists for batches, not for a single click.
+    function askImport() {
+        const chosen = browser.selection.slice();
+        if (chosen.length === 0) {
+            browser.lastAction = "nothing to add";
+            return false;
+        }
+        if (chosen.length === 1 && Browser.entryIsFile(chosen[0])) {
+            browser.startImport(chosen, true);
+            return true;
+        }
+        importDialog.open();
+        return true;
+    }
+
+    function startImport(paths, parallel) {
+        Bridge.importPaths(paths, LayoutState.roomiestRoot(), parallel);
+        browser.lastAction = "import " + paths.length + " into " + LayoutState.roomiestRoot();
+    }
+
+    /// One line of facts for the duplicate dialog: what the two copies are, in numbers a DJ reads.
+    function factsLine(facts) {
+        if (facts === undefined || facts === null) {
+            return "";
+        }
+        const parts = [];
+        if (facts.format !== undefined && facts.format.length > 0) {
+            parts.push(facts.format);
+        }
+        if (facts.lossless === true) {
+            parts.push("lossless");
+        }
+        if (facts.sample_rate > 0) {
+            parts.push((facts.sample_rate / 1000).toFixed(1) + " kHz");
+        }
+        if (facts.bits > 0) {
+            parts.push(facts.bits + " bit");
+        }
+        if (facts.bitrate_kbps > 0) {
+            parts.push(Math.round(facts.bitrate_kbps) + " kbps");
+        }
+        const seconds = Math.round(facts.duration_ms / 1000);
+        parts.push(Math.floor(seconds / 60) + ":" + ("0" + (seconds % 60)).slice(-2));
+        parts.push((facts.size_bytes / (1024 * 1024)).toFixed(1) + " MB");
+        return parts.join(" · ");
+    }
+
     background: Rectangle {
         color: UiSettings.themePanel
         border.color: UiSettings.themeBorder
@@ -139,6 +230,198 @@ Pane {
         Bridge.load(deck, path);
         browser.lastAction = "loaded " + path + " into " + deck;
         return true;
+    }
+
+    // The context menu: what a DJ does with the rows he picked. One entry today; the place is here
+    // so the next one (analyse, reveal, remove) has somewhere to go.
+    Menu {
+        id: fileMenu
+        objectName: "browserMenu"
+        MenuItem {
+            objectName: "addToCollection"
+            text: qsTr("Add files to collection…")
+            enabled: browser.selection.length > 0
+            onClicked: browser.askImport()
+        }
+    }
+
+    // The batch's confirmation: how many, and whether to use several workers. A single file skips it.
+    Dialog {
+        id: importDialog
+        objectName: "importDialog"
+        title: qsTr("Add to collection")
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        standardButtons: Dialog.NoButton
+        ColumnLayout {
+            spacing: 8
+            Label {
+                objectName: "importCount"
+                text: qsTr("%1 item(s) selected").arg(browser.selection.length)
+                color: UiSettings.themeText
+                font.pixelSize: browser.listFont
+            }
+            Label {
+                objectName: "importRoot"
+                text: qsTr("into %1").arg(LayoutState.roomiestRoot())
+                color: UiSettings.themeTextDim
+                font.pixelSize: browser.listFont
+            }
+            CheckBox {
+                id: parallelBox
+                objectName: "importParallel"
+                text: qsTr("Выполнять параллельно")
+                checked: true
+                font.pixelSize: browser.listFont
+            }
+        }
+        footer: RowLayout {
+            spacing: 6
+            Item { Layout.fillWidth: true }
+            Button {
+                objectName: "importCancel"
+                text: qsTr("Отменить")
+                font.pixelSize: browser.listFont
+                onClicked: importDialog.close()
+            }
+            Button {
+                objectName: "importConfirm"
+                text: qsTr("Добавить")
+                font.pixelSize: browser.listFont
+                onClicked: {
+                    browser.startImport(browser.selection, parallelBox.checked);
+                    importDialog.close();
+                }
+            }
+        }
+    }
+
+    // The batch at work: the counts come from the engine's snapshot, not from this panel.
+    Dialog {
+        id: importProgress
+        objectName: "importProgress"
+        title: qsTr("Adding to collection")
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        closePolicy: Popup.NoAutoClose
+        standardButtons: Dialog.NoButton
+        visible: browser.importState !== null && browser.importState.running === true
+                 && browser.importQuestion === null
+        ColumnLayout {
+            spacing: 8
+            Label {
+                objectName: "importProgressText"
+                text: qsTr("%1 of %2 added, %3 skipped, %4 failed")
+                      .arg(browser.importState !== null ? browser.importState.done : 0)
+                      .arg(browser.importState !== null ? browser.importState.total : 0)
+                      .arg(browser.importState !== null ? browser.importState.skipped : 0)
+                      .arg(browser.importState !== null ? browser.importState.failed : 0)
+                color: UiSettings.themeText
+                font.pixelSize: browser.listFont
+            }
+            Label {
+                objectName: "importProgressCurrent"
+                text: browser.importState !== null && browser.importState.current !== undefined
+                      ? browser.importState.current : ""
+                elide: Text.ElideMiddle
+                Layout.preferredWidth: 320
+                color: UiSettings.themeTextDim
+                font.pixelSize: browser.listFont
+            }
+            ProgressBar {
+                objectName: "importProgressBar"
+                from: 0
+                to: browser.importState !== null ? Math.max(1, browser.importState.total) : 1
+                value: browser.importState !== null ? browser.importState.done : 0
+                Layout.fillWidth: true
+            }
+        }
+        footer: RowLayout {
+            Item { Layout.fillWidth: true }
+            Button {
+                objectName: "importStop"
+                text: qsTr("Отменить")
+                font.pixelSize: browser.listFont
+                onClicked: Bridge.cancelImport()
+            }
+        }
+    }
+
+    // The duplicate: both copies in numbers, and four answers that mean different things.
+    Dialog {
+        id: duplicateDialog
+        objectName: "duplicateDialog"
+        title: qsTr("This track is already in the collection")
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        closePolicy: Popup.NoAutoClose
+        standardButtons: Dialog.NoButton
+        visible: browser.importQuestion !== null
+        ColumnLayout {
+            spacing: 6
+            Label {
+                objectName: "duplicateAgreement"
+                text: qsTr("match %1 %").arg(browser.importQuestion !== null
+                                             ? Math.round(browser.importQuestion.agreement * 100) : 0)
+                color: UiSettings.themeTextDim
+                font.pixelSize: browser.listFont
+            }
+            Label {
+                objectName: "duplicateExisting"
+                text: qsTr("In the collection: %1").arg(browser.importQuestion !== null
+                                                        ? browser.importQuestion.existing.name : "")
+                color: UiSettings.themeText
+                font.pixelSize: browser.listFont
+            }
+            Label {
+                objectName: "duplicateExistingFacts"
+                text: browser.importQuestion !== null
+                      ? browser.factsLine(browser.importQuestion.existing) : ""
+                color: UiSettings.themeTextDim
+                font.pixelSize: browser.listFont
+            }
+            Label {
+                objectName: "duplicateIncoming"
+                text: qsTr("Adding: %1").arg(browser.importQuestion !== null
+                                             ? browser.importQuestion.incoming.name : "")
+                color: UiSettings.themeText
+                font.pixelSize: browser.listFont
+            }
+            Label {
+                objectName: "duplicateIncomingFacts"
+                text: browser.importQuestion !== null
+                      ? browser.factsLine(browser.importQuestion.incoming) : ""
+                color: UiSettings.themeTextDim
+                font.pixelSize: browser.listFont
+            }
+        }
+        footer: RowLayout {
+            spacing: 4
+            Button {
+                objectName: "duplicateSkip"
+                text: qsTr("Пропустить")
+                font.pixelSize: browser.listFont
+                onClicked: Bridge.answerImport("skip")
+            }
+            Button {
+                objectName: "duplicateReplace"
+                text: qsTr("Заменить")
+                font.pixelSize: browser.listFont
+                onClicked: Bridge.answerImport("replace")
+            }
+            Button {
+                objectName: "duplicateAdd"
+                text: qsTr("Добавить")
+                font.pixelSize: browser.listFont
+                onClicked: Bridge.answerImport("add")
+            }
+            Button {
+                objectName: "duplicateAddMarked"
+                text: qsTr("Добавить с меткой")
+                font.pixelSize: browser.listFont
+                onClicked: Bridge.answerImport("add_marked")
+            }
+        }
     }
 
     RowLayout {
@@ -396,9 +679,13 @@ Pane {
                     readonly property bool isFolder: row.modelData.dir === true
                     readonly property bool isParent: row.modelData.parent === true
                     readonly property bool current: list.currentIndex === row.index
-                    color: row.current ? UiSettings.themeAccentDim
-                                       : (row.index % 2 === 0 ? UiSettings.themePanel
-                                                              : UiSettings.themeBackground)
+                    readonly property bool chosen: browser.isChosen(row.modelData.path)
+                    // A chosen row is the loudest thing in the list: the DJ must see what a batch
+                    // will take before he adds it.
+                    color: row.chosen ? UiSettings.themeAccent
+                                      : (row.current ? UiSettings.themeAccentDim
+                                                     : (row.index % 2 === 0 ? UiSettings.themePanel
+                                                                            : UiSettings.themeBackground))
 
                     Label {
                         id: rowMeta
@@ -436,10 +723,20 @@ Pane {
                     }
                     MouseArea {
                         anchors.fill: parent
-                        acceptedButtons: Qt.LeftButton
-                        onClicked: {
+                        acceptedButtons: Qt.LeftButton | Qt.RightButton
+                        onClicked: function (mouse) {
                             list.currentIndex = row.index;
                             list.forceActiveFocus();
+                            if (mouse.button === Qt.RightButton) {
+                                // A right click on a row that is not chosen picks it first: a menu
+                                // that acts on something else is a trap.
+                                if (!row.chosen) {
+                                    browser.choose(row.index, Qt.NoModifier);
+                                }
+                                fileMenu.popup();
+                                return;
+                            }
+                            browser.choose(row.index, mouse.modifiers);
                         }
                         onDoubleClicked: {
                             // Folders only: opening one is navigation. A track needs a deck button or
