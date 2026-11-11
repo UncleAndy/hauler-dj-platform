@@ -31,6 +31,9 @@ pub struct DecodeStats {
 }
 
 /// A decoder over one file. Output is always interleaved stereo `f32`.
+/// Channels [`StreamDecoder::read_frames`] writes: two, a mono source duplicated into both.
+pub const OUTPUT_CHANNELS: u16 = 2;
+
 pub struct StreamDecoder {
     reader: Box<dyn FormatReader>,
     decoder: Box<dyn AudioDecoder>,
@@ -176,7 +179,17 @@ impl StreamDecoder {
         self.info.sample_rate
     }
 
+    /// Channels [`Self::read_frames`] writes: always two, a mono source duplicated into both.
+    ///
+    /// `info().channels` is what the file carries, not what comes out. A caller that trusts it reads
+    /// half of every chunk from a mono file and gets a signal at half the rate it thinks it has.
+    pub const fn output_channels(&self) -> u16 {
+        OUTPUT_CHANNELS
+    }
+
     /// Read up to `out.len() / 2` stereo frames. Returns frames written; 0 means end of file.
+    ///
+    /// The output is always [`OUTPUT_CHANNELS`] wide, whatever the file carries.
     pub fn read_frames(&mut self, out: &mut [f32]) -> Result<usize, MediaError> {
         if !out.len().is_multiple_of(2) {
             return Err(MediaError::OddBuffer(out.len()));

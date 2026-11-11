@@ -23,6 +23,6 @@ pub use cache::{
     CacheConfig, CacheOutcome, CacheStorage, CachedReader, PcmCache, PcmSampleFormat,
     PlaybackSource, playback_source,
 };
-pub use decode::{DecodeStats, StreamDecoder};
+pub use decode::{DecodeStats, OUTPUT_CHANNELS, StreamDecoder};
 pub use info::{GaplessInfo, MediaError, MediaFormat, MediaInfo};
 pub use prefetch::{PrefetchConfig, PrefetchStats, Prefetcher, SeekOutcome};

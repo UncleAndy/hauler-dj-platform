@@ -463,3 +463,47 @@ fn keeping_both_marks_the_second_copy_as_a_variant() {
     assert_eq!(record.variant.as_deref(), Some("2"));
     let _ = fs::remove_dir_all(&root);
 }
+
+#[test]
+fn a_mono_file_is_measured_whole() {
+    // Декодер всегда пишет стерео и дублирует моно в оба канала. Если верить числу каналов файла,
+    // читается половина каждого куска, и трек измеряется вдвое короче — а его же копия перестаёт
+    // быть копией.
+    let root = scratch("mono");
+    let source = tone(&root, "A - Track.wav", 30, 220.0);
+    let measured = identity::of_file(&source, "Track").expect("измерение");
+    assert_eq!(
+        measured.duration_ms, 30_000,
+        "длительность моно-файла неверна"
+    );
+    assert_eq!(measured.sample_rate, 44_100);
+}
+
+#[test]
+fn a_copy_at_another_sample_rate_is_still_the_same_recording() {
+    let root = scratch("rate");
+    let collection = root.join("collection");
+    let high = tagged(&root, "A - Track 44k.wav", "A", "Track", 30, 220.0, 44_100);
+    let low = tagged(&root, "A - Track 22k.wav", "A", "Track", 30, 220.0, 22_050);
+
+    let Outcome::Placed(placed) = import_checked(
+        &high,
+        &collection,
+        1_000,
+        find_in(&Catalog::new()),
+        Policy::Ask,
+    )
+    .expect("высокий") else {
+        panic!("высокий не лёг");
+    };
+    let catalog = catalogue(&placed.path, &placed.identity);
+    let second =
+        import_checked(&low, &collection, 2_000, find_in(&catalog), Policy::Ask).expect("низкий");
+    match second {
+        Outcome::Duplicate { verdict, .. } => {
+            assert!(matches!(verdict, Verdict::Duplicate { .. }), "{verdict:?}");
+        }
+        other => panic!("копия на другой частоте не распознана: {other:?}"),
+    }
+    let _ = fs::remove_dir_all(&root);
+}

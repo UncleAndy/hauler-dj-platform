@@ -200,7 +200,8 @@ fn decode_all(path: &Path) -> Result<(Vec<i16>, u32, u16, f64), String> {
     let started = Instant::now();
     let mut decoder = dj_codec::StreamDecoder::open(path).map_err(|error| error.to_string())?;
     let rate = decoder.sample_rate();
-    let channels = decoder.info().channels;
+    // Декодер пишет стерео всегда; info().channels — про файл, а не про выход.
+    let channels = decoder.output_channels();
     let mut buffer = vec![0.0_f32; 8_192 * 2];
     let mut samples: Vec<i16> = Vec::new();
     loop {
@@ -210,7 +211,8 @@ fn decode_all(path: &Path) -> Result<(Vec<i16>, u32, u16, f64), String> {
         if read == 0 {
             break;
         }
-        for value in &buffer[..read * 2] {
+        let count = (read * usize::from(channels)).min(buffer.len());
+        for value in &buffer[..count] {
             samples.push((value.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16);
         }
     }

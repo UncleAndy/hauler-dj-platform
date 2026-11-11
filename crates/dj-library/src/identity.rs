@@ -394,7 +394,11 @@ impl Catalog {
 pub fn of_file(path: &Path, title: &str) -> io::Result<Identity> {
     let mut decoder = dj_codec::StreamDecoder::open(path).map_err(io::Error::other)?;
     let rate = decoder.sample_rate();
-    let channels = usize::from(decoder.info().channels.max(1));
+    // The decoder writes stereo whatever the file carries: a mono source is duplicated into both
+    // channels. Trusting `info().channels` here would read half of every chunk and measure a signal at
+    // half its rate — a mono copy of a track would then look like another recording.
+    let output_channels = decoder.output_channels();
+    let channels = usize::from(output_channels);
     let lossless = !decoder.info().format.is_lossy();
     let mut buffer = vec![0.0_f32; 8_192 * 2];
     let mut samples: Vec<i16> = Vec::new();
@@ -416,9 +420,8 @@ pub fn of_file(path: &Path, title: &str) -> io::Result<Identity> {
     } else {
         u64::try_from(frames).unwrap_or(0) * 1_000 / u64::from(rate)
     };
-    let chromaprint =
-        dj_fingerprint::of_samples(&samples, rate, u16::try_from(channels).unwrap_or(1))
-            .map_err(|error| io::Error::other(error.to_string()))?;
+    let chromaprint = dj_fingerprint::of_samples(&samples, rate, output_channels)
+        .map_err(|error| io::Error::other(error.to_string()))?;
     let bytes = std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
     Ok(Identity {
         duration_ms,
