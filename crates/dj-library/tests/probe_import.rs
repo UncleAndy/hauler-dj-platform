@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use dj_library::identity::Catalog;
+use dj_library::import::Policy;
 use dj_library::queue::{Run, threads_for};
 
 const AUDIO: [&str; 4] = ["flac", "mp3", "wav", "ogg"];
@@ -73,6 +74,14 @@ fn probe_import() {
     );
 
     let check = std::env::var("DJ_IMPORT_CHECK").is_ok_and(|value| value == "1");
+    let policy = match std::env::var("DJ_IMPORT_POLICY")
+        .unwrap_or_default()
+        .as_str()
+    {
+        "replace" => Policy::ReplaceIfBetter,
+        "both" => Policy::KeepBoth,
+        _ => Policy::Ask,
+    };
     let started = Instant::now();
     let run = if check {
         let catalog = Catalog::scan(&to);
@@ -80,7 +89,7 @@ fn probe_import() {
             "PROBE: в коллекции уже {} треков с отпечатком",
             catalog.len()
         );
-        Run::start_checked(&to, files.clone(), requested, 1_000, catalog)
+        Run::start_checked(&to, files.clone(), requested, 1_000, catalog, policy)
     } else {
         Run::start(&to, files.clone(), requested, 1_000)
     };
@@ -170,12 +179,27 @@ fn probe_import() {
             version.agreement
         );
     }
+    for duplicate in &report.duplicates {
+        let _ = duplicate;
+    }
+    for replaced in &report.replaced {
+        println!(
+            "REPLACED {} | старый ушёл в {}",
+            replaced
+                .source
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            replaced.rejected.display()
+        );
+    }
     println!(
-        "PROBE summary: файлов {} | легло {} | дублей {} | версий {} | починено кодировок {repaired} | имя из файла {named} | отказов {} | отменено {} | {elapsed:.1} с на всё ({:.1} мс на файл) | обновлений прогресса {ticks}",
+        "PROBE summary: файлов {} | легло {} | дублей {} | версий {} | заменено {} | починено кодировок {repaired} | имя из файла {named} | отказов {} | отменено {} | {elapsed:.1} с на всё ({:.1} мс на файл) | обновлений прогресса {ticks}",
         files.len(),
         report.imported.len(),
         report.duplicates.len(),
         report.versions.len(),
+        report.replaced.len(),
         report.failures.len(),
         report.cancelled,
         elapsed * 1_000.0 / files.len().max(1) as f64

@@ -1,4 +1,4 @@
-//! Turning a file from anywhere into a row of the collection (DJP-MEDIA-004).
+//! Turning a file from anywhere into a row of the collection (DJP-MEDIA-004, DJP-MEDIA-005).
 //!
 //! The source is copied, never moved: the collection is a library, not a file manager. The copy gets
 //! the name its tags earn, broken tags are repaired in the copy, and a `.djmeta` beside it records the
@@ -12,7 +12,23 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::identity::{self, Identity};
+use crate::quality::{self, Quality};
 use crate::{TrackMeta, fingerprint, layout, meta, sidecar, tags};
+
+/// The folder that holds the files the collection refused.
+pub const DUPLICATES_DIR: &str = "_duplicates";
+
+/// What to do when the file offered is the same recording as one already in the collection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Policy {
+    /// Do not copy it and tell the caller: only the DJ knows whether the spare file is a better master.
+    #[default]
+    Ask,
+    /// Keep the better copy: the loser goes to `_duplicates/`, whichever of the two it is.
+    ReplaceIfBetter,
+    /// Keep both: the new file lands with a suffix and is marked as a variant.
+    KeepBoth,
+}
 
 /// Why an import did not happen.
 #[derive(Debug)]
@@ -47,6 +63,8 @@ pub struct Imported {
     pub repaired: bool,
     /// True when the name had to come from the file itself, because the tags had nothing to say.
     pub named_from_file: bool,
+    /// The marker that tells this copy from the one it duplicates, when the policy keeps both.
+    pub variant: Option<String>,
 }
 
 /// What an import decided about a file that may already be in the collection.
@@ -54,7 +72,7 @@ pub struct Imported {
 pub enum Outcome {
     /// Nothing like it was found: the file is in the collection.
     Placed(Imported),
-    /// The same recording, and the same edition. Nothing was copied: the DJ decides, because only he
+    /// The same recording and the same edition. Nothing was copied: the DJ decides, because only he
     /// knows whether the spare file is a better master.
     Duplicate {
         existing: PathBuf,
@@ -68,6 +86,20 @@ pub enum Outcome {
     Version {
         imported: Imported,
         existing: PathBuf,
+        verdict: identity::Verdict,
+    },
+    /// The policy kept the copy already in the collection: the new file went to `_duplicates/`.
+    Rejected {
+        existing: PathBuf,
+        /// Where the refused copy was put.
+        stored: PathBuf,
+        verdict: identity::Verdict,
+    },
+    /// The policy kept the new file: the old one went to `_duplicates/`, the new one took its place.
+    Replaced {
+        imported: Imported,
+        /// Where the old copy was put.
+        rejected: PathBuf,
         verdict: identity::Verdict,
     },
 }
@@ -92,7 +124,7 @@ impl Prepared {
 /// Import one file into the collection rooted at `root`, without asking about duplicates.
 pub fn import(source: &Path, root: &Path, now_ms: u64) -> Result<Imported, ImportError> {
     let prepared = prepare(source)?;
-    place(source, root, prepared, now_ms)
+    place(source, root, prepared, now_ms, None)
 }
 
 /// Import one file, telling a duplicate from a version by duration and chromaprint (DJP-MEDIA-005).
@@ -103,27 +135,65 @@ pub fn import_checked(
     source: &Path,
     root: &Path,
     now_ms: u64,
-    find: impl Fn(&Identity) -> Option<(PathBuf, identity::Verdict)>,
+    find: impl Fn(&Identity) -> Option<(PathBuf, Identity, identity::Verdict)>,
+    policy: Policy,
 ) -> Result<Outcome, ImportError> {
     let prepared = prepare(source)?;
     let target = root.join(prepared.relative());
     let matched = find(&prepared.identity);
-    match matched {
-        Some((existing, verdict @ identity::Verdict::Duplicate { .. })) => Ok(Outcome::Duplicate {
-            existing,
-            verdict,
-            candidate: prepared.identity.clone(),
-            target,
-        }),
-        Some((existing, verdict)) => {
-            let imported = place(source, root, prepared, now_ms)?;
+    let Some((existing, existing_identity, verdict)) = matched else {
+        return Ok(Outcome::Placed(place(
+            source, root, prepared, now_ms, None,
+        )?));
+    };
+    match verdict {
+        identity::Verdict::Different => Ok(Outcome::Placed(place(
+            source, root, prepared, now_ms, None,
+        )?)),
+        identity::Verdict::Version { .. } => {
+            let imported = place(source, root, prepared, now_ms, None)?;
             Ok(Outcome::Version {
                 imported,
                 existing,
                 verdict,
             })
         }
-        None => Ok(Outcome::Placed(place(source, root, prepared, now_ms)?)),
+        identity::Verdict::Duplicate { .. } => match policy {
+            Policy::Ask => Ok(Outcome::Duplicate {
+                existing,
+                verdict,
+                candidate: prepared.identity.clone(),
+                target,
+            }),
+            Policy::KeepBoth => {
+                let marker = variant_marker(&target);
+                let imported = place(source, root, prepared, now_ms, Some(marker.clone()))?;
+                Ok(Outcome::Placed(Imported {
+                    variant: Some(marker),
+                    ..imported
+                }))
+            }
+            Policy::ReplaceIfBetter => {
+                let candidate_quality = Quality::of(&prepared.identity);
+                let existing_quality = Quality::of(&existing_identity);
+                if quality::better(&candidate_quality, &existing_quality) {
+                    let rejected = retire(root, &existing)?;
+                    let imported = place(source, root, prepared, now_ms, None)?;
+                    Ok(Outcome::Replaced {
+                        imported,
+                        rejected,
+                        verdict,
+                    })
+                } else {
+                    let stored = keep_as_duplicate(root, source, &prepared, now_ms)?;
+                    Ok(Outcome::Rejected {
+                        existing,
+                        stored,
+                        verdict,
+                    })
+                }
+            }
+        },
     }
 }
 
@@ -184,6 +254,7 @@ fn place(
     root: &Path,
     prepared: Prepared,
     now_ms: u64,
+    variant: Option<String>,
 ) -> Result<Imported, ImportError> {
     let io_error = |path: &Path| {
         let path = path.to_path_buf();
@@ -220,6 +291,7 @@ fn place(
     if !prepared.identity.chromaprint.is_empty() {
         record.chromaprint = Some(meta::encode_print(&prepared.identity.chromaprint));
     }
+    record.variant = variant.clone();
     let meta_path = sidecar::file_of(&target).ok_or_else(|| ImportError::Io {
         path: target.clone(),
         source: io::Error::other("the file has no name to hang metadata on"),
@@ -233,7 +305,102 @@ fn place(
         identity: prepared.identity,
         repaired: prepared.repaired,
         named_from_file: prepared.named_from_file,
+        variant,
     })
+}
+
+/// Move a track out of the collection into `_duplicates/`, with its metadata file.
+fn retire(root: &Path, music: &Path) -> Result<PathBuf, ImportError> {
+    let io_error = |path: &Path| {
+        let path = path.to_path_buf();
+        move |source| ImportError::Io {
+            path: path.clone(),
+            source,
+        }
+    };
+    let relative = music
+        .strip_prefix(root)
+        .map_err(|_| ImportError::Io {
+            path: music.to_path_buf(),
+            source: io::Error::other("the track is not inside the collection"),
+        })?
+        .to_path_buf();
+    let target = free_path(&root.join(DUPLICATES_DIR).join(relative));
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(io_error(parent))?;
+    }
+    move_file(music, &target)?;
+    let meta_path = sidecar::file_of(music).filter(|path| path.is_file());
+    let target_meta = sidecar::file_of(&target);
+    if let (Some(meta_path), Some(target_meta)) = (meta_path, target_meta)
+        && let Some(parent) = target_meta.parent()
+    {
+        fs::create_dir_all(parent).map_err(io_error(parent))?;
+        move_file(&meta_path, &target_meta)?;
+    }
+    Ok(target)
+}
+
+/// Put the refused copy into `_duplicates/` under the name it would have had.
+fn keep_as_duplicate(
+    root: &Path,
+    source: &Path,
+    prepared: &Prepared,
+    now_ms: u64,
+) -> Result<PathBuf, ImportError> {
+    let io_error = |path: &Path| {
+        let path = path.to_path_buf();
+        move |source| ImportError::Io {
+            path: path.clone(),
+            source,
+        }
+    };
+    let target = free_path(&root.join(DUPLICATES_DIR).join(prepared.relative()));
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(io_error(parent))?;
+    }
+    fs::copy(source, &target).map_err(io_error(&target))?;
+    if let Some(meta_path) = sidecar::file_of(&target) {
+        let mut record = TrackMeta::new(
+            fingerprint::of_path(&target).map_err(io_error(&target))?,
+            now_ms,
+        );
+        if !prepared.identity.chromaprint.is_empty() {
+            record.chromaprint = Some(meta::encode_print(&prepared.identity.chromaprint));
+        }
+        sidecar::write(&meta_path, &record).map_err(|error| ImportError::Meta(Box::new(error)))?;
+    }
+    Ok(target)
+}
+
+/// A rename, with a copy for the case where the two paths are on different filesystems.
+fn move_file(from: &Path, to: &Path) -> Result<(), ImportError> {
+    if fs::rename(from, to).is_ok() {
+        return Ok(());
+    }
+    fs::copy(from, to).map_err(|source| ImportError::Io {
+        path: to.to_path_buf(),
+        source,
+    })?;
+    fs::remove_file(from).map_err(|source| ImportError::Io {
+        path: from.to_path_buf(),
+        source,
+    })
+}
+
+/// The marker that tells a kept variant from the copy it duplicates.
+fn variant_marker(target: &Path) -> String {
+    let name = target
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("track");
+    // The next free number is what the file will get, so the marker and the name agree.
+    let mut number = 2_u32;
+    while numbered(target, number).exists() {
+        number = number.saturating_add(1);
+    }
+    let _ = name;
+    number.to_string()
 }
 
 /// The artist and title a file name claims, when it has the shape the collection writes.

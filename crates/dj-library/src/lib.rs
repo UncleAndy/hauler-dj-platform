@@ -16,6 +16,7 @@ pub mod import;
 pub mod index;
 pub mod layout;
 pub mod meta;
+pub mod quality;
 pub mod queue;
 pub mod sidecar;
 pub mod store;

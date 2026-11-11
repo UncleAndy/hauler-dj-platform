@@ -58,6 +58,10 @@ pub struct Identity {
     pub duration_ms: u64,
     /// Native sample rate of the file: frames and milliseconds are only comparable through it.
     pub sample_rate: u32,
+    /// Size in bytes, which with the duration gives the average bitrate.
+    pub bytes: u64,
+    /// Bits per sample when the container says; the decoder does not expose it yet.
+    pub bits: Option<u32>,
     /// True for FLAC, WAV and the rest of the formats that keep every sample.
     pub lossless: bool,
     /// The title the tags claim, used for the edition question only.
@@ -71,6 +75,17 @@ impl Identity {
     /// because nothing says they are.
     pub fn unknown(&self) -> bool {
         self.chromaprint.is_empty()
+    }
+
+    /// Average bits per second over the file: honest for VBR, where the header lies.
+    pub fn bitrate(&self) -> Option<u64> {
+        if self.duration_ms == 0 {
+            return None;
+        }
+        self.bytes
+            .saturating_mul(8)
+            .saturating_mul(1_000)
+            .checked_div(self.duration_ms)
     }
 }
 
@@ -291,11 +306,16 @@ impl Catalog {
                         .and_then(dj_codec::MediaFormat::from_extension),
                     Some(format) if !format.is_lossy()
                 );
+                let bytes = std::fs::metadata(&music)
+                    .map(|meta| meta.len())
+                    .unwrap_or(0);
                 catalog.add(
                     music,
                     Identity {
                         duration_ms,
                         sample_rate: record.fingerprint.sample_rate.unwrap_or(0),
+                        bytes,
+                        bits: None,
                         lossless,
                         title: String::new(),
                         chromaprint: print,
@@ -336,7 +356,7 @@ impl Catalog {
     }
 
     /// The best verdict among the candidates: the strongest agreement wins.
-    pub fn find(&self, candidate: &Identity) -> Option<(&Path, Verdict)> {
+    pub fn find(&self, candidate: &Identity) -> Option<(&Path, &Identity, Verdict)> {
         let mut best: Option<(usize, Verdict)> = None;
         for entry in self.candidates(candidate) {
             let verdict = judge(&self.entries[entry].1, candidate);
@@ -360,7 +380,10 @@ impl Catalog {
                 best = Some((entry, verdict));
             }
         }
-        best.map(|(entry, verdict)| (self.entries[entry].0.as_path(), verdict))
+        best.map(|(entry, verdict)| {
+            let (path, identity) = &self.entries[entry];
+            (path.as_path(), identity, verdict)
+        })
     }
 }
 
@@ -396,9 +419,12 @@ pub fn of_file(path: &Path, title: &str) -> io::Result<Identity> {
     let chromaprint =
         dj_fingerprint::of_samples(&samples, rate, u16::try_from(channels).unwrap_or(1))
             .map_err(|error| io::Error::other(error.to_string()))?;
+    let bytes = std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
     Ok(Identity {
         duration_ms,
         sample_rate: rate,
+        bytes,
+        bits: None,
         lossless,
         title: title.to_owned(),
         chromaprint,
@@ -419,6 +445,8 @@ mod tests {
         Identity {
             duration_ms,
             sample_rate: 44_100,
+            bytes: 0,
+            bits: None,
             lossless,
             title: title.to_owned(),
             chromaprint: print,
@@ -529,7 +557,7 @@ mod tests {
             );
         }
         let candidate = identity("Track 7", 180_000, false, print(7 * 10_000 + 500, 400));
-        let (path, verdict) = catalog.find(&candidate).expect("не нашли свой же трек");
+        let (path, _, verdict) = catalog.find(&candidate).expect("не нашли свой же трек");
         assert_eq!(path, Path::new("/a/7.flac"));
         assert!(matches!(verdict, Verdict::Duplicate { .. }));
 
@@ -544,7 +572,7 @@ mod tests {
         catalog.add(PathBuf::from("/a/first.flac"), first.clone());
         assert_eq!(catalog.len(), 1);
         let second = identity("Track", 180_020, false, print(4_000, 400));
-        let (path, _) = catalog.find(&second).expect("копия не найдена");
+        let (path, _, _) = catalog.find(&second).expect("копия не найдена");
         assert_eq!(path, Path::new("/a/first.flac"));
     }
 }

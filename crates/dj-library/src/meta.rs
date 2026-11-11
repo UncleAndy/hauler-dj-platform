@@ -117,6 +117,10 @@ pub struct TrackMeta {
     pub notes: Option<String>,
     #[serde(default)]
     pub analysis_lock: bool,
+    /// The marker that tells this copy from the one it duplicates (DJP-MEDIA-005). A pair marked this
+    /// way is not a duplicate on the next addition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<String>,
     /// Fields written by a newer build are carried through, not dropped: an old version must not
     /// erase what it does not understand.
     #[serde(flatten)]
@@ -221,6 +225,7 @@ impl TrackMeta {
             rating: 0,
             notes: None,
             analysis_lock: false,
+            variant: None,
             extra: BTreeMap::new(),
         }
     }

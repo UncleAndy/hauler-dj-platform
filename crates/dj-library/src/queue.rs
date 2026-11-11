@@ -18,7 +18,7 @@ use std::thread::JoinHandle;
 use std::time::Instant;
 
 use crate::identity::{Catalog, Verdict};
-use crate::import::{self, Imported, Outcome};
+use crate::import::{self, Imported, Outcome, Policy};
 
 /// How many workers a batch should use. `0` means one per core.
 pub fn threads_for(requested: usize) -> usize {
@@ -72,6 +72,14 @@ pub struct Duplicate {
     pub agreement: f64,
 }
 
+/// A file that replaced the copy the collection held, which went to `_duplicates/`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Replaced {
+    pub source: PathBuf,
+    pub rejected: PathBuf,
+    pub agreement: f64,
+}
+
 /// A file that is the same recording as another edition already in the collection.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Version {
@@ -91,6 +99,8 @@ pub struct Report {
     pub duplicates: Vec<Duplicate>,
     /// Files that landed as another edition of a track already there.
     pub versions: Vec<Version>,
+    /// Files that replaced the copy the collection held; that copy is in `_duplicates/`.
+    pub replaced: Vec<Replaced>,
     pub cancelled: bool,
     pub elapsed_ms: u64,
 }
@@ -122,6 +132,8 @@ struct Shared {
     failures: Mutex<Vec<(PathBuf, String)>>,
     found_duplicates: Mutex<Vec<Duplicate>>,
     found_versions: Mutex<Vec<Version>>,
+    found_replaced: Mutex<Vec<Replaced>>,
+    policy: Policy,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -145,7 +157,7 @@ impl Run {
         threads: usize,
         now_ms: u64,
     ) -> Self {
-        Self::spawn(root.into(), jobs, threads, now_ms, None)
+        Self::spawn(root.into(), jobs, threads, now_ms, None, Policy::Ask)
     }
 
     /// Start importing, telling duplicates from versions against `catalog`.
@@ -155,8 +167,9 @@ impl Run {
         threads: usize,
         now_ms: u64,
         catalog: Catalog,
+        policy: Policy,
     ) -> Self {
-        Self::spawn(root.into(), jobs, threads, now_ms, Some(catalog))
+        Self::spawn(root.into(), jobs, threads, now_ms, Some(catalog), policy)
     }
 
     fn spawn(
@@ -165,6 +178,7 @@ impl Run {
         threads: usize,
         now_ms: u64,
         catalog: Option<Catalog>,
+        policy: Policy,
     ) -> Self {
         let shared = Arc::new(Shared {
             root,
@@ -179,6 +193,8 @@ impl Run {
             failures: Mutex::new(Vec::new()),
             found_duplicates: Mutex::new(Vec::new()),
             found_versions: Mutex::new(Vec::new()),
+            found_replaced: Mutex::new(Vec::new()),
+            policy,
             catalog: catalog.map(Mutex::new),
             now_ms,
             jobs,
@@ -227,11 +243,14 @@ impl Run {
         duplicates.sort_by(|left, right| left.source.cmp(&right.source));
         let mut versions = lock(&self.shared.found_versions).clone();
         versions.sort_by(|left, right| left.source.cmp(&right.source));
+        let mut replaced = lock(&self.shared.found_replaced).clone();
+        replaced.sort_by(|left, right| left.source.cmp(&right.source));
         Report {
             imported,
             failures,
             duplicates,
             versions,
+            replaced,
             cancelled: self.shared.cancelled.load(Ordering::Relaxed),
             elapsed_ms: self.started.elapsed().as_millis() as u64,
         }
@@ -251,11 +270,19 @@ fn work(shared: &Shared) {
         let now_ms = shared.now_ms.saturating_add(index as u64 * 1_000);
         let outcome = match &shared.catalog {
             None => import::import(path, &shared.root, now_ms).map(Outcome::Placed),
-            Some(catalog) => import::import_checked(path, &shared.root, now_ms, |identity| {
-                lock(catalog)
-                    .find(identity)
-                    .map(|(found, verdict)| (found.to_path_buf(), verdict))
-            }),
+            Some(catalog) => import::import_checked(
+                path,
+                &shared.root,
+                now_ms,
+                |identity| {
+                    lock(catalog)
+                        .find(identity)
+                        .map(|(found, existing, verdict)| {
+                            (found.to_path_buf(), existing.clone(), verdict)
+                        })
+                },
+                shared.policy,
+            ),
         };
         match outcome {
             Ok(Outcome::Placed(imported)) => {
@@ -278,6 +305,41 @@ fn work(shared: &Shared) {
                         agreement,
                     });
                 }
+                lock(&shared.imported).push(imported);
+                shared.done.fetch_add(1, Ordering::Relaxed);
+            }
+            Ok(Outcome::Rejected {
+                existing,
+                stored,
+                verdict,
+            }) => {
+                if let Verdict::Duplicate { agreement, .. } | Verdict::Version { agreement } =
+                    verdict
+                {
+                    lock(&shared.found_duplicates).push(Duplicate {
+                        source: path.clone(),
+                        existing,
+                        agreement,
+                    });
+                }
+                let _ = stored;
+                shared.duplicates.fetch_add(1, Ordering::Relaxed);
+            }
+            Ok(Outcome::Replaced {
+                imported,
+                rejected,
+                verdict,
+            }) => {
+                if let Verdict::Duplicate { agreement, .. } | Verdict::Version { agreement } =
+                    verdict
+                {
+                    lock(&shared.found_replaced).push(Replaced {
+                        source: path.clone(),
+                        rejected,
+                        agreement,
+                    });
+                }
+                remember(shared, &imported);
                 lock(&shared.imported).push(imported);
                 shared.done.fetch_add(1, Ordering::Relaxed);
             }
