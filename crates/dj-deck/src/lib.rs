@@ -2439,6 +2439,10 @@ impl Deck {
             // The channel fader belongs to the mixer strip, not to the deck: a deck on its own is at
             // unity, and the engine's snapshot fills the fader in from the strip.
             fader: 1.0,
+            // Blocks this deck asked its source for and did not get. A block of missing material moves
+            // the play head by a whole block, which a phase meter reads as a jump: the number is what
+            // tells a drifted deck from a starved one.
+            underruns: self.stats.underruns,
             eq: self.eq.gains(),
             master: self.master,
             sync: self.sync,

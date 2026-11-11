@@ -274,6 +274,7 @@ impl Engine {
             decks: vec![DeckSnapshot {
                 waveform: None,
                 deck: DeckId::A,
+                underruns: 0,
                 // The A01 engine plays a generated tone, not a file: it is ready by construction
                 // and has no track, loop or hotcues. Decks arrive in A03 (`dj-deck`).
                 load: dj_domain::DeckLoad::Ready,

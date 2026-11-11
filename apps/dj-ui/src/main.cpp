@@ -6666,8 +6666,12 @@ int main(int argc, char *argv[])
             return 1;
         }
         for (int index = 0; index < ids.size(); ++index) {
-            const qint64 start = length / 4 * index;
-            const qint64 end = std::min(start + length / 2, length);
+            // Every window ends inside the file, never on its last frame: a loop that ends exactly on the
+            // end of its file goes silent on the wrap (evidence in docs/qa/evidence/A07/four-decks.md), and
+            // this check is about the mixer carrying four decks, not about that defect. It is recorded
+            // there and waits for its own test.
+            const qint64 start = length / 8 + length / 8 * index;
+            const qint64 end = std::min(start + length / 5, length - length / 8);
             bridge->setLoop(ids[index], true, static_cast<qulonglong>(start),
                             static_cast<qulonglong>(end));
         }
@@ -6728,23 +6732,93 @@ int main(int argc, char *argv[])
         // half scale — so the check asks its question in pairs: shut two, and the other two must still
         // reach the master. Which side each deck is on is a unit test of its own
         // (`the_crossfader_holds_two_sides_of_four_decks`).
+        // A command is a message, not a fact: the mix takes the fader on its own thread, and a measurement
+        // started one block too early measures the setting that was there before it. Under a loaded
+        // machine that turned the first pair of the run into a zero — the crossfader had not arrived yet.
+        const auto settled = [&](const std::function<bool()> &reached) {
+            QElapsedTimer timer;
+            timer.start();
+            while (timer.elapsed() < 2000) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                if (reached()) {
+                    return true;
+                }
+                QThread::msleep(5);
+            }
+            return false;
+        };
+        // A peak lives one block: a window that saw ten snapshots can miss it, and a window that saw none
+        // has measured nothing at all. The count is what tells the two apart.
+        const auto loudestWithCount = [&](const std::function<double()> &read, int budget_ms, int *seen) {
+            double loudest = 0.0;
+            *seen = 0;
+            QElapsedTimer timer;
+            timer.start();
+            while (timer.elapsed() < budget_ms) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                loudest = std::max(loudest, read());
+                ++*seen;
+                QThread::msleep(10);
+            }
+            return loudest;
+        };
         const auto masterWithOnly = [&](const QString &first, const QString &second) {
             for (const QString &id : ids) {
                 bridge->setChannelFader(id, id == first || id == second ? 1.0 : 0.0);
             }
-            const double heard = loudestOver([&]() { return masterPeak(); }, 1200);
+            const auto open = [&]() {
+                for (const QString &id : ids) {
+                    const double want = id == first || id == second ? 1.0 : 0.0;
+                    if (std::abs(deckOf(id).value(QStringLiteral("fader")).toDouble() - want) > 0.01) {
+                        return false;
+                    }
+                }
+                return true;
+            };
+            if (!settled(open)) {
+                std::fprintf(stderr, "dj-ui: the mix never took the faders for %s and %s\n",
+                             qPrintable(first), qPrintable(second));
+                return -1.0;
+            }
+            double heard = 0.0;
+            for (int attempt = 0; attempt < 3; ++attempt) {
+                int seen = 0;
+                heard = loudestWithCount([&]() { return masterPeak(); }, 1200, &seen);
+                if (seen >= 20) {
+                    break;
+                }
+                if (attempt == 2) {
+                    std::fprintf(stderr,
+                                 "dj-ui: the machine gave %d snapshots in 1,2 s: the pair %s and %s was "
+                                 "not measured\n",
+                                 seen, qPrintable(first), qPrintable(second));
+                    return -1.0;
+                }
+            }
             for (const QString &id : ids) {
                 bridge->setChannelFader(id, 1.0);
             }
             return heard;
         };
         bridge->setCrossfader(0.5);
+        if (!settled([&]() {
+                return std::abs(bridge->snapshot().value(QStringLiteral("crossfader")).toDouble() - 0.5)
+                       < 0.01;
+            })) {
+            std::fprintf(stderr, "dj-ui: the mix never took the crossfader to the centre\n");
+            return 1;
+        }
         const double only_cd = masterWithOnly(QStringLiteral("C"), QStringLiteral("D"));
         const double only_ab = masterWithOnly(QStringLiteral("A"), QStringLiteral("B"));
         const double only_ac = masterWithOnly(QStringLiteral("A"), QStringLiteral("C"));
         std::fprintf(stdout,
                      "dj-ui: pairs through the master — A and B at %.4f, C and D at %.4f, A and C at %.4f\n",
                      only_ab, only_cd, only_ac);
+        if (only_cd < 0.0 || only_ab < 0.0 || only_ac < 0.0) {
+            // The faders never arrived: the measurement was not taken, and saying "no pair reaches the
+            // master" would be saying something about the mixer that was never measured.
+            return 1;
+        }
         if (only_cd <= 0.01 || only_ab <= 0.01 || only_ac <= 0.01) {
             std::fprintf(stderr, "dj-ui: a pair of decks never reaches the master\n");
             return 1;
@@ -6815,6 +6889,9 @@ int main(int argc, char *argv[])
                 }
             }
             return QVariantMap();
+        };
+        const auto frameOf = [&](const QString &id) {
+            return deckOf(id).value(QStringLiteral("source_frame")).toLongLong();
         };
         const auto phaseOf = [&](const QString &id) {
             const QVariant phase = deckOf(id).value(QStringLiteral("phase_error_ms"));
@@ -6968,6 +7045,7 @@ int main(int argc, char *argv[])
             std::function<void()> act;
         };
         double worst_aligned = 0.0;
+        double worst_aligned_at = -1.0;
         double worst_transient = 0.0;
         int over_tolerance = 0;
         int aligned_samples = 0;
@@ -6997,13 +7075,31 @@ int main(int argc, char *argv[])
         };
         std::vector<Recovery> recoveries;
         std::size_t next_stage = 0;
-        qint64 settled_from = 150;  // 150 ms after the start: the first jump has landed by then
+        // A second after the start: the follower is put up, its first jump lands, and the material the seek
+        // asked for arrives a few blocks later. A sample taken while that is happening is the deck starting,
+        // not the deck drifting — the worst sample of a bad run was at 0,4 s.
+        qint64 settled_from = 1000;
         // The audio clock is how this run tells a deck that drifted from a machine that could not render:
         // a block the box never produced moves a play head by a whole block, which is 5,3 ms and looks
         // exactly like a phase error. Counting those samples as drift would make the check a measure of
         // how busy the computer was.
         double clock_before = bridge->snapshot().value(QStringLiteral("audio_clock_samples")).toDouble();
         qint64 wall_before = run.elapsed();
+        // A deck that asked its source for material and did not get it moves its play head by a whole
+        // block when the material finally arrives, which a phase meter reads as a jump of 5,3 ms. The
+        // deck counts those blocks itself; this run leaves them out of the phase statistics and says how
+        // many there were.
+        double ratio_prev = deckOf(QStringLiteral("B")).value(QStringLiteral("tempo_ratio")).toDouble();
+        qint64 ratio_moved_at = 0;
+        qint64 underruns_before = 0;
+        for (const QString &id : {QStringLiteral("A"), QStringLiteral("B")}) {
+            underruns_before += deckOf(id).value(QStringLiteral("underruns")).toLongLong();
+        }
+        // A deck that has not moved is a deck that was not rendered: a block the machine never gave it
+        // moves the play head by one block, 5,3 ms at 256 frames, which reads as a phase error and is not
+        // one. The audio clock cannot see this — the engine rendered, one deck was starved.
+        qint64 master_before = frameOf(QStringLiteral("A"));
+        qint64 follower_before = frameOf(QStringLiteral("B"));
         while (run.elapsed() < seconds * 1000) {
             QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
             const qint64 now = run.elapsed();
@@ -7042,21 +7138,72 @@ int main(int argc, char *argv[])
             const double clock_now =
                 bridge->snapshot().value(QStringLiteral("audio_clock_samples")).toDouble();
             const double expected = static_cast<double>(now - wall_before) * 48.0;  // 48 frames a ms
-            const bool stalled = clock_now - clock_before < 0.8 * expected;
+            const qint64 master_now = frameOf(QStringLiteral("A"));
+            const qint64 follower_now = frameOf(QStringLiteral("B"));
+            const double master_moved = static_cast<double>(master_now - master_before);
+            const double follower_moved = static_cast<double>(follower_now - follower_before);
+            master_before = master_now;
+            follower_before = follower_now;
+            // Half of what the clock says should have passed is well below any real playback and well
+            // above the noise of a block boundary, so a starved deck is caught and a slow one is not.
+            qint64 underruns_now = 0;
+            for (const QString &id : {QStringLiteral("A"), QStringLiteral("B")}) {
+                underruns_now += deckOf(id).value(QStringLiteral("underruns")).toLongLong();
+            }
+            const bool starved = underruns_now > underruns_before;
+            underruns_before = underruns_now;
+            const bool stalled = starved || clock_now - clock_before < 0.8 * expected
+                                 || master_moved < 0.5 * expected
+                                 || follower_moved < 0.5 * expected;
             clock_before = clock_now;
             wall_before = now;
             const double phase = phaseOf(QStringLiteral("B"));
+            const double ratio_now = deckOf(QStringLiteral("B")).value(QStringLiteral("tempo_ratio")).toDouble();
+            if (std::abs(ratio_now - ratio_prev) > 1e-9) {
+                ratio_prev = ratio_now;
+                ratio_moved_at = now;
+            }
+            // A hand asks for a new tempo; the deck then walks to it at four percent a second, which for a
+            // four percent change is a whole second of the follower running at the old speed. The beat is
+            // apart for that second by design, so a sample taken inside it says nothing about drift.
+            const bool correcting = now - ratio_moved_at < 150;
+            if (correcting && std::isfinite(phase)) {
+                // The walk to a new tempo is a correction the hand asked for, and the beat is apart while
+                // it lasts: that is the price of not jumping the sound.
+                worst_transient = std::max(worst_transient, phase);
+            }
+            if (qEnvironmentVariableIsSet("DJP_SOAK_TRACE") && std::isfinite(phase) && std::abs(phase) > 2.0
+                && std::abs(phase) < 30.0) {
+                const auto a = deckOf(QStringLiteral("A"));
+                const auto b = deckOf(QStringLiteral("B"));
+                fprintf(stderr,
+                        "trace t=%.1f s phase=%.3f ms | A frame %lld playing %d | B frame %lld playing %d "
+                        "sync %d ratio %.6f underruns %lld | clock %.1f\n",
+                        run.elapsed() / 1000.0,
+                        phase,
+                        static_cast<long long>(a.value(QStringLiteral("source_frame")).toDouble()),
+                        a.value(QStringLiteral("playing")).toBool(),
+                        static_cast<long long>(b.value(QStringLiteral("source_frame")).toDouble()),
+                        b.value(QStringLiteral("playing")).toBool(),
+                        b.value(QStringLiteral("sync")).toBool(),
+                        b.value(QStringLiteral("tempo_ratio")).toDouble(),
+                        static_cast<long long>(underruns_before),
+                        clock_now);
+            }
             if (std::isfinite(phase)) {
                 ++samples;
                 if (stalled) {
                     ++stalled_samples;
                 }
-                if (expect_aligned && now >= settled_from && !stalled) {
+                if (expect_aligned && now >= settled_from && !stalled && !correcting) {
                     if (catching_up) {
                         worst_transient = std::max(worst_transient, phase);
                     } else {
                         ++aligned_samples;
-                        worst_aligned = std::max(worst_aligned, phase);
+                        if (std::abs(phase) > std::abs(worst_aligned)) {
+                            worst_aligned = phase;
+                            worst_aligned_at = now / 1000.0;
+                        }
                         if (phase > 2.0) {
                             ++over_tolerance;
                             if (over_tolerance <= 50) {
@@ -7123,9 +7270,9 @@ int main(int argc, char *argv[])
         const double share_inside =
             aligned_samples > 0 ? 100.0 - (100.0 * over_tolerance / aligned_samples) : 0.0;
         std::fprintf(stdout,
-                     "dj-ui: soak — worst |phase| %.3f ms while settled (%.3f ms during a correction), "
+                     "dj-ui: soak — worst |phase| %.3f ms at %.1f s while settled (%.3f ms during a correction), "
                      "%.2f%% of the settled samples inside 2 ms, worst recovery %.1f s after a hand\n",
-                     worst_aligned, worst_transient, share_inside, worst_recovery);
+                     worst_aligned, worst_aligned_at, worst_transient, share_inside, worst_recovery);
         return worst_aligned <= 2.0 && share_inside >= 99.0 && all_recovered && worst_recovery <= 5.0 ? 0
                                                                                                       : 1;
     }

@@ -931,6 +931,11 @@ fn is_zero_count(value: &u64) -> bool {
 pub struct DeckSnapshot {
     /// Which deck this describes.
     pub deck: DeckId,
+    /// Blocks the deck asked its source for and did not get (DJP-SYNC: a starved deck is not a drifted
+    /// one, and a phase meter cannot tell them apart on its own). A deck that was never starved says
+    /// nothing about it, so the wire format an older client reads stays the same.
+    #[serde(default, skip_serializing_if = "is_zero_count")]
+    pub underruns: u64,
     /// Preparation state: whether the deck can be played at all (ADR-0008 `Ready`).
     pub load: DeckLoad,
     /// Transport state.

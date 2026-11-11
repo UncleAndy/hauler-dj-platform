@@ -531,6 +531,8 @@ struct DeckCells {
     slip: AtomicBool,
     slip_frame: AtomicU64,
     reverse: AtomicBool,
+    /// Blocks this deck asked its source for and did not get: a starved deck is not a drifted one.
+    underruns: AtomicU64,
     cached: AtomicBool,
     cached_bytes: AtomicU64,
     // What the deck follows (DJP-SYNC-002), as one byte: off, tempo, beat.
@@ -567,6 +569,7 @@ impl DeckCells {
             slip: AtomicBool::new(false),
             slip_frame: AtomicU64::new(EMPTY),
             reverse: AtomicBool::new(false),
+            underruns: AtomicU64::new(0),
             cached: AtomicBool::new(false),
             cached_bytes: AtomicU64::new(0),
             sync: AtomicU8::new(0),
@@ -1145,6 +1148,9 @@ impl StateCells {
             cells.playing.store(deck.is_playing(), Ordering::Relaxed);
             cells.metronome.store(deck.metronome(), Ordering::Relaxed);
             cells.clicks.store(deck.clicks(), Ordering::Relaxed);
+            cells
+                .underruns
+                .store(deck.stats().underruns, Ordering::Relaxed);
             cells.attached.store(deck.has_source(), Ordering::Relaxed);
             cells.frame.store(deck.position(), Ordering::Relaxed);
             cells.gain.store(deck.gain().to_bits(), Ordering::Relaxed);
@@ -1246,6 +1252,7 @@ impl StateCells {
                 _ => (None, None),
             };
             decks.push(DeckSnapshot {
+                underruns: cells.underruns.load(Ordering::Relaxed),
                 deck: fixed.deck,
                 load,
                 playing: cells.playing.load(Ordering::Relaxed),
