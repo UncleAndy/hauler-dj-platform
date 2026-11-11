@@ -62,6 +62,10 @@ pub struct Key {
     /// How far the winner is ahead of the best profile of the *other* mode: a small margin means the
     /// track is as well described by its relative key as by its own.
     pub margin: f64,
+    /// The tuning the chroma was built against, in hertz for A4. A track tuned to 434 Hz measured
+    /// against 440 is a quarter of a semitone off on every note, which smears the chroma into its
+    /// neighbours; the reference set is tuned 434,19 Hz, not 440.
+    pub tuning_hz: f64,
 }
 
 const NAMES: [&str; 12] = [
@@ -118,54 +122,79 @@ const WINDOW: usize = 16_384;
 const HOP: usize = 4_096;
 /// How much an onset counts against a sustained frame: an onset carries five times the weight.
 const ONSET_WEIGHT: f64 = 4.0;
+/// The band the tuning is read from: below it the bins are too close together to place a semitone,
+/// above it a cymbal says nothing about tuning.
+const TUNING_LOWEST_HZ: f64 = 80.0;
+/// See [`TUNING_LOWEST_HZ`].
+const TUNING_HIGHEST_HZ: f64 = 2_000.0;
+/// The widest tuning that is still a tuning rather than a mistake: a quarter tone either way.
+const A4_LOWEST_HZ: f64 = 425.0;
+/// See [`A4_LOWEST_HZ`].
+const A4_HIGHEST_HZ: f64 = 455.0;
 
 /// The twelve pitch classes of a slice of audio, each in `0.0 … 1.0`.
 ///
 /// Frames that carry an onset are weighted more than frames that do not: a chord played on a beat says
 /// what the key is, a pad held under it says less.
 pub fn chroma(mono: &[f32], rate: f64) -> Option<[f64; 12]> {
+    tuning_of(mono, rate).map(|(chroma, _)| chroma)
+}
+
+/// The tuning of a slice of audio, in hertz for A4: where the pitch classes actually sit.
+///
+/// Every bin in the band has a position between two semitones, and a track tuned away from 440 puts
+/// all of those positions at the same offset. Summing them as vectors and reading the angle is that
+/// offset, and it is what keeps a 434 Hz record from being measured as if it were 440.
+pub fn tuning(mono: &[f32], rate: f64) -> Option<f64> {
+    tuning_of(mono, rate).map(|(_, hertz)| hertz)
+}
+
+fn tuning_of(mono: &[f32], rate: f64) -> Option<([f64; 12], f64)> {
     if !rate.is_finite() || rate <= 0.0 || mono.len() < WINDOW {
         return None;
     }
-    let mut chroma = [0.0_f64; 12];
-    let mut real = vec![0.0_f64; WINDOW];
-    let mut imaginary = vec![0.0_f64; WINDOW];
-    let mut previous = vec![0.0_f64; WINDOW / 2];
-    let mut flux_of_frame = Vec::with_capacity(mono.len() / HOP + 1);
-    let mut spectra: Vec<Vec<f64>> = Vec::with_capacity(mono.len() / HOP + 1);
-
-    let mut at = 0;
-    while at + WINDOW <= mono.len() {
-        for index in 0..WINDOW {
-            // A Hann window: without it the ends of the window ring across the whole spectrum.
-            let phase = std::f64::consts::TAU * index as f64 / WINDOW as f64;
-            real[index] = f64::from(mono[at + index]) * (0.5 - 0.5 * phase.cos());
-            imaginary[index] = 0.0;
-        }
-        fft(&mut real, &mut imaginary);
-        let mut half = vec![0.0_f64; WINDOW / 2];
-        let mut flux = 0.0_f64;
-        for (index, slot) in half.iter_mut().enumerate() {
-            let magnitude = real[index].hypot(imaginary[index]);
-            *slot = magnitude;
-            let rise = magnitude - previous[index];
-            if rise > 0.0 {
-                flux += rise;
-            }
-        }
-        previous.clone_from_slice(&half);
-        flux_of_frame.push(flux);
-        spectra.push(half);
-        at += HOP;
-    }
+    let spectra = spectra_of(mono);
     if spectra.is_empty() {
         return None;
     }
-    let loudest_flux = flux_of_frame.iter().cloned().fold(0.0_f64, f64::max);
+
+    // Where the pitch classes sit, as a circular mean over the whole track.
+    let mut real = 0.0_f64;
+    let mut imaginary = 0.0_f64;
+    for half in &spectra {
+        for (bin, magnitude) in half.iter().enumerate() {
+            let frequency = bin as f64 * rate / WINDOW as f64;
+            if !(TUNING_LOWEST_HZ..=TUNING_HIGHEST_HZ).contains(&frequency) || *magnitude <= 0.0 {
+                continue;
+            }
+            let midi = 69.0 + 12.0 * (frequency / 440.0).log2();
+            let angle = std::f64::consts::TAU * midi.rem_euclid(1.0);
+            let weight = magnitude * magnitude;
+            real += weight * angle.cos();
+            imaginary += weight * angle.sin();
+        }
+    }
+    let mut offset = imaginary.atan2(real) / std::f64::consts::TAU;
+    // The angle is only known modulo a semitone: take the nearer side, so a track a little flat reads
+    // as a little flat and not as almost a semitone sharp.
+    if offset > 0.5 {
+        offset -= 1.0;
+    }
+    if offset < -0.5 {
+        offset += 1.0;
+    }
+    let tuning_hz = 440.0 * (offset / 12.0).exp2();
+    if !tuning_hz.is_finite() || !(A4_LOWEST_HZ..=A4_HIGHEST_HZ).contains(&tuning_hz) {
+        return None;
+    }
+
+    let flux = flux_of(&spectra);
+    let loudest_flux = flux.iter().cloned().fold(0.0_f64, f64::max);
+    let mut chroma = [0.0_f64; 12];
     let mut total_weight = 0.0_f64;
     for (index, half) in spectra.iter().enumerate() {
         let onset = if loudest_flux > 0.0 {
-            flux_of_frame[index] / loudest_flux
+            flux[index] / loudest_flux
         } else {
             0.0
         };
@@ -179,9 +208,9 @@ pub fn chroma(mono: &[f32], rate: f64) -> Option<[f64; 12]> {
             if !(LOWEST_HZ..=HIGHEST_HZ).contains(&frequency) {
                 continue;
             }
-            // The bin's pitch, as a fractional pitch class, so energy between two semitones is split
-            // between them instead of being thrown at the nearer one.
-            let midi = 69.0 + 12.0 * (frequency / 440.0).log2();
+            // The bin's pitch against the tuning the track is actually in, as a fractional class, so
+            // energy between two semitones is split between them instead of being thrown at the nearer.
+            let midi = 69.0 + 12.0 * (frequency / tuning_hz).log2();
             let class = midi.rem_euclid(12.0);
             let lower = class.floor();
             let fraction = class - lower;
@@ -216,7 +245,51 @@ pub fn chroma(mono: &[f32], rate: f64) -> Option<[f64; 12]> {
     for value in &mut chroma {
         *value /= total;
     }
-    Some(chroma)
+    Some((chroma, tuning_hz))
+}
+
+/// The short-time spectra of a slice of audio: Hann window, half the bins, hop `HOP`.
+fn spectra_of(mono: &[f32]) -> Vec<Vec<f64>> {
+    let mut spectra: Vec<Vec<f64>> = Vec::with_capacity(mono.len() / HOP + 1);
+    let mut real = vec![0.0_f64; WINDOW];
+    let mut imaginary = vec![0.0_f64; WINDOW];
+    let mut at = 0;
+    while at + WINDOW <= mono.len() {
+        for index in 0..WINDOW {
+            // A Hann window: without it the ends of the window ring across the whole spectrum.
+            let phase = std::f64::consts::TAU * index as f64 / WINDOW as f64;
+            real[index] = f64::from(mono[at + index]) * (0.5 - 0.5 * phase.cos());
+            imaginary[index] = 0.0;
+        }
+        fft(&mut real, &mut imaginary);
+        let mut half = vec![0.0_f64; WINDOW / 2];
+        for (index, slot) in half.iter_mut().enumerate() {
+            *slot = real[index].hypot(imaginary[index]);
+        }
+        spectra.push(half);
+        at += HOP;
+    }
+    spectra
+}
+
+/// How much each frame rises over the one before: the onset measure the chroma is weighted by.
+fn flux_of(spectra: &[Vec<f64>]) -> Vec<f64> {
+    let mut flux = Vec::with_capacity(spectra.len());
+    let mut previous: Option<&Vec<f64>> = None;
+    for half in spectra {
+        let mut rise = 0.0_f64;
+        if let Some(before) = previous {
+            for (index, magnitude) in half.iter().enumerate() {
+                let difference = magnitude - before[index];
+                if difference > 0.0 {
+                    rise += difference;
+                }
+            }
+        }
+        flux.push(rise);
+        previous = Some(half);
+    }
+    flux
 }
 
 /// Pearson correlation of two twelve-point series.
@@ -242,7 +315,7 @@ fn correlate(left: &[f64; 12], right: &[f64; 12]) -> f64 {
 
 /// The key of a slice of audio, or `None` when there is not enough of it to tell.
 pub fn detect(mono: &[f32], rate: f64) -> Option<Key> {
-    let chroma = chroma(mono, rate)?;
+    let (chroma, tuning_hz) = tuning_of(mono, rate)?;
     let mut best: Option<Key> = None;
     for mode in [Mode::Major, Mode::Minor] {
         let profile = match mode {
@@ -261,6 +334,7 @@ pub fn detect(mono: &[f32], rate: f64) -> Option<Key> {
                     mode,
                     score,
                     margin: 0.0,
+                    tuning_hz,
                 });
             }
         }
@@ -435,6 +509,31 @@ mod tests {
     }
 
     #[test]
+    fn the_tuning_of_a_triad_is_read_from_its_own_notes() {
+        let audio = chord(&[261.63, 329.63, 392.00], 3.0);
+        let hertz = tuning(&audio, RATE).expect("a tuning");
+        assert!(
+            (hertz - 440.0).abs() < 1.0,
+            "a 440 Hz triad read as {hertz:.2} Hz"
+        );
+    }
+
+    #[test]
+    fn a_triad_tuned_flat_is_still_the_same_key() {
+        // The reference set is tuned 434,19 Hz: every note sits a quarter of a semitone below where a
+        // 440 Hz chroma would look for it, and measuring it against 440 put the answer a fifth away.
+        let flat = 434.19 / 440.0;
+        let audio = chord(&[261.63 * flat, 329.63 * flat, 392.00 * flat], 3.0);
+        let key = detect(&audio, RATE).expect("a key");
+        assert!(
+            (key.tuning_hz - 434.19).abs() < 1.0,
+            "tuning read as {:.2} Hz",
+            key.tuning_hz
+        );
+        assert_eq!(key.name(), "C major", "at {:.2} Hz", key.tuning_hz);
+    }
+
+    #[test]
     fn silence_has_no_key() {
         let audio = vec![0.0_f32; (RATE * 2.0) as usize];
         assert!(detect(&audio, RATE).is_none());
@@ -454,6 +553,7 @@ mod tests {
                 mode: Mode::Major,
                 score: 1.0,
                 margin: 1.0,
+                tuning_hz: 440.0,
             };
             assert_eq!(key.camelot(), expected, "{}", key.name());
         }
@@ -463,6 +563,7 @@ mod tests {
                 mode: Mode::Minor,
                 score: 1.0,
                 margin: 1.0,
+                tuning_hz: 440.0,
             };
             assert_eq!(key.camelot(), expected, "{}", key.name());
         }
