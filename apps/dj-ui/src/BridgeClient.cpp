@@ -149,18 +149,13 @@ void FileBrowser::openCollection(const QString &root)
     m_total = 0;
     m_entries.clear();
     m_error.clear();
-    // No root chosen yet: the section says so instead of showing a folder nobody picked, because a
-    // collection that quietly turns into the music folder is a collection the DJ cannot trust.
-    if (root.isEmpty()) {
-        m_folder.clear();
-        m_error = QStringLiteral("no collection root: start the shell with --collection-root PATH");
-        emit changed();
-        return;
-    }
-    QDir dir(root);
+    // No root chosen yet: the collection is the music folder, the same one the file list opens at.
+    // A section that refuses to show anything until a flag is typed is a section nobody uses.
+    const QString path = root.isEmpty() ? defaultFolder() : root;
+    QDir dir(path);
     if (!dir.exists()) {
-        m_folder = root;
-        m_error = QStringLiteral("%1 is not a directory").arg(root);
+        m_folder = path;
+        m_error = QStringLiteral("%1 is not a directory").arg(path);
         emit changed();
         return;
     }

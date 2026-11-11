@@ -131,8 +131,9 @@ void LayoutSettings::setCollectionRoot(const QString &path)
     }
     m_collectionRoot = absolute;
     emit changed();
-    // Written at once: the root is set once, from the command line, and the next start must see it.
-    save();
+    // Not written here: the layout file is written when the shell exits, so a root adopted by
+    // default lands there too instead of only the one typed on the command line.
+    scheduleSave();
 }
 
 void LayoutSettings::setWaveformSpan(double span)

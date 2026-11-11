@@ -1409,6 +1409,10 @@ int main(int argc, char *argv[])
     }
     if (parser.isSet(collectionRootOption)) {
         layout.setCollectionRoot(parser.value(collectionRootOption));
+    } else if (layout.collectionRoot().isEmpty()) {
+        // No root chosen yet: the Collection section shows the music folder, and the shell writes
+        // that choice to the layout file when it exits.
+        layout.setCollectionRoot(browser.defaultFolder());
     }
     if (parser.isSet(channelOrderOption)
         && !layout.setChannelOrder(parser.value(channelOrderOption))) {
@@ -1447,6 +1451,9 @@ int main(int argc, char *argv[])
     qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "UiSettings", &settings);
     // Not "Layout": that name belongs to QtQuick.Layouts' attached property.
     qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "LayoutState", &layout);
+    // The arrangement is the user's, and it is written when the shell exits: a root adopted by
+    // default must reach the file even if nothing was dragged and no flag was typed.
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, [&layout]() { layout.save(); });
 
     if (parser.isSet(waveformPngOption)) {
         // The envelope drawn exactly as the deck draws it, but into a file: no display, no engine,
@@ -9328,6 +9335,17 @@ int main(int argc, char *argv[])
             record.write(R"({"schema":"djmeta/1","revision":1,"updated_at_ms":0,"fingerprint":{},"beatgrid":{"bpm":128.0,"first_beat_frame":0},"key":"8m"})");
             record.close();
         }
+        // An unset root is the music folder, not an empty section: the shell adopts the default.
+        browser.openCollection(QString());
+        QCoreApplication::processEvents();
+        if (browser.mode() != QStringLiteral("collection")
+            || browser.folder() != browser.defaultFolder() || !browser.error().isEmpty()) {
+            std::fprintf(stderr, "dj-ui: an unset collection root did not fall back to %s (it is %s, "
+                                 "error «%s»)\n",
+                         qPrintable(browser.defaultFolder()), qPrintable(browser.folder()),
+                         qPrintable(browser.error()));
+            return 1;
+        }
         browser.openCollection(collectionRoot);
         QCoreApplication::processEvents();
         const QVariantList collected = browser.entries();
@@ -9409,6 +9427,12 @@ int main(int argc, char *argv[])
         // The rail is a set of places, and pressing one moves the list. The root comes from the layout
         // settings, the way the running shell takes it, and the press is a real event on the row.
         layout.setCollectionRoot(collectionRoot);
+        // The file is written when the shell exits, so the check writes it the way that hook does
+        // before reading it back with a fresh reader.
+        if (!layout.save()) {
+            std::fprintf(stderr, "dj-ui: the layout file could not be written\n");
+            return 1;
+        }
         QQuickItem *collectionRow = findItem(panel, QStringLiteral("section_collection"));
         QQuickItem *filesRow = findItem(panel, QStringLiteral("section_files"));
         if (collectionRow == nullptr || filesRow == nullptr) {
