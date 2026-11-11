@@ -26,6 +26,12 @@ symphonia = { version = "0.6", default-features = false, features = [
     "ogg",
     "vorbis",
     "pcm",
+    # Tags live in the container, not in the audio: without these the MP3 reader does not skip the
+    # ID3v2 block at all and starts scanning inside it, where the UTF-16 BOM of the first text frame
+    # (`FF FE`) reads as an MPEG Layer I header. One missing feature cost 37 files out of 114.
+    "id3v2",
+    "id3v1",
+    "ape",
 ] }
 
 [lints]
