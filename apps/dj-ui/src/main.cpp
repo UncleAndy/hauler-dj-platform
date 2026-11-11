@@ -8417,14 +8417,15 @@ int main(int argc, char *argv[])
         const auto deckNow = [&]() { return deckById(bridge->snapshot(), QStringLiteral("A")); };
         const auto trackOf = [&]() { return deckNow().value(QStringLiteral("track")).toMap(); };
         const auto keyOf = [&]() { return trackOf().value(QStringLiteral("key")).toString().trimmed(); };
-        // A deck that is playing refuses a load, and that refusal is right: cutting the track the room
-        // is dancing to is the mistake a DJ never forgives. An earlier check in the suite leaves deck A
-        // playing, so the deck is stopped first — a check that assumed silence would fail on the order
-        // of the suite rather than on the thing it measures.
-        bridge->play(QStringLiteral("A"), false);
-        QElapsedTimer stopping;
-        stopping.start();
-        while (stopping.elapsed() < 5000 && deckNow().value(QStringLiteral("playing")).toBool()) {
+        // The deck is emptied first, and not only stopped. A deck that is playing refuses a load — the
+        // refusal is right, cutting the track the room is dancing to is the mistake a DJ never forgives
+        // — and an earlier check in the suite leaves deck A playing. Emptying also makes the wait below
+        // mean something: on a deck that already holds this very file the title matches before the load
+        // has happened, and the check would read the previous answer as a fresh one.
+        bridge->eject(QStringLiteral("A"));
+        QElapsedTimer emptying;
+        emptying.start();
+        while (emptying.elapsed() < 5000 && !trackOf().isEmpty()) {
             QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
             QThread::msleep(10);
         }
@@ -8476,7 +8477,17 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: the engine did not write the key beside the track\n");
             return 1;
         }
-        if (written != shown) {
+        // The format is part of the answer: the owner reads keys as numbers on the circle of fifths, so
+        // a name in the header would be a different feature. 1d … 12d, 1m … 12m, nothing else.
+        static const QRegularExpression circleOfFifths(QStringLiteral("^([1-9]|1[0-2])[dm]$"));
+        if (!circleOfFifths.match(shown).hasMatch()) {
+            std::fprintf(stderr, "dj-ui: \"%s\" is not a key on the circle of fifths\n",
+                         qPrintable(shown));
+            return 1;
+        }
+        // A file that already holds a code must agree with the header. A file holding a name was
+        // translated for the display, and the translation itself is covered by the analysis tests.
+        if (circleOfFifths.match(written).hasMatch() && written != shown) {
             std::fprintf(stderr, "dj-ui: the header says \"%s\" and the file says \"%s\"\n",
                          qPrintable(shown), qPrintable(written));
             return 1;

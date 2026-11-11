@@ -147,8 +147,15 @@ pub fn restore(
             // A key in the file is a decision — the DJ's ear, or another program's — and outranks the
             // measurement the loader has just made.
             if let Some(stored) = loaded.meta.key.clone() {
+                // The deck speaks the circle of fifths whatever the file holds: a key written by an
+                // older build is a name (`A# major`), and a name is translated rather than shown. A
+                // value this build cannot read — another program's Camelot code, a hand note — is
+                // shown as it stands, because guessing at it would be worse than repeating it.
+                let shown = dj_analysis::key::Key::from_name(&stored)
+                    .map(|key| key.traktor())
+                    .unwrap_or(stored);
                 if let Some(track) = prepared.track.as_mut() {
-                    track.key = Some(stored);
+                    track.key = Some(shown);
                 }
                 prepared.static_info.track = prepared.track.clone();
             }

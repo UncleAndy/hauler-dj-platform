@@ -32,6 +32,17 @@ use dj_mixer::{ChannelSettings, CrossAssign, Mixer};
 /// A load is refused for a deck that is playing, and the flag that says so is refreshed at display
 /// rate — slower than the block boundary a stop is applied at. The two commands that end playback are
 /// named here so the flag can follow the intent at once.
+/// The deck a command is about to start, if it is about starting.
+fn starting_deck(command: &dj_domain::DjCommand) -> Option<dj_domain::DeckId> {
+    match command {
+        dj_domain::DjCommand::Play {
+            deck,
+            enabled: true,
+        } => Some(*deck),
+        _ => None,
+    }
+}
+
 fn stopping_deck(command: &dj_domain::DjCommand) -> Option<dj_domain::DeckId> {
     match command {
         dj_domain::DjCommand::Play {
@@ -426,10 +437,18 @@ fn run(argv: &[String]) -> Result<(), String> {
     // playing, and the thread that answers the client never sees the graph.
     let playing: Arc<Vec<AtomicBool>> =
         Arc::new((0..DeckId::COUNT).map(|_| AtomicBool::new(false)).collect());
+    // A stop is applied at the next block boundary, and the flag above is refreshed from the published
+    // snapshot — so for one publish after an accepted stop it still says "playing", and a load sent in
+    // that window is refused for a state that no longer exists. This flag says "the deck was told to
+    // stop and has not been seen stopped yet", which is what a load has to respect: the DJ pressing
+    // stop and then load is not cutting a track out from under anyone.
+    let stopping: Arc<Vec<AtomicBool>> =
+        Arc::new((0..DeckId::COUNT).map(|_| AtomicBool::new(false)).collect());
     {
         let cells = Arc::clone(&cells);
         let published = Arc::clone(&published);
         let playing = Arc::clone(&playing);
+        let stopping = Arc::clone(&stopping);
         let subscribers = Arc::clone(&subscribers);
         let grids = Arc::clone(&grids);
         let rates = Arc::clone(&rates);
@@ -513,6 +532,13 @@ fn run(argv: &[String]) -> Result<(), String> {
                     if let Some(flag) = playing.get(deck.deck.index()) {
                         flag.store(deck.playing, Ordering::Relaxed);
                     }
+                    // The graph has been seen with this deck standing still: the stop has landed, and a
+                    // load is judged on the plain flag again.
+                    if !deck.playing
+                        && let Some(flag) = stopping.get(deck.deck.index())
+                    {
+                        flag.store(false, Ordering::Relaxed);
+                    }
                 }
                 let message = ServerMessage::Snapshot(Box::new(snapshot));
 
@@ -559,17 +585,12 @@ fn run(argv: &[String]) -> Result<(), String> {
                 let alerts = outgoing_clone;
                 let work = work.clone();
                 let stop = Arc::clone(&stop_handle);
-                let playing = Arc::clone(&playing);
+                let flags = DeckFlags {
+                    playing: Arc::clone(&playing),
+                    stopping: Arc::clone(&stopping),
+                };
                 std::thread::spawn(move || {
-                    serve_client(
-                        connection,
-                        receiver,
-                        alerts,
-                        submissions,
-                        work,
-                        stop,
-                        playing,
-                    )
+                    serve_client(connection, receiver, alerts, submissions, work, stop, flags)
                 });
             }
         });
@@ -1215,6 +1236,19 @@ struct GridEditRequest {
     edit: dj_domain::GridEdit,
 }
 
+/// The per-deck flags a client connection reads.
+///
+/// `playing` is refreshed by the publisher from the snapshot; `stopping` says a stop was accepted and
+/// the graph has not been seen standing still yet. A load is refused for a deck that is playing, and
+/// the second flag is what keeps that refusal from outliving the stop it belongs to.
+#[derive(Clone)]
+struct DeckFlags {
+    /// True while the deck is playing, as last published.
+    playing: Arc<Vec<AtomicBool>>,
+    /// True between an accepted stop and the publish that shows the deck standing still.
+    stopping: Arc<Vec<AtomicBool>>,
+}
+
 /// The background work a client connection may ask for: a decode, or a second measurement.
 #[derive(Clone)]
 struct Workers {
@@ -1242,7 +1276,7 @@ fn serve_client(
     submissions: Sender<Submission>,
     work: Workers,
     stop: Arc<AtomicBool>,
-    playing: Arc<Vec<AtomicBool>>,
+    flags: DeckFlags,
 ) {
     let (mut reader, mut writer) = connection.split();
 
@@ -1270,9 +1304,14 @@ fn serve_client(
                         // A deck that is playing refuses a load: cutting the track the room is
                         // dancing to is the one mistake a DJ never forgives. The flag comes from the
                         // publisher, so it is at most one publish interval old.
-                        let busy = playing
+                        let busy = flags
+                            .playing
                             .get(request.deck.index())
-                            .is_some_and(|flag| flag.load(Ordering::Relaxed));
+                            .is_some_and(|flag| flag.load(Ordering::Relaxed))
+                            && !flags
+                                .stopping
+                                .get(request.deck.index())
+                                .is_some_and(|flag| flag.load(Ordering::Relaxed));
                         if busy {
                             let ack =
                                 dj_domain::Ack::rejected(command.id, dj_domain::RejectReason::Busy);
@@ -1306,12 +1345,25 @@ fn serve_client(
                         {
                             return;
                         }
-                        if let Ok(ack) = answer.recv_timeout(Duration::from_millis(500))
-                            && alerts.send(ServerMessage::Ack(ack)).is_err()
-                        {
-                            return;
+                        if let Ok(ack) = answer.recv_timeout(Duration::from_millis(500)) {
+                            // The deck is emptied at the next block boundary, and the flag that refuses a
+                            // load is refreshed from the published snapshot — for one publish it still
+                            // says "playing", and a load sent right after the eject is refused for a
+                            // state that no longer exists. An accepted eject is a deck with nothing in
+                            // it: say so now, and let the publisher clear the mark once it sees the
+                            // deck standing still.
+                            if matches!(ack.status, dj_domain::AckStatus::Applied { .. }) {
+                                if let Some(flag) = flags.playing.get(deck.index()) {
+                                    flag.store(false, Ordering::Relaxed);
+                                }
+                                if let Some(flag) = flags.stopping.get(deck.index()) {
+                                    flag.store(true, Ordering::Relaxed);
+                                }
+                            }
+                            if alerts.send(ServerMessage::Ack(ack)).is_err() {
+                                return;
+                            }
                         }
-                        let _ = deck;
                         continue;
                     }
                     dj_engine::Routed::EditGrid { deck, path, edit } => {
@@ -1349,7 +1401,8 @@ fn serve_client(
                 }
                 let (reply, answer) = std::sync::mpsc::channel();
                 // Read before the command is handed over: after the send it belongs to the graph.
-                let stopping = stopping_deck(&command.command);
+                let stop_of = stopping_deck(&command.command);
+                let start_of = starting_deck(&command.command);
                 if submissions.send(Submission { command, reply }).is_err() {
                     return;
                 }
@@ -1363,8 +1416,19 @@ fn serve_client(
                         // longer exists. The command was accepted, so the deck is going to stop: say so
                         // now. The publisher corrects the flag either way, so a refusal cannot leak.
                         if matches!(ack.status, dj_domain::AckStatus::Applied { .. })
-                            && let Some(deck) = stopping
-                            && let Some(flag) = playing.get(deck.index())
+                            && let Some(deck) = stop_of
+                        {
+                            if let Some(flag) = flags.playing.get(deck.index()) {
+                                flag.store(false, Ordering::Relaxed);
+                            }
+                            if let Some(flag) = flags.stopping.get(deck.index()) {
+                                flag.store(true, Ordering::Relaxed);
+                            }
+                        }
+                        // A deck told to play again is a deck a load would cut: the window closes here.
+                        if matches!(ack.status, dj_domain::AckStatus::Applied { .. })
+                            && let Some(deck) = start_of
+                            && let Some(flag) = flags.stopping.get(deck.index())
                         {
                             flag.store(false, Ordering::Relaxed);
                         }

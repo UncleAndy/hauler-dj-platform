@@ -1797,12 +1797,15 @@ pub fn prepare_track_with_key(
     // The key is measured here as well, on the same thread and for the same reason: it is another full
     // decode of the file, and the audio callback must never see one. A key already stored in the file
     // outranks this answer — the caller restores it right after this returns.
+    // The circle of fifths is how the owner reads a key (`11m` is G minor, `12d` is F major), so that is
+    // the form the deck carries and the file stores. One notation, one source of truth: the name is for
+    // a tooltip, not for the wire.
     track.key = match known_key {
         Some(known) => Some(known.to_owned()),
         None => dj_analysis::key::analyse(path)
             .ok()
             .flatten()
-            .map(|key| key.name()),
+            .map(|key| key.traktor()),
     };
     static_info.track = Some(track.clone());
     static_info.grid = track.grid.clone();
