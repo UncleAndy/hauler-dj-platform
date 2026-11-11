@@ -2,12 +2,16 @@
 
 #include <QDebug>
 #include <QDir>
+#include <QDirIterator>
+#include <QFile>
 #include <QFileInfo>
 #include <QFileInfoList>
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QJsonValue>
 #include <QTimer>
 
+#include <algorithm>
 #include <cstring>
 
 namespace {
@@ -87,6 +91,12 @@ void FileBrowser::load(const QString &path)
 {
     QDir dir(path);
     m_error.clear();
+    // A folder list is not a collection: the section's name, its filter and its count belong to the
+    // other view and must not survive a step into a folder.
+    m_mode = QStringLiteral("files");
+    m_filter.clear();
+    m_all.clear();
+    m_total = 0;
     if (!dir.exists()) {
         m_error = QStringLiteral("%1 is not a directory").arg(path);
         emit changed();
@@ -120,6 +130,123 @@ void FileBrowser::load(const QString &path)
                                    {QStringLiteral("dir"), false}});
     }
     m_entries = entries;
+    m_filesFolder = m_folder;
+    emit changed();
+}
+
+void FileBrowser::openCollection(const QString &root)
+{
+    m_mode = QStringLiteral("collection");
+    m_filter.clear();
+    m_all.clear();
+    m_total = 0;
+    m_entries.clear();
+    m_error.clear();
+    // No root chosen yet: the section says so instead of showing a folder nobody picked, because a
+    // collection that quietly turns into the music folder is a collection the DJ cannot trust.
+    if (root.isEmpty()) {
+        m_folder.clear();
+        m_error = QStringLiteral("no collection root: start the shell with --collection-root PATH");
+        emit changed();
+        return;
+    }
+    QDir dir(root);
+    if (!dir.exists()) {
+        m_folder = root;
+        m_error = QStringLiteral("%1 is not a directory").arg(root);
+        emit changed();
+        return;
+    }
+    m_folder = dir.absolutePath();
+    collect(m_folder);
+    applyFilter();
+}
+
+void FileBrowser::showFiles()
+{
+    load(m_filesFolder.isEmpty() ? defaultFolder() : m_filesFolder);
+}
+
+void FileBrowser::rememberFolder(const QString &folder)
+{
+    if (folder.isEmpty()) {
+        return;
+    }
+    // Only the file list follows: the collection is a place the DJ chose, and a load from it must not
+    // move him into the folder of the track he just took out of it.
+    if (m_mode == QLatin1String("files")) {
+        load(folder);
+        return;
+    }
+    m_filesFolder = QDir(folder).absolutePath();
+}
+
+void FileBrowser::collect(const QString &root)
+{
+    QVariantList tracks;
+    QDirIterator walker(root, QDir::Files | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+    while (walker.hasNext()) {
+        walker.next();
+        const QFileInfo info = walker.fileInfo();
+        // The metadata folder holds records, not music, and a scan that lists it lists the wrong tree.
+        if (info.dir().dirName() == QLatin1String(".djmeta") || !looksLikeAudio(info.fileName())) {
+            continue;
+        }
+        // The import names the copy from the tags, so the file name is the name to show.
+        QVariantMap entry{{QStringLiteral("name"), info.completeBaseName()},
+                          {QStringLiteral("path"), info.absoluteFilePath()},
+                          {QStringLiteral("dir"), false}};
+        const QString record =
+            info.dir().absolutePath() + QStringLiteral("/.djmeta/") + info.fileName()
+            + QStringLiteral(".json");
+        QFile meta(record);
+        if (meta.open(QIODevice::ReadOnly)) {
+            const QJsonObject object = QJsonDocument::fromJson(meta.readAll()).object();
+            const QString key = object.value(QStringLiteral("key")).toString();
+            if (!key.isEmpty()) {
+                entry.insert(QStringLiteral("key"), key);
+            }
+            const double bpm =
+                object.value(QStringLiteral("beatgrid")).toObject().value(QStringLiteral("bpm")).toDouble();
+            if (bpm > 0.0) {
+                entry.insert(QStringLiteral("bpm"), bpm);
+            }
+        }
+        tracks.append(entry);
+    }
+    std::sort(tracks.begin(), tracks.end(), [](const QVariant &left, const QVariant &right) {
+        const QString a = left.toMap().value(QStringLiteral("name")).toString();
+        const QString b = right.toMap().value(QStringLiteral("name")).toString();
+        return QString::localeAwareCompare(a, b) < 0;
+    });
+    m_all = tracks;
+    m_total = tracks.size();
+}
+
+void FileBrowser::setFilter(const QString &text)
+{
+    if (text == m_filter) {
+        return;
+    }
+    m_filter = text;
+    applyFilter();
+}
+
+void FileBrowser::applyFilter()
+{
+    if (m_filter.isEmpty()) {
+        m_entries = m_all;
+        emit changed();
+        return;
+    }
+    QVariantList kept;
+    const QString needle = m_filter.toLower();
+    for (const QVariant &entry : std::as_const(m_all)) {
+        if (entry.toMap().value(QStringLiteral("name")).toString().toLower().contains(needle)) {
+            kept.append(entry);
+        }
+    }
+    m_entries = kept;
     emit changed();
 }
 

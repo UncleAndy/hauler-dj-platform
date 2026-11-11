@@ -1135,6 +1135,12 @@ int main(int argc, char *argv[])
         QStringLiteral("Order of the mixer strips, left to right (default CABD). A permutation of "
                        "A, B, C and D."),
         QStringLiteral("ABCD"));
+    const QCommandLineOption collectionRootOption(
+        QStringLiteral("collection-root"),
+        QStringLiteral("The folder the browser's Collection section lists, remembered for the next "
+                       "start. Without it the section stays empty rather than showing a folder nobody "
+                       "chose."),
+        QStringLiteral("path"));
     const QCommandLineOption layoutCheckOption(
         QStringLiteral("layout-check"),
         QStringLiteral("Load the shell, print each region's share of the window and fail when it "
@@ -1268,6 +1274,7 @@ int main(int argc, char *argv[])
     parser.addOption(contrastOption);
     parser.addOption(layoutOption);
     parser.addOption(layoutFileOption);
+    parser.addOption(collectionRootOption);
     parser.addOption(layoutCheckOption);
     parser.addOption(channelOrderOption);
     parser.addOption(sessionFileOption);
@@ -1292,7 +1299,7 @@ int main(int argc, char *argv[])
     bridge->setLoadFolderHandler([&session, &browser](const QString &folder) {
         if (session.rememberFolder(folder)) {
             session.save();
-            browser.open(folder);
+            browser.rememberFolder(folder);
         }
     });
     qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "Browser", &browser);
@@ -1399,6 +1406,9 @@ int main(int argc, char *argv[])
     if (parser.isSet(layoutOption) && !layout.applyPreset(parser.value(layoutOption))) {
         std::fprintf(stderr, "dj-ui: --layout expects traktor or two-deck\n");
         return 2;
+    }
+    if (parser.isSet(collectionRootOption)) {
+        layout.setCollectionRoot(parser.value(collectionRootOption));
     }
     if (parser.isSet(channelOrderOption)
         && !layout.setChannelOrder(parser.value(channelOrderOption))) {
@@ -8999,6 +9009,14 @@ int main(int argc, char *argv[])
         };
 
         const QString onTrack = loadInto(QStringLiteral("A"));
+        // The path in the answer is the path of the row that was chosen: a load that moves the folder
+        // must not make the panel report a row it never sent.
+        const QString chosenPath = entries.at(fileIndex).toMap().value(QStringLiteral("path")).toString();
+        if (onTrack != QStringLiteral("loaded ") + chosenPath + QStringLiteral(" into A")) {
+            std::fprintf(stderr, "dj-ui: the browser reported a path it did not choose (%s, wanted %s)\n",
+                         qPrintable(onTrack), qPrintable(chosenPath));
+            return 1;
+        }
         // The selection has to hold too: a highlight that never lights is the same bug as a click
         // that never lands. Checked before the folder, because opening a folder reloads the model
         // and a fresh list correctly starts with nothing selected.
@@ -9277,6 +9295,156 @@ int main(int argc, char *argv[])
                          reloaded.waveformSpan());
             return 1;
         }
+
+        // The Collection section: one root, every track below it, named as the import named it, with
+        // the tempo and the key its metadata records. The tree here is real, with a real .djmeta, and
+        // it is read through the same object the section uses.
+        QTemporaryDir collection;
+        if (!collection.isValid()) {
+            std::fprintf(stderr, "dj-ui: cannot make a temporary collection\n");
+            return 1;
+        }
+        const QString collectionRoot = collection.path();
+        QDir(collectionRoot).mkpath(QStringLiteral("A/N/.djmeta"));
+        QDir(collectionRoot).mkpath(QStringLiteral("B/B"));
+        const auto writeStub = [](const QString &path) {
+            QFile file(path);
+            if (!file.open(QIODevice::WriteOnly)) {
+                return false;
+            }
+            file.write("RIFF", 4);
+            return true;
+        };
+        if (!writeStub(collectionRoot + QStringLiteral("/A/N/ANH - tonight.flac"))
+            || !writeStub(collectionRoot + QStringLiteral("/B/B/Bbno$ - ADD.flac"))) {
+            std::fprintf(stderr, "dj-ui: cannot write the collection's tracks\n");
+            return 1;
+        }
+        QFile record(collectionRoot + QStringLiteral("/A/N/.djmeta/ANH - tonight.flac.json"));
+        if (record.open(QIODevice::WriteOnly)) {
+            record.write(R"({"schema":"djmeta/1","revision":1,"updated_at_ms":0,"fingerprint":{},"beatgrid":{"bpm":128.0,"first_beat_frame":0},"key":"8m"})");
+            record.close();
+        }
+        browser.openCollection(collectionRoot);
+        QCoreApplication::processEvents();
+        const QVariantList collected = browser.entries();
+        std::fprintf(stdout, "dj-ui: collection %s -> %d tracks in mode %s\n",
+                     qPrintable(browser.folder()), static_cast<int>(collected.size()),
+                     qPrintable(browser.mode()));
+        if (browser.mode() != QStringLiteral("collection") || browser.total() != 2
+            || collected.size() != 2) {
+            std::fprintf(stderr, "dj-ui: the Collection section did not list the collection (%d of %d)\n",
+                         static_cast<int>(collected.size()), browser.total());
+            return 1;
+        }
+        // Named as the import named it, and sorted by that name: the file name is the name.
+        if (collected.at(0).toMap().value(QStringLiteral("name")).toString()
+            != QStringLiteral("ANH - tonight")) {
+            std::fprintf(stderr, "dj-ui: the collection is not sorted by name (%s)\n",
+                         qPrintable(collected.at(0).toMap().value(QStringLiteral("name")).toString()));
+            return 1;
+        }
+        // The metadata beside the track reaches its row: a tempo and a key, or neither of them.
+        const QVariantMap withMeta = collected.at(0).toMap();
+        const QVariantMap withoutMeta = collected.at(1).toMap();
+        if (qAbs(withMeta.value(QStringLiteral("bpm")).toDouble() - 128.0) > 1e-6
+            || withMeta.value(QStringLiteral("key")).toString() != QStringLiteral("8m")
+            || withoutMeta.contains(QStringLiteral("bpm"))
+            || withoutMeta.contains(QStringLiteral("key"))) {
+            std::fprintf(stderr, "dj-ui: the metadata beside a track did not reach its row\n");
+            return 1;
+        }
+        // The search keeps what matches and the count says how much it kept.
+        browser.setFilter(QStringLiteral("bbno"));
+        QCoreApplication::processEvents();
+        const int filtered = static_cast<int>(browser.entries().size());
+        browser.setFilter(QString());
+        QCoreApplication::processEvents();
+        const int unfiltered = static_cast<int>(browser.entries().size());
+        std::fprintf(stdout, "dj-ui: collection search -> %d of %d, then %d\n", filtered,
+                     browser.total(), unfiltered);
+        if (filtered != 1 || unfiltered != 2) {
+            std::fprintf(stderr, "dj-ui: the collection search did not filter the list (%d, %d)\n",
+                         filtered, unfiltered);
+            return 1;
+        }
+        // A track from the collection loads the way a file from a folder does.
+        list->setProperty("currentIndex", 0);
+        QCoreApplication::processEvents();
+        const QVariantMap chosen = panel->property("selected").toMap();
+        QVariant fromCollection;
+        QMetaObject::invokeMethod(panel, "loadInto", Q_RETURN_ARG(QVariant, fromCollection),
+                                  Q_ARG(QVariant, QStringLiteral("C")));
+        QCoreApplication::processEvents();
+        const QString onCollection = panel->property("lastAction").toString();
+        std::fprintf(stdout, "dj-ui: collection track -> %s\n", qPrintable(onCollection));
+        const QString expected = QStringLiteral("loaded ")
+            + chosen.value(QStringLiteral("path")).toString() + QStringLiteral(" into C");
+        if (onCollection != expected) {
+            std::fprintf(stderr, "dj-ui: a collection track did not load into the chosen deck (%s, "
+                                 "wanted %s)\n",
+                         qPrintable(onCollection), qPrintable(expected));
+            return 1;
+        }
+        // A load from the collection leaves the list in the collection: the section is a place the DJ
+        // chose, not a temporary detour into the folder of the track he took out of it.
+        if (browser.mode() != QStringLiteral("collection")) {
+            std::fprintf(stderr, "dj-ui: a load from the collection threw the list into %s\n",
+                         qPrintable(browser.mode()));
+            return 1;
+        }
+        // And the way back: Files is the folder it was showing, with its ".." row.
+        browser.showFiles();
+        QCoreApplication::processEvents();
+        if (browser.mode() != QStringLiteral("files") || browser.entries().isEmpty()
+            || !browser.entries().first().toMap().value(QStringLiteral("parent")).toBool()) {
+            std::fprintf(stderr, "dj-ui: the Files section did not come back\n");
+            return 1;
+        }
+
+        // The rail is a set of places, and pressing one moves the list. The root comes from the layout
+        // settings, the way the running shell takes it, and the press is a real event on the row.
+        layout.setCollectionRoot(collectionRoot);
+        QQuickItem *collectionRow = findItem(panel, QStringLiteral("section_collection"));
+        QQuickItem *filesRow = findItem(panel, QStringLiteral("section_files"));
+        if (collectionRow == nullptr || filesRow == nullptr) {
+            std::fprintf(stderr, "dj-ui: the sections rail has no Collection row\n");
+            return 1;
+        }
+        const auto pressSection = [&](QQuickItem *item) {
+            const QPointF centre =
+                item->mapToScene(QPointF(item->width() / 2.0, item->height() / 2.0));
+            for (const QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+                QMouseEvent event(type, centre, window->mapToGlobal(centre.toPoint()),
+                                  Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+                QCoreApplication::sendEvent(window, &event);
+            }
+            QCoreApplication::processEvents();
+        };
+        // The root is a setting, so it outlives the run: a fresh reader of the same file sees it.
+        LayoutSettings reread;
+        reread.setFile(layout.file());
+        if (!reread.load() || reread.collectionRoot() != collectionRoot) {
+            std::fprintf(stderr, "dj-ui: the collection root was not remembered (%s)\n",
+                         qPrintable(reread.collectionRoot()));
+            return 1;
+        }
+        pressSection(collectionRow);
+        const QString afterCollection = browser.mode();
+        const int pressedCount = static_cast<int>(browser.entries().size());
+        pressSection(filesRow);
+        const QString afterFiles = browser.mode();
+        std::fprintf(stdout, "dj-ui: sections -> %s (%d tracks), then %s\n",
+                     qPrintable(afterCollection), pressedCount, qPrintable(afterFiles));
+        if (afterCollection != QStringLiteral("collection") || pressedCount != 2
+            || afterFiles != QStringLiteral("files")) {
+            std::fprintf(stderr, "dj-ui: pressing a section did not move the list\n");
+            return 1;
+        }
+        std::fprintf(stdout,
+                     "dj-ui: the Collection section lists %d tracks by name, carries the tempo and "
+                     "the key from the metadata, filters by name and loads into a deck\n",
+                     unfiltered);
 
         std::fprintf(stdout,
                      "dj-ui: browser selects and acts, selection follows the click, \"..\" goes up, "

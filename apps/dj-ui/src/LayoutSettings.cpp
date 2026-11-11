@@ -121,6 +121,20 @@ void LayoutSettings::setBrowserRailWidth(int pixels)
     scheduleSave();
 }
 
+void LayoutSettings::setCollectionRoot(const QString &path)
+{
+    // Absolute: the shell's working directory is not the DJ's business, and a relative root would
+    // point somewhere else after a start from another folder.
+    const QString absolute = path.trimmed().isEmpty() ? QString() : QFileInfo(path).absoluteFilePath();
+    if (absolute == m_collectionRoot) {
+        return;
+    }
+    m_collectionRoot = absolute;
+    emit changed();
+    // Written at once: the root is set once, from the command line, and the next start must see it.
+    save();
+}
+
 void LayoutSettings::setWaveformSpan(double span)
 {
     // Zero is the "never set" marker; anything else has to be a span the deck can draw.
@@ -202,6 +216,7 @@ bool LayoutSettings::load()
     const double span = root.value(QStringLiteral("waveform_span")).toDouble(m_waveformSpan);
     m_waveformSpan = span <= 0.0 ? 0.0 : std::clamp(span, 0.0025, 1.0);
     setChannelOrder(root.value(QStringLiteral("channel_order")).toString(m_channelOrder));
+    m_collectionRoot = root.value(QStringLiteral("collection_root")).toString(m_collectionRoot);
     normalise();
     emit changed();
     return true;
@@ -223,6 +238,7 @@ bool LayoutSettings::save() const
     root.insert(QStringLiteral("channel_order"), m_channelOrder);
     root.insert(QStringLiteral("browser_font"), m_browserFont);
     root.insert(QStringLiteral("browser_rail_width"), m_browserRailWidth);
+    root.insert(QStringLiteral("collection_root"), m_collectionRoot);
     root.insert(QStringLiteral("waveform_span"), m_waveformSpan);
     QFile file(m_file);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {

@@ -20,6 +20,9 @@ Pane {
     property string target: "A"
     // What the last activation did: read by --browser-check, so the click path can be measured.
     property string lastAction: ""
+    // Which section the list is showing. The browser object holds the mode; this is its name, so the
+    // rail can light the row the list belongs to instead of guessing.
+    readonly property string section: Browser.mode === "collection" ? "collection" : "files"
 
     background: Rectangle {
         color: UiSettings.themePanel
@@ -102,6 +105,22 @@ Pane {
         return true;
     }
 
+    // A section is a place, not a label: pressing one moves the list there.
+    function showSection(key) {
+        if (key === "collection") {
+            Browser.openCollection(LayoutState.collectionRoot);
+            browser.lastAction = "collection " + Browser.folder;
+            return true;
+        }
+        if (key === "files") {
+            Browser.showFiles();
+            browser.lastAction = "files " + Browser.folder;
+            return true;
+        }
+        browser.lastAction = key + " is not built yet";
+        return false;
+    }
+
     // Load the selected track into `deck`; refuses a deck that is playing rather than cutting the
     // track the room is dancing to.
     function loadInto(deck) {
@@ -113,9 +132,12 @@ Pane {
             browser.lastAction = "deck " + deck + " is playing";
             return false;
         }
+        // Read once: a load moves the folder the browser shows, so the second read of the selection
+        // would be a different row — and the panel would report a path it never sent.
+        const path = browser.selected.path;
         browser.target = deck;
-        Bridge.load(deck, browser.selected.path);
-        browser.lastAction = "loaded " + browser.selected.path + " into " + deck;
+        Bridge.load(deck, path);
+        browser.lastAction = "loaded " + path + " into " + deck;
         return true;
     }
 
@@ -153,7 +175,7 @@ Pane {
                 ListElement {
                     key: "collection"
                     title: "Collection"
-                    ready: false
+                    ready: true
                 }
                 ListElement {
                     key: "playlists"
@@ -170,9 +192,10 @@ Pane {
                     objectName: "section_" + key
                     Layout.fillWidth: true
                     height: browser.rowHeight
-                    // Only Files exists today; the others are dimmed until they do, rather than
-                    // pretending to be a place that holds nothing.
-                    color: ready ? UiSettings.themeAccentDim : "transparent"
+                    // The section the list is showing is lit. Playlists has nothing behind it yet, so
+                    // it stays dim rather than pretending to be a place that holds nothing.
+                    readonly property bool current: ready && browser.section === key
+                    color: current ? UiSettings.themeAccentDim : "transparent"
                     radius: 2
                     Label {
                         objectName: "sectionLabel_" + key
@@ -183,7 +206,15 @@ Pane {
                         text: title
                         font.pixelSize: browser.sectionFont
                         elide: Text.ElideRight
-                        color: ready ? UiSettings.themeText : UiSettings.themeWaveOutline
+                        color: current ? UiSettings.themeText
+                                       : (ready ? UiSettings.themeTextDim
+                                                : UiSettings.themeWaveOutline)
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        enabled: ready
+                        cursorShape: ready ? Qt.PointingHandCursor : Qt.ArrowCursor
+                        onClicked: browser.showSection(key)
                     }
                 }
             }
@@ -247,6 +278,17 @@ Pane {
                     color: UiSettings.themeTextDim
                     font.pixelSize: browser.headerFont
                 }
+                // How much the collection holds and how much of it the search is showing: a filter
+                // that hides everything must not look like an empty collection.
+                Label {
+                    objectName: "collectionCount"
+                    visible: browser.section === "collection"
+                    text: Browser.filter.length > 0
+                          ? qsTr("%1 of %2").arg(Browser.entries.length).arg(Browser.total)
+                          : qsTr("%1 tracks").arg(Browser.total)
+                    color: UiSettings.themeTextDim
+                    font.pixelSize: browser.headerFont
+                }
                 // The text size, changed where it is read: a browser whose font cannot be changed is
                 // a browser for one pair of eyes.
                 Button {
@@ -303,6 +345,25 @@ Pane {
                 }
             }
 
+            // The search lives in the section that needs it: a field that is always there is a field
+            // that means nothing in a folder.
+            TextField {
+                objectName: "collectionSearch"
+                visible: browser.section === "collection"
+                Layout.fillWidth: true
+                font.pixelSize: browser.listFont
+                selectByMouse: true
+                placeholderText: qsTr("search artist or title")
+                text: Browser.filter
+                onTextChanged: {
+                    // The filter is the browser's state, not the field's: writing it back from here
+                    // would make the field a second source of truth for what the list shows.
+                    if (text !== Browser.filter) {
+                        Browser.setFilter(text);
+                    }
+                }
+            }
+
             ListView {
                 id: list
                 objectName: "browserList"
@@ -340,9 +401,26 @@ Pane {
                                                               : UiSettings.themeBackground)
 
                     Label {
+                        id: rowMeta
+                        objectName: "browserMeta_" + row.index
+                        anchors.right: parent.right
+                        anchors.rightMargin: 6
+                        anchors.verticalCenter: parent.verticalCenter
+                        // Tempo and key travel with the file in its metadata; a collection row that
+                        // shows neither makes the DJ open the track to learn what he already owns.
+                        readonly property var tempo: row.modelData.bpm
+                        readonly property var key: row.modelData.key
+                        text: browser.section !== "collection" ? ""
+                              : [tempo === undefined ? "" : Math.round(tempo) + " BPM",
+                                 key === undefined ? "" : key]
+                                .filter(part => part.length > 0).join(" · ")
+                        color: UiSettings.themeWaveOutline
+                        font.pixelSize: browser.listFont
+                    }
+                    Label {
                         anchors.left: parent.left
                         anchors.leftMargin: 6
-                        anchors.right: parent.right
+                        anchors.right: rowMeta.text.length > 0 ? rowMeta.left : parent.right
                         anchors.rightMargin: 6
                         anchors.verticalCenter: parent.verticalCenter
                         // ".." is the way up and is written as such: no folder arrow, because it is

@@ -15,7 +15,7 @@
 #include <QString>
 #include <QVariantMap>
 
-// Lists a directory for the load dialog.
+// Lists a directory for the load dialog, or the whole collection for the Collection section.
 //
 // Written by hand because both alternatives fail here: Qt's FileDialog is the GTK/portal dialog
 // (a missing gsettings schema aborts the process) and Qt.labs.folderlistmodel is not built into
@@ -26,6 +26,13 @@ class FileBrowser : public QObject
     Q_PROPERTY(QString folder READ folder NOTIFY changed)
     Q_PROPERTY(QVariantList entries READ entries NOTIFY changed)
     Q_PROPERTY(QString error READ error NOTIFY changed)
+    // "files" while the list is one folder, "collection" while it is the collection under its root.
+    Q_PROPERTY(QString mode READ mode NOTIFY changed)
+    // What the DJ typed into the collection's search field; empty shows every track.
+    Q_PROPERTY(QString filter READ filter NOTIFY changed)
+    // How many tracks the collection holds before the filter: the header says both numbers, so an
+    // empty search result cannot pass for an empty collection.
+    Q_PROPERTY(int total READ total NOTIFY changed)
 
 public:
     explicit FileBrowser(QObject *parent = nullptr);
@@ -33,21 +40,42 @@ public:
     QString folder() const { return m_folder; }
     QVariantList entries() const { return m_entries; }
     QString error() const { return m_error; }
+    QString mode() const { return m_mode; }
+    QString filter() const { return m_filter; }
+    int total() const { return m_total; }
 
     // Show `path`, or the default music folder when it is empty.
     Q_INVOKABLE void open(const QString &path);
     Q_INVOKABLE void up();
     Q_INVOKABLE QString defaultFolder() const;
+    /// Show the collection under `root`: every audio file below it, named as the import named it, with
+    /// the tempo and the key its metadata records.
+    Q_INVOKABLE void openCollection(const QString &root);
+    /// Back to the folder the file list was showing.
+    Q_INVOKABLE void showFiles();
+    /// Remember where a load came from: the file list opens there next time, and a load made from the
+    /// collection does not throw the list out of the collection.
+    Q_INVOKABLE void rememberFolder(const QString &folder);
+    /// Keep only the collection's tracks whose name contains `text`, in either case.
+    Q_INVOKABLE void setFilter(const QString &text);
 
 signals:
     void changed();
 
 private:
     void load(const QString &path);
+    void collect(const QString &root);
+    void applyFilter();
 
     QString m_folder;
     QVariantList m_entries;
     QString m_error;
+    QString m_mode = QStringLiteral("files");
+    QString m_filter;
+    int m_total = 0;
+    // The collection's tracks before the filter, and the folder the file list was showing.
+    QVariantList m_all;
+    QString m_filesFolder;
 };
 
 class BridgeClient : public QObject
