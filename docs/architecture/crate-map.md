@@ -17,7 +17,7 @@
 | `dj-dsp` | dsp | A14 | R0.5 | DJP-MIX-002; DJP-NFR-008 — **реализовано в A14**: трёхполосный EQ (low shelf / mid peak / high shelf), таблица коэффициентов по 0,125 дБ, построенная вне аудиоколбэка; свип `dj-headless eq` |
 | `dj-mixer` | dsp | A04 | R0 | DJP-MIX-001; DJP-ARCH-006, -007 — **реализовано в A04**: канальные стрипы, кроссфейдер, лимитер, метры, шина cue |
 | `dj-analysis` | media | A07 | R0 | DJP-MEDIA-003 |
-| `dj-library` | media | A08 | R0 | DJP-DATA-001…006 — переносимые метаданные трека (`.djmeta`), индекс SQLite только для поиска и сортировки |
+| `dj-library` | media | A08 | R0 | DJP-DATA-001…006 — переносимые метаданные трека (`.djmeta`), индекс SQLite только для поиска и сортировки; коллекция, теги и идентичность по длительности и отпечатку — `docs/architecture/library.md` |
 | `dj-session` | media | A08 | R0 | DJP-ENV-006; DJP-SET-002, -003 |
 | `dj-sync` | audio-core | B03 | R1 | DJP-SYNC-001, -002 — **ядро (часть B03)**: `BeatClock` (источник темпа и фазы: дека, MIDI, Link — планировщику всё равно), `DeckClock` поверх `BeatGrid`, `plan()` (Tempo/Beat Sync, отказ вне питч-диапазона), `choose_master()` (явный/авто), `DriftMeter` для AC-SYNC, `RateTrim` для хода питча. Проводки в движок и оболочки пока нет |
 | `dj-bridge` | ui | A06 | R0 | DJP-ARCH-004; DJP-UI-001, -002 | — **реализовано в A06 (часть 1)**: кадры с длиной, рукопожатие `command-v1`, снапшоты, отказ чужому протоколу, замена протухшего сокета
