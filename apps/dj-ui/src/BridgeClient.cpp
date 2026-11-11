@@ -43,6 +43,13 @@ quint32 readLength(const char *bytes)
 
 namespace {
 
+// The folder the import parks a rejected copy in (`DUPLICATES_DIR` in crates/dj-library). Its files
+// are not part of the collection until their owner deletes them, so the section does not list them.
+bool insideDuplicates(const QString &directory)
+{
+    return directory.split(QLatin1Char('/')).contains(QStringLiteral("_duplicates"));
+}
+
 bool looksLikeAudio(const QString &name)
 {
     static const QStringList suffixes = {QStringLiteral("wav"), QStringLiteral("flac"),
@@ -189,7 +196,8 @@ void FileBrowser::collect(const QString &root)
         walker.next();
         const QFileInfo info = walker.fileInfo();
         // The metadata folder holds records, not music, and a scan that lists it lists the wrong tree.
-        if (info.dir().dirName() == QLatin1String(".djmeta") || !looksLikeAudio(info.fileName())) {
+        if (info.dir().dirName() == QLatin1String(".djmeta")
+            || insideDuplicates(info.dir().absolutePath()) || !looksLikeAudio(info.fileName())) {
             continue;
         }
         // The import names the copy from the tags, so the file name is the name to show.

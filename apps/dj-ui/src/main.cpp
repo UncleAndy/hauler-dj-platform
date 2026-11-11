@@ -9307,6 +9307,8 @@ int main(int argc, char *argv[])
         const QString collectionRoot = collection.path();
         QDir(collectionRoot).mkpath(QStringLiteral("A/N/.djmeta"));
         QDir(collectionRoot).mkpath(QStringLiteral("B/B"));
+        // The import parks a rejected copy here; the collection is what its owner kept.
+        QDir(collectionRoot).mkpath(QStringLiteral("_duplicates/C/C"));
         const auto writeStub = [](const QString &path) {
             QFile file(path);
             if (!file.open(QIODevice::WriteOnly)) {
@@ -9316,7 +9318,8 @@ int main(int argc, char *argv[])
             return true;
         };
         if (!writeStub(collectionRoot + QStringLiteral("/A/N/ANH - tonight.flac"))
-            || !writeStub(collectionRoot + QStringLiteral("/B/B/Bbno$ - ADD.flac"))) {
+            || !writeStub(collectionRoot + QStringLiteral("/B/B/Bbno$ - ADD.flac"))
+            || !writeStub(collectionRoot + QStringLiteral("/_duplicates/C/C/Bbno$ - ADD.mp3"))) {
             std::fprintf(stderr, "dj-ui: cannot write the collection's tracks\n");
             return 1;
         }
@@ -9328,6 +9331,7 @@ int main(int argc, char *argv[])
         browser.openCollection(collectionRoot);
         QCoreApplication::processEvents();
         const QVariantList collected = browser.entries();
+        // A rejected copy is not part of the collection: three files on disk, two in the list.
         std::fprintf(stdout, "dj-ui: collection %s -> %d tracks in mode %s\n",
                      qPrintable(browser.folder()), static_cast<int>(collected.size()),
                      qPrintable(browser.mode()));
@@ -9441,6 +9445,25 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: pressing a section did not move the list\n");
             return 1;
         }
+        // Real material, when the run names it: how long a root takes to list and how much of it
+        // carries a tempo. A measurement, not a gate — the tree above is what the check asserts.
+        const QString realRoot = qEnvironmentVariable("DJ_COLLECTION_CHECK_ROOT");
+        if (!realRoot.isEmpty()) {
+            QElapsedTimer timer;
+            timer.start();
+            browser.openCollection(realRoot);
+            const qint64 elapsed = timer.elapsed();
+            int withTempo = 0;
+            for (const QVariant &entry : browser.entries()) {
+                if (entry.toMap().contains(QStringLiteral("bpm"))) {
+                    ++withTempo;
+                }
+            }
+            std::fprintf(stdout, "dj-ui: collection %s -> %d tracks in %lld ms, %d with a tempo\n",
+                         qPrintable(realRoot), static_cast<int>(browser.entries().size()),
+                         static_cast<long long>(elapsed), withTempo);
+        }
+
         std::fprintf(stdout,
                      "dj-ui: the Collection section lists %d tracks by name, carries the tempo and "
                      "the key from the metadata, filters by name and loads into a deck\n",
