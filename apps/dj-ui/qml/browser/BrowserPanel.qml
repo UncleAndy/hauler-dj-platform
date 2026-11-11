@@ -123,6 +123,16 @@ Pane {
         return x;
     }
     // Which column the pointer is over: the drop target of a dragged header.
+    /// Where a named column sits now: a row cell belongs to its column, not to a position, so a
+    /// moved column takes its numbers with it.
+    function columnIndexOf(id) {
+        for (let i = 0; i < columns.length; ++i) {
+            if (columns[i].id === id) {
+                return i;
+            }
+        }
+        return -1;
+    }
     function columnIndexAt(x, total) {
         let edge = 0;
         for (let i = 0; i < columns.length; ++i) {
@@ -772,7 +782,7 @@ Pane {
                     for (let index = 0; index < browser.columns.length; ++index) {
                         const edge = browser.columnX(index, header.width)
                             + browser.columnWidth(index, header.width);
-                        if (Math.abs(x - edge) <= 4) {
+                        if (Math.abs(x - edge) <= 5) {
                             return index;
                         }
                     }
@@ -846,6 +856,44 @@ Pane {
                     elide: Text.ElideRight
                 }
 
+                // The edges are drawn: a column that can be resized has to show where its edge is,
+                // otherwise the DJ aims at a fifteen-pixel strip in the dark.
+                Rectangle {
+                    x: browser.columnX(1, header.width) - 1
+                    width: 2
+                    height: parent.height
+                    visible: browser.columns.length > 1
+                    color: UiSettings.themePanel
+                }
+                Rectangle {
+                    x: browser.columnX(2, header.width) - 1
+                    width: 2
+                    height: parent.height
+                    visible: browser.columns.length > 2
+                    color: UiSettings.themePanel
+                }
+                Rectangle {
+                    x: browser.columnX(3, header.width) - 1
+                    width: 2
+                    height: parent.height
+                    visible: browser.columns.length > 3
+                    color: UiSettings.themePanel
+                }
+                Rectangle {
+                    x: browser.columnX(4, header.width) - 1
+                    width: 2
+                    height: parent.height
+                    visible: browser.columns.length > 4
+                    color: UiSettings.themePanel
+                }
+                Rectangle {
+                    x: browser.columnX(5, header.width) - 1
+                    width: 2
+                    height: parent.height
+                    visible: browser.columns.length > 5
+                    color: UiSettings.themePanel
+                }
+
                 // One pointer does both jobs: on a column's edge it changes the width, anywhere else
                 // it moves the column. Two targets on a fifteen-pixel strip would fight each other.
                 MouseArea {
@@ -857,7 +905,12 @@ Pane {
                     property real startShare: 0
                     property int dragIndex: -1
                     property int dropIndex: -1
-                    cursorShape: resizeIndex >= 0 ? Qt.SizeHorCursor
+                    // The cursor says what the strip does: a splitter under the pointer is the only
+                    // way a DJ learns that the edge is draggable at all.
+                    property int hoverBoundary: -1
+                    hoverEnabled: true
+                    cursorShape: (hoverBoundary >= 0 || resizeIndex >= 0)
+                                 ? Qt.SizeHorCursor
                                  : (dragIndex >= 0 ? Qt.ClosedHandCursor : Qt.ArrowCursor)
                     onPressed: function (mouse) {
                         const edge = header.boundaryAt(mouse.x);
@@ -873,6 +926,7 @@ Pane {
                         }
                     }
                     onPositionChanged: function (mouse) {
+                        hoverBoundary = header.boundaryAt(mouse.x);
                         if (resizeIndex >= 0) {
                             LayoutState.setCollectionColumnWidth(
                                 browser.columnId(resizeIndex),
@@ -951,9 +1005,10 @@ Pane {
 
                         Label {
                             objectName: "collectionCell_artist_" + row.index
-                            x: browser.columnX(0, row.width) + 6
-                            width: Math.max(0, browser.columnWidth(0, row.width) - 12)
-                            visible: browser.columnId(0) === "artist"
+                            readonly property int column: browser.columnIndexOf("artist")
+                            x: column >= 0 ? browser.columnX(column, row.width) + 6 : 0
+                            width: column >= 0 ? Math.max(0, browser.columnWidth(column, row.width) - 12) : 0
+                            visible: column >= 0
                             anchors.verticalCenter: parent.verticalCenter
                             text: browser.columnText(row.modelData, "artist")
                             elide: Text.ElideRight
@@ -962,9 +1017,10 @@ Pane {
                         }
                         Label {
                             objectName: "collectionCell_album_" + row.index
-                            x: browser.columnX(1, row.width) + 6
-                            width: Math.max(0, browser.columnWidth(1, row.width) - 12)
-                            visible: browser.columnId(1) === "album"
+                            readonly property int column: browser.columnIndexOf("album")
+                            x: column >= 0 ? browser.columnX(column, row.width) + 6 : 0
+                            width: column >= 0 ? Math.max(0, browser.columnWidth(column, row.width) - 12) : 0
+                            visible: column >= 0
                             anchors.verticalCenter: parent.verticalCenter
                             text: browser.columnText(row.modelData, "album")
                             elide: Text.ElideRight
@@ -973,9 +1029,10 @@ Pane {
                         }
                         Label {
                             objectName: "collectionCell_title_" + row.index
-                            x: browser.columnX(2, row.width) + 6
-                            width: Math.max(0, browser.columnWidth(2, row.width) - 12)
-                            visible: browser.columnId(2) === "title"
+                            readonly property int column: browser.columnIndexOf("title")
+                            x: column >= 0 ? browser.columnX(column, row.width) + 6 : 0
+                            width: column >= 0 ? Math.max(0, browser.columnWidth(column, row.width) - 12) : 0
+                            visible: column >= 0
                             anchors.verticalCenter: parent.verticalCenter
                             text: browser.columnText(row.modelData, "title")
                             elide: Text.ElideRight
@@ -984,9 +1041,10 @@ Pane {
                         }
                         Label {
                             objectName: "collectionCell_time_" + row.index
-                            x: browser.columnX(3, row.width) + 6
-                            width: Math.max(0, browser.columnWidth(3, row.width) - 12)
-                            visible: browser.columnId(3) === "time"
+                            readonly property int column: browser.columnIndexOf("time")
+                            x: column >= 0 ? browser.columnX(column, row.width) + 6 : 0
+                            width: column >= 0 ? Math.max(0, browser.columnWidth(column, row.width) - 12) : 0
+                            visible: column >= 0
                             anchors.verticalCenter: parent.verticalCenter
                             text: browser.columnText(row.modelData, "time")
                             horizontalAlignment: Text.AlignRight
@@ -995,9 +1053,10 @@ Pane {
                         }
                         Label {
                             objectName: "collectionCell_bpm_" + row.index
-                            x: browser.columnX(4, row.width) + 6
-                            width: Math.max(0, browser.columnWidth(4, row.width) - 12)
-                            visible: browser.columnId(4) === "bpm"
+                            readonly property int column: browser.columnIndexOf("bpm")
+                            x: column >= 0 ? browser.columnX(column, row.width) + 6 : 0
+                            width: column >= 0 ? Math.max(0, browser.columnWidth(column, row.width) - 12) : 0
+                            visible: column >= 0
                             anchors.verticalCenter: parent.verticalCenter
                             text: browser.columnText(row.modelData, "bpm")
                             horizontalAlignment: Text.AlignRight
@@ -1006,9 +1065,10 @@ Pane {
                         }
                         Label {
                             objectName: "collectionCell_key_" + row.index
-                            x: browser.columnX(5, row.width) + 6
-                            width: Math.max(0, browser.columnWidth(5, row.width) - 12)
-                            visible: browser.columnId(5) === "key"
+                            readonly property int column: browser.columnIndexOf("key")
+                            x: column >= 0 ? browser.columnX(column, row.width) + 6 : 0
+                            width: column >= 0 ? Math.max(0, browser.columnWidth(column, row.width) - 12) : 0
+                            visible: column >= 0
                             anchors.verticalCenter: parent.verticalCenter
                             text: browser.columnText(row.modelData, "key")
                             horizontalAlignment: Text.AlignRight

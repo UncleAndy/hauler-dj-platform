@@ -373,6 +373,9 @@ bool LayoutSettings::load()
     }
     m_collectionRoots = normalisedRoots(roots);
     // The columns the file knows, in the order it has them; anything missing joins at the end.
+    // The defaults are what a file without a setting means, so the file's own columns replace them
+    // rather than joining them: six defaults plus six saved is still six, and the defaults would win.
+    m_columns.clear();
     const QJsonValue storedColumns = root.value(QStringLiteral("collection_columns"));
     if (storedColumns.isArray()) {
         for (const QJsonValue &value : storedColumns.toArray()) {

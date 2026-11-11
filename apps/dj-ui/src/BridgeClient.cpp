@@ -223,13 +223,13 @@ void FileBrowser::rememberFolder(const QString &folder)
     if (folder.isEmpty()) {
         return;
     }
-    // Only the file list follows: the collection is a place the DJ chose, and a load from it must not
-    // move him into the folder of the track he just took out of it.
-    if (m_mode == QLatin1String("files")) {
-        load(folder);
+    // A track taken out of the collection lives in the collection: its folder is not where the DJ was
+    // browsing, and the file list must stay where he left it. In the file list a load does move the
+    // list — that is how browsing follows what the DJ takes out of a folder he just opened.
+    if (m_mode != QLatin1String("files")) {
         return;
     }
-    m_filesFolder = QDir(folder).absolutePath();
+    load(folder);
 }
 
 void FileBrowser::collect(const QStringList &roots)

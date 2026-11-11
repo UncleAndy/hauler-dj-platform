@@ -4373,6 +4373,33 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         return 1;
     }
     const double artistWidth = before.at(0).toMap().value(QStringLiteral("width")).toDouble();
+    // First with the mouse, on the edge between two columns: a splitter nobody can grab is a
+    // splitter that does not exist, and only a real event proves the header catches it.
+    QQuickItem *headerItem = findItem(window->contentItem(), QStringLiteral("collectionHeader"));
+    if (headerItem == nullptr || headerItem->width() < 100.0) {
+        std::fprintf(stderr, "dj-ui: the header is not on screen to drag\n");
+        return 1;
+    }
+    const QPointF edge =
+        headerItem->mapToScene(QPointF(headerItem->width() * artistWidth, headerItem->height() / 2.0));
+    const QPointF pulled = edge + QPointF(40.0, 0.0);
+    for (const auto &step : {std::make_pair(QEvent::MouseButtonPress, edge),
+                             std::make_pair(QEvent::MouseMove, pulled),
+                             std::make_pair(QEvent::MouseButtonRelease, pulled)}) {
+        const Qt::MouseButtons buttons =
+            step.first == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton;
+        QMouseEvent event(step.first, step.second, window->mapToGlobal(step.second.toPoint()),
+                          Qt::LeftButton, buttons, Qt::NoModifier);
+        QCoreApplication::sendEvent(window, &event);
+    }
+    QCoreApplication::processEvents();
+    const double dragged = layout.collectionColumns().at(0).toMap().value(QStringLiteral("width")).toDouble();
+    std::fprintf(stdout, "dj-ui: the edge dragged the artist column from %.2f to %.2f\n",
+                 artistWidth, dragged);
+    if (dragged <= artistWidth + 0.01) {
+        std::fprintf(stderr, "dj-ui: the mouse did not move the column edge\n");
+        return 1;
+    }
     layout.setCollectionColumnWidth(QStringLiteral("artist"), artistWidth + 0.05);
     layout.moveCollectionColumn(QStringLiteral("key"), 0);
     QCoreApplication::processEvents();
@@ -4417,6 +4444,47 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
                  qPrintable(storedFirst), storedWidth);
     if (storedFirst != QStringLiteral("key") || qAbs(storedWidth - widened) > 1e-6) {
         std::fprintf(stderr, "dj-ui: the arrangement was not saved as it was set\n");
+        return 1;
+    }
+
+    // A table must not empty itself when a column moves: each cell belongs to its column, so the
+    // title stays where the title column went.
+    QQuickItem *titleCell = byName(window->contentItem(), QStringLiteral("collectionCell_title_0"));
+    if (titleCell == nullptr || !titleCell->isVisible()
+        || titleCell->property("text").toString().isEmpty()) {
+        std::fprintf(stderr, "dj-ui: the row went blank after the column moved\n");
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: the row still reads \"%s\" after the move\n",
+                 qPrintable(titleCell->property("text").toString()));
+
+    // And the arrangement survives a restart: a second reader of the same file sees the same order.
+    LayoutSettings reloaded;
+    reloaded.setFile(layout.file());
+    if (!reloaded.load()) {
+        std::fprintf(stderr, "dj-ui: the saved layout could not be read back\n");
+        return 1;
+    }
+    const QVariantList reread = reloaded.collectionColumns();
+    const QString rereadFirst = reread.at(0).toMap().value(QStringLiteral("id")).toString();
+    const double rereadWidth = reread.at(1).toMap().value(QStringLiteral("width")).toDouble();
+    std::fprintf(stdout, "dj-ui: a restart reads -> %s first, artist %.2f\n", qPrintable(rereadFirst),
+                 rereadWidth);
+    if (rereadFirst != QStringLiteral("key") || qAbs(rereadWidth - widened) > 1e-6) {
+        std::fprintf(stderr, "dj-ui: the arrangement did not survive the restart\n");
+        return 1;
+    }
+
+    // A track taken out of the collection does not move the file list: the DJ was browsing a folder,
+    // and that folder is where he comes back to.
+    const QString collectionTrack = rows.at(0).toMap().value(QStringLiteral("path")).toString();
+    browser.rememberFolder(QFileInfo(collectionTrack).absolutePath());
+    browser.showFiles();
+    QCoreApplication::processEvents();
+    std::fprintf(stdout, "dj-ui: files after a collection load -> %s\n", qPrintable(browser.folder()));
+    if (browser.folder() != incoming.path()) {
+        std::fprintf(stderr, "dj-ui: the file list moved to %s instead of staying in %s\n",
+                     qPrintable(browser.folder()), qPrintable(incoming.path()));
         return 1;
     }
 
