@@ -3,19 +3,21 @@
 //! Проба ничего не меняет в источнике: она копирует файлы в отдельный каталог коллекции.
 //!
 //! ```text
-//! DJ_IMPORT_FROM=/path/to/music DJ_IMPORT_TO=/path/to/collection DJ_IMPORT_LIMIT=40 \
+//! DJ_IMPORT_FROM=/path/to/music DJ_IMPORT_TO=/path/to/collection \
+//!   DJ_IMPORT_LIMIT=40 DJ_IMPORT_THREADS=4 \
 //!   cargo test -p dj-library --test probe_import -- --nocapture
 //! ```
 //!
-//! `DJ_IMPORT_LIMIT` — сколько файлов взять (0 или не задано — все).
+//! `DJ_IMPORT_LIMIT` — сколько файлов взять (0 или не задано — все), `DJ_IMPORT_THREADS` — сколько
+//! работников у очереди (0 или не задано — по числу ядер).
 
 #![allow(clippy::expect_used)]
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use dj_library::import;
+use dj_library::queue::{Run, threads_for};
 
 const AUDIO: [&str; 4] = ["flac", "mp3", "wav", "ogg"];
 
@@ -49,6 +51,10 @@ fn probe_import() {
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(0);
+    let requested = std::env::var("DJ_IMPORT_THREADS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(0);
     let from = PathBuf::from(from);
     let to = PathBuf::from(to);
 
@@ -58,52 +64,75 @@ fn probe_import() {
     if limit > 0 {
         files.truncate(limit);
     }
-    println!("PROBE: {} файлов из {}", files.len(), from.display());
+    println!(
+        "PROBE: {} файлов из {} | потоков {}",
+        files.len(),
+        from.display(),
+        threads_for(requested)
+    );
 
     let started = Instant::now();
-    let mut repaired = 0;
-    let mut named_from_file = 0;
-    let mut failed = 0;
-    let mut per_file = Vec::new();
-    for (number, source) in files.iter().enumerate() {
-        let file_started = Instant::now();
-        match import(source, &to, 1_000 + number as u64 * 1_000) {
-            Ok(imported) => {
-                if imported.repaired {
-                    repaired += 1;
-                }
-                if imported.named_from_file {
-                    named_from_file += 1;
-                }
-                let ms = file_started.elapsed().as_millis();
-                per_file.push(ms);
-                println!(
-                    "IMPORT {} -> {} | теги «{}» — «{}» | починено {} | имя из файла {} | {ms} мс",
-                    source.display(),
-                    imported
-                        .path
-                        .strip_prefix(&to)
-                        .unwrap_or(&imported.path)
-                        .display(),
-                    imported.tags.artist,
-                    imported.tags.title,
-                    imported.repaired,
-                    imported.named_from_file,
-                );
-            }
-            Err(error) => {
-                failed += 1;
-                println!("IMPORT FAILED {} | {error}", source.display());
-            }
+    let run = Run::start(&to, files.clone(), requested, 1_000);
+    let mut ticks = 0_u32;
+    let mut last_share = -1.0_f64;
+    while run.progress().running {
+        std::thread::sleep(Duration::from_millis(250));
+        let progress = run.progress();
+        let share = (progress.share() * 100.0).round();
+        if share > last_share {
+            last_share = share;
+            ticks += 1;
+            println!(
+                "PROGRESS {}/{} ({share}%) | {}",
+                progress.finished(),
+                progress.total,
+                progress
+                    .current
+                    .as_ref()
+                    .and_then(|path| path.file_name())
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_default()
+            );
         }
     }
+    let report = run.join();
     let elapsed = started.elapsed().as_secs_f64();
-    per_file.sort_unstable();
-    let median = per_file.get(per_file.len() / 2).copied().unwrap_or(0);
-    let worst = per_file.last().copied().unwrap_or(0);
+
+    for imported in &report.imported {
+        println!(
+            "IMPORT {} -> {} | теги «{}» — «{}» | починено {} | имя из файла {}",
+            imported
+                .path
+                .parent()
+                .and_then(|parent| parent.file_name())
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            imported
+                .path
+                .strip_prefix(&to)
+                .unwrap_or(&imported.path)
+                .display(),
+            imported.tags.artist,
+            imported.tags.title,
+            imported.repaired,
+            imported.named_from_file,
+        );
+    }
+    for (path, reason) in &report.failures {
+        println!("IMPORT FAILED {} | {reason}", path.display());
+    }
+    let repaired = report.imported.iter().filter(|item| item.repaired).count();
+    let named = report
+        .imported
+        .iter()
+        .filter(|item| item.named_from_file)
+        .count();
     println!(
-        "PROBE summary: файлов {} | починено кодировок {repaired} | имя из файла {named_from_file} | отказов {failed} | {elapsed:.1} с на всё ({:.1} мс на файл, медиана {median} мс, худший {worst} мс)",
+        "PROBE summary: файлов {} | легло {} | починено кодировок {repaired} | имя из файла {named} | отказов {} | отменено {} | {elapsed:.1} с на всё ({:.1} мс на файл) | обновлений прогресса {ticks}",
         files.len(),
+        report.imported.len(),
+        report.failures.len(),
+        report.cancelled,
         elapsed * 1_000.0 / files.len().max(1) as f64
     );
 }
