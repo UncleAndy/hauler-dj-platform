@@ -26,5 +26,8 @@ undocumented_unsafe_blocks = "deny"
 signal-hook = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Writing tags back into the copy that lands in the collection (MIT, DJP-LIC-001): ID3v2 for MP3,
+# Vorbis comments for FLAC and OGG, atoms for MP4.
+lofty = "0.22"
 # Human-edited settings files: TOML keeps them readable and still typed.
 toml = "0.9"

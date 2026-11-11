@@ -11,11 +11,15 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 pub mod fingerprint;
+pub mod import;
 pub mod index;
+pub mod layout;
 pub mod meta;
 pub mod sidecar;
 pub mod store;
+pub mod tags;
 
+pub use import::{ImportError, Imported, import};
 pub use index::{Index, IndexError, TrackRow};
 pub use meta::{Anchor, BeatGrid, Cue, Fingerprint, Loop, SCHEMA, TrackMeta};
 pub use sidecar::MetaError;

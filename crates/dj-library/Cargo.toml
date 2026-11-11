@@ -13,12 +13,9 @@ serde_json.workspace = true
 # The index is a cache over portable metadata (DJP-DATA-006): SQLite for queries, bundled so the
 # build does not depend on a system libsqlite3.
 rusqlite = { version = "0.32", features = ["bundled"] }
-
-[dev-dependencies]
-# The probe reads tags (symphonia), decodes (dj-codec) and fingerprints (dj-fingerprint); the import
-# itself will need the same three, so they are not test-only in spirit.
-dj-codec = { path = "../dj-codec" }
-dj-fingerprint = { path = "../dj-fingerprint" }
+# Writing tags back into the copy that lands in the collection (MIT, DJP-LIC-001).
+lofty.workspace = true
+# The import reads tags in production code, not only in the probe.
 symphonia = { version = "0.6", default-features = false, features = [
     "wav",
     "flac",
@@ -33,6 +30,11 @@ symphonia = { version = "0.6", default-features = false, features = [
     "id3v1",
     "ape",
 ] }
+
+[dev-dependencies]
+# The probe decodes and fingerprints; the import itself does not (yet).
+dj-codec = { path = "../dj-codec" }
+dj-fingerprint = { path = "../dj-fingerprint" }
 
 [lints]
 workspace = true
