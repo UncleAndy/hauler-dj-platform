@@ -85,6 +85,18 @@ pub struct Loop {
     pub end: u64,
 }
 
+/// The names a file was imported under, so a collection list shows them without decoding anything:
+/// the file name carries the artist and the title, but never the album.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileTags {
+    #[serde(default)]
+    pub artist: String,
+    #[serde(default)]
+    pub album: String,
+    #[serde(default)]
+    pub title: String,
+}
+
 /// Everything the metadata file holds.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TrackMeta {
@@ -121,6 +133,10 @@ pub struct TrackMeta {
     /// way is not a duplicate on the next addition.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub variant: Option<String>,
+    /// The tags the import read, so the browser can list a collection by artist, album and title
+    /// (DJP-MEDIA-004). An older record has none: the file name still says most of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<FileTags>,
     /// Fields written by a newer build are carried through, not dropped: an old version must not
     /// erase what it does not understand.
     #[serde(flatten)]
@@ -226,6 +242,7 @@ impl TrackMeta {
             notes: None,
             analysis_lock: false,
             variant: None,
+            tags: None,
             extra: BTreeMap::new(),
         }
     }

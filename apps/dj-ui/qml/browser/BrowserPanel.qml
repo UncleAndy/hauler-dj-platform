@@ -88,6 +88,15 @@ Pane {
         browser.lastAction = "import " + paths.length + " into " + LayoutState.roomiestRoot();
     }
 
+    /// A length in milliseconds as a DJ reads it: `3:21`. Empty when nothing measured it.
+    function clock(ms) {
+        if (!(ms > 0)) {
+            return "";
+        }
+        const seconds = Math.round(ms / 1000);
+        return Math.floor(seconds / 60) + ":" + ("0" + (seconds % 60)).slice(-2);
+    }
+
     /// One line of facts for the duplicate dialog: what the two copies are, in numbers a DJ reads.
     function factsLine(facts) {
         if (facts === undefined || facts === null) {
@@ -647,6 +656,81 @@ Pane {
                 }
             }
 
+            // The collection's columns, named: a row of numbers with no header is a puzzle. The file
+            // name is not among them — a DJ looks for the artist, the album and the title.
+            Item {
+                objectName: "collectionHeader"
+                visible: browser.section === "collection"
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.round(browser.rowHeight * 0.85)
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 6
+                    anchors.rightMargin: 6
+                    spacing: 8
+                    // Six labels, not a Repeater over an array of objects: a header is six fixed
+                    // words, and a table whose header is built by a model is a table with one more
+                    // thing that can fail.
+                    Label {
+                        objectName: "collectionHeaderArtist"
+                        text: qsTr("Исполнитель")
+                        Layout.preferredWidth: list.width * 0.22
+                        Layout.maximumWidth: list.width * 0.22
+                        color: UiSettings.themeTextDim
+                        font.pixelSize: browser.listFont
+                        elide: Text.ElideRight
+                    }
+                    Label {
+                        objectName: "collectionHeaderAlbum"
+                        text: qsTr("Альбом")
+                        Layout.preferredWidth: list.width * 0.20
+                        Layout.maximumWidth: list.width * 0.20
+                        color: UiSettings.themeTextDim
+                        font.pixelSize: browser.listFont
+                        elide: Text.ElideRight
+                    }
+                    Label {
+                        objectName: "collectionHeaderTitle"
+                        text: qsTr("Название")
+                        Layout.preferredWidth: list.width * 0.30
+                        Layout.maximumWidth: list.width * 0.30
+                        color: UiSettings.themeTextDim
+                        font.pixelSize: browser.listFont
+                        elide: Text.ElideRight
+                    }
+                    Label {
+                        objectName: "collectionHeaderTime"
+                        text: qsTr("Время")
+                        horizontalAlignment: Text.AlignRight
+                        Layout.preferredWidth: list.width * 0.08
+                        Layout.maximumWidth: list.width * 0.08
+                        color: UiSettings.themeTextDim
+                        font.pixelSize: browser.listFont
+                        elide: Text.ElideRight
+                    }
+                    Label {
+                        objectName: "collectionHeaderBpm"
+                        text: qsTr("BPM")
+                        horizontalAlignment: Text.AlignRight
+                        Layout.preferredWidth: list.width * 0.07
+                        Layout.maximumWidth: list.width * 0.07
+                        color: UiSettings.themeTextDim
+                        font.pixelSize: browser.listFont
+                        elide: Text.ElideRight
+                    }
+                    Label {
+                        objectName: "collectionHeaderKey"
+                        text: qsTr("Key")
+                        horizontalAlignment: Text.AlignRight
+                        Layout.preferredWidth: list.width * 0.05
+                        Layout.maximumWidth: list.width * 0.05
+                        color: UiSettings.themeTextDim
+                        font.pixelSize: browser.listFont
+                        elide: Text.ElideRight
+                    }
+                }
+            }
+
             ListView {
                 id: list
                 objectName: "browserList"
@@ -687,27 +771,78 @@ Pane {
                                                      : (row.index % 2 === 0 ? UiSettings.themePanel
                                                                             : UiSettings.themeBackground))
 
-                    Label {
-                        id: rowMeta
-                        objectName: "browserMeta_" + row.index
-                        anchors.right: parent.right
+                    // A collection row is about the track, not about the file: artist, album, title,
+                    // how long it plays, its tempo and its key. The file name says none of that.
+                    RowLayout {
+                        objectName: "collectionRow_" + row.index
+                        anchors.fill: parent
+                        anchors.leftMargin: 6
                         anchors.rightMargin: 6
-                        anchors.verticalCenter: parent.verticalCenter
-                        // Tempo and key travel with the file in its metadata; a collection row that
-                        // shows neither makes the DJ open the track to learn what he already owns.
-                        readonly property var tempo: row.modelData.bpm
-                        readonly property var key: row.modelData.key
-                        text: browser.section !== "collection" ? ""
-                              : [tempo === undefined ? "" : Math.round(tempo) + " BPM",
-                                 key === undefined ? "" : key]
-                                .filter(part => part.length > 0).join(" · ")
-                        color: UiSettings.themeWaveOutline
-                        font.pixelSize: browser.listFont
+                        spacing: 8
+                        visible: browser.section === "collection" && !row.isFolder
+
+                        Label {
+                            objectName: "collectionArtist_" + row.index
+                            Layout.preferredWidth: list.width * 0.22
+                            Layout.maximumWidth: list.width * 0.22
+                            text: row.modelData.artist !== undefined ? row.modelData.artist : ""
+                            elide: Text.ElideRight
+                            font.pixelSize: browser.listFont
+                            color: row.current ? UiSettings.themePlayhead : UiSettings.themeText
+                        }
+                        Label {
+                            objectName: "collectionAlbum_" + row.index
+                            Layout.preferredWidth: list.width * 0.20
+                            Layout.maximumWidth: list.width * 0.20
+                            text: row.modelData.album !== undefined ? row.modelData.album : ""
+                            elide: Text.ElideRight
+                            font.pixelSize: browser.listFont
+                            color: row.current ? UiSettings.themePlayhead : UiSettings.themeTextDim
+                        }
+                        Label {
+                            objectName: "collectionTitle_" + row.index
+                            Layout.preferredWidth: list.width * 0.30
+                            Layout.maximumWidth: list.width * 0.30
+                            text: row.modelData.title !== undefined ? row.modelData.title : ""
+                            elide: Text.ElideRight
+                            font.pixelSize: browser.listFont
+                            color: row.current ? UiSettings.themePlayhead : UiSettings.themeText
+                        }
+                        Label {
+                            objectName: "collectionTime_" + row.index
+                            Layout.preferredWidth: list.width * 0.08
+                            Layout.maximumWidth: list.width * 0.08
+                            text: browser.clock(row.modelData.duration_ms)
+                            horizontalAlignment: Text.AlignRight
+                            font.pixelSize: browser.listFont
+                            color: row.current ? UiSettings.themePlayhead : UiSettings.themeTextDim
+                        }
+                        Label {
+                            objectName: "collectionBpm_" + row.index
+                            Layout.preferredWidth: list.width * 0.07
+                            Layout.maximumWidth: list.width * 0.07
+                            text: row.modelData.bpm !== undefined ? Math.round(row.modelData.bpm) : ""
+                            horizontalAlignment: Text.AlignRight
+                            font.pixelSize: browser.listFont
+                            color: row.current ? UiSettings.themePlayhead : UiSettings.themeTextDim
+                        }
+                        Label {
+                            objectName: "collectionKey_" + row.index
+                            Layout.preferredWidth: list.width * 0.05
+                            Layout.maximumWidth: list.width * 0.05
+                            text: row.modelData.key !== undefined ? row.modelData.key : ""
+                            horizontalAlignment: Text.AlignRight
+                            font.pixelSize: browser.listFont
+                            color: row.current ? UiSettings.themePlayhead : UiSettings.themeTextDim
+                        }
                     }
                     Label {
+                        // The folder list keeps the names it has: a file is a file, and its name is
+                        // how a DJ recognises it there.
+                        visible: browser.section !== "collection"
                         anchors.left: parent.left
                         anchors.leftMargin: 6
-                        anchors.right: rowMeta.text.length > 0 ? rowMeta.left : parent.right
+                        anchors.right: parent.right
                         anchors.rightMargin: 6
                         anchors.verticalCenter: parent.verticalCenter
                         // ".." is the way up and is written as such: no folder arrow, because it is

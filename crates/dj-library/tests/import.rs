@@ -40,6 +40,26 @@ fn tagged_copy(root: &Path, artist: &str, title: &str) -> PathBuf {
 }
 
 #[test]
+fn the_record_carries_the_names_the_copy_was_filed_under() {
+    let root = scratch("names");
+    let source = tagged_copy(&root, "Moderat", "A New Error");
+    // The album is in the tags and nowhere in the file name, so the record is the only place the
+    // browser can read it from.
+    let mut written = tags::read(&source).expect("теги");
+    written.album = "Moderat".to_owned();
+    assert!(tags::write(&source, &written).expect("альбом"));
+
+    let collection = root.join("collection");
+    let imported = import(&source, &collection, 1_000).expect("импорт");
+    let record = sidecar::read(&imported.meta).expect("запись");
+    let names = record.tags.expect("имена в записи");
+    assert_eq!(names.artist, "Moderat");
+    assert_eq!(names.album, "Moderat");
+    assert_eq!(names.title, "A New Error");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
 fn a_track_lands_where_its_tags_say() {
     let root = scratch("layout");
     let source = tagged_copy(&root, "Abba", "Dancing Queen");

@@ -870,7 +870,7 @@ int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socket
 // Split out of main: a function of ten thousand lines loses its debug information, and GCC says so
 // (`variable tracking size limit exceeded`). The checks are the tests; they read better named.
 static int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
-                          LayoutSettings &layout, UiSettings &settings, Waveform &waveform)
+                          LayoutSettings &layout)
 {
     // A list you cannot pick from is a picture of a list, so the check goes through the same
     // function the mouse does: select a track, activate it, read what the panel says happened.
@@ -2789,7 +2789,6 @@ static int runLoop(QQmlApplicationEngine &engine,
 // function is where a failure is read.
 static int runEqCheck(QQmlApplicationEngine &engine,
                       std::unique_ptr<BridgeClient> &bridge,
-                      SessionState &session,
                       QCommandLineParser &parser,
                       const QCommandLineOption &connectOption)
 {
@@ -3225,8 +3224,6 @@ static int runEqCheck(QQmlApplicationEngine &engine,
 // function is where a failure is read.
 static int runGridLines(QQmlApplicationEngine &engine,
                         std::unique_ptr<BridgeClient> &bridge,
-                        UiSettings &settings,
-                        Waveform &waveform,
                         QCommandLineParser &parser,
                         const QCommandLineOption &connectOption,
                         const QCommandLineOption &loadOption)
@@ -4032,8 +4029,8 @@ static int runLayoutCheck(QQmlApplicationEngine &engine,
 /// The browser's way into the collection: pick rows, ask for the batch, confirm it, answer the
 /// duplicate question, and require the files to be in the collection. Runs against a real engine,
 /// because the import is the engine's work and a shell that only draws dialogs proves nothing.
-static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSettings &layout,
-                          BridgeClient &bridge, const QString &fixture, const QString &collectionRoot)
+static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
+                          const QString &fixture, const QString &collectionRoot)
 {
     if (fixture.isEmpty() || !QFile::exists(fixture)) {
         std::fprintf(stderr, "dj-ui: --import-check needs a real track in --import-fixture\n");
@@ -4286,6 +4283,77 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser, L
     std::fprintf(stdout, "dj-ui: the collection still holds %d files\n", afterSkip);
     if (afterSkip != 2) {
         std::fprintf(stderr, "dj-ui: skipping added something (%d files)\n", afterSkip);
+        return 1;
+    }
+
+    // The collection as the DJ sees it: artist, album, title, length, tempo and key — never the file
+    // name, which says nothing a DJ searches by.
+    browser.openCollection({collectionRoot});
+    QEventLoop settled;
+    QTimer::singleShot(300, &settled, &QEventLoop::quit);
+    settled.exec();
+    const QVariantList rows = browser.entries();
+    if (rows.size() != 2) {
+        std::fprintf(stderr, "dj-ui: the collection section lists %d rows, wanted 2\n",
+                     static_cast<int>(rows.size()));
+        return 1;
+    }
+    const QVariantMap row = rows.at(0).toMap();
+    const QString artist = row.value(QStringLiteral("artist")).toString();
+    const QString title = row.value(QStringLiteral("title")).toString();
+    const qint64 length = row.value(QStringLiteral("duration_ms")).toLongLong();
+    std::fprintf(stdout, "dj-ui: collection row -> %s | %s | %lld ms\n", qPrintable(artist),
+                 qPrintable(title), static_cast<long long>(length));
+    if (artist != QStringLiteral("A")) {
+        std::fprintf(stderr, "dj-ui: the collection row has no artist (%s)\n", qPrintable(artist));
+        return 1;
+    }
+    if (!title.startsWith(QStringLiteral("Track"))) {
+        std::fprintf(stderr, "dj-ui: the collection row has no title (%s)\n", qPrintable(title));
+        return 1;
+    }
+    if (length < 15000 || length > 25000) {
+        std::fprintf(stderr, "dj-ui: the collection row says %lld ms, wanted about 20000\n",
+                     static_cast<long long>(length));
+        return 1;
+    }
+    // And the window draws those columns, not the file name: a row of numbers with no artist on
+    // screen is the bug this check exists for.
+    // The rows are found in the visual tree: a ListView's delegates are not QObject children of the
+    // panel, so findChild on the panel would report a table that is on screen as missing.
+    const std::function<QQuickItem *(QQuickItem *, const QString &)> byName =
+        [&](QQuickItem *node, const QString &name) -> QQuickItem * {
+        if (node == nullptr) {
+            return nullptr;
+        }
+        if (node->objectName() == name) {
+            return node;
+        }
+        for (QQuickItem *child : node->childItems()) {
+            if (QQuickItem *found = byName(child, name)) {
+                return found;
+            }
+        }
+        return nullptr;
+    };
+    QQuickItem *artistLabel = byName(window->contentItem(), QStringLiteral("collectionArtist_0"));
+    QQuickItem *timeLabel = byName(window->contentItem(), QStringLiteral("collectionTime_0"));
+    QQuickItem *headerArtist = byName(window->contentItem(), QStringLiteral("collectionHeaderArtist"));
+    if (artistLabel == nullptr || timeLabel == nullptr || headerArtist == nullptr) {
+        std::fprintf(stderr,
+                     "dj-ui: the collection has no columns (mode %s, artist %d, time %d, header %d)\n",
+                     qPrintable(browser.mode()), artistLabel != nullptr, timeLabel != nullptr,
+                     headerArtist != nullptr);
+        return 1;
+    }
+    const QString shownArtist = artistLabel->property("text").toString();
+    const QString shownTime = timeLabel->property("text").toString();
+    std::fprintf(stdout, "dj-ui: collection columns -> \"%s\" %s, header \"%s\"\n",
+                 qPrintable(shownArtist), qPrintable(shownTime),
+                 qPrintable(headerArtist->property("text").toString()));
+    if (shownArtist != QStringLiteral("A") || shownTime != QStringLiteral("0:20")) {
+        std::fprintf(stderr, "dj-ui: the collection row shows \"%s\" %s\n", qPrintable(shownArtist),
+                     qPrintable(shownTime));
         return 1;
     }
 
@@ -7591,7 +7659,7 @@ int main(int argc, char *argv[])
     }
 
     if (parser.isSet(gridLinesOption)) {
-        return runGridLines(engine, bridge, settings, waveform, parser, connectOption, loadOption);
+        return runGridLines(engine, bridge, parser, connectOption, loadOption);
     }
 
     if (parser.isSet(gridCreateOption)) {
@@ -8101,7 +8169,7 @@ int main(int argc, char *argv[])
     }
 
     if (parser.isSet(eqCheckOption)) {
-        return runEqCheck(engine, bridge, session, parser, connectOption);
+        return runEqCheck(engine, bridge, parser, connectOption);
     }
 
 
@@ -9907,7 +9975,7 @@ int main(int argc, char *argv[])
     }
 
     if (parser.isSet(browserCheckOption)) {
-        return runBrowserCheck(engine, browser, layout, settings, waveform);
+        return runBrowserCheck(engine, browser, layout);
     }
 
     if (parser.isSet(importCheckOption)) {
@@ -9918,7 +9986,7 @@ int main(int argc, char *argv[])
             return 1;
         }
         bridge->connectToEngine(parser.value(connectOption));
-        return runImportCheck(engine, browser, layout, *bridge, parser.value(importFixtureOption),
+        return runImportCheck(engine, browser, parser.value(importFixtureOption),
                               parser.values(collectionRootOption).value(0));
     }
 

@@ -311,6 +311,13 @@ fn place(
         record.chromaprint = Some(meta::encode_print(&prepared.identity.chromaprint));
     }
     record.variant = variant.clone();
+    // The names the copy was filed under travel with it: the browser lists a collection by artist,
+    // album and title, and the album is nowhere in the file name.
+    record.tags = Some(meta::FileTags {
+        artist: prepared.tags.artist.clone(),
+        album: prepared.tags.album.clone(),
+        title: prepared.tags.title.clone(),
+    });
     let meta_path = sidecar::file_of(&target).ok_or_else(|| ImportError::Io {
         path: target.clone(),
         source: io::Error::other("the file has no name to hang metadata on"),

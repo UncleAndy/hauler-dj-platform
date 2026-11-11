@@ -859,6 +859,9 @@ fn run(argv: &[String]) -> Result<(), String> {
                             Err(message) => eprintln!("dj-engine: {message}"),
                         }
                     }
+                    // Names for a collection list: the tags are read here anyway, and an import from
+                    // before they travelled in the record has none of them.
+                    dj_engine::meta::write_names(&store, volume(), root(), &path);
                     // The key is worth keeping for the same reason: measuring it is a decode of the
                     // whole file. A key already in the file is left alone by the write.
                     if let Some(key) = prepared.track.as_ref().and_then(|track| track.key.clone())

@@ -17,6 +17,8 @@
 | окно дубля | обе копии с числами: `WAV · lossless · 48.0 kHz · 768 kbps · 0:20 · 1.8 MB` |
 | «Добавить с меткой» | `2 of 2, 2 placed, 0 skipped, 0 failed`, в коллекции два файла |
 | один файл | окна подтверждения нет, пачка идёт, ответ «Пропустить» ничего не добавляет |
+| колонки коллекции | строка модели `A \| Track \| 20000 ms`, на экране `"A"` и `0:20`, шапка `Исполнитель` |
+| имена в записи | `dj-library/tests/import.rs`: `tags.artist`/`tags.album`/`tags.title` в `.djmeta` после импорта |
 
 Тесты: `apps/dj-engine/tests/import.rs` — `a_duplicate_is_asked_about_and_the_answer_is_obeyed`,
 `a_stopped_batch_takes_no_more_files`.

@@ -231,6 +231,45 @@ pub fn write_beatgrid(
         .map_err(|error| error.to_string())
 }
 
+/// Fill the names a collection list reads, once per file.
+///
+/// An import from before the names travelled in the record has none, and a list that shows an empty
+/// album forever is a list nobody uses. The tags are read once and kept beside the file.
+pub fn write_names(store: &Store, volume: &str, root: &Path, path: &Path) -> bool {
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or_default();
+    let (mut meta, existed) = match store.load(volume, root, path) {
+        Ok(loaded) => (loaded.meta, true),
+        Err(_) => {
+            let Ok(print) = fingerprint::of_path(path) else {
+                return false;
+            };
+            (TrackMeta::new(print, now_ms), false)
+        }
+    };
+    if meta.tags.is_some() {
+        return false;
+    }
+    let Ok(tags) = dj_library::tags::read(path) else {
+        return false;
+    };
+    if tags.artist.trim().is_empty() && tags.title.trim().is_empty() && tags.album.trim().is_empty()
+    {
+        return false;
+    }
+    meta.tags = Some(dj_library::meta::FileTags {
+        artist: tags.artist,
+        album: tags.album,
+        title: tags.title,
+    });
+    if existed {
+        meta.bump(now_ms);
+    }
+    store.save(volume, root, path, &meta).is_ok()
+}
+
 /// Store the measured key, unless the file already carries one.
 ///
 /// A key already in the file is a decision — the DJ's ear, or another program's — and a detector does

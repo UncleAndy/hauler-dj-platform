@@ -238,7 +238,12 @@ void FileBrowser::collect(const QStringList &roots)
                 continue;
             }
             seen.insert(info.absoluteFilePath());
-            // The import names the copy from the tags, so the file name is the name to show.
+            // A collection row is about the track, not about the file: artist, album, title, how long
+            // it plays, its tempo and its key. The file name is none of those and is not shown.
+            QString artist;
+            QString album;
+            QString title;
+            qint64 durationMs = 0;
             QVariantMap entry{{QStringLiteral("name"), info.completeBaseName()},
                               {QStringLiteral("path"), info.absoluteFilePath()},
                               {QStringLiteral("dir"), false}};
@@ -259,7 +264,35 @@ void FileBrowser::collect(const QStringList &roots)
                 if (bpm > 0.0) {
                     entry.insert(QStringLiteral("bpm"), bpm);
                 }
+                // The names the import filed the copy under; an older record has none of them.
+                const QJsonObject names = object.value(QStringLiteral("tags")).toObject();
+                artist = names.value(QStringLiteral("artist")).toString();
+                album = names.value(QStringLiteral("album")).toString();
+                title = names.value(QStringLiteral("title")).toString();
+                // Frames and the rate that gives them meaning: the length without decoding again.
+                const QJsonObject print = object.value(QStringLiteral("fingerprint")).toObject();
+                const double rate = print.value(QStringLiteral("sample_rate")).toDouble();
+                const double frames = print.value(QStringLiteral("duration_frames")).toDouble();
+                if (rate > 0.0 && frames > 0.0) {
+                    durationMs = static_cast<qint64>(frames * 1000.0 / rate + 0.5);
+                }
             }
+            // The import names the copy `<artist> - <title>`, so a record written before the names
+            // travelled still says most of what a row needs.
+            if (artist.isEmpty() && title.isEmpty()) {
+                const QString stem = info.completeBaseName();
+                const int dash = stem.indexOf(QStringLiteral(" - "));
+                if (dash > 0) {
+                    artist = stem.left(dash);
+                    title = stem.mid(dash + 3);
+                } else {
+                    title = stem;
+                }
+            }
+            entry.insert(QStringLiteral("artist"), artist);
+            entry.insert(QStringLiteral("album"), album);
+            entry.insert(QStringLiteral("title"), title);
+            entry.insert(QStringLiteral("duration_ms"), durationMs);
             tracks.append(entry);
         }
     }
@@ -291,7 +324,17 @@ void FileBrowser::applyFilter()
     QVariantList kept;
     const QString needle = m_filter.toLower();
     for (const QVariant &entry : std::as_const(m_all)) {
-        if (entry.toMap().value(QStringLiteral("name")).toString().toLower().contains(needle)) {
+        // A DJ searches for what he knows: the artist, the album, the title — and the file name for
+        // the tracks that came in without tags.
+        const QVariantMap fields = entry.toMap();
+        bool hit = false;
+        for (const char *field : {"artist", "album", "title", "name"}) {
+            if (fields.value(QLatin1String(field)).toString().toLower().contains(needle)) {
+                hit = true;
+                break;
+            }
+        }
+        if (hit) {
             kept.append(entry);
         }
     }
