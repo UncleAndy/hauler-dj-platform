@@ -426,6 +426,37 @@ fn the_worse_copy_goes_to_duplicates_and_the_collection_stays() {
 }
 
 #[test]
+fn replacing_a_worse_copy_is_the_djs_choice() {
+    // The numbers say the copy in the collection is better. The DJ was shown both and said "replace":
+    // the import obeys the hand, not the measurement, and the old copy is kept in `_duplicates/`.
+    let root = scratch("replace-choice");
+    let collection = root.join("collection");
+    let better = tagged(&root, "A - Track 44k.wav", "A", "Track", 30, 220.0, 44_100);
+    // The same melody at half the rate: the same recording, and the worse copy by the numbers.
+    let worse = tagged(&root, "A - Track 22k.wav", "A", "Track", 30, 220.0, 22_050);
+
+    let Outcome::Placed(placed) =
+        import_checked(&better, &collection, 1_000, find_in(&Catalog::new()), Policy::Ask)
+            .expect("первый")
+    else {
+        panic!("первый не лёг");
+    };
+    let catalog = catalogue(&placed.path, &placed.identity);
+    let outcome = import_checked(&worse, &collection, 2_000, find_in(&catalog), Policy::Replace)
+        .expect("замена");
+    match outcome {
+        Outcome::Replaced { imported, rejected, .. } => {
+            assert!(imported.path.exists(), "нового файла нет в коллекции");
+            assert!(!rejected.exists() || rejected.starts_with(collection.join("_duplicates")),
+                    "старая копия не уехала в _duplicates: {}", rejected.display());
+            assert!(!placed.path.exists(), "старая копия осталась в коллекции");
+        }
+        other => panic!("замена не произошла: {other:?}"),
+    }
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
 fn keeping_both_marks_the_second_copy_as_a_variant() {
     let root = scratch("both");
     let collection = root.join("collection");

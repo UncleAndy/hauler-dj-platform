@@ -400,6 +400,25 @@ pub enum DjCommand {
         /// What to do to the grid.
         edit: GridEdit,
     },
+    /// Add files and folders to the collection (DJP-MEDIA-004).
+    ///
+    /// The engine does the work: the collection is written by one process, and the browser only says
+    /// what the DJ picked. Progress and the duplicate question travel back in the snapshot.
+    Import {
+        /// Files and folders, as the browser spells them.
+        paths: Vec<String>,
+        /// The collection root to add them to.
+        root: String,
+        /// Run the batch on several workers.
+        parallel: bool,
+    },
+    /// Stop the running import between files: the file in hand is finished.
+    ImportCancel,
+    /// Answer the duplicate question the engine is waiting on.
+    ImportAnswer {
+        /// What to do with the file in question.
+        answer: DuplicateAnswer,
+    },
     /// Return a deck to `Empty` and stop it.
     Eject {
         /// Target deck.
@@ -635,6 +654,9 @@ impl DjCommand {
             | DjCommand::Load { .. }
             | DjCommand::AnalyzeTempo { .. }
             | DjCommand::EditGrid { .. }
+            | DjCommand::Import { .. }
+            | DjCommand::ImportCancel
+            | DjCommand::ImportAnswer { .. }
             | DjCommand::Eject { .. } => true,
             DjCommand::SetTempoRatio { .. }
             | DjCommand::Nudge { .. }
@@ -1103,6 +1125,80 @@ pub struct Waveform {
     pub sample_rate: u32,
 }
 
+/// What the DJ answered when the file offered turned out to be the same recording as one already in
+/// the collection (DJP-MEDIA-005).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DuplicateAnswer {
+    /// Keep the copy already there; the new file is not added.
+    Skip,
+    /// Put the new file in place of the old one; the old one goes to `_duplicates/`.
+    Replace,
+    /// Keep both, without a marker: the pair is a duplicate again on the next addition.
+    Add,
+    /// Keep both and mark the new copy as a variant, so the pair is not a duplicate again.
+    AddMarked,
+}
+
+/// What a client needs to judge a duplicate: the file offered and the one already in the collection.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TrackFacts {
+    /// Path as the engine has it.
+    pub path: String,
+    /// Name without the extension.
+    pub name: String,
+    /// Container as the decoder named it, e.g. `FLAC` or `MP3`.
+    pub format: String,
+    /// Sample rate in hertz.
+    pub sample_rate: u32,
+    /// Bits per sample, zero when the container does not say.
+    #[serde(default)]
+    pub bits: u32,
+    /// Average bitrate in kilobits per second, zero when it cannot be computed.
+    #[serde(default)]
+    pub bitrate_kbps: f64,
+    /// Duration in milliseconds.
+    pub duration_ms: u64,
+    /// Size in bytes.
+    pub size_bytes: u64,
+    /// True when the format keeps every sample.
+    pub lossless: bool,
+}
+
+/// The question the engine asks when a duplicate needs the DJ's decision.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DuplicateQuestion {
+    /// The file the DJ is adding.
+    pub incoming: TrackFacts,
+    /// The file already in the collection.
+    pub existing: TrackFacts,
+    /// How much the two fingerprints agree, 0…1.
+    pub agreement: f32,
+}
+
+/// State of the import the DJ started from the browser (DJP-MEDIA-004, DJP-MEDIA-005).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImportState {
+    /// Files the batch will try.
+    pub total: usize,
+    /// Files already decided.
+    pub done: usize,
+    /// Files added to the collection.
+    pub placed: usize,
+    /// Files left out because they were already there.
+    pub skipped: usize,
+    /// Files that could not be read.
+    pub failed: usize,
+    /// True while the batch is running.
+    pub running: bool,
+    /// The file being worked on, when there is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current: Option<String>,
+    /// The question waiting for an answer, when the batch is paused on one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question: Option<DuplicateQuestion>,
+}
+
 /// Read-only state published to the UI and controllers (DJP-ARCH-004).
 ///
 /// `revision` grows monotonically and `epoch` changes when the engine restarts, so a
@@ -1143,6 +1239,12 @@ pub struct Snapshot {
     pub cache_budget_bytes: u64,
     /// One entry per deck.
     pub decks: Vec<DeckSnapshot>,
+    /// The import the DJ started from the browser, while it runs or while it waits for an answer.
+    ///
+    /// Absent when nothing was imported since the engine started: a client that knows nothing about
+    /// imports is not a protocol error.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import: Option<ImportState>,
 }
 
 #[cfg(test)]

@@ -26,6 +26,9 @@ pub enum Policy {
     Ask,
     /// Keep the better copy: the loser goes to `_duplicates/`, whichever of the two it is.
     ReplaceIfBetter,
+    /// Keep the new copy, whatever the numbers say: the DJ was shown both and chose this one. The copy
+    /// already in the collection goes to `_duplicates/`.
+    Replace,
     /// Keep both: the new file lands with a suffix and is marked as a variant.
     KeepBoth,
 }
@@ -172,6 +175,16 @@ pub fn import_checked(
                     variant: Some(marker),
                     ..imported
                 }))
+            }
+            Policy::Replace => {
+                // No comparison: the question was asked and answered, and the answer was this file.
+                let rejected = retire(root, &existing)?;
+                let imported = place(source, root, prepared, now_ms, None)?;
+                Ok(Outcome::Replaced {
+                    imported,
+                    rejected,
+                    verdict,
+                })
             }
             Policy::ReplaceIfBetter => {
                 let candidate_quality = Quality::of(&prepared.identity);

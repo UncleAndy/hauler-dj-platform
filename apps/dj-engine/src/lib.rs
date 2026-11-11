@@ -380,6 +380,7 @@ pub fn snapshot(
     let mut published_decks: Vec<DeckSnapshot> = decks.iter().map(Deck::snapshot).collect();
     fill_phase_errors(&mut published_decks, beats_per_bar(decks));
     Snapshot {
+        import: None,
         protocol: dj_domain::STATE_PROTOCOL.to_string(),
         // A snapshot taken from the mixer alone says nothing about the loader's cache.
         cache_budget_bytes: 0,
@@ -1360,6 +1361,7 @@ impl StateCells {
             }
         }
         Snapshot {
+            import: None,
             protocol: dj_domain::STATE_PROTOCOL.to_string(),
             cache_budget_bytes: self.cache_budget.load(Ordering::Relaxed),
             revision,

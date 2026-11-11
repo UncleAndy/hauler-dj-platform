@@ -175,6 +175,11 @@ impl Engine {
         let status = match scheduled.command {
             // The A01 renderer holds one tone and no beat: a deck to follow or to lead does not exist
             // here, and saying so is better than pretending the flag did something.
+            // The library is not the audio engine's business: this renderer holds one tone and no
+            // collection, and the import is run by the engine process itself.
+            DjCommand::Import { .. } | DjCommand::ImportCancel | DjCommand::ImportAnswer { .. } => {
+                Some(Ack::rejected(command_id, RejectReason::NotSupported))
+            }
             DjCommand::Sync { .. } | DjCommand::Master { .. } | DjCommand::MasterOff => Some(Ack {
                 command_id,
                 status: AckStatus::Rejected(RejectReason::NotSupported),
@@ -257,6 +262,7 @@ impl Engine {
     /// audio callback.
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
+            import: None,
             protocol: STATE_PROTOCOL.to_string(),
             // The A01 renderer has no cache: nothing is allowed and nothing is spent.
             cache_budget_bytes: 0,
