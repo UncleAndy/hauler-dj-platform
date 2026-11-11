@@ -33,6 +33,7 @@
 #include <QGuiApplication>
 #include <QPalette>
 #include <QDir>
+#include <QDirIterator>
 #include <QThread>
 #include <QMap>
 #include <QTemporaryDir>
@@ -4028,6 +4029,272 @@ static int runLayoutCheck(QQmlApplicationEngine &engine,
     return 0;
 }
 
+/// The browser's way into the collection: pick rows, ask for the batch, confirm it, answer the
+/// duplicate question, and require the files to be in the collection. Runs against a real engine,
+/// because the import is the engine's work and a shell that only draws dialogs proves nothing.
+static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSettings &layout,
+                          BridgeClient &bridge, const QString &fixture, const QString &collectionRoot)
+{
+    if (fixture.isEmpty() || !QFile::exists(fixture)) {
+        std::fprintf(stderr, "dj-ui: --import-check needs a real track in --import-fixture\n");
+        return 1;
+    }
+    if (collectionRoot.isEmpty()) {
+        std::fprintf(stderr, "dj-ui: --import-check needs --collection-root\n");
+        return 1;
+    }
+    QTemporaryDir incoming;
+    if (!incoming.isValid()) {
+        std::fprintf(stderr, "dj-ui: cannot make a temporary folder\n");
+        return 1;
+    }
+    // Two copies of one recording: the second is the duplicate the batch has to ask about.
+    const QString first = incoming.path() + QStringLiteral("/A - Track.wav");
+    const QString second = incoming.path() + QStringLiteral("/A - Track (copy).wav");
+    if (!QFile::copy(fixture, first) || !QFile::copy(fixture, second)) {
+        std::fprintf(stderr, "dj-ui: cannot copy %s twice\n", qPrintable(fixture));
+        return 1;
+    }
+
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    if (window == nullptr) {
+        std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+        return 1;
+    }
+    window->resize(1366, 768);
+    window->show();
+    browser.open(incoming.path());
+    QEventLoop settle;
+    QTimer::singleShot(600, &settle, &QEventLoop::quit);
+    settle.exec();
+
+    QQuickItem *panel = findItem(window->contentItem(), QStringLiteral("browserPanel"));
+    if (panel == nullptr) {
+        std::fprintf(stderr, "dj-ui: the shell has no browser\n");
+        return 1;
+    }
+    // The rows by path, not by position: the list may carry a way up and the order is the panel's.
+    const QVariantList entries = browser.entries();
+    int firstRow = -1;
+    int secondRow = -1;
+    for (int index = 0; index < entries.size(); ++index) {
+        const QString path = entries.at(index).toMap().value(QStringLiteral("path")).toString();
+        if (path == first) {
+            firstRow = index;
+        } else if (path == second) {
+            secondRow = index;
+        }
+    }
+    if (firstRow < 0 || secondRow < 0) {
+        std::fprintf(stderr, "dj-ui: the browser lists %d rows and not both copies\n",
+                     static_cast<int>(entries.size()));
+        return 1;
+    }
+
+    const auto choose = [&](int index, Qt::KeyboardModifiers modifiers) {
+        QVariant returned;
+        QMetaObject::invokeMethod(panel, "choose", Q_RETURN_ARG(QVariant, returned),
+                                  Q_ARG(QVariant, index),
+                                  Q_ARG(QVariant, static_cast<int>(modifiers)));
+    };
+    const auto askImport = [&]() {
+        QVariant returned;
+        QMetaObject::invokeMethod(panel, "askImport", Q_RETURN_ARG(QVariant, returned));
+        QCoreApplication::processEvents();
+        return returned.toBool();
+    };
+    // One reading of the state the engine published: what the panel draws comes from here.
+    const auto state = [&]() { return panel->property("importState").toMap(); };
+    const auto questionOpen = [&]() {
+        auto *dialog = panel->findChild<QObject *>(QStringLiteral("duplicateDialog"));
+        return dialog != nullptr && dialog->property("visible").toBool();
+    };
+    // Wait for the batch to stop, or give up: a batch that never ends is a hang, not a slow disk.
+    const auto waitDone = [&](int timeoutMs) {
+        QElapsedTimer clock;
+        clock.start();
+        while (clock.elapsed() < timeoutMs) {
+            QCoreApplication::processEvents();
+            const QVariantMap now = state();
+            if (!now.isEmpty() && now.value(QStringLiteral("total")).toInt() > 0
+                && !now.value(QStringLiteral("running")).toBool()) {
+                return true;
+            }
+            QThread::msleep(10);
+        }
+        return false;
+    };
+
+    // Ctrl extends the selection instead of replacing it: the batch must take both rows.
+    choose(firstRow, Qt::NoModifier);
+    choose(secondRow, Qt::ControlModifier);
+    const QStringList picked = panel->property("selection").toStringList();
+    std::fprintf(stdout, "dj-ui: import selection %d of 2 rows\n", static_cast<int>(picked.size()));
+    if (picked.size() != 2) {
+        std::fprintf(stderr, "dj-ui: Ctrl did not extend the selection\n");
+        return 1;
+    }
+    if (!askImport()) {
+        std::fprintf(stderr, "dj-ui: the browser refused to add the selection\n");
+        return 1;
+    }
+
+    auto *confirmDialog = panel->findChild<QObject *>(QStringLiteral("importDialog"));
+    auto *countLabel = panel->findChild<QObject *>(QStringLiteral("importCount"));
+    auto *confirmButton = panel->findChild<QObject *>(QStringLiteral("importConfirm"));
+    auto *progressDialog = panel->findChild<QObject *>(QStringLiteral("importProgress"));
+    auto *progressText = panel->findChild<QObject *>(QStringLiteral("importProgressText"));
+    auto *existingFacts = panel->findChild<QObject *>(QStringLiteral("duplicateExistingFacts"));
+    auto *incomingFacts = panel->findChild<QObject *>(QStringLiteral("duplicateIncomingFacts"));
+    auto *addMarked = panel->findChild<QObject *>(QStringLiteral("duplicateAddMarked"));
+    auto *skipButton = panel->findChild<QObject *>(QStringLiteral("duplicateSkip"));
+    if (confirmDialog == nullptr || countLabel == nullptr || confirmButton == nullptr
+        || progressDialog == nullptr || progressText == nullptr || existingFacts == nullptr
+        || incomingFacts == nullptr || addMarked == nullptr || skipButton == nullptr) {
+        std::fprintf(stderr, "dj-ui: the import windows are not in the shell\n");
+        return 1;
+    }
+    if (!confirmDialog->property("visible").toBool()) {
+        std::fprintf(stderr, "dj-ui: a batch of two went in without asking\n");
+        return 1;
+    }
+    const QString countText = countLabel->property("text").toString();
+    std::fprintf(stdout, "dj-ui: import dialog says \"%s\"\n", qPrintable(countText));
+    if (!countText.contains(QStringLiteral("2"))) {
+        std::fprintf(stderr, "dj-ui: the dialog does not count the selection\n");
+        return 1;
+    }
+
+    QMetaObject::invokeMethod(confirmButton, "clicked");
+    QCoreApplication::processEvents();
+    if (confirmDialog->property("visible").toBool()) {
+        std::fprintf(stderr, "dj-ui: the dialog stayed open after the confirmation\n");
+        return 1;
+    }
+
+    // The batch runs: progress first, then the question about the copy.
+    bool sawProgress = false;
+    bool sawQuestion = false;
+    QString facts;
+    QElapsedTimer batch;
+    batch.start();
+    while (batch.elapsed() < 60000) {
+        QCoreApplication::processEvents();
+        if (progressDialog->property("visible").toBool()) {
+            if (!sawProgress) {
+                std::fprintf(stdout, "dj-ui: import progress -> %s\n",
+                             qPrintable(progressText->property("text").toString()));
+            }
+            sawProgress = true;
+        }
+        if (questionOpen()) {
+            sawQuestion = true;
+            facts = existingFacts->property("text").toString() + QStringLiteral(" | ")
+                + incomingFacts->property("text").toString();
+            break;
+        }
+        const QVariantMap now = state();
+        if (!now.isEmpty() && !now.value(QStringLiteral("running")).toBool()) {
+            break;
+        }
+        QThread::msleep(10);
+    }
+    if (!sawProgress) {
+        std::fprintf(stderr, "dj-ui: the batch ran without a progress window\n");
+        return 1;
+    }
+    if (!sawQuestion) {
+        std::fprintf(stderr, "dj-ui: the batch did not ask about the copy\n");
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: duplicate asked, %s\n", qPrintable(facts));
+    if (!facts.contains(QStringLiteral("kHz")) || !facts.contains(QStringLiteral("MB"))) {
+        std::fprintf(stderr, "dj-ui: the duplicate question carries no numbers\n");
+        return 1;
+    }
+
+    // "Добавить с меткой": both copies belong in the collection.
+    QMetaObject::invokeMethod(addMarked, "clicked");
+    if (!waitDone(60000)) {
+        std::fprintf(stderr, "dj-ui: the batch did not finish\n");
+        return 1;
+    }
+    const QVariantMap finished = state();
+    std::fprintf(stdout, "dj-ui: import finished -> %d of %d, %d placed, %d skipped, %d failed\n",
+                 finished.value(QStringLiteral("done")).toInt(),
+                 finished.value(QStringLiteral("total")).toInt(),
+                 finished.value(QStringLiteral("placed")).toInt(),
+                 finished.value(QStringLiteral("skipped")).toInt(),
+                 finished.value(QStringLiteral("failed")).toInt());
+    if (finished.value(QStringLiteral("total")).toInt() != 2
+        || finished.value(QStringLiteral("done")).toInt() != 2
+        || finished.value(QStringLiteral("placed")).toInt() != 2) {
+        std::fprintf(stderr, "dj-ui: the batch did not add both copies\n");
+        return 1;
+    }
+    if (questionOpen() || progressDialog->property("visible").toBool()) {
+        std::fprintf(stderr, "dj-ui: a window stayed open after the batch\n");
+        return 1;
+    }
+
+    const auto collectionFiles = [](const QString &root) {
+        int files = 0;
+        QDirIterator it(root, QDir::Files, QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            it.next();
+            // The metadata folder is not music.
+            if (it.filePath().contains(QStringLiteral("/.djmeta/"))) {
+                continue;
+            }
+            ++files;
+        }
+        return files;
+    };
+    const int placed = collectionFiles(collectionRoot);
+    std::fprintf(stdout, "dj-ui: the collection holds %d files\n", placed);
+    if (placed != 2) {
+        std::fprintf(stderr, "dj-ui: the collection holds %d files, wanted 2\n", placed);
+        return 1;
+    }
+
+    // One file goes straight in: the confirmation exists for batches, not for a single click.
+    choose(firstRow, Qt::NoModifier);
+    if (!askImport()) {
+        std::fprintf(stderr, "dj-ui: the browser refused a single file\n");
+        return 1;
+    }
+    if (confirmDialog->property("visible").toBool()) {
+        std::fprintf(stderr, "dj-ui: a single file asked for confirmation\n");
+        return 1;
+    }
+    batch.restart();
+    while (batch.elapsed() < 30000 && !questionOpen()) {
+        QCoreApplication::processEvents();
+        QThread::msleep(10);
+    }
+    if (!questionOpen()) {
+        std::fprintf(stderr, "dj-ui: the single file did not reach the duplicate question\n");
+        return 1;
+    }
+    // The file is already there: skipping is the answer, and nothing may be added.
+    QMetaObject::invokeMethod(skipButton, "clicked");
+    if (!waitDone(30000)) {
+        std::fprintf(stderr, "dj-ui: the single-file batch did not finish\n");
+        return 1;
+    }
+    const int afterSkip = collectionFiles(collectionRoot);
+    std::fprintf(stdout, "dj-ui: the collection still holds %d files\n", afterSkip);
+    if (afterSkip != 2) {
+        std::fprintf(stderr, "dj-ui: skipping added something (%d files)\n", afterSkip);
+        return 1;
+    }
+
+    std::fprintf(stdout,
+                 "dj-ui: the browser adds files to the collection: selection, confirmation, "
+                 "progress, the duplicate question and its answer\n");
+    return 0;
+}
+
 int main(int argc, char *argv[])
 {
     qInstallMessageHandler(collectMessages);
@@ -4166,6 +4433,13 @@ int main(int argc, char *argv[])
         QStringLiteral("curve-check"),
         QStringLiteral("With --connect: send each crossfader law and require the snapshot to report "
                        "it back."));
+    const QCommandLineOption importCheckOption(
+        QStringLiteral("import-check"),
+        QStringLiteral("With --connect: pick two rows in the browser, add them to the collection, "
+                       "answer the duplicate question and require the files to be there."));
+    const QCommandLineOption importFixtureOption(
+        QStringLiteral("import-fixture"),
+        QStringLiteral("A real track the import check copies twice."), QStringLiteral("path"));
     const QCommandLineOption windowCheckOption(
         QStringLiteral("window-check"),
         QStringLiteral("With --session-file: restore the remembered window shape, toggle it with F11 "
@@ -4402,6 +4676,8 @@ int main(int argc, char *argv[])
     parser.addOption(windowCheckOption);
     parser.addOption(curveCheckOption);
     parser.addOption(masterCheckOption);
+    parser.addOption(importCheckOption);
+    parser.addOption(importFixtureOption);
     parser.addOption(gridReconnectOption);
     parser.addOption(metronomeOption);
     parser.addOption(tapOption);
@@ -9632,6 +9908,18 @@ int main(int argc, char *argv[])
 
     if (parser.isSet(browserCheckOption)) {
         return runBrowserCheck(engine, browser, layout, settings, waveform);
+    }
+
+    if (parser.isSet(importCheckOption)) {
+        // The import is the engine's work, so this check is useless without one: say so rather than
+        // report a shell that draws dialogs for a batch nobody runs.
+        if (!parser.isSet(connectOption)) {
+            std::fprintf(stderr, "dj-ui: --import-check needs --connect\n");
+            return 1;
+        }
+        bridge->connectToEngine(parser.value(connectOption));
+        return runImportCheck(engine, browser, layout, *bridge, parser.value(importFixtureOption),
+                              parser.values(collectionRootOption).value(0));
     }
 
     if (parser.isSet(themeCheckOption) || parser.isSet(screenshotOption)) {

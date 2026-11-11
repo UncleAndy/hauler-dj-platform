@@ -198,6 +198,17 @@ case "${1:-}" in
     # signal, and the knob must sit above a shorter meter in the middle of the mixer.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --master-check \
         --load "$fixture"
+    # Adding to the collection from the browser: two rows picked with Ctrl, the confirmation window,
+    # the progress window, the question about the copy and its answer. The engine does the work, so
+    # the check needs a real track twice over and a collection of its own.
+    # Its own track, twenty seconds long: a fingerprint needs more than a few seconds of music, and a
+    # copy nobody can recognise is not a duplicate anybody can ask about.
+    import_track="$run_dir/import-track.wav"
+    if [ -x "$headless_bin" ]; then
+      "$headless_bin" sine --frames 960000 --rate 48000 --out "$import_track" >/dev/null
+    fi
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
+        --collection-root "$run_dir/collection" --import-check --import-fixture "$import_track"
     # Every crossfader law must reach the engine and come back in the snapshot, and the selector must
     # show the one in force — a selector that lights up on the click is a selector that lies.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --curve-check
