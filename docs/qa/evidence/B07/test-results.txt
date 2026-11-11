@@ -1,0 +1,22 @@
+# эталон по построению и контроль транспозиции
+synth_c.wav                                                C major    camelot 8B  score 0.825 margin 0.399  (237 ms)
+synth_c_up2.wav                                            D major    camelot 10B score 0.826 margin 0.401  (212 ms)
+synth_c_down2.wav                                          A# major   camelot 6B  score 0.819 margin 0.403  (273 ms)
+
+# первые 90 с и +2 полутона
+endless_flat48.wav                                         D minor    camelot 7A  score 0.642 margin 0.287  (1088 ms)
+endless_up2.wav                                            B minor    camelot 10A score 0.832 margin 0.419  (968 ms)
+emotions_flat48.wav                                        G minor    camelot 6A  score 0.795 margin 0.331  (1075 ms)
+emotions_up2.wav                                           A minor    camelot 8A  score 0.828 margin 0.277  (963 ms)
+deep_flat48.wav                                            E minor    camelot 9A  score 0.902 margin 0.390  (1099 ms)
+deep_up2.wav                                               F# minor   camelot 11A score 0.622 margin 0.467  (991 ms)
+
+# полные файлы эталонного набора
+12660184_Emotions_(Original Mix).wav                       A# major   camelot 6B  score 0.712 margin 0.432  (3682 ms)
+15185626_Movin My Body_(Original Mix).wav                  D# major   camelot 5B  score 0.763 margin 0.619  (3245 ms)
+8356768_One Love_(Dance Floor Breaks).wav                  A# major   camelot 6B  score 0.444 margin 0.245  (3163 ms)
+9723675_Endless Summer_(Original Mix).wav                  D minor    camelot 7A  score 0.758 margin 0.306  (3602 ms)
+Среди своих Stems - Music.wav                              A major    camelot 11B score 0.866 margin 0.409  (3528 ms)
+Shadow Rhythm - Aura of Oresa - Treblo.flac                C minor    camelot 5A  score 0.661 margin 0.289  (1871 ms)
+Shadow Rhythm - Deep Resonance - Treblo.flac               E minor    camelot 9A  score 0.890 margin 0.428  (1421 ms)
+Shadow Rhythm - Leash Broken - Treblo.flac                 D minor    camelot 7A  score 0.615 margin 0.137  (2676 ms)

@@ -11,9 +11,11 @@
 
 pub mod beat;
 pub mod cache;
+pub mod key;
 pub mod loudness;
 pub mod tempo;
 pub mod waveform;
 
 pub use cache::{Fingerprint, WaveformCache, write_envelope};
+pub use key::{Key, Mode};
 pub use waveform::{Bucket, OVERVIEW_FRAMES_PER_BUCKET, Peaks, analyse};
