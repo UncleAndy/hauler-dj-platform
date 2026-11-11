@@ -493,8 +493,6 @@ fn probe_collection() {
             track.fingerprint_s,
         );
     }
-    let total_s = started.elapsed().as_secs_f64();
-
     // Duplicates: shared subfingerprints first, full comparison only for the candidates.
     let mut index: HashMap<u32, Vec<usize>> = HashMap::new();
     let mut pairs: Vec<(usize, usize, f64, i32, u32)> = Vec::new();
