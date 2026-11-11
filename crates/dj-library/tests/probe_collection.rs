@@ -65,6 +65,8 @@ enum Verdict {
     Repaired(&'static str),
     /// Bytes were already lost before we saw them.
     Lost,
+    /// The decoder refused the file: the reason travels with it.
+    Undecodable,
 }
 
 fn main_root() -> PathBuf {
@@ -199,6 +201,29 @@ fn cp1252_bytes(text: &str) -> Option<Vec<u8>> {
 }
 
 /// Repair a tag string: cp1251 read as Latin-1, or UTF-8 read as cp1252 (the `ÐœÐ¾ÑÐºÐ²Ð°` case).
+/// True when no single word mixes Latin and Cyrillic letters.
+///
+/// The two repairs that matter — cp1251 read as Latin-1 and UTF-8 read as cp1252 — produce text in one
+/// alphabet, word by word. A candidate that turns `Käärijä` into `Kддrijд` mixes them inside a word,
+/// and that is the signature of a guess rather than of a repair.
+fn single_script(text: &str) -> bool {
+    for word in text.split_whitespace() {
+        let mut latin = false;
+        let mut cyrillic = false;
+        for character in word.chars() {
+            if character.is_ascii_alphabetic() {
+                latin = true;
+            } else if ('\u{0400}'..='\u{04FF}').contains(&character) {
+                cyrillic = true;
+            }
+        }
+        if latin && cyrillic {
+            return false;
+        }
+    }
+    true
+}
+
 fn repair(text: &str) -> (String, Verdict) {
     if text.is_empty() {
         return (String::new(), Verdict::Clean);
@@ -221,7 +246,7 @@ fn repair(text: &str) -> (String, Verdict) {
             let Some(candidate) = candidate else {
                 return;
             };
-            if suspicious_ratio(&candidate) > 0.0 {
+            if suspicious_ratio(&candidate) > 0.0 || !single_script(&candidate) {
                 return;
             }
             let score = text_score(&candidate);
@@ -328,15 +353,17 @@ fn read_tags(path: &Path) -> (Tags, Quality) {
     )
 }
 
-fn decode_all(path: &Path) -> (Vec<i16>, u32, u16, f64) {
+fn decode_all(path: &Path) -> Result<(Vec<i16>, u32, u16, f64), String> {
     let started = Instant::now();
-    let mut decoder = dj_codec::StreamDecoder::open(path).expect("decode");
+    let mut decoder = dj_codec::StreamDecoder::open(path).map_err(|error| error.to_string())?;
     let rate = decoder.sample_rate();
     let channels = decoder.info().channels;
     let mut buffer = vec![0.0_f32; 8_192 * 2];
     let mut samples: Vec<i16> = Vec::new();
     loop {
-        let read = decoder.read_frames(&mut buffer).expect("frames");
+        let read = decoder
+            .read_frames(&mut buffer)
+            .map_err(|error| error.to_string())?;
         if read == 0 {
             break;
         }
@@ -344,7 +371,7 @@ fn decode_all(path: &Path) -> (Vec<i16>, u32, u16, f64) {
             samples.push((value.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16);
         }
     }
-    (samples, rate, channels, started.elapsed().as_secs_f64())
+    Ok((samples, rate, channels, started.elapsed().as_secs_f64()))
 }
 
 fn verdict_name(verdict: Verdict) -> &'static str {
@@ -354,12 +381,30 @@ fn verdict_name(verdict: Verdict) -> &'static str {
         Verdict::Repaired("cp1251") => "починено из cp1251",
         Verdict::Repaired(_) => "починено из двойного UTF-8",
         Verdict::Lost => "байты потеряны",
+        Verdict::Undecodable => "не декодируется",
     }
 }
 
 fn measure(path: &Path) -> Measured {
     let (tags, mut quality) = read_tags(path);
-    let (samples, rate, channels, decode_s) = decode_all(path);
+    let (samples, rate, channels, decode_s) = match decode_all(path) {
+        Ok(decoded) => decoded,
+        Err(reason) => {
+            return Measured {
+                path: path.to_path_buf(),
+                tags,
+                quality,
+                verdict: Verdict::Undecodable,
+                repaired_artist: String::new(),
+                repaired_title: String::new(),
+                duration_ms: 0,
+                fingerprint: Vec::new(),
+                decode_s: 0.0,
+                fingerprint_s: 0.0,
+                failure: Some(reason),
+            };
+        }
+    };
     let frames = samples.len() / usize::from(channels.max(1));
     let duration_ms = if rate > 0 {
         u64::try_from(frames).unwrap_or(0) * 1_000 / u64::from(rate)
@@ -395,6 +440,7 @@ fn measure(path: &Path) -> Measured {
         fingerprint_s,
         repaired_artist: artist,
         repaired_title: title,
+        failure: None,
     }
 }
 
@@ -443,6 +489,8 @@ struct Measured {
     fingerprint: Vec<u32>,
     decode_s: f64,
     fingerprint_s: f64,
+    /// Why the file could not be measured, when it could not.
+    failure: Option<String>,
 }
 
 #[test]
@@ -492,6 +540,9 @@ fn probe_collection() {
             track.decode_s,
             track.fingerprint_s,
         );
+        if let Some(reason) = &track.failure {
+            println!("PROBE undecodable {} | {reason}", track.path.display());
+        }
     }
     // Duplicates: shared subfingerprints first, full comparison only for the candidates.
     let mut index: HashMap<u32, Vec<usize>> = HashMap::new();
@@ -565,6 +616,10 @@ fn probe_collection() {
         .iter()
         .filter(|track| track.quality.lossless)
         .count();
+    let undecodable = measured
+        .iter()
+        .filter(|track| track.failure.is_some())
+        .count();
     let mut encodings: HashMap<String, usize> = HashMap::new();
     for track in &measured {
         let name = match track.verdict {
@@ -573,6 +628,7 @@ fn probe_collection() {
             Verdict::Repaired("cp1251") => "починено cp1251",
             Verdict::Repaired(_) => "починено utf8",
             Verdict::Lost => "потеряно",
+            Verdict::Undecodable => "не декодируется",
         };
         *encodings.entry(name.to_owned()).or_default() += 1;
     }
@@ -583,10 +639,11 @@ fn probe_collection() {
     let decode_total: f64 = measured.iter().map(|track| track.decode_s).sum();
     let fingerprint_total: f64 = measured.iter().map(|track| track.fingerprint_s).sum();
     println!(
-        "PROBE summary: файлов {} | с тегами artist+title {} | lossless {} | форматы {:?} | кодировки {:?} | пар-дублей {} | {:.1} с на всё (декод {:.1} с, отпечатки {:.1} с)",
+        "PROBE summary: файлов {} | с тегами artist+title {} | lossless {} | не декодируется {} | форматы {:?} | кодировки {:?} | пар-дублей {} | {:.1} с на всё (декод {:.1} с, отпечатки {:.1} с)",
         measured.len(),
         tagged,
         lossless,
+        undecodable,
         by_format,
         encodings,
         duplicates,
@@ -683,5 +740,24 @@ mod encoding {
         let (fixed, verdict) = repair("Москва\u{FFFD}");
         assert_eq!(fixed, "Москва\u{FFFD}");
         assert_eq!(verdict, Verdict::Lost);
+    }
+
+    #[test]
+    fn a_correct_name_with_accents_is_not_repaired_into_cyrillic() {
+        // Käärijä is a Finnish artist. Read as Latin-1 his four `ä` are 0xE4, and 0xE4 in cp1251 is
+        // `д`, so a repair that only asks "does this look like text?" turns the name into `Kддrijд` —
+        // a word in two alphabets at once, which a repair never produces.
+        let (artist, verdict) = repair("Käärijä");
+        assert_eq!(artist, "Käärijä", "испортили имя: «{artist}»");
+        assert_eq!(verdict, Verdict::Clean);
+    }
+
+    #[test]
+    fn a_guess_that_mixes_alphabets_is_rejected() {
+        assert!(!single_script("Kддrijд"));
+        assert!(single_script("Москва"));
+        assert!(single_script("Käärijä"));
+        assert!(single_script("Steve Levi - Lost"));
+        assert!(single_script("Ёжик — Туман"));
     }
 }
