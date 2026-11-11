@@ -939,6 +939,11 @@ int main(int argc, char *argv[])
         QStringLiteral("grid-lines-check"),
         QStringLiteral("With --connect and --load: require the strip to draw the beat lines of the grid, "
                        "with a bar line every fourth beat, and the spacing to follow the tempo."));
+    const QCommandLineOption gridCreateOption(
+        QStringLiteral("grid-create-check"),
+        QStringLiteral("With --connect and --load: on a track whose tempo could not be measured, the "
+                       "grid tools must be there, the ones that read a grid must be grey, and placing a "
+                       "beat or typing a tempo must make the grid."));
     const QCommandLineOption gridCheckOption(
         QStringLiteral("grid-check"),
         QStringLiteral("With --connect and --load: move the grid, halve it, double it and type a tempo, "
@@ -1230,6 +1235,7 @@ int main(int argc, char *argv[])
     parser.addOption(tapOption);
     parser.addOption(gridLinesOption);
     parser.addOption(gridCheckOption);
+    parser.addOption(gridCreateOption);
     parser.addOption(loopBeatsOption);
     parser.addOption(fourDeckOption);
     parser.addOption(syncSoakOption);
@@ -4909,6 +4915,202 @@ int main(int argc, char *argv[])
                      "dj-ui: the strip draws the grid: %d beats, %d bars, %.1f px a beat at %.2f BPM, "
                      "%.1f px after half\n",
                      beats, bars, expected, bpm, spacing());
+        return 0;
+    }
+
+    if (parser.isSet(gridCreateOption)) {
+        // A track whose tempo could not be measured has no grid — and that is exactly the track whose
+        // grid a person has to place. The tools have to be there, the ones that read a grid have to be
+        // grey, and the two that make one have to work: a beat placed at the play head starts a grid
+        // there, a typed tempo starts one at the first frame (DJP-MEDIA-006).
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        const QString fixture = parser.value(loadOption);
+        if (fixture.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: --grid-create-check needs --load\n");
+            return 1;
+        }
+        bridge->connectToEngine(parser.value(connectOption));
+        const auto waitFor = [](const std::function<bool()> &ready, int budget) {
+            QElapsedTimer timer;
+            timer.start();
+            while (timer.elapsed() < budget) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                if (ready()) {
+                    return true;
+                }
+                QThread::msleep(10);
+            }
+            return ready();
+        };
+        if (!waitFor([&]() { return bridge->isConnected(); }, 3000)) {
+            std::fprintf(stderr, "dj-ui: no engine\n");
+            return 1;
+        }
+        const auto deckA = [&]() {
+            return deckById(bridge->snapshot(), QStringLiteral("A"));
+        };
+        const auto gridOf = [&]() { return deckA().value(QStringLiteral("track")).toMap().value(
+                                            QStringLiteral("grid")).toMap(); };
+        const auto firstBeat = [&]() -> qint64 {
+            const QVariantList segments = gridOf().value(QStringLiteral("segments")).toList();
+            if (segments.isEmpty()) {
+                return -1;
+            }
+            return segments.first().toMap().value(QStringLiteral("frame")).toLongLong();
+        };
+        const auto tempoOf = [&]() {
+            const QVariantList segments = gridOf().value(QStringLiteral("segments")).toList();
+            return segments.isEmpty()
+                       ? 0.0
+                       : segments.first().toMap().value(QStringLiteral("bpm")).toDouble();
+        };
+        const auto itemByName = [&](const QString &name) {
+            return findItem(window->contentItem(), name);
+        };
+
+        // Its own file, emptied first: a deck that already holds a grid would answer about the track
+        // before this one.
+        bridge->eject(QStringLiteral("A"));
+        waitFor([&]() { return deckA().value(QStringLiteral("track")).toMap().isEmpty(); }, 5000);
+        bridge->load(QStringLiteral("A"), fixture);
+        const QString wantName = QFileInfo(fixture).fileName();
+        const auto loadArrived = [&]() {
+            const QString held = deckA().value(QStringLiteral("path")).toString();
+            return !held.isEmpty() && held.endsWith(wantName);
+        };
+        if (!waitFor([&]() { return loadArrived(); }, 30000)) {
+            std::fprintf(stderr, "dj-ui: deck A never loaded %s\n", qPrintable(wantName));
+            return 1;
+        }
+        if (!gridOf().isEmpty()) {
+            std::fprintf(stderr, "dj-ui: %s measured a grid of its own; this check needs a track "
+                                 "with none\n",
+                         qPrintable(wantName));
+            return 1;
+        }
+
+        // The row is there, the readers are grey, the makers are live.
+        auto *row = itemByName(QStringLiteral("gridedit_A"));
+        if (row == nullptr || !row->isVisible()) {
+            std::fprintf(stderr, "dj-ui: the grid tools are hidden on a track with no grid\n");
+            return 1;
+        }
+        struct Expect {
+            const char *name;
+            bool enabled;
+        };
+        for (const Expect &expect : {Expect{"gridHere_A", true}, Expect{"gridTempo_A", true},
+                                     Expect{"gridTap_A", true}, Expect{"gridRight_A", false},
+                                     Expect{"gridHalf_A", false}, Expect{"gridDouble_A", false},
+                                     Expect{"metronome_A", false}}) {
+            auto *item = itemByName(QString::fromLatin1(expect.name));
+            if (item == nullptr) {
+                std::fprintf(stderr, "dj-ui: no %s on a track with no grid\n", expect.name);
+                return 1;
+            }
+            if (!item->isVisible()) {
+                std::fprintf(stderr, "dj-ui: %s is hidden on a track with no grid\n", expect.name);
+                return 1;
+            }
+            const bool enabled = item->property("enabled").toBool();
+            if (enabled != expect.enabled) {
+                std::fprintf(stderr, "dj-ui: %s is %s, and on a track with no grid it must be %s\n",
+                             expect.name, enabled ? "live" : "grey",
+                             expect.enabled ? "live" : "grey");
+                return 1;
+            }
+        }
+        std::fprintf(stdout, "dj-ui: on a track with no grid the tools are there, the readers grey\n");
+
+        // A beat placed at the play head: the grid starts there, at the tempo a deck shows when nothing
+        // has been measured.
+        constexpr qint64 target = 48'000;
+        bridge->seek(QStringLiteral("A"), static_cast<qulonglong>(target));
+        waitFor(
+            [&]() { return deckA().value(QStringLiteral("source_frame")).toLongLong() == target; },
+            5000);
+        QMetaObject::invokeMethod(itemByName(QStringLiteral("gridHere_A")), "clicked");
+        const auto placed = [&]() {
+            return !gridOf().isEmpty() && firstBeat() == target;
+        };
+        if (!waitFor(placed, 5000)) {
+            std::fprintf(stderr,
+                         "dj-ui: placing a beat made no grid at the play head (first beat %lld)\n",
+                         static_cast<long long>(firstBeat()));
+            return 1;
+        }
+        if (std::abs(tempoOf() - 120.0) > 0.01) {
+            std::fprintf(stderr, "dj-ui: the grid started at %.2f BPM instead of 120\n", tempoOf());
+            return 1;
+        }
+        if (gridOf().value(QStringLiteral("beats_per_bar")).toInt() != 4) {
+            std::fprintf(stderr, "dj-ui: the grid started in %d/4\n",
+                         gridOf().value(QStringLiteral("beats_per_bar")).toInt());
+            return 1;
+        }
+        std::fprintf(stdout, "dj-ui: a beat placed at frame %lld started a 120 BPM grid there\n",
+                     static_cast<long long>(target));
+
+        // A typed tempo on a track with no grid begins at the first frame: there is no beat to hold on
+        // to, and the reading a DJ then shifts onto the first kick is the one that starts at zero. It is
+        // measured on deck B, whose file has no grid: deck A has one now, and retiming an existing grid
+        // keeps its first beat — a different rule, and the one that would hide this one.
+        const QString second = parser.value(loadSecondOption);
+        if (second.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: --grid-create-check needs --load-b, a second track with no "
+                                 "grid\n");
+            return 1;
+        }
+        const auto deckB = [&]() { return deckById(bridge->snapshot(), QStringLiteral("B")); };
+        const auto gridOfB = [&]() { return deckB().value(QStringLiteral("track")).toMap().value(
+                                             QStringLiteral("grid")).toMap(); };
+        const auto firstBeatB = [&]() -> qint64 {
+            const QVariantList segments = gridOfB().value(QStringLiteral("segments")).toList();
+            return segments.isEmpty()
+                       ? -1
+                       : segments.first().toMap().value(QStringLiteral("frame")).toLongLong();
+        };
+        const auto tempoOfB = [&]() {
+            const QVariantList segments = gridOfB().value(QStringLiteral("segments")).toList();
+            return segments.isEmpty()
+                       ? 0.0
+                       : segments.first().toMap().value(QStringLiteral("bpm")).toDouble();
+        };
+        bridge->eject(QStringLiteral("B"));
+        waitFor([&]() { return deckB().value(QStringLiteral("track")).toMap().isEmpty(); }, 5000);
+        bridge->load(QStringLiteral("B"), second);
+        const QString secondName = QFileInfo(second).fileName();
+        if (!waitFor(
+                [&]() {
+                    const QString held = deckB().value(QStringLiteral("path")).toString();
+                    return !held.isEmpty() && held.endsWith(secondName);
+                },
+                30000)) {
+            std::fprintf(stderr, "dj-ui: deck B never loaded %s\n", qPrintable(secondName));
+            return 1;
+        }
+        if (!gridOfB().isEmpty()) {
+            std::fprintf(stderr, "dj-ui: %s measured a grid of its own; this check needs a track "
+                                 "with none\n",
+                         qPrintable(secondName));
+            return 1;
+        }
+        bridge->setGridTempo(QStringLiteral("B"), 174.0);
+        const auto retimed = [&]() {
+            return !gridOfB().isEmpty() && std::abs(tempoOfB() - 174.0) < 0.01 && firstBeatB() == 0;
+        };
+        if (!waitFor(retimed, 5000)) {
+            std::fprintf(stderr,
+                         "dj-ui: a typed tempo left the grid at %.2f BPM from frame %lld\n",
+                         tempoOfB(), static_cast<long long>(firstBeatB()));
+            return 1;
+        }
+        std::fprintf(stdout, "dj-ui: a typed tempo of 174 BPM started the grid at the file start\n");
+        std::fprintf(stdout, "dj-ui: a track with no grid can be given one by hand\n");
         return 0;
     }
 

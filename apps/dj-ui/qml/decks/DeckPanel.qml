@@ -1119,7 +1119,10 @@ Pane {
         RowLayout {
             objectName: "gridedit_" + panel.deckId
             Layout.fillWidth: true
-            visible: panel.gridReady
+            // Always there, and never hidden: a track whose tempo could not be measured is the one whose
+            // grid a person has to place, and a row that disappears takes the tools away exactly then.
+            // The buttons that read an existing grid are greyed instead (DJP-MEDIA-006).
+            visible: panel.track !== null
             spacing: 3
 
             // A beat a press, on the outside of the ten-millisecond arrows: the two mistakes a grid makes
@@ -1130,6 +1133,7 @@ Pane {
             // compared one at a time.
             Button {
                 objectName: "metronome_" + panel.deckId
+                enabled: panel.gridReady
                 text: qsTr("♪")
                 font.pixelSize: 9
                 Layout.preferredWidth: 24
@@ -1143,6 +1147,7 @@ Pane {
             }
             Button {
                 objectName: "gridBeatLeft_" + panel.deckId
+                enabled: panel.gridReady
                 text: qsTr("⇤")
                 font.pixelSize: 9
                 Layout.preferredWidth: 22
@@ -1156,6 +1161,7 @@ Pane {
             // what the ear actually hears.
             Button {
                 objectName: "gridLeft_" + panel.deckId
+                enabled: panel.gridReady
                 text: qsTr("◀")
                 font.pixelSize: 9
                 Layout.preferredWidth: 22
@@ -1215,6 +1221,7 @@ Pane {
             }
             Button {
                 objectName: "gridRight_" + panel.deckId
+                enabled: panel.gridReady
                 text: qsTr("▶")
                 font.pixelSize: 9
                 Layout.preferredWidth: 22
@@ -1226,6 +1233,7 @@ Pane {
             }
             Button {
                 objectName: "gridBeatRight_" + panel.deckId
+                enabled: panel.gridReady
                 text: qsTr("⇥")
                 font.pixelSize: 9
                 Layout.preferredWidth: 22
@@ -1237,6 +1245,7 @@ Pane {
             }
             Button {
                 objectName: "gridHalf_" + panel.deckId
+                enabled: panel.gridReady
                 text: qsTr("½")
                 font.pixelSize: 9
                 Layout.preferredHeight: 18
@@ -1247,6 +1256,7 @@ Pane {
             }
             Button {
                 objectName: "gridDouble_" + panel.deckId
+                enabled: panel.gridReady
                 text: qsTr("×2")
                 font.pixelSize: 9
                 Layout.preferredHeight: 18

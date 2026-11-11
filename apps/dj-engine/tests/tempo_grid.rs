@@ -60,8 +60,12 @@ fn a_beat_goes_where_the_play_head_is() {
         .with_beats_per_bar(4);
     let period = f64::from(RATE) * 60.0 / grid.bpm();
     let target = 4_800 + (period / 2.0) as u64 + 137;
-    let moved = dj_engine::edit_grid(&grid, &dj_domain::GridEdit::Here { frame: target }, RATE)
-        .expect("the grid takes the frame");
+    let moved = dj_engine::edit_grid(
+        Some(&grid),
+        &dj_domain::GridEdit::Here { frame: target },
+        RATE,
+    )
+    .expect("the grid takes the frame");
     assert_eq!(
         moved.bpm(),
         grid.bpm(),
@@ -230,4 +234,53 @@ fn a_stored_grid_comes_back_on_the_deck() {
     assert_eq!(published.bpm, Some(128.25));
     assert_eq!(published.first_beat_frame, Some(5_000));
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_beat_on_a_track_with_no_grid_starts_one_at_a_standard_tempo() {
+    // A track whose tempo could not be measured has no grid at all, and the button that puts a beat
+    // where the play head is must still work — otherwise the only way to a grid is the button that
+    // measures, which is the one that already failed. The grid starts where the DJ pointed, at the
+    // number a deck shows when nothing has been measured.
+    let created = dj_engine::edit_grid(None, &dj_domain::GridEdit::Here { frame: 96_000 }, RATE)
+        .expect("a grid is made from nothing");
+    assert_eq!(created.bpm(), 120.0, "the starting tempo");
+    assert_eq!(
+        created.first_beat_frame(),
+        96_000,
+        "the beat is where the play head was"
+    );
+    assert_eq!(
+        created.beats_per_bar(),
+        4,
+        "a bar of four, as everywhere else"
+    );
+}
+
+#[test]
+fn a_typed_tempo_on_a_track_with_no_grid_starts_one_at_the_file_start() {
+    // The other way in: the DJ knows the tempo and types it. There is no beat to hold on to, so the
+    // grid begins at the first frame — the reading a DJ checks against the first kick and then shifts.
+    let created = dj_engine::edit_grid(None, &dj_domain::GridEdit::Tempo { bpm: 174.0 }, RATE)
+        .expect("a grid is made from nothing");
+    assert_eq!(created.bpm(), 174.0);
+    assert_eq!(created.first_beat_frame(), 0, "from the very beginning");
+    assert_eq!(created.beats_per_bar(), 4);
+}
+
+#[test]
+fn an_edit_that_needs_a_grid_changes_nothing_without_one() {
+    // Halving, doubling and the ten-millisecond arrows read a grid that exists: there is nothing to
+    // halve and nothing to move. They are refused rather than invented, so a press on a greyed button
+    // that somehow arrives cannot fabricate a tempo nobody asked for.
+    for edit in [
+        dj_domain::GridEdit::Half,
+        dj_domain::GridEdit::Double,
+        dj_domain::GridEdit::Shift { frames: 48 },
+    ] {
+        assert!(
+            dj_engine::edit_grid(None, &edit, RATE).is_none(),
+            "{edit:?} made a grid out of nothing"
+        );
+    }
 }

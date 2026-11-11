@@ -1518,12 +1518,32 @@ pub struct MetaEdit {
 
 /// A beat grid: the tempo and where its first beat sits (B02, DJP-SYNC-003).
 ///
+/// The tempo a grid starts at when a track has none: what a deck shows before anything is measured.
+const STARTING_BPM: f64 = 120.0;
+
 /// Apply one edit to a grid, or refuse it.
 ///
 /// One place, so the meaning of "half" is the same in the engine, in the file and in a test. The edits
 /// are the DJ's: they are applied to the whole track, because a grid is how the whole track is read, and
 /// a refusal (a shift off the start of the file, a tempo that is not a number) leaves the grid alone.
-pub fn edit_grid(grid: &BeatGrid, edit: &GridEdit, source_rate: u32) -> Option<BeatGrid> {
+pub fn edit_grid(grid: Option<&BeatGrid>, edit: &GridEdit, source_rate: u32) -> Option<BeatGrid> {
+    let Some(grid) = grid else {
+        // A track whose tempo could not be measured has no grid, and the buttons that place a beat have
+        // to work anyway: the measurement failed, so the DJ is the only source of a tempo. Placing a beat
+        // starts a grid there at the number a deck shows when nothing has been measured; typing a tempo
+        // starts it at the first frame, which is the reading the DJ then shifts onto the first kick.
+        // Everything else reads a grid that exists — there is nothing to halve and nothing to move — and
+        // is refused rather than invented.
+        return match edit {
+            GridEdit::Here { frame } => {
+                BeatGrid::single(STARTING_BPM, *frame).map(|grid| grid.with_beats_per_bar(4))
+            }
+            GridEdit::Tempo { bpm } => {
+                BeatGrid::single(*bpm, 0).map(|grid| grid.with_beats_per_bar(4))
+            }
+            _ => None,
+        };
+    };
     match edit {
         // The rate is the grid's own timebase, and a shift needs it only to know how wide a square of
         // four bars is: a grid that is shifted past the start of the file is rebased by whole squares

@@ -170,6 +170,18 @@ case "${1:-}" in
     # it. A waveform that never arrives looks exactly like a track that never loaded.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --strip-check \
       --load "$fixture"
+
+    # A track whose tempo could not be measured has no grid, and that is the track whose grid a person
+    # has to place: the tools must be there, the readers grey, and placing a beat or typing a tempo
+    # must make the grid. Its own file, so no earlier check has left a grid on this fingerprint.
+    grid_track="$run_dir/grid-track.wav"
+    grid_track_b="$run_dir/grid-track-b.wav"
+    if [ -x "$headless_bin" ]; then
+      "$headless_bin" sine --frames 72000 --rate 48000 --out "$grid_track" >/dev/null
+      "$headless_bin" sine --frames 60000 --rate 48000 --out "$grid_track_b" >/dev/null
+    fi
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --grid-create-check \
+      --load "$grid_track" --load-b "$grid_track_b"
     # The key: measured on load, written beside the file, shown in the deck's header. A key that never
     # reaches the file is a key the next load forgets, so the check reads both. It runs after a check
     # that leaves deck A playing on purpose: a load sent right after a stop used to be refused as

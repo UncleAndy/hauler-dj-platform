@@ -697,19 +697,16 @@ fn run(argv: &[String]) -> Result<(), String> {
                     .lock()
                     .ok()
                     .and_then(|held| held.get(deck.index()).cloned().flatten());
-                let Some(current) = current else {
-                    eprintln!(
-                        "dj-engine: no grid on deck {:?} to edit — the track has none yet",
-                        deck
-                    );
-                    continue;
-                };
+                // No grid is a state a track is in, not a reason to ignore the DJ: the edit that places
+                // a beat or names a tempo makes the grid it needs (B02). A track nobody has measured
+                // would otherwise have no way to a grid at all.
                 let rate = rates
                     .lock()
                     .ok()
                     .and_then(|held| held.get(deck.index()).copied())
                     .unwrap_or(0);
-                let Some(edited) = dj_engine::edit_grid(&current, &request.edit, rate) else {
+                let Some(edited) = dj_engine::edit_grid(current.as_ref(), &request.edit, rate)
+                else {
                     eprintln!("dj-engine: the edit does not make a grid; nothing changed");
                     continue;
                 };
