@@ -4030,7 +4030,7 @@ static int runLayoutCheck(QQmlApplicationEngine &engine,
 /// duplicate question, and require the files to be in the collection. Runs against a real engine,
 /// because the import is the engine's work and a shell that only draws dialogs proves nothing.
 static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
-                          LayoutSettings &layout, const QString &fixture,
+                          LayoutSettings &layout, BridgeClient &bridge, const QString &fixture,
                           const QString &collectionRoot)
 {
     if (fixture.isEmpty() || !QFile::exists(fixture)) {
@@ -4478,7 +4478,9 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     // A track taken out of the collection does not move the file list: the DJ was browsing a folder,
     // and that folder is where he comes back to.
     const QString collectionTrack = rows.at(0).toMap().value(QStringLiteral("path")).toString();
-    browser.rememberFolder(QFileInfo(collectionTrack).absolutePath());
+    // The real path, not the handler's function: a deck load from the collection goes through the
+    // bridge, and the bridge is what remembers where the list was.
+    bridge.load(QStringLiteral("A"), collectionTrack);
     browser.showFiles();
     QCoreApplication::processEvents();
     std::fprintf(stdout, "dj-ui: files after a collection load -> %s\n", qPrintable(browser.folder()));
@@ -4938,10 +4940,16 @@ int main(int argc, char *argv[])
     browser.open(session.folder());
     // Every load, from the browser or from a deck's dialog, moves that folder.
     bridge->setLoadFolderHandler([&session, &browser](const QString &folder) {
+        // A track taken out of the collection lives in the collection: neither the file list nor the
+        // next start belongs in its folder. Only a load made from the file list says where the file
+        // list is — and it moves the list whether or not the session already knew that folder.
+        if (browser.mode() != QLatin1String("files")) {
+            return;
+        }
         if (session.rememberFolder(folder)) {
             session.save();
-            browser.rememberFolder(folder);
         }
+        browser.rememberFolder(folder);
     });
     qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "Browser", &browser);
     // A type, not a singleton: two decks hold two envelopes, and a singleton made the second deck
@@ -5044,6 +5052,18 @@ int main(int argc, char *argv[])
     // The file is the user's last arrangement; a preset named on the command line wins over it, so a
     // single run can be compared against the measured default without editing anything.
     layout.load();
+    // A remembered folder inside a collection root is a leftover from a build that remembered loads
+    // made out of the collection. The file list has no business opening there: it opens in the music
+    // folder, which is where a DJ looks for files that are not in the collection yet.
+    const QString remembered = browser.folder();
+    for (const QString &root : layout.collectionRoots()) {
+        if (!root.isEmpty() && remembered.startsWith(root)) {
+            std::fprintf(stdout, "dj-ui: %s is inside the collection; the file list opens in %s\n",
+                         qPrintable(remembered), qPrintable(browser.defaultFolder()));
+            browser.open(browser.defaultFolder());
+            break;
+        }
+    }
     if (parser.isSet(layoutOption) && !layout.applyPreset(parser.value(layoutOption))) {
         std::fprintf(stderr, "dj-ui: --layout expects traktor or two-deck\n");
         return 2;
@@ -10117,7 +10137,7 @@ int main(int argc, char *argv[])
             return 1;
         }
         bridge->connectToEngine(parser.value(connectOption));
-        return runImportCheck(engine, browser, layout, parser.value(importFixtureOption),
+        return runImportCheck(engine, browser, layout, *bridge, parser.value(importFixtureOption),
                               parser.values(collectionRootOption).value(0));
     }
 
