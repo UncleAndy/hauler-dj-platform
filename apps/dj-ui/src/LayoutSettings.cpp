@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QStandardPaths>
@@ -121,15 +122,32 @@ void LayoutSettings::setBrowserRailWidth(int pixels)
     scheduleSave();
 }
 
-void LayoutSettings::setCollectionRoot(const QString &path)
+QStringList LayoutSettings::normalisedRoots(const QStringList &roots)
 {
-    // Absolute: the shell's working directory is not the DJ's business, and a relative root would
-    // point somewhere else after a start from another folder.
-    const QString absolute = path.trimmed().isEmpty() ? QString() : QFileInfo(path).absoluteFilePath();
-    if (absolute == m_collectionRoot) {
+    QStringList normalised;
+    for (const QString &root : roots) {
+        const QString trimmed = root.trimmed();
+        if (trimmed.isEmpty()) {
+            continue;
+        }
+        // Absolute: the shell's working directory is not the DJ's business, and a relative root would
+        // point somewhere else after a start from another folder. Unique: a root listed twice would
+        // list its tracks twice.
+        const QString absolute = QFileInfo(trimmed).absoluteFilePath();
+        if (!normalised.contains(absolute)) {
+            normalised.append(absolute);
+        }
+    }
+    return normalised;
+}
+
+void LayoutSettings::setCollectionRoots(const QStringList &roots)
+{
+    const QStringList normalised = normalisedRoots(roots);
+    if (normalised == m_collectionRoots) {
         return;
     }
-    m_collectionRoot = absolute;
+    m_collectionRoots = normalised;
     emit changed();
     // Not written here: the layout file is written when the shell exits, so a root adopted by
     // default lands there too instead of only the one typed on the command line.
@@ -217,7 +235,18 @@ bool LayoutSettings::load()
     const double span = root.value(QStringLiteral("waveform_span")).toDouble(m_waveformSpan);
     m_waveformSpan = span <= 0.0 ? 0.0 : std::clamp(span, 0.0025, 1.0);
     setChannelOrder(root.value(QStringLiteral("channel_order")).toString(m_channelOrder));
-    m_collectionRoot = root.value(QStringLiteral("collection_root")).toString(m_collectionRoot);
+    // Several roots are the normal case: one collection may live on several disks. A file written by
+    // a build that knew one root still reads, and keeps its root.
+    QStringList roots;
+    const QJsonValue stored = root.value(QStringLiteral("collection_roots"));
+    if (stored.isArray()) {
+        for (const QJsonValue &value : stored.toArray()) {
+            roots.append(value.toString());
+        }
+    } else if (root.contains(QStringLiteral("collection_root"))) {
+        roots.append(root.value(QStringLiteral("collection_root")).toString());
+    }
+    m_collectionRoots = normalisedRoots(roots);
     normalise();
     emit changed();
     return true;
@@ -239,7 +268,11 @@ bool LayoutSettings::save() const
     root.insert(QStringLiteral("channel_order"), m_channelOrder);
     root.insert(QStringLiteral("browser_font"), m_browserFont);
     root.insert(QStringLiteral("browser_rail_width"), m_browserRailWidth);
-    root.insert(QStringLiteral("collection_root"), m_collectionRoot);
+    QJsonArray roots;
+    for (const QString &path : m_collectionRoots) {
+        roots.append(path);
+    }
+    root.insert(QStringLiteral("collection_roots"), roots);
     root.insert(QStringLiteral("waveform_span"), m_waveformSpan);
     QFile file(m_file);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {

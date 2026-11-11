@@ -9,6 +9,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
+#include <QStandardPaths>
 #include <QTimer>
 
 #include <algorithm>
@@ -141,7 +142,15 @@ void FileBrowser::load(const QString &path)
     emit changed();
 }
 
-void FileBrowser::openCollection(const QString &root)
+QString FileBrowser::defaultCollectionRoot() const
+{
+    // The tree the engine keeps its own data in ($XDG_DATA_HOME/hauler-dj): one collection, one place,
+    // and a copy of the collection carries its .djmeta with it.
+    const QString base = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+    return base + QStringLiteral("/hauler-dj/collection");
+}
+
+void FileBrowser::openCollection(const QStringList &roots)
 {
     m_mode = QStringLiteral("collection");
     m_filter.clear();
@@ -149,18 +158,38 @@ void FileBrowser::openCollection(const QString &root)
     m_total = 0;
     m_entries.clear();
     m_error.clear();
-    // No root chosen yet: the collection is the music folder, the same one the file list opens at.
-    // A section that refuses to show anything until a flag is typed is a section nobody uses.
-    const QString path = root.isEmpty() ? defaultFolder() : root;
-    QDir dir(path);
-    if (!dir.exists()) {
-        m_folder = path;
-        m_error = QStringLiteral("%1 is not a directory").arg(path);
-        emit changed();
-        return;
+
+    QStringList wanted;
+    for (const QString &root : roots) {
+        if (!root.trimmed().isEmpty()) {
+            wanted.append(QDir(root).absolutePath());
+        }
     }
-    m_folder = dir.absolutePath();
-    collect(m_folder);
+    // No root chosen yet: the collection lives in the shell's own data folder. A section that shows
+    // nothing until a flag is typed is a section nobody opens.
+    if (wanted.isEmpty()) {
+        wanted.append(defaultCollectionRoot());
+    }
+
+    QStringList listed;
+    QStringList missing;
+    for (const QString &root : wanted) {
+        if (!QDir(root).exists()) {
+            // A root that is not there yet holds nothing. For the default root that is the normal state
+            // of a fresh install and no error; a root the DJ named must not fail silently.
+            if (root != defaultCollectionRoot()) {
+                missing.append(root);
+            }
+            continue;
+        }
+        listed.append(root);
+    }
+    // The header names every root the section reads: one collection, several disks.
+    m_folder = wanted.join(QStringLiteral(" · "));
+    if (!missing.isEmpty()) {
+        m_error = QStringLiteral("not a directory: %1").arg(missing.join(QStringLiteral(", ")));
+    }
+    collect(listed);
     applyFilter();
 }
 
@@ -183,39 +212,50 @@ void FileBrowser::rememberFolder(const QString &folder)
     m_filesFolder = QDir(folder).absolutePath();
 }
 
-void FileBrowser::collect(const QString &root)
+void FileBrowser::collect(const QStringList &roots)
 {
     QVariantList tracks;
-    QDirIterator walker(root, QDir::Files | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
-    while (walker.hasNext()) {
-        walker.next();
-        const QFileInfo info = walker.fileInfo();
+    QSet<QString> seen;
+    for (const QString &root : roots) {
+        QDirIterator walker(root, QDir::Files | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+        while (walker.hasNext()) {
+            walker.next();
+            const QFileInfo info = walker.fileInfo();
         // The metadata folder holds records, not music, and a scan that lists it lists the wrong tree.
-        if (info.dir().dirName() == QLatin1String(".djmeta")
-            || insideDuplicates(info.dir().absolutePath()) || !looksLikeAudio(info.fileName())) {
-            continue;
-        }
-        // The import names the copy from the tags, so the file name is the name to show.
-        QVariantMap entry{{QStringLiteral("name"), info.completeBaseName()},
-                          {QStringLiteral("path"), info.absoluteFilePath()},
-                          {QStringLiteral("dir"), false}};
-        const QString record =
-            info.dir().absolutePath() + QStringLiteral("/.djmeta/") + info.fileName()
-            + QStringLiteral(".json");
-        QFile meta(record);
-        if (meta.open(QIODevice::ReadOnly)) {
-            const QJsonObject object = QJsonDocument::fromJson(meta.readAll()).object();
-            const QString key = object.value(QStringLiteral("key")).toString();
-            if (!key.isEmpty()) {
-                entry.insert(QStringLiteral("key"), key);
+            if (info.dir().dirName() == QLatin1String(".djmeta")
+                || insideDuplicates(info.dir().absolutePath()) || !looksLikeAudio(info.fileName())) {
+                continue;
             }
-            const double bpm =
-                object.value(QStringLiteral("beatgrid")).toObject().value(QStringLiteral("bpm")).toDouble();
-            if (bpm > 0.0) {
-                entry.insert(QStringLiteral("bpm"), bpm);
+            // One track, one row: roots may overlap, and a collection listed twice is not two
+            // collections.
+            if (seen.contains(info.absoluteFilePath())) {
+                continue;
             }
+            seen.insert(info.absoluteFilePath());
+            // The import names the copy from the tags, so the file name is the name to show.
+            QVariantMap entry{{QStringLiteral("name"), info.completeBaseName()},
+                              {QStringLiteral("path"), info.absoluteFilePath()},
+                              {QStringLiteral("dir"), false}};
+            const QString record =
+                info.dir().absolutePath() + QStringLiteral("/.djmeta/") + info.fileName()
+                + QStringLiteral(".json");
+            QFile meta(record);
+            if (meta.open(QIODevice::ReadOnly)) {
+                const QJsonObject object = QJsonDocument::fromJson(meta.readAll()).object();
+                const QString key = object.value(QStringLiteral("key")).toString();
+                if (!key.isEmpty()) {
+                    entry.insert(QStringLiteral("key"), key);
+                }
+                const double bpm = object.value(QStringLiteral("beatgrid"))
+                                       .toObject()
+                                       .value(QStringLiteral("bpm"))
+                                       .toDouble();
+                if (bpm > 0.0) {
+                    entry.insert(QStringLiteral("bpm"), bpm);
+                }
+            }
+            tracks.append(entry);
         }
-        tracks.append(entry);
     }
     std::sort(tracks.begin(), tracks.end(), [](const QVariant &left, const QVariant &right) {
         const QString a = left.toMap().value(QStringLiteral("name")).toString();

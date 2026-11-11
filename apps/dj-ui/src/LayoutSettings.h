@@ -11,6 +11,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QTimer>
 
 class LayoutSettings : public QObject
@@ -31,9 +32,9 @@ class LayoutSettings : public QObject
     // view sizes like any other, so they live with the layout and not in the folder the engine owns.
     Q_PROPERTY(int browserFont READ browserFont WRITE setBrowserFont NOTIFY changed)
     Q_PROPERTY(int browserRailWidth READ browserRailWidth WRITE setBrowserRailWidth NOTIFY changed)
-    // The folder the browser's Collection section lists: the root the import writes into. Empty means
-    // the section has nothing to show, which is the truth before a root is chosen.
-    Q_PROPERTY(QString collectionRoot READ collectionRoot WRITE setCollectionRoot NOTIFY changed)
+    // The folders the browser's Collection section lists. One collection may live on several disks,
+    // and each root holds its own tracks and its own .djmeta; empty means the default root.
+    Q_PROPERTY(QStringList collectionRoots READ collectionRoots WRITE setCollectionRoots NOTIFY changed)
     // Visible fraction of a track in a deck's main waveform. Zero means "the deck's own default", so a
     // file that has never held a value still opens at the built-in zoom.
     Q_PROPERTY(double waveformSpan READ waveformSpan WRITE setWaveformSpan NOTIFY changed)
@@ -62,8 +63,8 @@ public:
     void setBrowserFont(int pixels);
     int browserRailWidth() const { return m_browserRailWidth; }
     void setBrowserRailWidth(int pixels);
-    QString collectionRoot() const { return m_collectionRoot; }
-    void setCollectionRoot(const QString &path);
+    QStringList collectionRoots() const { return m_collectionRoots; }
+    void setCollectionRoots(const QStringList &roots);
     double waveformSpan() const { return m_waveformSpan; }
     void setWaveformSpan(double span);
 
@@ -85,6 +86,9 @@ signals:
     void changed();
 
 private:
+    // Absolute and unique: what a root list has to be before it is stored or written.
+    static QStringList normalisedRoots(const QStringList &roots);
+
     // Clamp to what the shell can draw and keep the three row shares inside one window.
     void normalise();
 
@@ -100,7 +104,7 @@ private:
     QString m_channelOrder = QStringLiteral("CABD");
     int m_browserFont = 11;
     int m_browserRailWidth = 92;
-    QString m_collectionRoot;
+    QStringList m_collectionRoots;
     double m_waveformSpan = 0.0;
     QTimer *m_saveTimer = nullptr;
     QString m_file;

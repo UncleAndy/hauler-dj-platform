@@ -108,7 +108,7 @@ Pane {
     // A section is a place, not a label: pressing one moves the list there.
     function showSection(key) {
         if (key === "collection") {
-            Browser.openCollection(LayoutState.collectionRoot);
+            Browser.openCollection(LayoutState.collectionRoots);
             browser.lastAction = "collection " + Browser.folder;
             return true;
         }

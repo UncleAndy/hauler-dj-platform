@@ -1137,9 +1137,10 @@ int main(int argc, char *argv[])
         QStringLiteral("ABCD"));
     const QCommandLineOption collectionRootOption(
         QStringLiteral("collection-root"),
-        QStringLiteral("The folder the browser's Collection section lists, remembered for the next "
-                       "start. Without it the section stays empty rather than showing a folder nobody "
-                       "chose."),
+        QStringLiteral("A folder the browser's Collection section lists. Repeat it for a collection "
+                       "spread over several disks: every root is listed in one list, each with its own "
+                       "metadata. Remembered for the next start; without it the collection lives in "
+                       "$XDG_DATA_HOME/hauler-dj/collection."),
         QStringLiteral("path"));
     const QCommandLineOption layoutCheckOption(
         QStringLiteral("layout-check"),
@@ -1408,11 +1409,11 @@ int main(int argc, char *argv[])
         return 2;
     }
     if (parser.isSet(collectionRootOption)) {
-        layout.setCollectionRoot(parser.value(collectionRootOption));
-    } else if (layout.collectionRoot().isEmpty()) {
-        // No root chosen yet: the Collection section shows the music folder, and the shell writes
-        // that choice to the layout file when it exits.
-        layout.setCollectionRoot(browser.defaultFolder());
+        layout.setCollectionRoots(parser.values(collectionRootOption));
+    } else if (layout.collectionRoots().isEmpty()) {
+        // No root chosen yet: the collection lives in the shell's own data folder, and that choice is
+        // written to the layout file when the shell exits.
+        layout.setCollectionRoots({browser.defaultCollectionRoot()});
     }
     if (parser.isSet(channelOrderOption)
         && !layout.setChannelOrder(parser.value(channelOrderOption))) {
@@ -9335,18 +9336,23 @@ int main(int argc, char *argv[])
             record.write(R"({"schema":"djmeta/1","revision":1,"updated_at_ms":0,"fingerprint":{},"beatgrid":{"bpm":128.0,"first_beat_frame":0},"key":"8m"})");
             record.close();
         }
-        // An unset root is the music folder, not an empty section: the shell adopts the default.
-        browser.openCollection(QString());
+        // No root at all is the platform's own collection folder, not an empty section.
+        browser.openCollection(QStringList());
         QCoreApplication::processEvents();
         if (browser.mode() != QStringLiteral("collection")
-            || browser.folder() != browser.defaultFolder() || !browser.error().isEmpty()) {
-            std::fprintf(stderr, "dj-ui: an unset collection root did not fall back to %s (it is %s, "
+            || browser.folder() != browser.defaultCollectionRoot() || !browser.error().isEmpty()) {
+            std::fprintf(stderr, "dj-ui: an unset collection did not fall back to %s (it is %s, "
                                  "error «%s»)\n",
-                         qPrintable(browser.defaultFolder()), qPrintable(browser.folder()),
+                         qPrintable(browser.defaultCollectionRoot()), qPrintable(browser.folder()),
                          qPrintable(browser.error()));
             return 1;
         }
-        browser.openCollection(collectionRoot);
+        if (!browser.defaultCollectionRoot().endsWith(QStringLiteral("/hauler-dj/collection"))) {
+            std::fprintf(stderr, "dj-ui: the default collection root is not hauler-dj/collection (%s)\n",
+                         qPrintable(browser.defaultCollectionRoot()));
+            return 1;
+        }
+        browser.openCollection({collectionRoot});
         QCoreApplication::processEvents();
         const QVariantList collected = browser.entries();
         // A rejected copy is not part of the collection: three files on disk, two in the list.
@@ -9376,6 +9382,35 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: the metadata beside a track did not reach its row\n");
             return 1;
         }
+        // One collection may live on several disks: every root is listed, in one list.
+        QTemporaryDir secondRoot;
+        if (!secondRoot.isValid()) {
+            std::fprintf(stderr, "dj-ui: cannot make a second collection root\n");
+            return 1;
+        }
+        QDir(secondRoot.path()).mkpath(QStringLiteral("C/C"));
+        if (!writeStub(secondRoot.path() + QStringLiteral("/C/C/Cazz - one more.flac"))) {
+            std::fprintf(stderr, "dj-ui: cannot write the second root's track\n");
+            return 1;
+        }
+        browser.openCollection({collectionRoot, secondRoot.path()});
+        QCoreApplication::processEvents();
+        const int bothRoots = static_cast<int>(browser.entries().size());
+        const QString lastOfBoth =
+            browser.entries().isEmpty()
+                ? QString()
+                : browser.entries().last().toMap().value(QStringLiteral("name")).toString();
+        std::fprintf(stdout, "dj-ui: two roots -> %d tracks, last «%s»\n", bothRoots,
+                     qPrintable(lastOfBoth));
+        if (bothRoots != 3 || lastOfBoth != QStringLiteral("Cazz - one more")) {
+            std::fprintf(stderr, "dj-ui: two collection roots did not land in one list (%d tracks, last "
+                                 "«%s»)\n",
+                         bothRoots, qPrintable(lastOfBoth));
+            return 1;
+        }
+        browser.openCollection({collectionRoot});
+        QCoreApplication::processEvents();
+
         // The search keeps what matches and the count says how much it kept.
         browser.setFilter(QStringLiteral("bbno"));
         QCoreApplication::processEvents();
@@ -9426,7 +9461,7 @@ int main(int argc, char *argv[])
 
         // The rail is a set of places, and pressing one moves the list. The root comes from the layout
         // settings, the way the running shell takes it, and the press is a real event on the row.
-        layout.setCollectionRoot(collectionRoot);
+        layout.setCollectionRoots({collectionRoot});
         // The file is written when the shell exits, so the check writes it the way that hook does
         // before reading it back with a fresh reader.
         if (!layout.save()) {
@@ -9452,9 +9487,9 @@ int main(int argc, char *argv[])
         // The root is a setting, so it outlives the run: a fresh reader of the same file sees it.
         LayoutSettings reread;
         reread.setFile(layout.file());
-        if (!reread.load() || reread.collectionRoot() != collectionRoot) {
-            std::fprintf(stderr, "dj-ui: the collection root was not remembered (%s)\n",
-                         qPrintable(reread.collectionRoot()));
+        if (!reread.load() || reread.collectionRoots() != QStringList{collectionRoot}) {
+            std::fprintf(stderr, "dj-ui: the collection roots were not remembered (%s)\n",
+                         qPrintable(reread.collectionRoots().join(QStringLiteral(", "))));
             return 1;
         }
         pressSection(collectionRow);
@@ -9475,7 +9510,7 @@ int main(int argc, char *argv[])
         if (!realRoot.isEmpty()) {
             QElapsedTimer timer;
             timer.start();
-            browser.openCollection(realRoot);
+            browser.openCollection({realRoot});
             const qint64 elapsed = timer.elapsed();
             int withTempo = 0;
             for (const QVariant &entry : browser.entries()) {

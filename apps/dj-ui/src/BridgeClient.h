@@ -48,9 +48,12 @@ public:
     Q_INVOKABLE void open(const QString &path);
     Q_INVOKABLE void up();
     Q_INVOKABLE QString defaultFolder() const;
-    /// Show the collection under `root`: every audio file below it, named as the import named it, with
-    /// the tempo and the key its metadata records.
-    Q_INVOKABLE void openCollection(const QString &root);
+    /// Show the collection under `roots`: every audio file below each of them, named as the import
+    /// named it, with the tempo and the key its metadata records. Empty means the default root.
+    Q_INVOKABLE void openCollection(const QStringList &roots);
+    /// Where the collection lives until the DJ names another root: `$XDG_DATA_HOME/hauler-dj/collection`,
+    /// the same tree the engine keeps its metadata in.
+    Q_INVOKABLE QString defaultCollectionRoot() const;
     /// Back to the folder the file list was showing.
     Q_INVOKABLE void showFiles();
     /// Remember where a load came from: the file list opens there next time, and a load made from the
@@ -64,7 +67,7 @@ signals:
 
 private:
     void load(const QString &path);
-    void collect(const QString &root);
+    void collect(const QStringList &roots);
     void applyFilter();
 
     QString m_folder;
