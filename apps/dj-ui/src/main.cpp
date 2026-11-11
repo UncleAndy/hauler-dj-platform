@@ -5158,19 +5158,73 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: the tempo field never appeared\n");
             return 1;
         }
-        for (const auto &[typed, accepted] :
-             {std::pair<const char *, bool>{"174.5", true}, {"174,5", true}, {"174.5.5", false},
-              {"174,5,5", false}}) {
-            field->setProperty("text", QString::fromLatin1(typed));
+        // Typed, not assigned: a comma that survives `setProperty` may still never arrive from a
+        // keyboard, and the keyboard is what the DJ uses. The key events go to the focused item through
+        // the window, exactly as a real press does.
+        const auto typeInto = [&](const QString &text) {
+            field->forceActiveFocus();
+            field->setProperty("text", QString());
             QCoreApplication::processEvents();
-            const bool ok = field->property("acceptableInput").toBool();
-            if (ok != accepted) {
-                std::fprintf(stderr, "dj-ui: the tempo field %s \"%s\"\n",
-                             ok ? "accepted" : "refused", typed);
+            for (const QChar &character : text) {
+                QKeyEvent press(QEvent::KeyPress, character.unicode(), Qt::NoModifier,
+                                QString(character));
+                QCoreApplication::sendEvent(window, &press);
+                QKeyEvent release(QEvent::KeyRelease, character.unicode(), Qt::NoModifier,
+                                  QString(character));
+                QCoreApplication::sendEvent(window, &release);
+            }
+            QCoreApplication::processEvents();
+            return field->property("text").toString();
+        };
+        for (const QString &typed : {QStringLiteral("174.5"), QStringLiteral("174,5")}) {
+            const QString landed = typeInto(typed);
+            if (landed != typed) {
+                std::fprintf(stderr, "dj-ui: typing \"%s\" put \"%s\" in the tempo field\n",
+                             qPrintable(typed), qPrintable(landed));
+                return 1;
+            }
+            if (!field->property("acceptableInput").toBool()) {
+                std::fprintf(stderr, "dj-ui: the tempo field refuses \"%s\"\n", qPrintable(typed));
                 return 1;
             }
         }
-        std::fprintf(stdout, "dj-ui: the tempo field takes a dot and a comma alike\n");
+        for (const QString &typed : {QStringLiteral("174.5.5"), QStringLiteral("174,5,5")}) {
+            field->setProperty("text", typed);
+            QCoreApplication::processEvents();
+            if (field->property("acceptableInput").toBool()) {
+                std::fprintf(stderr, "dj-ui: the tempo field accepts \"%s\"\n", qPrintable(typed));
+                return 1;
+            }
+        }
+        std::fprintf(stdout, "dj-ui: the tempo field takes a dot and a comma from the keyboard\n");
+
+        // And it stays inside its own window: the text and the field used to be laid out at their own
+        // width and ran out of the popup on the right.
+        auto *label = itemByName(QStringLiteral("tempoEditLabel_A"));
+        if (label == nullptr) {
+            std::fprintf(stderr, "dj-ui: the tempo dialog has no label\n");
+            return 1;
+        }
+        const auto rightEdge = [](QQuickItem *item) {
+            return item->mapToScene(QPointF(item->width(), 0.0)).x();
+        };
+        const qreal windowWidth = static_cast<qreal>(window->width());
+        std::fprintf(stdout, "dj-ui: the tempo dialog: label %.0f px, field %.0f px, window %.0f px\n",
+                     label->width(), field->width(), windowWidth);
+        if (rightEdge(label) > windowWidth || rightEdge(field) > windowWidth) {
+            std::fprintf(stderr,
+                         "dj-ui: the tempo dialog runs out of the window (label to %.0f, field to "
+                         "%.0f, window %.0f)\n",
+                         rightEdge(label), rightEdge(field), windowWidth);
+            return 1;
+        }
+        if (label->width() > 280.0) {
+            std::fprintf(stderr, "dj-ui: the tempo dialog label is %.0f px wide, wider than the "
+                                 "popup\n",
+                         label->width());
+            return 1;
+        }
+        std::fprintf(stdout, "dj-ui: the tempo dialog keeps its content inside itself\n");
         std::fprintf(stdout, "dj-ui: a track with no grid can be given one by hand\n");
         return 0;
     }

@@ -1495,7 +1495,10 @@ Pane {
         modal: true
         focus: true
         padding: 10
-        width: Math.min(260, Overlay.overlay !== null ? Overlay.overlay.width - 40 : 260)
+        // Measured from the panel, not from the overlay: the overlay is not laid out when the popup is
+        // created, and `overlay.width - 40` was a negative width for that instant — the content was then
+        // laid out at its own width and ran out of the window on the right. The panel is laid out.
+        width: Math.max(220, Math.min(280, panel.width - 20))
         contentWidth: width - 2 * padding
 
         onOpened: {
@@ -1505,11 +1508,14 @@ Pane {
         }
 
         ColumnLayout {
+            // The column is as wide as the popup, and the text wraps inside it: `Layout.fillWidth` on a
+            // column that has no width of its own does nothing, and the label kept its one-line width.
+            width: tempoEdit.availableWidth
             spacing: 6
-            Layout.fillWidth: true
             Label {
                 objectName: "tempoEditLabel_" + panel.deckId
                 Layout.fillWidth: true
+                Layout.maximumWidth: tempoEdit.availableWidth
                 wrapMode: Text.WordWrap
                 text: qsTr("Tempo of deck %1, in beats per minute. The first beat stays where it is.")
                         .arg(panel.deckId)
