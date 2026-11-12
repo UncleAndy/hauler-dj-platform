@@ -4037,6 +4037,219 @@ static int runLayoutCheck(QQmlApplicationEngine &engine,
 /// The browser's way into the collection: pick rows, ask for the batch, confirm it, answer the
 /// duplicate question, and require the files to be in the collection. Runs against a real engine,
 /// because the import is the engine's work and a shell that only draws dialogs proves nothing.
+// The collection's sort: a click on a column name sorts by it, a second click turns it around, and a
+// Shift click adds the next key. And the rail: the collection at its top, the files at its bottom.
+static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSettings &layout,
+                        BridgeClient &bridge, const QString &fixture, const QString &collectionRoot)
+{
+    if (fixture.isEmpty() || collectionRoot.isEmpty()) {
+        std::fprintf(stderr, "dj-ui: --sort-check needs --import-fixture and --collection-root\n");
+        return 1;
+    }
+    QDir root(collectionRoot);
+    if (!root.mkpath(QStringLiteral("."))) {
+        std::fprintf(stderr, "dj-ui: cannot make %s\n", qPrintable(collectionRoot));
+        return 1;
+    }
+    // Four names that parse as artist and title, so the list has something to sort by without tags.
+    for (const QString &name : {QStringLiteral("Alpha - Zebra"), QStringLiteral("Beta - Apple"),
+                                QStringLiteral("Alpha - Apple"), QStringLiteral("Gamma - Mango")}) {
+        const QString target = root.filePath(name + QStringLiteral(".wav"));
+        QFile::remove(target);
+        if (!QFile::copy(fixture, target)) {
+            std::fprintf(stderr, "dj-ui: cannot place %s\n", qPrintable(target));
+            return 1;
+        }
+    }
+
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().value(0));
+    if (window == nullptr) {
+        std::fprintf(stderr, "dj-ui: no shell window\n");
+        return 1;
+    }
+    auto *panel = findItem(window->contentItem(), QStringLiteral("browserPanel"));
+    if (panel == nullptr) {
+        std::fprintf(stderr, "dj-ui: the shell has no browser\n");
+        return 1;
+    }
+    // The header's geometry comes from the column settings: a check that runs before the shell has
+    // read them would click on nothing.
+    if (layout.collectionColumns().isEmpty()) {
+        layout.resetCollectionColumns();
+    }
+    browser.openCollection({collectionRoot});
+    QElapsedTimer clock;
+    clock.start();
+    while (browser.entries().size() < 4 && clock.elapsed() < 5000) {
+        QCoreApplication::processEvents();
+        QThread::msleep(20);
+    }
+    if (browser.entries().size() != 4) {
+        std::fprintf(stderr, "dj-ui: the collection lists %d rows, wanted 4\n",
+                     static_cast<int>(browser.entries().size()));
+        return 1;
+    }
+
+    // The rail: two places, and the one a DJ starts in is above the one he digs in.
+    auto *collectionRow = findItem(window->contentItem(), QStringLiteral("section_collection"));
+    auto *filesRow = findItem(window->contentItem(), QStringLiteral("section_files"));
+    if (collectionRow == nullptr || filesRow == nullptr) {
+        std::fprintf(stderr, "dj-ui: the rail has no Collection or Files row\n");
+        return 1;
+    }
+    if (!(collectionRow->y() < filesRow->y())) {
+        std::fprintf(stderr, "dj-ui: the rail puts Collection at %.1f and Files at %.1f\n",
+                     collectionRow->y(), filesRow->y());
+        return 1;
+    }
+    std::fprintf(stderr, "dj-ui: rail: Collection at %.1f, Files at %.1f\n", collectionRow->y(),
+                 filesRow->y());
+
+    auto *header = findItem(window->contentItem(), QStringLiteral("collectionHeaderDrag"));
+    if (header == nullptr) {
+        std::fprintf(stderr, "dj-ui: the collection has no header\n");
+        return 1;
+    }
+    // The header has no width until the shell has laid itself out, and a click at zero lands on the
+    // first column's edge, which is a resize: wait for the geometry before aiming at a name.
+    {
+        QElapsedTimer ready;
+        ready.start();
+        while (header->width() <= 1.0 && ready.elapsed() < 3000) {
+            QCoreApplication::processEvents();
+            QThread::msleep(20);
+        }
+    }
+    // A column's middle, in the header's own coordinates: the click is a real mouse event, because a
+    // sort nobody can reach with the pointer is a sort that only exists in the code.
+    const auto clickColumn = [&](const QString &column, Qt::KeyboardModifiers modifiers) {
+        const QVariantList columns = layout.collectionColumns();
+        int index = -1;
+        for (int at = 0; at < columns.size(); ++at) {
+            if (columns.at(at).toMap().value(QStringLiteral("id")).toString() == column) {
+                index = at;
+                break;
+            }
+        }
+        if (index < 0) {
+            return false;
+        }
+        const double width = header->width();
+        double left = 0.0;
+        for (int at = 0; at < index; ++at) {
+            left += columns.at(at).toMap().value(QStringLiteral("width")).toDouble() * width;
+        }
+        const double share = columns.at(index).toMap().value(QStringLiteral("width")).toDouble();
+        const QPointF at(left + share * width / 2.0, header->height() / 2.0);
+        const QPointF scene = header->mapToScene(at);
+        for (const QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+            QMouseEvent event(type, scene, window->mapToGlobal(scene.toPoint()), Qt::LeftButton,
+                              Qt::LeftButton, modifiers);
+            QCoreApplication::sendEvent(window, &event);
+        }
+        QCoreApplication::processEvents();
+        return true;
+    };
+    const auto order = [&]() {
+        QStringList names;
+        for (const QVariant &row : browser.entries()) {
+            names.append(row.toMap().value(QStringLiteral("name")).toString());
+        }
+        return names;
+    };
+    const auto keys = [&]() {
+        QStringList list;
+        for (const QVariant &key : browser.collectionSort()) {
+            const QVariantMap entry = key.toMap();
+            list.append(entry.value(QStringLiteral("column")).toString()
+                        + (entry.value(QStringLiteral("ascending")).toBool() ? "+" : "-"));
+        }
+        return list.join(QStringLiteral(","));
+    };
+    const auto require = [&](const QString &what, const QStringList &wanted) {
+        const QStringList got = order();
+        if (got != wanted) {
+            std::fprintf(stderr, "dj-ui: %s -> %s, wanted %s\n", qPrintable(what),
+                         qPrintable(got.join(QStringLiteral(" | "))),
+                         qPrintable(wanted.join(QStringLiteral(" | "))));
+            return false;
+        }
+        std::fprintf(stderr, "dj-ui: %s -> %s\n", qPrintable(what),
+                     qPrintable(got.join(QStringLiteral(" | "))));
+        return true;
+    };
+
+    if (!clickColumn(QStringLiteral("artist"), Qt::NoModifier)) {
+        std::fprintf(stderr, "dj-ui: the header has no artist column\n");
+        return 1;
+    }
+    if (!require(QStringLiteral("click artist"),
+                 {QStringLiteral("Alpha - Apple"), QStringLiteral("Alpha - Zebra"),
+                  QStringLiteral("Beta - Apple"), QStringLiteral("Gamma - Mango")})) {
+        return 1;
+    }
+    if (keys() != QStringLiteral("artist+")) {
+        std::fprintf(stderr, "dj-ui: the sort keys read «%s», wanted artist+\n", qPrintable(keys()));
+        return 1;
+    }
+
+    clickColumn(QStringLiteral("artist"), Qt::NoModifier);
+    // Equal artists keep the name order: a list that reshuffles between equal rows jumps under the hand.
+    if (!require(QStringLiteral("click artist again"),
+                 {QStringLiteral("Gamma - Mango"), QStringLiteral("Beta - Apple"),
+                  QStringLiteral("Alpha - Apple"), QStringLiteral("Alpha - Zebra")})) {
+        return 1;
+    }
+    if (keys() != QStringLiteral("artist-")) {
+        std::fprintf(stderr, "dj-ui: the second click left the keys at «%s»\n", qPrintable(keys()));
+        return 1;
+    }
+
+    clickColumn(QStringLiteral("title"), Qt::NoModifier);
+    if (!require(QStringLiteral("click title"),
+                 {QStringLiteral("Alpha - Apple"), QStringLiteral("Beta - Apple"),
+                  QStringLiteral("Gamma - Mango"), QStringLiteral("Alpha - Zebra")})) {
+        return 1;
+    }
+    if (keys() != QStringLiteral("title+")) {
+        std::fprintf(stderr, "dj-ui: a plain click did not replace the key: «%s»\n", qPrintable(keys()));
+        return 1;
+    }
+
+    clickColumn(QStringLiteral("title"), Qt::NoModifier);
+    if (!require(QStringLiteral("click title again"),
+                 {QStringLiteral("Alpha - Zebra"), QStringLiteral("Gamma - Mango"),
+                  QStringLiteral("Alpha - Apple"), QStringLiteral("Beta - Apple")})) {
+        return 1;
+    }
+
+    // Shift: the title keeps deciding, the artist decides between the rows it could not. Ascending it
+    // agrees with the name order, so the change is checked by turning that second key around.
+    clickColumn(QStringLiteral("artist"), Qt::ShiftModifier);
+    if (keys() != QStringLiteral("title-,artist+")) {
+        std::fprintf(stderr, "dj-ui: the shift click left the keys at «%s»\n", qPrintable(keys()));
+        return 1;
+    }
+    if (!require(QStringLiteral("shift click artist"),
+                 {QStringLiteral("Alpha - Zebra"), QStringLiteral("Gamma - Mango"),
+                  QStringLiteral("Alpha - Apple"), QStringLiteral("Beta - Apple")})) {
+        return 1;
+    }
+    clickColumn(QStringLiteral("artist"), Qt::ShiftModifier);
+    if (!require(QStringLiteral("shift click artist again"),
+                 {QStringLiteral("Alpha - Zebra"), QStringLiteral("Gamma - Mango"),
+                  QStringLiteral("Beta - Apple"), QStringLiteral("Alpha - Apple")})) {
+        return 1;
+    }
+    if (keys() != QStringLiteral("title-,artist-")) {
+        std::fprintf(stderr, "dj-ui: the second shift click left the keys at «%s»\n",
+                     qPrintable(keys()));
+        return 1;
+    }
+    std::fprintf(stderr, "dj-ui: sort check done\n");
+    return 0;
+}
+
 // The collection's Analyze…: one track gets a progress window, a selection gets a question with the
 // parallel box and then the same window. Afterwards the numbers are in the list, not only in the files.
 static int runAnalyzeCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSettings &layout,
@@ -4898,6 +5111,10 @@ int main(int argc, char *argv[])
         QStringLiteral("import-check"),
         QStringLiteral("With --connect: pick two rows in the browser, add them to the collection, "
                        "answer the duplicate question and require the files to be there."));
+    const QCommandLineOption sortCheckOption(
+        QStringLiteral("sort-check"),
+        QStringLiteral("From the collection: a click on a column sorts by it, a second click turns it "
+                       "around, a Shift click adds the next key — and the rail's order."));
     const QCommandLineOption analyzeCheckOption(
         QStringLiteral("analyze-check"),
         QStringLiteral("From the collection: Analyze… on one track and on three — a progress window, "
@@ -5143,6 +5360,7 @@ int main(int argc, char *argv[])
     parser.addOption(masterCheckOption);
     parser.addOption(importCheckOption);
     parser.addOption(analyzeCheckOption);
+    parser.addOption(sortCheckOption);
     parser.addOption(importFixtureOption);
     parser.addOption(gridReconnectOption);
     parser.addOption(metronomeOption);
@@ -10414,6 +10632,12 @@ int main(int argc, char *argv[])
         bridge->connectToEngine(parser.value(connectOption));
         return runImportCheck(engine, browser, layout, *bridge, parser.value(importFixtureOption),
                               parser.values(collectionRootOption).value(0));
+    }
+
+    if (parser.isSet(sortCheckOption)) {
+        bridge->connectToEngine(parser.value(connectOption));
+        return runSortCheck(engine, browser, layout, *bridge, parser.value(importFixtureOption),
+                            parser.values(collectionRootOption).value(0));
     }
 
     if (parser.isSet(analyzeCheckOption)) {

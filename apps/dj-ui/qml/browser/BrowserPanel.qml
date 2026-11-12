@@ -150,6 +150,20 @@ Pane {
 
     /// Where a named column sits now: a row cell belongs to its column, not to a position, so a
     /// moved column takes its numbers with it.
+    /// The mark a sorted column carries: filled for the key that decides, hollow for the one after it.
+    function sortMark(id) {
+        const keys = Browser.collectionSort;
+        for (let index = 0; index < keys.length; ++index) {
+            if (keys[index].column === id) {
+                if (index === 0) {
+                    return keys[index].ascending ? " ▲" : " ▼";
+                }
+                return keys[index].ascending ? " △" : " ▽";
+            }
+        }
+        return "";
+    }
+
     function columnIndexOf(id) {
         for (let i = 0; i < columns.length; ++i) {
             if (columns[i].id === id) {
@@ -688,27 +702,12 @@ Pane {
                 font.bold: true
                 color: UiSettings.themeTextDim
             }
-            ListModel {
-                id: sectionModel
-                ListElement {
-                    key: "files"
-                    title: "Files"
-                    ready: true
-                }
-                ListElement {
-                    key: "collection"
-                    title: "Collection"
-                    ready: true
-                }
-                ListElement {
-                    key: "playlists"
-                    title: "Playlists"
-                    ready: false
-                }
-            }
-            Repeater {
-                model: sectionModel
-                delegate: Rectangle {
+            // Places, not labels: a DJ starts in the collection and digs in the file list, so the
+            // collection sits at the top of the rail and the files at its bottom. Playlists goes with
+            // the collection — it is a place the same way, and an empty one is still a place.
+            Component {
+                id: sectionRow
+                Rectangle {
                     required property string key
                     required property string title
                     required property bool ready
@@ -741,8 +740,37 @@ Pane {
                     }
                 }
             }
+            ListModel {
+                id: sectionTop
+                ListElement {
+                    key: "collection"
+                    title: "Collection"
+                    ready: true
+                }
+                ListElement {
+                    key: "playlists"
+                    title: "Playlists"
+                    ready: false
+                }
+            }
+            Repeater {
+                model: sectionTop
+                delegate: sectionRow
+            }
             Item {
                 Layout.fillHeight: true
+            }
+            ListModel {
+                id: sectionBottom
+                ListElement {
+                    key: "files"
+                    title: "Files"
+                    ready: true
+                }
+            }
+            Repeater {
+                model: sectionBottom
+                delegate: sectionRow
             }
         }
 
@@ -914,8 +942,10 @@ Pane {
                     width: Math.max(0, browser.columnWidth(0, header.width) - 12)
                     visible: browser.columnId(0) !== ""
                     text: browser.columnTitle(browser.columnId(0))
+                          + browser.sortMark(browser.columnId(0))
                     horizontalAlignment: browser.columnAlign(browser.columnId(0))
-                    color: UiSettings.themeTextDim
+                    color: browser.sortMark(browser.columnId(0)) === ""
+                           ? UiSettings.themeTextDim : UiSettings.themeAccent
                     font.pixelSize: browser.listFont
                     elide: Text.ElideRight
                 }
@@ -925,8 +955,10 @@ Pane {
                     width: Math.max(0, browser.columnWidth(1, header.width) - 12)
                     visible: browser.columnId(1) !== ""
                     text: browser.columnTitle(browser.columnId(1))
+                          + browser.sortMark(browser.columnId(1))
                     horizontalAlignment: browser.columnAlign(browser.columnId(1))
-                    color: UiSettings.themeTextDim
+                    color: browser.sortMark(browser.columnId(1)) === ""
+                           ? UiSettings.themeTextDim : UiSettings.themeAccent
                     font.pixelSize: browser.listFont
                     elide: Text.ElideRight
                 }
@@ -936,8 +968,10 @@ Pane {
                     width: Math.max(0, browser.columnWidth(2, header.width) - 12)
                     visible: browser.columnId(2) !== ""
                     text: browser.columnTitle(browser.columnId(2))
+                          + browser.sortMark(browser.columnId(2))
                     horizontalAlignment: browser.columnAlign(browser.columnId(2))
-                    color: UiSettings.themeTextDim
+                    color: browser.sortMark(browser.columnId(2)) === ""
+                           ? UiSettings.themeTextDim : UiSettings.themeAccent
                     font.pixelSize: browser.listFont
                     elide: Text.ElideRight
                 }
@@ -947,8 +981,10 @@ Pane {
                     width: Math.max(0, browser.columnWidth(3, header.width) - 12)
                     visible: browser.columnId(3) !== ""
                     text: browser.columnTitle(browser.columnId(3))
+                          + browser.sortMark(browser.columnId(3))
                     horizontalAlignment: browser.columnAlign(browser.columnId(3))
-                    color: UiSettings.themeTextDim
+                    color: browser.sortMark(browser.columnId(3)) === ""
+                           ? UiSettings.themeTextDim : UiSettings.themeAccent
                     font.pixelSize: browser.listFont
                     elide: Text.ElideRight
                 }
@@ -958,8 +994,10 @@ Pane {
                     width: Math.max(0, browser.columnWidth(4, header.width) - 12)
                     visible: browser.columnId(4) !== ""
                     text: browser.columnTitle(browser.columnId(4))
+                          + browser.sortMark(browser.columnId(4))
                     horizontalAlignment: browser.columnAlign(browser.columnId(4))
-                    color: UiSettings.themeTextDim
+                    color: browser.sortMark(browser.columnId(4)) === ""
+                           ? UiSettings.themeTextDim : UiSettings.themeAccent
                     font.pixelSize: browser.listFont
                     elide: Text.ElideRight
                 }
@@ -969,8 +1007,10 @@ Pane {
                     width: Math.max(0, browser.columnWidth(5, header.width) - 12)
                     visible: browser.columnId(5) !== ""
                     text: browser.columnTitle(browser.columnId(5))
+                          + browser.sortMark(browser.columnId(5))
                     horizontalAlignment: browser.columnAlign(browser.columnId(5))
-                    color: UiSettings.themeTextDim
+                    color: browser.sortMark(browser.columnId(5)) === ""
+                           ? UiSettings.themeTextDim : UiSettings.themeAccent
                     font.pixelSize: browser.listFont
                     elide: Text.ElideRight
                 }
@@ -1024,6 +1064,10 @@ Pane {
                     property real startShare: 0
                     property int dragIndex: -1
                     property int dropIndex: -1
+                    // Where the press started: a release in the same place is a click, and a click on a
+                    // column's name sorts by it — the strip already owns the width and the move.
+                    property real pressX: -1
+                    property int pressIndex: -1
                     // The cursor says what the strip does: a splitter under the pointer is the only
                     // way a DJ learns that the edge is draggable at all.
                     property int hoverBoundary: -1
@@ -1042,6 +1086,8 @@ Pane {
                             resizeIndex = -1;
                             dragIndex = browser.columnIndexAt(mouse.x, header.width);
                             dropIndex = dragIndex;
+                            pressX = mouse.x;
+                            pressIndex = dragIndex;
                         }
                     }
                     onPositionChanged: function (mouse) {
@@ -1054,13 +1100,20 @@ Pane {
                             dropIndex = browser.columnIndexAt(mouse.x, header.width);
                         }
                     }
-                    onReleased: {
-                        if (dragIndex >= 0 && dropIndex >= 0 && dropIndex !== dragIndex) {
+                    onReleased: function (mouse) {
+                        if (resizeIndex < 0 && pressIndex >= 0 && dropIndex === pressIndex
+                            && Math.abs(mouse.x - pressX) <= 4) {
+                            // A click on the name: sort by this column, or by it second with Shift.
+                            Browser.sortCollection(browser.columnId(pressIndex),
+                                                   (mouse.modifiers & Qt.ShiftModifier) !== 0);
+                        } else if (dragIndex >= 0 && dropIndex >= 0 && dropIndex !== dragIndex) {
                             LayoutState.moveCollectionColumn(browser.columnId(dragIndex), dropIndex);
                         }
                         resizeIndex = -1;
                         dragIndex = -1;
                         dropIndex = -1;
+                        pressIndex = -1;
+                        pressX = -1;
                     }
                 }
 

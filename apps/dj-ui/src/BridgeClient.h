@@ -36,6 +36,8 @@ class FileBrowser : public QObject
     // Where the cursor stands in the list that is showing: the panel puts the highlight there when
     // the list comes back, and a row that is gone simply has no highlight.
     Q_PROPERTY(QString cursor READ cursor NOTIFY cursorChanged)
+    // The collection's sort: one or more keys, the first deciding. The header writes it, the rows obey.
+    Q_PROPERTY(QVariantList collectionSort READ collectionSort NOTIFY sortChanged)
 
 public:
     explicit FileBrowser(QObject *parent = nullptr);
@@ -56,6 +58,11 @@ public:
     Q_INVOKABLE void seedCursors(const QString &files, const QString &collection);
     /// Where `path` sits in the list that is showing; -1 when it is not there any more.
     Q_INVOKABLE int rowOf(const QString &path) const;
+    /// The collection's sort keys, in order: `{column, ascending}`.
+    QVariantList collectionSort() const { return m_sort; }
+    /// Sort the collection by `column`. A plain click makes it the only key and turns it around on a
+    /// second click; `shift` adds it as the next key, so two columns can decide together.
+    Q_INVOKABLE void sortCollection(const QString &column, bool shift);
     int total() const { return m_total; }
 
     // Show `path`, or the default music folder when it is empty.
@@ -86,11 +93,13 @@ signals:
     /// The remembered row moved. Its own signal: `changed()` rebuilds the list, and a rebuild resets
     /// the very index the cursor is about.
     void cursorChanged();
+    void sortChanged();
 
 private:
     void load(const QString &path);
     void collect(const QStringList &roots);
     void applyFilter();
+    void applySort();
 
     QString m_folder;
     QVariantList m_entries;
@@ -107,6 +116,8 @@ private:
     QString m_filesCursor;
     QString m_collectionCursor;
     QString m_filesFolder;
+    // The sort keys of the collection, in order: `{column, ascending}`.
+    QVariantList m_sort;
 };
 
 class BridgeClient : public QObject

@@ -348,6 +348,8 @@ void FileBrowser::collect(const QStringList &roots)
     });
     m_all = tracks;
     m_total = tracks.size();
+    // A refresh reads the disks again: the sort the DJ chose outlives it.
+    applySort();
 }
 
 void FileBrowser::setFilter(const QString &text)
@@ -385,6 +387,144 @@ void FileBrowser::applyFilter()
     }
     m_entries = kept;
     emit changed();
+}
+
+namespace {
+
+/// Whether a row has nothing to say for this column: such rows go last whichever way the sort runs.
+bool emptyFor(const QVariantMap &row, const QString &column)
+{
+    if (column == QStringLiteral("time")) {
+        return !(row.value(QStringLiteral("duration_ms")).toDouble() > 0.0);
+    }
+    if (column == QStringLiteral("bpm")) {
+        return !(row.value(QStringLiteral("bpm")).toDouble() > 0.0);
+    }
+    return row.value(column).toString().trimmed().isEmpty();
+}
+
+/// The Camelot order of a key: `2d` before `10d`, `8d` before `8m`. A key nobody can read is not one.
+int camelot(const QString &key, bool *read)
+{
+    const QString text = key.trimmed();
+    if (text.size() < 2) {
+        *read = false;
+        return 0;
+    }
+    const QChar letter = text.at(text.size() - 1);
+    bool ok = false;
+    const int wheel = text.left(text.size() - 1).toInt(&ok);
+    if (!ok || wheel <= 0 || (letter != QLatin1Char('d') && letter != QLatin1Char('m'))) {
+        *read = false;
+        return 0;
+    }
+    *read = true;
+    return wheel * 2 + (letter == QLatin1Char('m') ? 1 : 0);
+}
+
+/// The order of two rows in one column, ascending.
+int compareColumn(const QVariantMap &left, const QVariantMap &right, const QString &column)
+{
+    const auto three = [](double a, double b) { return a < b ? -1 : (a > b ? 1 : 0); };
+    if (column == QStringLiteral("time")) {
+        return three(left.value(QStringLiteral("duration_ms")).toDouble(),
+                     right.value(QStringLiteral("duration_ms")).toDouble());
+    }
+    if (column == QStringLiteral("bpm")) {
+        return three(left.value(QStringLiteral("bpm")).toDouble(),
+                     right.value(QStringLiteral("bpm")).toDouble());
+    }
+    if (column == QStringLiteral("key")) {
+        bool leftRead = false;
+        bool rightRead = false;
+        const int leftKey = camelot(left.value(QStringLiteral("key")).toString(), &leftRead);
+        const int rightKey = camelot(right.value(QStringLiteral("key")).toString(), &rightRead);
+        if (leftRead && rightRead) {
+            return leftKey < rightKey ? -1 : (leftKey > rightKey ? 1 : 0);
+        }
+        // A key in a notation the wheel cannot read is compared as the text it is.
+    }
+    const QString a = left.value(column).toString().toLower();
+    const QString b = right.value(column).toString().toLower();
+    return QString::localeAwareCompare(a, b);
+}
+
+/// The order of two rows under the whole list of keys, the first key deciding.
+int compareRows(const QVariantMap &left, const QVariantMap &right, const QVariantList &keys)
+{
+    for (const QVariant &entry : keys) {
+        const QVariantMap key = entry.toMap();
+        const QString column = key.value(QStringLiteral("column")).toString();
+        const bool ascending = key.value(QStringLiteral("ascending")).toBool();
+        const bool leftEmpty = emptyFor(left, column);
+        const bool rightEmpty = emptyFor(right, column);
+        // An empty cell is not a value: it sits at the bottom whichever way the column runs.
+        if (leftEmpty != rightEmpty) {
+            return leftEmpty ? 1 : -1;
+        }
+        if (leftEmpty && rightEmpty) {
+            continue;
+        }
+        const int order = compareColumn(left, right, column);
+        if (order != 0) {
+            return ascending ? order : -order;
+        }
+    }
+    // Equal rows keep a stable order: a list that reshuffles between them jumps under the hand.
+    return QString::localeAwareCompare(left.value(QStringLiteral("name")).toString().toLower(),
+                                       right.value(QStringLiteral("name")).toString().toLower());
+}
+
+} // namespace
+
+void FileBrowser::sortCollection(const QString &column, bool shift)
+{
+    if (column.isEmpty()) {
+        return;
+    }
+    int existing = -1;
+    for (int index = 0; index < m_sort.size(); ++index) {
+        if (m_sort.at(index).toMap().value(QStringLiteral("column")).toString() == column) {
+            existing = index;
+            break;
+        }
+    }
+    QVariantList next;
+    if (shift) {
+        // Shift adds a key: the column the list is already sorted by stays first, and this one decides
+        // between the rows that the first could not.
+        next = m_sort;
+        if (existing >= 0) {
+            QVariantMap key = next.at(existing).toMap();
+            key.insert(QStringLiteral("ascending"), !key.value(QStringLiteral("ascending")).toBool());
+            next[existing] = key;
+        } else {
+            next.append(QVariantMap{{QStringLiteral("column"), column},
+                                    {QStringLiteral("ascending"), true}});
+        }
+    } else if (m_sort.size() == 1 && existing == 0) {
+        // The same column twice in a row turns it around.
+        QVariantMap key = m_sort.first().toMap();
+        key.insert(QStringLiteral("ascending"), !key.value(QStringLiteral("ascending")).toBool());
+        next.append(key);
+    } else {
+        next.append(QVariantMap{{QStringLiteral("column"), column},
+                                {QStringLiteral("ascending"), true}});
+    }
+    m_sort = next;
+    emit sortChanged();
+    applySort();
+}
+
+void FileBrowser::applySort()
+{
+    if (m_sort.isEmpty()) {
+        return;
+    }
+    std::sort(m_all.begin(), m_all.end(), [this](const QVariant &left, const QVariant &right) {
+        return compareRows(left.toMap(), right.toMap(), m_sort) < 0;
+    });
+    applyFilter();
 }
 
 BridgeClient::BridgeClient(QObject *parent)

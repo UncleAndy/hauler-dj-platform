@@ -221,6 +221,11 @@ case "${1:-}" in
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --collection-root "$run_dir/analyze-collection" --analyze-check \
         --import-fixture "$analyze_track" --layout-file "$run_dir/analyze-layout.json"
+    # The collection's sort and the rail's order: a click on a column sorts by it, a second click turns
+    # it around, a Shift click adds the next key; and Collection sits above Files.
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
+        --collection-root "$run_dir/sort-collection" --sort-check \
+        --import-fixture "$analyze_track" --layout-file "$run_dir/sort-layout.json"
     # Every crossfader law must reach the engine and come back in the snapshot, and the selector must
     # show the one in force — a selector that lights up on the click is a selector that lies.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --curve-check

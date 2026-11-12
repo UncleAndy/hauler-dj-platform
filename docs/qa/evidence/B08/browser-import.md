@@ -91,3 +91,36 @@ dj-ui: analyze check done
   диалога (`analyzeDialog.parallel`), которое видно обеим сторонам.
 - **Окно прогресса для одного файла может мелькнуть.** Проверка ловит его опросом каждые 10 мс;
   на 64-секундном файле анализ идёт секунды, и окно успевает быть видимым.
+
+## Сортировка коллекции и порядок разделов
+
+**Запрос владельца.** «При нажатии на колонку без `Shift` — сортировка по этой колонке. При нажатии с
+`Shift`, если ещё есть сортировка по другой колонке, по данной идёт вторичная сортировка.» И:
+«`Collection` нужно разместить в самом верху левой панели, `Files` — в самом низу.»
+
+**Что стало.** Сортировка живёт в `FileBrowser` (`sortCollection(column, shift)`, `collectionSort`),
+шапка сортирует по щелчку с настоящей мышью, метка в шапке показывает ключ (▲/▼ — решающий,
+△/▽ — следующий). Рельс разбит на два списка: `Collection` и `Playlists` сверху, `Files` снизу.
+
+**Замер (`--sort-check`, четыре копии бит-фикстуры, имена `<Исполнитель> - <Название>`):**
+
+```
+dj-ui: rail: Collection at 13,0, Files at 55,0
+dj-ui: click artist -> Alpha - Apple | Alpha - Zebra | Beta - Apple | Gamma - Mango
+dj-ui: click artist again -> Gamma - Mango | Beta - Apple | Alpha - Apple | Alpha - Zebra
+dj-ui: click title -> Alpha - Apple | Beta - Apple | Gamma - Mango | Alpha - Zebra
+dj-ui: click title again -> Alpha - Zebra | Gamma - Mango | Alpha - Apple | Beta - Apple
+dj-ui: shift click artist -> Alpha - Zebra | Gamma - Mango | Alpha - Apple | Beta - Apple
+dj-ui: shift click artist again -> Alpha - Zebra | Gamma - Mango | Beta - Apple | Alpha - Apple
+dj-ui: sort check done
+```
+
+**Грабли:**
+
+- **Шапка не имеет ширины, пока оболочка не разложилась.** Первый заход щёлкал в точку (0, 0): там
+  край первой колонки, и жест читался как изменение ширины, а не как щелчок по названию. Проверка ждёт
+  `header->width() > 1` перед прицеливанием.
+- **Равные ключи держат порядок имён,** поэтому «Shift по артисту» на уже отсортированном по названию
+  списке ничего не меняет — проверка переворачивает второй ключ вторым Shift, иначе она ничего не
+  доказывает.
+- **Пустые ячейки внизу при любом направлении** — иначе трек без BPM оказывается «самым быстрым».
