@@ -4913,6 +4913,30 @@ static int runCollectionPageCheck(QQmlApplicationEngine &engine, FileBrowser &br
         std::fprintf(stderr, "dj-ui: cannot make a temporary folder\n");
         return 1;
     }
+    // The cold case first: no index exists yet, so the engine creates it and runs the schema and its
+    // migrations inside the answer. That is what a browser opening the collection on a fresh install
+    // does, and it must not hang the engine.
+    {
+        QVariantMap cold;
+        cold.insert(QStringLiteral("id"), 1111);
+        cold.insert(QStringLiteral("offset"), 0);
+        cold.insert(QStringLiteral("limit"), 100);
+        QElapsedTimer coldClock;
+        coldClock.start();
+        bridge.queryCollection(cold);
+        while (coldClock.elapsed() < 15000
+               && bridge.collectionPage().value(QStringLiteral("id")).toInt() != 1111) {
+            QCoreApplication::processEvents();
+            QThread::msleep(10);
+        }
+        if (bridge.collectionPage().value(QStringLiteral("id")).toInt() != 1111) {
+            std::fprintf(stderr, "dj-ui: the engine never answered a query with no index\n");
+            return 1;
+        }
+        std::fprintf(stdout, "dj-ui: a query with no index answered in %lld ms, %d rows\n",
+                     static_cast<long long>(coldClock.elapsed()),
+                     static_cast<int>(bridge.collectionPage().value(QStringLiteral("rows")).toList().size()));
+    }
     const QString source = incoming.path() + QStringLiteral("/A - Page.wav");
     if (!QFile::copy(fixture, source)) {
         std::fprintf(stderr, "dj-ui: cannot copy %s\n", qPrintable(fixture));
