@@ -401,7 +401,9 @@ Pane {
     }
     Connections {
         target: Browser
-        function onGenresChanged() {
+        // Only a pick is a decision of the DJ: a reload also moves the chips, and writing the layout
+        // from it would re-open the collection the layout change asks for.
+        function onGenresPicked() {
             if (browser.genresSeeded) {
                 LayoutState.collectionGenres = Browser.genreFilter;
             }

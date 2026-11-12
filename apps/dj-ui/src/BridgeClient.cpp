@@ -1,5 +1,9 @@
 #include "BridgeClient.h"
 
+#include <QCoreApplication>
+#include <QElapsedTimer>
+#include <QThread>
+
 #include <QDebug>
 #include <QDir>
 #include <QDirIterator>
@@ -245,6 +249,11 @@ bool FileBrowser::entryIsFile(const QString &path) const
     return QFileInfo(path).isFile();
 }
 
+void FileBrowser::attachBridge(BridgeClient *bridge)
+{
+    m_bridge = bridge;
+}
+
 void FileBrowser::showFiles()
 {
     load(m_filesFolder.isEmpty() ? defaultFolder() : m_filesFolder);
@@ -444,6 +453,7 @@ void FileBrowser::setGenreFilter(const QStringList &genres)
     }
     m_genres = clean;
     emit genresChanged();
+    emit genresPicked();
     applyFilter();
 }
 

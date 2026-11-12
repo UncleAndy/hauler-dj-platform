@@ -20,6 +20,8 @@
 // Written by hand because both alternatives fail here: Qt's FileDialog is the GTK/portal dialog
 // (a missing gsettings schema aborts the process) and Qt.labs.folderlistmodel is not built into
 // this Qt. QDir cannot crash the UI and needs nothing installed.
+class BridgeClient;
+
 class FileBrowser : public QObject
 {
     Q_OBJECT
@@ -88,6 +90,9 @@ public:
     Q_INVOKABLE QString defaultCollectionRoot() const;
     /// Back to the folder the file list was showing.
     Q_INVOKABLE void showFiles();
+    /// Attach the engine's client: from then on the collection is read as a page the engine builds, and
+    /// the walk over `.djmeta` stays the path for a shell that runs without an engine.
+    Q_INVOKABLE void attachBridge(BridgeClient *bridge);
     /// Read the collection again without losing the search: an analysis that lands while the DJ is
     /// looking at a filtered list must not throw the list away.
     Q_INVOKABLE void refreshCollection();
@@ -103,6 +108,10 @@ signals:
     void changed();
     /// The chips have new counts, or the filter itself moved: the panel redraws them.
     void genresChanged();
+    /// The DJ picked other chips. Kept apart from `genresChanged` on purpose: a reload also moves the
+    /// chips, and writing the layout from that signal closes a circle — layout `changed` re-opens the
+    /// collection, which reloads the chips.
+    void genresPicked();
     /// The remembered row moved. Its own signal: `changed()` rebuilds the list, and a rebuild resets
     /// the very index the cursor is about.
     void cursorChanged();
@@ -119,6 +128,10 @@ private:
     QString m_error;
     QString m_mode = QStringLiteral("files");
     QString m_filter;
+    /// The engine's client, when there is one: the collection is its index, not this process's walk.
+    BridgeClient *m_bridge = nullptr;
+    /// The marker of the last page asked for: an answer to an older question is not this list.
+    int m_pageQuery = 0;
     /// The genres the collection is narrowed to. Empty is the whole collection.
     QStringList m_genres;
     int m_total = 0;

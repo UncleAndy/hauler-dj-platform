@@ -6084,6 +6084,9 @@ int main(int argc, char *argv[])
     auto bridge = std::make_unique<BridgeClient>();
     qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "Bridge", bridge.get());
     FileBrowser browser;
+    // The collection is the engine's index, not this process's walk: the browser asks, and only a shell
+    // without an engine falls back to reading  itself.
+    browser.attachBridge(bridge.get());
     SessionState session;
     if (parser.isSet(sessionFileOption)) {
         session.setFile(parser.value(sessionFileOption));
