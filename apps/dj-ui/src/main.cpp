@@ -4893,6 +4893,209 @@ static int runAnalyzeCheck(QQmlApplicationEngine &engine, FileBrowser &browser, 
     return 0;
 }
 
+// The same collection, two sources: the walk over `.djmeta` and the page out of the index. The question
+// is not which one the list uses today — it is whether the index gives the same rows at all. Compared by
+// path, field by field, and the first differences are printed.
+static int runCollectionPageCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
+                                  BridgeClient &bridge, const QString &fixture,
+                                  const QString &collectionRoot)
+{
+    if (fixture.isEmpty() || !QFile::exists(fixture)) {
+        std::fprintf(stderr, "dj-ui: --collection-page-check needs a real track in --import-fixture\n");
+        return 1;
+    }
+    if (collectionRoot.isEmpty()) {
+        std::fprintf(stderr, "dj-ui: --collection-page-check needs --collection-root\n");
+        return 1;
+    }
+    QTemporaryDir incoming;
+    if (!incoming.isValid()) {
+        std::fprintf(stderr, "dj-ui: cannot make a temporary folder\n");
+        return 1;
+    }
+    const QString source = incoming.path() + QStringLiteral("/A - Page.wav");
+    if (!QFile::copy(fixture, source)) {
+        std::fprintf(stderr, "dj-ui: cannot copy %s\n", qPrintable(fixture));
+        return 1;
+    }
+
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    if (window == nullptr) {
+        std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+        return 1;
+    }
+    window->resize(1366, 768);
+    window->show();
+    browser.open(incoming.path());
+    QEventLoop settle;
+    QTimer::singleShot(600, &settle, &QEventLoop::quit);
+    settle.exec();
+
+    QQuickItem *panel = findItem(window->contentItem(), QStringLiteral("browserPanel"));
+    if (panel == nullptr) {
+        std::fprintf(stderr, "dj-ui: the shell has no browser\n");
+        return 1;
+    }
+    int row = -1;
+    const QVariantList listed = browser.entries();
+    for (int index = 0; index < listed.size(); ++index) {
+        if (listed.at(index).toMap().value(QStringLiteral("path")).toString() == source) {
+            row = index;
+        }
+    }
+    if (row < 0) {
+        std::fprintf(stderr, "dj-ui: the browser lists %d rows and not the copy\n",
+                     static_cast<int>(listed.size()));
+        return 1;
+    }
+
+    QVariant returned;
+    QMetaObject::invokeMethod(panel, "choose", Q_RETURN_ARG(QVariant, returned),
+                              Q_ARG(QVariant, row),
+                              Q_ARG(QVariant, static_cast<int>(Qt::NoModifier)));
+    QMetaObject::invokeMethod(panel, "askImport", Q_RETURN_ARG(QVariant, returned));
+    QCoreApplication::processEvents();
+    auto *confirmButton = panel->findChild<QObject *>(QStringLiteral("importConfirm"));
+    if (confirmButton == nullptr) {
+        std::fprintf(stderr, "dj-ui: the import windows are not in the shell\n");
+        return 1;
+    }
+    QMetaObject::invokeMethod(confirmButton, "clicked");
+    const auto state = [&]() { return panel->property("importState").toMap(); };
+    QElapsedTimer batch;
+    batch.start();
+    while (batch.elapsed() < 60000) {
+        QCoreApplication::processEvents();
+        const QVariantMap now = state();
+        if (!now.isEmpty() && now.value(QStringLiteral("total")).toInt() > 0
+            && !now.value(QStringLiteral("running")).toBool()) {
+            break;
+        }
+        QThread::msleep(10);
+    }
+    const QVariantMap finished = state();
+    if (finished.value(QStringLiteral("placed")).toInt() < 1) {
+        std::fprintf(stderr, "dj-ui: the batch placed %d of %d\n",
+                     finished.value(QStringLiteral("placed")).toInt(),
+                     finished.value(QStringLiteral("total")).toInt());
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: the collection holds the copy after an import (%d placed)\n",
+                 finished.value(QStringLiteral("placed")).toInt());
+
+    // The walk: what the list shows today.
+    browser.openCollection({collectionRoot});
+    QElapsedTimer walkClock;
+    walkClock.start();
+    while (browser.entries().isEmpty() && walkClock.elapsed() < 5000) {
+        QCoreApplication::processEvents();
+        QThread::msleep(20);
+    }
+    const QVariantList walked = browser.entries();
+
+    // The page: what the index says, asked directly — the list is not involved in the answer.
+    QVariantMap query;
+    query.insert(QStringLiteral("id"), 4242);
+    query.insert(QStringLiteral("offset"), 0);
+    query.insert(QStringLiteral("limit"), 5000);
+    bridge.queryCollection(query);
+    QElapsedTimer pageClock;
+    pageClock.start();
+    while (pageClock.elapsed() < 15000
+           && bridge.collectionPage().value(QStringLiteral("id")).toInt() != 4242) {
+        QCoreApplication::processEvents();
+        QThread::msleep(20);
+    }
+    const QVariantMap answer = bridge.collectionPage();
+    const QVariantList pageRows = answer.value(QStringLiteral("rows")).toList();
+    if (answer.value(QStringLiteral("id")).toInt() != 4242) {
+        std::fprintf(stderr, "dj-ui: the engine never answered the page question\n");
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: the walk lists %d rows, the index page %d\n",
+                 static_cast<int>(walked.size()), static_cast<int>(pageRows.size()));
+
+    QHash<QString, QVariantMap> byPath;
+    for (const QVariant &entry : pageRows) {
+        const QVariantMap made = entry.toMap();
+        byPath.insert(made.value(QStringLiteral("path")).toString(), made);
+    }
+    int told = 0;
+    int compared = 0;
+    int wrong = 0;
+    for (const QVariant &entry : walked) {
+        const QVariantMap row_ = entry.toMap();
+        const QString path = row_.value(QStringLiteral("path")).toString();
+        if (!byPath.contains(path)) {
+            if (told++ < 5) {
+                std::fprintf(stderr, "dj-ui: the index has no row for %s\n", qPrintable(path));
+            }
+            ++wrong;
+            continue;
+        }
+        const QVariantMap pageRow = byPath.take(path);
+        ++compared;
+        const auto complain = [&](const char *field, const QString &walkedValue,
+                                  const QString &pageValue) {
+            if (told++ < 5) {
+                std::fprintf(stderr, "dj-ui: %s differs on %s: walk '%s', index '%s'\n", field,
+                             qPrintable(path), qPrintable(walkedValue), qPrintable(pageValue));
+            }
+            ++wrong;
+        };
+        if (row_.value(QStringLiteral("artist")).toString()
+            != pageRow.value(QStringLiteral("artist")).toString()) {
+            complain("artist", row_.value(QStringLiteral("artist")).toString(),
+                     pageRow.value(QStringLiteral("artist")).toString());
+        }
+        if (row_.value(QStringLiteral("album")).toString()
+            != pageRow.value(QStringLiteral("album")).toString()) {
+            complain("album", row_.value(QStringLiteral("album")).toString(),
+                     pageRow.value(QStringLiteral("album")).toString());
+        }
+        if (row_.value(QStringLiteral("title")).toString()
+            != pageRow.value(QStringLiteral("title")).toString()) {
+            complain("title", row_.value(QStringLiteral("title")).toString(),
+                     pageRow.value(QStringLiteral("title")).toString());
+        }
+        // The walk carries milliseconds, the index frames and their rate: one number, two spellings.
+        const double frames = pageRow.value(QStringLiteral("duration_frames")).toDouble();
+        const double rate = pageRow.value(QStringLiteral("sample_rate")).toDouble();
+        const qint64 pageMs = rate > 0.0 && frames > 0.0
+            ? static_cast<qint64>(frames * 1000.0 / rate + 0.5)
+            : 0;
+        const qint64 walkedMs = row_.value(QStringLiteral("duration_ms")).toLongLong();
+        if (std::abs(pageMs - walkedMs) > 1) {
+            complain("duration", QString::number(walkedMs), QString::number(pageMs));
+        }
+        // Genres: the walk keeps them apart, the index keeps one line per name.
+        QStringList pageGenres;
+        const QString names = pageRow.value(QStringLiteral("genre")).toString();
+        for (const QString &genre : names.split(QStringLiteral(", "), Qt::SkipEmptyParts)) {
+            pageGenres.append(genre.trimmed());
+        }
+        const QStringList walkedGenres = row_.value(QStringLiteral("genres")).toStringList();
+        if (pageGenres != walkedGenres) {
+            complain("genres", walkedGenres.join(QStringLiteral("|")),
+                     pageGenres.join(QStringLiteral("|")));
+        }
+    }
+    if (!byPath.isEmpty()) {
+        const QString extra = byPath.keys().value(0);
+        if (told < 5) {
+            std::fprintf(stderr, "dj-ui: the index has a row the walk does not: %s\n",
+                         qPrintable(extra));
+        }
+        ++wrong;
+    }
+    std::fprintf(stdout, "dj-ui: %d rows compared field by field, %d differ\n", compared, wrong);
+    if (wrong != 0) {
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: the index and the walk agree on every row\n");
+    return 0;
+}
+
 static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
                           LayoutSettings &layout, BridgeClient &bridge, const QString &fixture,
                           const QString &collectionRoot)
@@ -5763,6 +5966,9 @@ int main(int argc, char *argv[])
         QStringLiteral("curve-check"),
         QStringLiteral("With --connect: send each crossfader law and require the snapshot to report "
                        "it back."));
+    const QCommandLineOption pageCheckOption(
+        QStringLiteral("collection-page-check"),
+        QStringLiteral("Compare the index page with the walk over the collection, field by field."));
     const QCommandLineOption importCheckOption(
         QStringLiteral("import-check"),
         QStringLiteral("With --connect: pick two rows in the browser, add them to the collection, "
@@ -6026,6 +6232,7 @@ int main(int argc, char *argv[])
     parser.addOption(windowCheckOption);
     parser.addOption(curveCheckOption);
     parser.addOption(masterCheckOption);
+    parser.addOption(pageCheckOption);
     parser.addOption(importCheckOption);
     parser.addOption(analyzeCheckOption);
     parser.addOption(sortCheckOption);
@@ -11337,6 +11544,16 @@ int main(int argc, char *argv[])
 
     if (parser.isSet(browserCheckOption)) {
         return runBrowserCheck(engine, browser, layout);
+    }
+
+    if (parser.isSet(pageCheckOption)) {
+        if (!parser.isSet(connectOption)) {
+            std::fprintf(stderr, "dj-ui: --collection-page-check needs --connect\n");
+            return 1;
+        }
+        bridge->connectToEngine(parser.value(connectOption));
+        return runCollectionPageCheck(engine, browser, *bridge, parser.value(importFixtureOption),
+                                      parser.values(collectionRootOption).value(0));
     }
 
     if (parser.isSet(importCheckOption)) {

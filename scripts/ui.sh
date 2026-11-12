@@ -127,6 +127,50 @@ case "${1:-}" in
         --collection-load-check --collection-root "$root"
     ;;
 
+  --collection-page-check)
+    # The same collection from two sources: the walk over `.djmeta` and the page out of the index. The
+    # question is not which one the list uses today — it is whether the index gives the same rows at all.
+    # The copy is imported into a fresh root, so the DJ's collection is not touched.
+    root="${COLLECTION_ROOT:-$HOME/.local/share/hauler-dj/collection}"
+    fixture="${2:-}"
+    if [ -z "$fixture" ] && [ -d "$root" ]; then
+      fixture="$(find "$root" -type f \( -name '*.wav' -o -name '*.flac' -o -name '*.aiff' \) | head -1)"
+    fi
+    if [ -z "$fixture" ] || [ ! -f "$fixture" ]; then
+      echo "ui.sh: --collection-page-check needs a track: pass one as the second argument" >&2
+      exit 1
+    fi
+    if [ -z "${DJ_ENGINE_BIN:-}" ]; then
+      if ! command -v cargo >/dev/null 2>&1; then
+        echo "ui.sh: cargo is not in PATH; run this inside the dev shell" >&2
+        exit 1
+      fi
+      cargo build --quiet -p dj-engine || exit 1
+    fi
+    engine_bin="${DJ_ENGINE_BIN:-${CARGO_TARGET_DIR:-$HOME/.cache/dj-platform-target}/debug/dj-engine}"
+    run_dir="$(mktemp -d)"
+    export XDG_DATA_HOME="$run_dir/data"
+    export XDG_CONFIG_HOME="$run_dir/config"
+    socket="$run_dir/engine.sock"
+    mkdir -p "$run_dir/collection"
+    "$engine_bin" --null-sink --socket "$socket" --block 256 &
+    engine_pid=$!
+    cleanup() {
+      kill "$engine_pid" 2>/dev/null || true
+      wait "$engine_pid" 2>/dev/null || true
+      rm -rf "$run_dir"
+    }
+    trap cleanup EXIT
+    for _ in $(seq 1 100); do
+      [ -S "$socket" ] && break
+      sleep 0.05
+    done
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
+        --collection-page-check --collection-root "$run_dir/collection" \
+        --import-fixture "$fixture" --layout-file "$run_dir/layout.json"
+    ;;
+
+
   --engine-check)
     # The A06 acceptance, without a display or a sound card: run the real engine on a null sink,
     # let the real UI press Play, and require the ack and the published state to agree.
