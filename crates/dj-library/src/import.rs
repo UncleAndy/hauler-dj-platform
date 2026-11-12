@@ -35,6 +35,7 @@ pub fn index_row(imported: &Imported) -> (TrackRow, Vec<genres::GenreName>) {
         musical_key: None,
         rating: 0,
         duration_frames: imported.fingerprint.duration_frames,
+        sample_rate: imported.fingerprint.sample_rate,
         gain: 1.0,
         play_count: 0,
         last_played_ms: None,

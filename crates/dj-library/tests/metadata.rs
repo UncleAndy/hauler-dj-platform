@@ -62,6 +62,7 @@ fn row(meta: &TrackMeta, path: &Path, title: &str) -> TrackRow {
         musical_key: Some("8A".to_owned()),
         rating: 4,
         duration_frames: Some(8_000_000),
+        sample_rate: None,
         gain: meta.gain,
         play_count: 0,
         last_played_ms: None,

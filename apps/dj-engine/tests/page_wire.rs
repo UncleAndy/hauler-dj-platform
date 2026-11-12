@@ -73,6 +73,7 @@ fn a_row_keeps_everything_the_list_shows() {
         musical_key: Some("8d".to_owned()),
         rating: 4,
         duration_frames: Some(48_000),
+        sample_rate: None,
         gain: 1.0,
         play_count: 0,
         last_played_ms: None,

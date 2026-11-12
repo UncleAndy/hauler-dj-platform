@@ -28,6 +28,7 @@ fn row() -> TrackRow {
         musical_key: None,
         rating: 0,
         duration_frames: None,
+        sample_rate: None,
         gain: 1.0,
         play_count: 0,
         last_played_ms: None,

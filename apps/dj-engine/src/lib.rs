@@ -1820,9 +1820,7 @@ pub fn collection_row(row: &dj_library::TrackRow) -> dj_domain::CollectionRow {
         musical_key: row.musical_key.clone(),
         rating: row.rating,
         duration_frames: row.duration_frames,
-        // The rate travels in the record, and the row the index keeps does not carry it: the frame
-        // count alone already says the length to the list, which rounds it to seconds.
-        sample_rate: None,
+        sample_rate: row.sample_rate,
     }
 }
 

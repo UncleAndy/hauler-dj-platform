@@ -39,6 +39,8 @@ pub struct TrackRow {
     pub rating: u8,
     /// Length in frames of the source file.
     pub duration_frames: Option<u64>,
+    /// Native sample rate of the file: without it the frames are a number, not a length.
+    pub sample_rate: Option<u32>,
     /// Channel gain from the metadata file.
     pub gain: f64,
     /// How many times the track was played.
@@ -100,6 +102,7 @@ CREATE TABLE IF NOT EXISTS tracks (
     musical_key TEXT,
     rating INTEGER NOT NULL DEFAULT 0,
     duration_frames INTEGER,
+    sample_rate INTEGER,
     gain REAL NOT NULL DEFAULT 1.0,
     play_count INTEGER NOT NULL DEFAULT 0,
     last_played_ms INTEGER,
@@ -117,7 +120,7 @@ CREATE TABLE IF NOT EXISTS track_genres (
 );
 CREATE INDEX IF NOT EXISTS genres_key         ON genres(key);
 CREATE INDEX IF NOT EXISTS track_genres_genre ON track_genres(genre_id, fingerprint);
-PRAGMA user_version = 2;
+PRAGMA user_version = 3;
 ";
 
 /// The database file. One writer, opened off the audio path.
@@ -140,7 +143,19 @@ impl Index {
         connection.pragma_update(None, "synchronous", "NORMAL")?;
         connection.pragma_update(None, "busy_timeout", 3000)?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
+        // The version is read before the schema runs: the schema stamps the current one, and a
+        // database from before a column existed would then look up to date.
+        let previous: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
         connection.execute_batch(SCHEMA)?;
+        if (1..3).contains(&previous) {
+            let mut statement = connection.prepare("PRAGMA table_info(tracks)")?;
+            let columns: Vec<String> = statement
+                .query_map([], |row| row.get::<_, String>(1))?
+                .collect::<Result<Vec<_>, _>>()?;
+            if !columns.iter().any(|name| name == "sample_rate") {
+                connection.execute_batch("ALTER TABLE tracks ADD COLUMN sample_rate INTEGER")?;
+            }
+        }
         Ok(Self { connection })
     }
 
@@ -408,7 +423,7 @@ impl Index {
             .connection
             .query_row(
                 "SELECT fingerprint, path, artist, title, album, genre, year, bpm, musical_key,
-                        rating, duration_frames, gain, play_count, last_played_ms, analysis_lock
+                        rating, duration_frames, sample_rate, gain, play_count, last_played_ms, analysis_lock
                  FROM tracks WHERE fingerprint = ?1",
                 [fingerprint],
                 Self::row,
@@ -422,7 +437,7 @@ impl Index {
         let pattern = format!("%{needle}%");
         let mut statement = self.connection.prepare(
             "SELECT fingerprint, path, artist, title, album, genre, year, bpm, musical_key,
-                    rating, duration_frames, gain, play_count, last_played_ms, analysis_lock
+                    rating, duration_frames, sample_rate, gain, play_count, last_played_ms, analysis_lock
              FROM tracks
              WHERE title LIKE ?1 OR artist LIKE ?1 OR album LIKE ?1
              ORDER BY artist, album, title",
@@ -500,7 +515,7 @@ impl Index {
 
         let sql = format!(
             "SELECT fingerprint, path, artist, title, album, genre, year, bpm, musical_key,
-                    rating, duration_frames, gain, play_count, last_played_ms, analysis_lock
+                    rating, duration_frames, sample_rate, gain, play_count, last_played_ms, analysis_lock
              FROM tracks{where_sql}{} LIMIT ?{limit_at} OFFSET ?{offset_at}",
             order_clause(&query.order)
         );
@@ -538,10 +553,13 @@ impl Index {
             duration_frames: raw
                 .get::<_, Option<i64>>(10)?
                 .map(|frames| frames.max(0) as u64),
-            gain: raw.get(11)?,
-            play_count: raw.get::<_, i64>(12)?.max(0) as u64,
-            last_played_ms: raw.get::<_, Option<i64>>(13)?.map(|ms| ms.max(0) as u64),
-            analysis_lock: raw.get(14)?,
+            sample_rate: raw
+                .get::<_, Option<i64>>(11)?
+                .map(|rate| rate.clamp(0, i64::from(u32::MAX)) as u32),
+            gain: raw.get(12)?,
+            play_count: raw.get::<_, i64>(13)?.max(0) as u64,
+            last_played_ms: raw.get::<_, Option<i64>>(14)?.map(|ms| ms.max(0) as u64),
+            analysis_lock: raw.get(15)?,
         })
     }
 }
@@ -663,6 +681,7 @@ pub fn row_of(meta: &TrackMeta, path: &Path) -> TrackRow {
         musical_key: meta.key.clone(),
         rating: meta.rating,
         duration_frames: meta.fingerprint.duration_frames,
+        sample_rate: meta.fingerprint.sample_rate,
         gain: meta.gain,
         play_count: 0,
         last_played_ms: None,
@@ -731,8 +750,8 @@ fn records_under(roots: &[PathBuf]) -> Vec<PathBuf> {
 
 const INSERT: &str = "INSERT OR REPLACE INTO tracks
      (fingerprint, path, artist, title, album, genre, year, bpm, musical_key, rating,
-      duration_frames, gain, play_count, last_played_ms, analysis_lock)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)";
+      duration_frames, sample_rate, gain, play_count, last_played_ms, analysis_lock)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)";
 
 fn bind(statement: &mut rusqlite::Statement<'_>, row: &TrackRow) -> Result<(), IndexError> {
     statement.execute(params![
@@ -747,6 +766,7 @@ fn bind(statement: &mut rusqlite::Statement<'_>, row: &TrackRow) -> Result<(), I
         row.musical_key,
         row.rating,
         row.duration_frames.map(|frames| frames as i64),
+        row.sample_rate.map(i64::from),
         row.gain,
         row.play_count as i64,
         row.last_played_ms.map(|ms| ms as i64),
@@ -822,7 +842,15 @@ mod tests {
             .connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version");
-        assert_eq!(version, 2, "the schema must move to version 2");
+        assert_eq!(version, 3, "the schema must move to version 3");
+        assert!(
+            index
+                .columns()
+                .expect("columns")
+                .iter()
+                .any(|name| name == "sample_rate"),
+            "an older database gains the rate column"
+        );
         assert!(table_exists(&index, "genres"), "genres table");
         assert!(table_exists(&index, "track_genres"), "track_genres table");
         assert_eq!(
@@ -850,7 +878,7 @@ mod tests {
             .connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version");
-        assert_eq!(version, 2);
+        assert_eq!(version, 3);
         assert!(table_exists(&index, "track_genres"));
         std::fs::remove_dir_all(&dir).ok();
     }

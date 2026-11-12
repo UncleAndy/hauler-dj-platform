@@ -352,6 +352,7 @@ pub fn row_of(meta: &TrackMeta, path: &Path) -> dj_library::TrackRow {
         musical_key: meta.key.clone(),
         rating: meta.rating,
         duration_frames: meta.fingerprint.duration_frames,
+        sample_rate: meta.fingerprint.sample_rate,
         gain: meta.gain,
         play_count: 0,
         last_played_ms: None,
