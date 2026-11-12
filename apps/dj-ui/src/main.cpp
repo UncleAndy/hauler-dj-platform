@@ -4571,6 +4571,42 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
 
 // The collection's Analyze…: one track gets a progress window, a selection gets a question with the
 // parallel box and then the same window. Afterwards the numbers are in the list, not only in the files.
+/// How the collection lists: the walk, the sidecars, the rows — and the time it takes.
+///
+/// The section is built by walking every root and reading a `.djmeta` record per file, then sorted and
+/// filtered in memory. Whether that holds at a hundred thousand tracks is a question with a number, not
+/// an opinion, and this is where the number comes from. Nothing is written.
+static int runCollectionProbe(FileBrowser &browser, const QString &root)
+{
+    if (root.isEmpty()) {
+        std::fprintf(stderr, "dj-ui: --collection-probe needs --collection-root\n");
+        return 1;
+    }
+    QElapsedTimer clock;
+    clock.start();
+    browser.openCollection({root});
+    const qint64 cold = clock.elapsed();
+    const int rows = static_cast<int>(browser.entries().size());
+    std::fprintf(stderr, "dj-ui: collection probe: %d rows in %lld ms (cold)\n", rows, cold);
+    clock.restart();
+    browser.openCollection({root});
+    const qint64 warm = clock.elapsed();
+    std::fprintf(stderr, "dj-ui: collection probe: %d rows in %lld ms (warm)\n", rows, warm);
+    // The sort the DJ asks for by clicking a header, on the rows the walk produced.
+    clock.restart();
+    browser.sortCollection(QStringLiteral("artist"), false);
+    std::fprintf(stderr, "dj-ui: collection probe: sort by artist in %lld ms\n", clock.elapsed());
+    // The search field: what the DJ types, and what clearing it costs.
+    clock.restart();
+    browser.setFilter(QStringLiteral("Track 99999"));
+    std::fprintf(stderr, "dj-ui: collection probe: filter -> %d rows in %lld ms\n",
+                 static_cast<int>(browser.entries().size()), clock.elapsed());
+    clock.restart();
+    browser.setFilter(QString());
+    std::fprintf(stderr, "dj-ui: collection probe: filter cleared in %lld ms\n", clock.elapsed());
+    return 0;
+}
+
 /// Does this value, anywhere inside it, name the file?
 static bool holdsName(const QVariant &value, const QString &name)
 {
@@ -5547,6 +5583,10 @@ int main(int argc, char *argv[])
         QStringLiteral("sort-check"),
         QStringLiteral("From the collection: a click on a column sorts by it, a second click turns it "
                        "around, a Shift click adds the next key — and the rail's order."));
+    const QCommandLineOption collectionProbeOption(
+        QStringLiteral("collection-probe"),
+        QStringLiteral("Time the listing of a collection root: how many rows, and how long the walk "
+                       "takes cold and warm. Read only."));
     const QCommandLineOption collectionLoadCheckOption(
         QStringLiteral("collection-load-check"),
         QStringLiteral("From a real collection, read only: choose a row and load it into deck A — the "
@@ -5798,6 +5838,7 @@ int main(int argc, char *argv[])
     parser.addOption(analyzeCheckOption);
     parser.addOption(sortCheckOption);
     parser.addOption(collectionLoadCheckOption);
+    parser.addOption(collectionProbeOption);
     parser.addOption(importFixtureOption);
     parser.addOption(gridReconnectOption);
     parser.addOption(metronomeOption);
@@ -11087,6 +11128,10 @@ int main(int argc, char *argv[])
         bridge->connectToEngine(parser.value(connectOption));
         return runSortCheck(engine, browser, layout, parser.value(importFixtureOption),
                             parser.values(collectionRootOption).value(0));
+    }
+
+    if (parser.isSet(collectionProbeOption)) {
+        return runCollectionProbe(browser, parser.values(collectionRootOption).value(0));
     }
 
     if (parser.isSet(collectionLoadCheckOption)) {
