@@ -5093,6 +5093,32 @@ static int runCollectionPageCheck(QQmlApplicationEngine &engine, FileBrowser &br
         return 1;
     }
     std::fprintf(stdout, "dj-ui: the index and the walk agree on every row\n");
+
+    // Can the engine still take a load after answering a collection query? That is what broke when the
+    // page was wired into the list: the query opened the index — schema and migrations, a write — on the
+    // same loop that acks deck commands. The number below is the answer, not an opinion.
+    if (!walked.isEmpty()) {
+        browser.setCursor(walked.first().toMap().value(QStringLiteral("path")).toString());
+        QCoreApplication::processEvents();
+        panel->setProperty("lastAction", QString());
+        QVariant returnedLoad;
+        QElapsedTimer loadClock;
+        loadClock.start();
+        QMetaObject::invokeMethod(panel, "loadInto", Q_RETURN_ARG(QVariant, returnedLoad),
+                                  Q_ARG(QVariant, QStringLiteral("A")));
+        while (loadClock.elapsed() < 20000
+               && !panel->property("lastAction").toString().startsWith(QStringLiteral("loaded "))) {
+            QCoreApplication::processEvents();
+            QThread::msleep(20);
+        }
+        const QString action = panel->property("lastAction").toString();
+        std::fprintf(stdout, "dj-ui: a load after the query -> '%s' in %lld ms\n", qPrintable(action),
+                     static_cast<long long>(loadClock.elapsed()));
+        if (!action.startsWith(QStringLiteral("loaded "))) {
+            std::fprintf(stderr, "dj-ui: the engine did not take a load after the query\n");
+            return 1;
+        }
+    }
     return 0;
 }
 

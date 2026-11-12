@@ -1435,25 +1435,32 @@ fn serve_client(
                         continue;
                     }
                     dj_engine::Routed::Query { command_id, query } => {
-                        // The index is a cache over the records: a query that cannot open it is an empty
-                        // answer, not a failure — the browser then shows what it walked itself.
-                        let page = dj_library::Index::open_default()
-                            .and_then(|index| index.page(&dj_engine::page_query(&query)))
-                            .map(|page| dj_domain::CollectionPage {
-                                id: query.id,
-                                total: page.total,
-                                rows: page.rows.iter().map(dj_engine::collection_row).collect(),
-                            })
-                            .unwrap_or(dj_domain::CollectionPage {
-                                id: query.id,
-                                rows: Vec::new(),
-                                total: 0,
-                            });
-                        cells.set_collection(page);
-                        let ack = dj_domain::Ack::applied(command_id, 0);
-                        if alerts.send(ServerMessage::Ack(ack)).is_err() {
-                            return;
-                        }
+                        // The index lives on disk: opening it runs the schema and its migrations, which is
+                        // a write. That must not happen in the loop that acks deck commands — a DJ who
+                        // opens the collection should not find his deck unresponsive. So the query gets
+                        // its own thread, and the answer comes back the way every other answer does:
+                        // through the cells and the alerts.
+                        let query_cells = Arc::clone(&cells);
+                        let query_alerts = alerts.clone();
+                        std::thread::spawn(move || {
+                            // The index is a cache over the records: a query that cannot open it is an
+                            // empty answer, not a failure — the browser then shows what it walked itself.
+                            let page = dj_library::Index::open_default()
+                                .and_then(|index| index.page(&dj_engine::page_query(&query)))
+                                .map(|page| dj_domain::CollectionPage {
+                                    id: query.id,
+                                    total: page.total,
+                                    rows: page.rows.iter().map(dj_engine::collection_row).collect(),
+                                })
+                                .unwrap_or(dj_domain::CollectionPage {
+                                    id: query.id,
+                                    rows: Vec::new(),
+                                    total: 0,
+                                });
+                            query_cells.set_collection(page);
+                            let _ = query_alerts
+                                .send(ServerMessage::Ack(dj_domain::Ack::applied(command_id, 0)));
+                        });
                         continue;
                     }
                     dj_engine::Routed::Import {
