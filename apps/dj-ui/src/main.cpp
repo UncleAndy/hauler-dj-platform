@@ -4040,7 +4040,7 @@ static int runLayoutCheck(QQmlApplicationEngine &engine,
 // The collection's sort: a click on a column name sorts by it, a second click turns it around, and a
 // Shift click adds the next key. And the rail: the collection at its top, the files at its bottom.
 static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSettings &layout,
-                        BridgeClient &bridge, const QString &fixture, const QString &collectionRoot)
+                        const QString &fixture, const QString &collectionRoot)
 {
     if (fixture.isEmpty() || collectionRoot.isEmpty()) {
         std::fprintf(stderr, "dj-ui: --sort-check needs --import-fixture and --collection-root\n");
@@ -4481,7 +4481,7 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
 // The collection's Analyze…: one track gets a progress window, a selection gets a question with the
 // parallel box and then the same window. Afterwards the numbers are in the list, not only in the files.
 static int runAnalyzeCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSettings &layout,
-                           BridgeClient &bridge, const QString &fixture, const QString &collectionRoot)
+                           const QString &fixture, const QString &collectionRoot)
 {
     Q_UNUSED(layout);
     if (fixture.isEmpty() || collectionRoot.isEmpty()) {
@@ -10864,7 +10864,7 @@ int main(int argc, char *argv[])
 
     if (parser.isSet(sortCheckOption)) {
         bridge->connectToEngine(parser.value(connectOption));
-        return runSortCheck(engine, browser, layout, *bridge, parser.value(importFixtureOption),
+        return runSortCheck(engine, browser, layout, parser.value(importFixtureOption),
                             parser.values(collectionRootOption).value(0));
     }
 
@@ -10874,7 +10874,7 @@ int main(int argc, char *argv[])
             return 1;
         }
         bridge->connectToEngine(parser.value(connectOption));
-        return runAnalyzeCheck(engine, browser, layout, *bridge, parser.value(importFixtureOption),
+        return runAnalyzeCheck(engine, browser, layout, parser.value(importFixtureOption),
                                parser.values(collectionRootOption).value(0));
     }
 
