@@ -1239,6 +1239,105 @@ pub struct AnalyzeState {
     pub current: Option<String>,
 }
 
+/// A column the interface can order the collection by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CollectionSort {
+    /// Artist, case-insensitive.
+    Artist,
+    /// Album, case-insensitive.
+    Album,
+    /// Title, case-insensitive.
+    Title,
+    /// Tempo in BPM.
+    Bpm,
+    /// Musical key, as the record spells it.
+    Key,
+    /// Length, from the frames the record carries.
+    Time,
+}
+
+/// One sort key: the column and which way it runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollectionOrder {
+    /// The column.
+    pub column: CollectionSort,
+    /// True for A→Z, false for Z→A. Rows with nothing to say go last either way.
+    pub ascending: bool,
+}
+
+/// One question about a page of the collection.
+///
+/// The interface asks, the engine reads the index: the list arrives as a page, so opening the section
+/// costs the same on a hundred thousand rows as on a thousand. `id` comes back in the answer, because
+/// an answer to somebody else's question is not an answer.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CollectionQuery {
+    /// The caller's marker, returned with the answer.
+    pub id: u64,
+    /// The sort keys in order. Empty means artist, album, title.
+    #[serde(default)]
+    pub order: Vec<CollectionOrder>,
+    /// Genres to narrow to: a track is kept when it carries any of them. Empty is the whole collection.
+    #[serde(default)]
+    pub genres: Vec<String>,
+    /// What the DJ typed: matched against artist, album and title.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search: Option<String>,
+    /// Rows to skip: the page before this one.
+    #[serde(default)]
+    pub offset: usize,
+    /// Rows in the page; zero means a hundred — a caller that did not choose a width.
+    #[serde(default)]
+    pub limit: usize,
+}
+
+/// One row of the collection, as the list shows it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CollectionRow {
+    /// The record's fingerprint: the row's identity, and how a genre filter finds it.
+    pub fingerprint: String,
+    /// Where the file is, so the list can load it into a deck.
+    pub path: String,
+    /// Artist, as the record says.
+    pub artist: String,
+    /// Title, as the record says.
+    pub title: String,
+    /// Album, as the record says.
+    pub album: String,
+    /// The raw genre tag, joined back together: the links, not this field, decide what a track is.
+    #[serde(default)]
+    pub genre: String,
+    /// Release year, when the record has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub year: Option<i64>,
+    /// Tempo in BPM, when the record has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bpm: Option<f64>,
+    /// Musical key, in the notation the record keeps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub musical_key: Option<String>,
+    /// The DJ's rating.
+    #[serde(default)]
+    pub rating: u8,
+    /// Frames of the source file: the list shows the length without decoding anything.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_frames: Option<u64>,
+    /// Sample rate that gives those frames their meaning.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample_rate: Option<u32>,
+}
+
+/// The answer to a query: the rows of the page, and how many the filter found in all.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CollectionPage {
+    /// The `id` of the question this answers.
+    pub id: u64,
+    /// The rows of the page, in the order asked for.
+    pub rows: Vec<CollectionRow>,
+    /// How many rows the filter found: the list needs to know how long it is before its end.
+    pub total: usize,
+}
+
 /// Read-only state published to the UI and controllers (DJP-ARCH-004).
 ///
 /// `revision` grows monotonically and `epoch` changes when the engine restarts, so a
