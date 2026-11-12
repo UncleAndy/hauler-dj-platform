@@ -202,54 +202,21 @@ void FileBrowser::refreshCollection()
 
 void FileBrowser::openCollection(const QStringList &roots)
 {
+    const QStringList listed = roots.isEmpty() ? QStringList{defaultCollectionRoot()} : roots;
+    m_roots = listed;
+    m_folder = listed.join(QStringLiteral(" | "));
     m_mode = QStringLiteral("collection");
-    m_roots = roots;
-    m_filter.clear();
-    m_all.clear();
-    m_total = 0;
-    m_entries.clear();
-    m_error.clear();
-
-    QStringList wanted;
-    for (const QString &root : roots) {
-        if (!root.trimmed().isEmpty()) {
-            wanted.append(QDir(root).absolutePath());
-        }
-    }
-    // No root chosen yet: the collection lives in the shell's own data folder. A section that shows
-    // nothing until a flag is typed is a section nobody opens.
-    if (wanted.isEmpty()) {
-        wanted.append(defaultCollectionRoot());
-    }
-
-    QStringList listed;
-    QStringList missing;
-    for (const QString &root : wanted) {
-        if (!QDir(root).exists()) {
-            // A root that is not there yet holds nothing. For the default root that is the normal state
-            // of a fresh install and no error; a root the DJ named must not fail silently.
-            if (root != defaultCollectionRoot()) {
-                missing.append(root);
-            }
-            continue;
-        }
-        listed.append(root);
-    }
-    // The header names every root the section reads: one collection, several disks.
-    m_folder = wanted.join(QStringLiteral(" · "));
-    if (!missing.isEmpty()) {
-        m_error = QStringLiteral("not a directory: %1").arg(missing.join(QStringLiteral(", ")));
-    }
-    collect(listed);
-    applyFilter();
-    // The walk is the first frame; the index replaces it when its answer comes. From then on the list
-    // is a window over the database, and scrolling asks for the next batch instead of holding the whole
-    // collection in memory.
-    setPaged(false);
     m_pageOffset = 0;
     m_pageTotal = 0;
     m_pageAnsweredFor = 0;
-    if (m_bridge != nullptr && m_bridge->isConnected() && !listed.isEmpty()) {
+    setPaged(false);
+    // The interface does not walk the disks: the walk is how the database is prepared, not how it is
+    // read. An empty answer here is an empty collection, and it is shown as such.
+    m_all.clear();
+    m_total = 0;
+    applyFilter();
+    emit changed();
+    if (m_bridge != nullptr && m_bridge->isConnected()) {
         askPage(0);
     }
 }
@@ -315,8 +282,8 @@ void FileBrowser::takePage()
     // The page does not carry its offset back: the question does, and the id says which question.
     const int offset = m_askedOffset;
     if (offset == 0 && rows.isEmpty() && total == 0) {
-        // No index for this collection: the walk is all there is, and it stays.
-        setPaged(false);
+        // The index is the source: it answered, and the answer is "nothing under these roots".
+        setPaged(true);
         return;
     }
     QVariantList tracks;
@@ -510,6 +477,10 @@ void FileBrowser::setFilter(const QString &text)
     }
     m_filter = text;
     applyFilter();
+    // The list is a window over the index now: a narrower question is a new question.
+    if (m_paged) {
+        askPage(0);
+    }
 }
 
 int BridgeClient::queryCollection(const QVariantMap &query)
@@ -583,6 +554,10 @@ void FileBrowser::setGenreFilter(const QStringList &genres)
     emit genresChanged();
     emit genresPicked();
     applyFilter();
+    // A new order or a new chip set is a new question for the index.
+    if (m_paged) {
+        askPage(0);
+    }
 }
 
 void FileBrowser::applyFilter()
@@ -782,6 +757,10 @@ void FileBrowser::applySort()
         return compareRows(left.toMap(), right.toMap(), m_sort) < 0;
     });
     applyFilter();
+    // A new order or a new chip set is a new question for the index.
+    if (m_paged) {
+        askPage(0);
+    }
 }
 
 BridgeClient::BridgeClient(QObject *parent)
