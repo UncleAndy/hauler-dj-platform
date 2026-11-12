@@ -275,7 +275,14 @@ pub fn analyze_file(store: &Store, volume: &str, root: &Path, path: &Path, force
 ///
 /// An import from before the names travelled in the record has none, and a list that shows an empty
 /// album forever is a list nobody uses. The tags are read once and kept beside the file.
-pub fn write_names(store: &Store, volume: &str, root: &Path, path: &Path) -> bool {
+pub fn write_names(
+    store: &Store,
+    volume: &str,
+    root: &Path,
+    path: &Path,
+    force: bool,
+    index: Option<&mut dj_library::Index>,
+) -> bool {
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
@@ -289,13 +296,17 @@ pub fn write_names(store: &Store, volume: &str, root: &Path, path: &Path) -> boo
             (TrackMeta::new(print, now_ms), false)
         }
     };
-    if meta.tags.is_some() {
+    if meta.tags.is_some() && !force {
         return false;
     }
     let Ok(tags) = dj_library::tags::read(path) else {
         return false;
     };
-    if tags.artist.trim().is_empty() && tags.title.trim().is_empty() && tags.album.trim().is_empty()
+    let genres = dj_library::genres::split(&tags.genre);
+    if tags.artist.trim().is_empty()
+        && tags.title.trim().is_empty()
+        && tags.album.trim().is_empty()
+        && genres.is_empty()
     {
         return false;
     }
@@ -303,15 +314,49 @@ pub fn write_names(store: &Store, volume: &str, root: &Path, path: &Path) -> boo
         artist: tags.artist,
         album: tags.album,
         title: tags.title,
-        genres: dj_library::genres::split(&tags.genre)
-            .into_iter()
-            .map(|genre| genre.name)
-            .collect(),
+        genres: genres.iter().map(|genre| genre.name.clone()).collect(),
     });
     if existed {
         meta.bump(now_ms);
     }
-    store.save(volume, root, path, &meta).is_ok()
+    if store.save(volume, root, path, &meta).is_err() {
+        return false;
+    }
+    if let Some(index) = index {
+        let row = row_of(&meta, path);
+        // The database is a cache over the record: a failed write is reported, and the collection
+        // still has its names. The rebuild fills the row later.
+        if let Err(error) = index.upsert_with_genres(&row, &genres) {
+            eprintln!("dj-engine: index write failed for {}: {error}", row.path);
+        }
+    }
+    true
+}
+
+/// The index row for a record: what the browser sorts by, and what a search looks in.
+///
+/// The row is built from the record, not from the file: a name the DJ corrected is the name the list
+/// shows. `genre` is the raw tag joined back together — the links, not this column, decide what the
+/// track belongs to.
+pub fn row_of(meta: &TrackMeta, path: &Path) -> dj_library::TrackRow {
+    let tags = meta.tags.clone().unwrap_or_default();
+    dj_library::TrackRow {
+        fingerprint: meta.fingerprint.key(),
+        path: path.to_string_lossy().into_owned(),
+        artist: tags.artist,
+        title: tags.title,
+        album: tags.album,
+        genre: tags.genres.join(", "),
+        year: None,
+        bpm: meta.beatgrid.as_ref().map(|grid| grid.bpm),
+        musical_key: meta.key.clone(),
+        rating: meta.rating,
+        duration_frames: meta.fingerprint.duration_frames,
+        gain: meta.gain,
+        play_count: 0,
+        last_played_ms: None,
+        analysis_lock: meta.analysis_lock,
+    }
 }
 
 /// Store the measured key, unless the file already carries one.
