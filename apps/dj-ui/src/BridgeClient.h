@@ -85,6 +85,8 @@ public:
     /// Show the collection under `roots`: every audio file below each of them, named as the import
     /// named it, with the tempo and the key its metadata records. Empty means the default root.
     Q_INVOKABLE void openCollection(const QStringList &roots);
+    /// The list reached its end: append the next batch of the index, a page at a time.
+    Q_INVOKABLE void loadMore();
     /// Where the collection lives until the DJ names another root: `$XDG_DATA_HOME/hauler-dj/collection`,
     /// the same tree the engine keeps its metadata in.
     Q_INVOKABLE QString defaultCollectionRoot() const;
@@ -122,6 +124,10 @@ private:
     void collect(const QStringList &roots);
     void applyFilter();
     void applySort();
+    /// Take the engine's page if the snapshot carries the answer this list is waiting for.
+    void takePage();
+    /// Ask the index for the rows at `offset`: one door for the first page and for the next ones.
+    void askPage(int offset);
 
     QString m_folder;
     QVariantList m_entries;
@@ -132,6 +138,15 @@ private:
     BridgeClient *m_bridge = nullptr;
     /// The marker of the last page asked for: an answer to an older question is not this list.
     int m_pageQuery = 0;
+    /// The page whose answer has already been taken: the same answer must not be appended twice.
+    int m_pageAnsweredFor = 0;
+    /// How many rows of the collection the list already holds from the index, and how many there are.
+    int m_pageOffset = 0;
+    int m_pageTotal = 0;
+    /// True when the list is fed by the index: then scrolling asks for the next page.
+    bool m_paged = false;
+    /// The offset of the question in flight: the answer does not carry it, the question does.
+    int m_askedOffset = 0;
     /// The genres the collection is narrowed to. Empty is the whole collection.
     QStringList m_genres;
     int m_total = 0;

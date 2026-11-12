@@ -1363,6 +1363,9 @@ Pane {
                 clip: true
                 model: Browser.entries
                 boundsBehavior: Flickable.StopAtBounds
+                // The list stays one continuous thing: when its end comes into view, the next batch of
+                // the index is asked for and appended — no pages, no seams.
+                onAtYEndChanged: if (atYEnd) Browser.loadMore()
                 keyNavigationWraps: false
                 focus: true
                 ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }

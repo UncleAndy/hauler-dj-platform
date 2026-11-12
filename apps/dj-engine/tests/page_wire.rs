@@ -22,6 +22,7 @@ fn the_question_reaches_the_index_unchanged() {
         search: Some("mango".to_owned()),
         offset: 40,
         limit: 20,
+        roots: Vec::new(),
     };
     let asked = dj_engine::page_query(&query);
     assert_eq!(

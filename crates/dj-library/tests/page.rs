@@ -169,3 +169,32 @@ fn a_search_looks_in_the_names_and_counts_what_it_finds() {
     assert_eq!(page.total, 2);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn a_page_belongs_to_the_roots_it_was_asked_for() {
+    // The index is one for the machine; the list is one for the folders the DJ opened.
+    let (mut inside, inside_genres) = row("A", "Alpha", 0.0, &[]);
+    inside.path = "/music/one/A - Alpha.flac".to_owned();
+    let (mut outside, outside_genres) = row("B", "Beta", 0.0, &[]);
+    outside.path = "/music/two/B - Beta.flac".to_owned();
+    // A folder whose name starts with the same letters is not the same folder.
+    let (mut neighbour, neighbour_genres) = row("C", "Cat", 0.0, &[]);
+    neighbour.path = "/music/one2/C - Cat.flac".to_owned();
+    let (index, _dir) = filled(
+        "roots",
+        &[
+            (inside, inside_genres),
+            (outside, outside_genres),
+            (neighbour, neighbour_genres),
+        ],
+    );
+
+    let page = index
+        .page(&dj_library::index::PageQuery {
+            roots: vec![std::path::PathBuf::from("/music/one")],
+            ..dj_library::index::PageQuery::default()
+        })
+        .expect("page");
+    assert_eq!(page.total, 1, "в ответе только строки своего корня");
+    assert_eq!(titles(&page), vec!["A".to_owned()]);
+}

@@ -485,6 +485,18 @@ impl Index {
         let mut args: Vec<Value> = Vec::new();
         let mut filters: Vec<String> = Vec::new();
 
+        // The index is one for the whole machine; the list is one for the roots the DJ opened. Without
+        // this, a collection of forty records would show whatever else the index happens to hold.
+        if !query.roots.is_empty() {
+            let mut marks = Vec::with_capacity(query.roots.len());
+            for folder in &query.roots {
+                let prefix = format!("{}/", folder.to_string_lossy().trim_end_matches('/'));
+                args.push(Value::Text(prefix));
+                marks.push(format!("path LIKE ?{} || '%'", args.len()));
+            }
+            filters.push(format!("({})", marks.join(" OR ")));
+        }
+
         if let Some(search) = query
             .search
             .as_deref()
@@ -638,6 +650,9 @@ pub struct PageQuery {
     pub offset: usize,
     /// How many rows the page holds. Zero means a hundred — a caller that did not choose a width.
     pub limit: usize,
+    /// The folders the list is opened on: a row outside them is not in this collection. Empty means
+    /// every row, which is what a rebuild or a probe wants.
+    pub roots: Vec<std::path::PathBuf>,
 }
 
 /// The answer: the rows of the page, and how many the filter found in all.

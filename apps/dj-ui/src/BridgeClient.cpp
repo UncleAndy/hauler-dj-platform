@@ -242,6 +242,122 @@ void FileBrowser::openCollection(const QStringList &roots)
     }
     collect(listed);
     applyFilter();
+    // The walk is the first frame; the index replaces it when its answer comes. From then on the list
+    // is a window over the database, and scrolling asks for the next batch instead of holding the whole
+    // collection in memory.
+    m_paged = false;
+    m_pageOffset = 0;
+    m_pageTotal = 0;
+    m_pageAnsweredFor = 0;
+    if (m_bridge != nullptr && m_bridge->isConnected() && !listed.isEmpty()) {
+        askPage(0);
+    }
+}
+
+void FileBrowser::askPage(int offset)
+{
+    if (m_bridge == nullptr) {
+        return;
+    }
+    const int id = ++m_pageQuery;
+    QVariantMap query;
+    query.insert(QStringLiteral("id"), id);
+    QVariantList order;
+    for (const QVariant &entry : m_sort) {
+        const QVariantMap key = entry.toMap();
+        QVariantMap asked;
+        asked.insert(QStringLiteral("column"), key.value(QStringLiteral("column")));
+        asked.insert(QStringLiteral("ascending"), key.value(QStringLiteral("ascending")));
+        order.append(asked);
+    }
+    query.insert(QStringLiteral("order"), order);
+    query.insert(QStringLiteral("genres"), m_genres);
+    if (!m_filter.isEmpty()) {
+        query.insert(QStringLiteral("search"), m_filter);
+    }
+    query.insert(QStringLiteral("roots"), m_roots);
+    query.insert(QStringLiteral("offset"), offset);
+    query.insert(QStringLiteral("limit"), 200);
+    m_askedOffset = offset;
+    m_bridge->queryCollection(query);
+}
+
+void FileBrowser::loadMore()
+{
+    if (!m_paged || m_bridge == nullptr || m_pageOffset <= 0 || m_pageOffset >= m_pageTotal) {
+        return;
+    }
+    askPage(m_pageOffset);
+}
+
+void FileBrowser::takePage()
+{
+    if (m_bridge == nullptr || m_mode != QLatin1String("collection")) {
+        return;
+    }
+    const QVariantMap answer = m_bridge->collectionPage();
+    const int id = answer.value(QStringLiteral("id")).toInt();
+    if (id != m_pageQuery || id == m_pageAnsweredFor) {
+        return;
+    }
+    m_pageAnsweredFor = id;
+    const QVariantList rows = answer.value(QStringLiteral("rows")).toList();
+    const int total = answer.value(QStringLiteral("total")).toInt();
+    // The page does not carry its offset back: the question does, and the id says which question.
+    const int offset = m_askedOffset;
+    if (offset == 0 && rows.isEmpty() && total == 0) {
+        // No index for this collection: the walk is all there is, and it stays.
+        m_paged = false;
+        return;
+    }
+    QVariantList tracks;
+    for (const QVariant &entry : rows) {
+        const QVariantMap row = entry.toMap();
+        const QString path = row.value(QStringLiteral("path")).toString();
+        const double frames = row.value(QStringLiteral("duration_frames")).toDouble();
+        const double rate = row.value(QStringLiteral("sample_rate")).toDouble();
+        QVariantMap made{{QStringLiteral("name"), QFileInfo(path).completeBaseName()},
+                         {QStringLiteral("path"), path},
+                         {QStringLiteral("dir"), false},
+                         {QStringLiteral("artist"), row.value(QStringLiteral("artist"))},
+                         {QStringLiteral("album"), row.value(QStringLiteral("album"))},
+                         {QStringLiteral("title"), row.value(QStringLiteral("title"))},
+                         {QStringLiteral("fingerprint"), row.value(QStringLiteral("fingerprint"))}};
+        made.insert(QStringLiteral("duration_ms"),
+                    rate > 0.0 && frames > 0.0
+                        ? static_cast<qint64>(frames * 1000.0 / rate + 0.5)
+                        : 0);
+        QStringList genres;
+        const QString names = row.value(QStringLiteral("genre")).toString();
+        for (const QString &genre : names.split(QStringLiteral(", "), Qt::SkipEmptyParts)) {
+            genres.append(genre.trimmed());
+        }
+        made.insert(QStringLiteral("genres"), genres);
+        tracks.append(made);
+    }
+    // Replacing or appending, the DJ's place stays: a cursor that jumps to the top on every batch is a
+    // cursor he has to find again by hand.
+    const QString at = cursor();
+    if (offset == 0) {
+        m_paged = true;
+        m_all = tracks;
+        m_pageOffset = tracks.size();
+        m_pageTotal = total;
+        m_total = total;
+    } else {
+        if (tracks.isEmpty()) {
+            m_pageTotal = m_pageOffset;
+            return;
+        }
+        m_all += tracks;
+        m_pageOffset += tracks.size();
+        m_pageTotal = total;
+    }
+    applyFilter();
+    if (!at.isEmpty() && rowOf(at) >= 0) {
+        setCursor(at);
+    }
+    emit genresChanged();
 }
 
 bool FileBrowser::entryIsFile(const QString &path) const
@@ -252,6 +368,9 @@ bool FileBrowser::entryIsFile(const QString &path) const
 void FileBrowser::attachBridge(BridgeClient *bridge)
 {
     m_bridge = bridge;
+    if (bridge != nullptr) {
+        connect(bridge, &BridgeClient::snapshotChanged, this, &FileBrowser::takePage);
+    }
 }
 
 void FileBrowser::showFiles()

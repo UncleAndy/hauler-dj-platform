@@ -1299,6 +1299,9 @@ pub struct CollectionQuery {
     /// Rows in the page; zero means a hundred — a caller that did not choose a width.
     #[serde(default)]
     pub limit: usize,
+    /// The folders the list is opened on: the index is one for the machine, the list is one for these.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub roots: Vec<String>,
 }
 
 /// One row of the collection, as the list shows it.

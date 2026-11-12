@@ -1784,6 +1784,7 @@ pub fn page_query(query: &dj_domain::CollectionQuery) -> dj_library::index::Page
     use dj_domain::CollectionSort;
 
     dj_library::index::PageQuery {
+        roots: query.roots.iter().map(std::path::PathBuf::from).collect(),
         order: query
             .order
             .iter()
