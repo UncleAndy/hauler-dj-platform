@@ -4408,6 +4408,39 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
     }
     std::fprintf(stderr, "dj-ui: the view is at row %d at once (contentY %.1f, row height %.1f)\n",
                  row, settled, rowHeight);
+
+    // The wheel moves the cursor: a scroll that only moved the picture slid the selection out of the
+    // window, which is what the DJ reported. The wheel event goes through the window, as a real one
+    // does, so the handler on the list is the thing under test.
+    {
+        const int beforeWheel = browser.rowOf(browser.cursor());
+        const QPointF local(list->width() / 2.0, list->height() / 2.0);
+        const QPointF scene = list->mapToScene(local);
+        QWheelEvent wheel(scene, window->mapToGlobal(scene.toPoint()), QPoint(0, 0), QPoint(0, -120),
+                          Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QCoreApplication::sendEvent(window, &wheel);
+        for (int tick = 0; tick < 4; ++tick) {
+            QCoreApplication::processEvents();
+            QThread::msleep(20);
+        }
+        const int afterWheel = browser.rowOf(browser.cursor());
+        if (afterWheel != beforeWheel + 1) {
+            std::fprintf(stderr, "dj-ui: the wheel moved the cursor from %d to %d, wanted one row\n",
+                         beforeWheel, afterWheel);
+            return 1;
+        }
+        const double wheelCentre = list->property("contentY").toDouble() + list->height() / 2.0;
+        const double wheelRowCentre = afterWheel * rowHeight + rowHeight / 2.0;
+        if (std::abs(wheelCentre - wheelRowCentre) > rowHeight) {
+            std::fprintf(stderr,
+                         "dj-ui: after the wheel row %d is not in the middle (row centre %.1f, "
+                         "window centre %.1f)\n",
+                         afterWheel, wheelRowCentre, wheelCentre);
+            return 1;
+        }
+        std::fprintf(stderr, "dj-ui: the wheel moved the cursor to row %d, still in the middle\n",
+                     afterWheel);
+    }
     std::fprintf(stderr, "dj-ui: sort check done\n");
     return 0;
 }

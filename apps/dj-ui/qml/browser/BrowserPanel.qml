@@ -1215,6 +1215,18 @@ Pane {
                 // be remembered as the DJ's choice, wiping the place he actually left.
                 Keys.onUpPressed: browser.stepCursor(-1)
                 Keys.onDownPressed: browser.stepCursor(1)
+
+                // The wheel moves the cursor, not only the picture. The row the DJ is on sits in the
+                // middle of the window, so a scroll that moved the picture alone would slide the
+                // selection out of the window — which is exactly what the DJ saw.
+                WheelHandler {
+                    onWheel: function (event) {
+                        const rows = Math.round(-event.angleDelta.y / 120);
+                        if (rows !== 0) {
+                            browser.stepCursor(rows);
+                        }
+                    }
+                }
                 // A click selects; Enter or a double click acts, as in any file list.
                 // A folder opens with Enter; a track does not, because Enter is not a load key here.
                 Keys.onReturnPressed: browser.openFolder(list.currentIndex)
