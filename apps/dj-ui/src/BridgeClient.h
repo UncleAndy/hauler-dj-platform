@@ -64,6 +64,10 @@ public:
     ///
     /// Read from the same records the list is built from, so a genre appears when a track that carries
     /// it does — no second source and nothing to keep in step.
+    /// True when the rows come from the index and arrive in batches: the header says so, because a list
+    /// that is a window over the database is a different thing from a list walked off the disks.
+    Q_PROPERTY(bool paged READ paged NOTIFY pagedChanged)
+    bool paged() const { return m_paged; }
     Q_PROPERTY(QVariantList genres READ genreList NOTIFY genresChanged)
     Q_PROPERTY(QStringList genreFilter READ genreFilter WRITE setGenreFilter NOTIFY genresChanged)
     Q_INVOKABLE QVariantList genreList() const;
@@ -114,6 +118,8 @@ signals:
     /// chips, and writing the layout from that signal closes a circle — layout `changed` re-opens the
     /// collection, which reloads the chips.
     void genresPicked();
+    /// The list started or stopped being a window over the index.
+    void pagedChanged();
     /// The remembered row moved. Its own signal: `changed()` rebuilds the list, and a rebuild resets
     /// the very index the cursor is about.
     void cursorChanged();
@@ -124,6 +130,8 @@ private:
     void collect(const QStringList &roots);
     void applyFilter();
     void applySort();
+    /// Set the source and tell the header, if it changed.
+    void setPaged(bool paged);
     /// Take the engine's page if the snapshot carries the answer this list is waiting for.
     void takePage();
     /// Ask the index for the rows at `offset`: one door for the first page and for the next ones.

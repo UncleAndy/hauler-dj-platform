@@ -245,13 +245,22 @@ void FileBrowser::openCollection(const QStringList &roots)
     // The walk is the first frame; the index replaces it when its answer comes. From then on the list
     // is a window over the database, and scrolling asks for the next batch instead of holding the whole
     // collection in memory.
-    m_paged = false;
+    setPaged(false);
     m_pageOffset = 0;
     m_pageTotal = 0;
     m_pageAnsweredFor = 0;
     if (m_bridge != nullptr && m_bridge->isConnected() && !listed.isEmpty()) {
         askPage(0);
     }
+}
+
+void FileBrowser::setPaged(bool paged)
+{
+    if (m_paged == paged) {
+        return;
+    }
+    m_paged = paged;
+    emit pagedChanged();
 }
 
 void FileBrowser::askPage(int offset)
@@ -307,7 +316,7 @@ void FileBrowser::takePage()
     const int offset = m_askedOffset;
     if (offset == 0 && rows.isEmpty() && total == 0) {
         // No index for this collection: the walk is all there is, and it stays.
-        m_paged = false;
+        setPaged(false);
         return;
     }
     QVariantList tracks;
@@ -339,7 +348,7 @@ void FileBrowser::takePage()
     // cursor he has to find again by hand.
     const QString at = cursor();
     if (offset == 0) {
-        m_paged = true;
+        setPaged(true);
         m_all = tracks;
         m_pageOffset = tracks.size();
         m_pageTotal = total;

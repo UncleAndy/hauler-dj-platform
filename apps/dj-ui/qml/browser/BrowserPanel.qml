@@ -973,6 +973,15 @@ Pane {
                     font.pixelSize: browser.titleFont
                     color: UiSettings.themeText
                 }
+                // The rows are a window over the index, not a walk over the disks: the header says
+                // which one the DJ is looking at, so a batch that arrives later is not a surprise.
+                Label {
+                    objectName: "collectionSource"
+                    visible: browser.section === "collection" && Browser.paged
+                    text: qsTr("for collection")
+                    color: UiSettings.themeTextDim
+                    font.pixelSize: browser.headerFont
+                }
                 Label {
                     objectName: "browserPath"
                     Layout.fillWidth: true
