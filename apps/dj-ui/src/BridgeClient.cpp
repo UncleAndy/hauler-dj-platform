@@ -411,15 +411,19 @@ int camelot(const QString &key, bool *read)
         *read = false;
         return 0;
     }
-    const QChar letter = text.at(text.size() - 1);
+    // Both notations a DJ meets: Traktor's `8d`/`8m` and Camelot's `8A`/`8B`, in either case. A key
+    // written in capitals is the same key, and sorting it as text puts 10d before 2d.
+    const QChar letter = text.at(text.size() - 1).toLower();
     bool ok = false;
     const int wheel = text.left(text.size() - 1).toInt(&ok);
-    if (!ok || wheel <= 0 || (letter != QLatin1Char('d') && letter != QLatin1Char('m'))) {
+    const bool minor = letter == QLatin1Char('m') || letter == QLatin1Char('b');
+    const bool major = letter == QLatin1Char('d') || letter == QLatin1Char('a');
+    if (!ok || wheel <= 0 || wheel > 12 || !(minor || major)) {
         *read = false;
         return 0;
     }
     *read = true;
-    return wheel * 2 + (letter == QLatin1Char('m') ? 1 : 0);
+    return wheel * 2 + (minor ? 1 : 0);
 }
 
 /// The order of two rows in one column, ascending.

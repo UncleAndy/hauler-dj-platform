@@ -4052,14 +4052,33 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
         return 1;
     }
     // Four names that parse as artist and title, so the list has something to sort by without tags.
-    for (const QString &name : {QStringLiteral("Alpha - Zebra"), QStringLiteral("Beta - Apple"),
-                                QStringLiteral("Alpha - Apple"), QStringLiteral("Gamma - Mango")}) {
-        const QString target = root.filePath(name + QStringLiteral(".wav"));
+    // The keys are what a secondary sort by tone has to see: `2d` before `10d`, and `8d` before `8m`.
+    const QList<QPair<QString, QString>> toneKeys = {
+        {QStringLiteral("Alpha - Zebra"), QStringLiteral("2d")},
+        {QStringLiteral("Beta - Apple"), QStringLiteral("8m")},
+        {QStringLiteral("Alpha - Apple"), QStringLiteral("10d")},
+        {QStringLiteral("Gamma - Mango"), QStringLiteral("8d")},
+    };
+    if (!root.mkpath(QStringLiteral(".djmeta"))) {
+        std::fprintf(stderr, "dj-ui: cannot make the metadata folder under %s\n",
+                     qPrintable(collectionRoot));
+        return 1;
+    }
+    for (const auto &pair : toneKeys) {
+        const QString target = root.filePath(pair.first + QStringLiteral(".wav"));
         QFile::remove(target);
         if (!QFile::copy(fixture, target)) {
             std::fprintf(stderr, "dj-ui: cannot place %s\n", qPrintable(target));
             return 1;
         }
+        QFile record(root.filePath(QStringLiteral(".djmeta/") + pair.first
+                                   + QStringLiteral(".wav.json")));
+        if (!record.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            std::fprintf(stderr, "dj-ui: cannot write the record for %s\n", qPrintable(pair.first));
+            return 1;
+        }
+        const QJsonObject meta{{QStringLiteral("key"), pair.second}};
+        record.write(QJsonDocument(meta).toJson());
     }
 
     auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().value(0));
@@ -4244,6 +4263,30 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
     if (keys() != QStringLiteral("title-,artist-")) {
         std::fprintf(stderr, "dj-ui: the second shift click left the keys at «%s»\n",
                      qPrintable(keys()));
+        return 1;
+    }
+    // The tone: numbers on the wheel, not letters. A text sort would put 10d before 2d.
+    clickColumn(QStringLiteral("key"), Qt::NoModifier);
+    if (!require(QStringLiteral("click key"),
+                 {QStringLiteral("Alpha - Zebra"), QStringLiteral("Gamma - Mango"),
+                  QStringLiteral("Beta - Apple"), QStringLiteral("Alpha - Apple")})) {
+        return 1;
+    }
+    if (keys() != QStringLiteral("key+")) {
+        std::fprintf(stderr, "dj-ui: the key click left the keys at «%s»\n", qPrintable(keys()));
+        return 1;
+    }
+
+    // And as the second key: the artist decides the groups, the tone decides inside one.
+    clickColumn(QStringLiteral("artist"), Qt::NoModifier);
+    clickColumn(QStringLiteral("key"), Qt::ShiftModifier);
+    if (!require(QStringLiteral("artist then shift key"),
+                 {QStringLiteral("Alpha - Zebra"), QStringLiteral("Alpha - Apple"),
+                  QStringLiteral("Beta - Apple"), QStringLiteral("Gamma - Mango")})) {
+        return 1;
+    }
+    if (keys() != QStringLiteral("artist+,key+")) {
+        std::fprintf(stderr, "dj-ui: the shift click on the key left «%s»\n", qPrintable(keys()));
         return 1;
     }
     std::fprintf(stderr, "dj-ui: sort check done\n");
