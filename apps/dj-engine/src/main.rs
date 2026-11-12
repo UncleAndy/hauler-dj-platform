@@ -1434,6 +1434,28 @@ fn serve_client(
                         }
                         continue;
                     }
+                    dj_engine::Routed::Query { command_id, query } => {
+                        // The index is a cache over the records: a query that cannot open it is an empty
+                        // answer, not a failure — the browser then shows what it walked itself.
+                        let page = dj_library::Index::open_default()
+                            .and_then(|index| index.page(&dj_engine::page_query(&query)))
+                            .map(|page| dj_domain::CollectionPage {
+                                id: query.id,
+                                total: page.total,
+                                rows: page.rows.iter().map(dj_engine::collection_row).collect(),
+                            })
+                            .unwrap_or(dj_domain::CollectionPage {
+                                id: query.id,
+                                rows: Vec::new(),
+                                total: 0,
+                            });
+                        cells.set_collection(page);
+                        let ack = dj_domain::Ack::applied(command_id, 0);
+                        if alerts.send(ServerMessage::Ack(ack)).is_err() {
+                            return;
+                        }
+                        continue;
+                    }
                     dj_engine::Routed::Import {
                         command_id,
                         paths,

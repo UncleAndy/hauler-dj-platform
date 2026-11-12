@@ -1161,6 +1161,16 @@ impl StateCells {
         }
     }
 
+    /// Put a collection page where the snapshot publishes it.
+    ///
+    /// The writer is the engine's own thread and the reader is the publisher: a mutex, not an atomic —
+    /// a page is a vector, and half a vector is not a page.
+    pub fn set_collection(&self, page: dj_domain::CollectionPage) {
+        if let Ok(mut slot) = self.collection.lock() {
+            *slot = Some(page);
+        }
+    }
+
     /// Publish the scalars. No allocation, no lock, no syscall: callable from a callback.
     /// Record the cache budget: the snapshot says how full the cache is, and "full" needs a whole.
     pub fn set_cache_budget(&self, bytes: u64) {
@@ -1746,6 +1756,13 @@ pub enum Routed {
         /// Spread the batch over several workers.
         parallel: bool,
     },
+    /// Read a page of the collection (DJP-MEDIA-007): the engine owns the index, the browser asks.
+    Query {
+        /// The command being answered.
+        command_id: u64,
+        /// What to show.
+        query: dj_domain::CollectionQuery,
+    },
     /// Stop the running batch between files.
     AnalyzeStop,
     /// Handed to the worker that edits grids: it owns the file write and the publication.
@@ -1757,6 +1774,56 @@ pub enum Routed {
         /// The edit the DJ made.
         edit: GridEdit,
     },
+}
+
+/// The question as the index spells it.
+///
+/// The two vocabularies are separate on purpose: the protocol is a promise to every client, the index is
+/// a cache that can be rebuilt. One function is the whole translation, so a new sort key is one edit.
+pub fn page_query(query: &dj_domain::CollectionQuery) -> dj_library::index::PageQuery {
+    use dj_domain::CollectionSort;
+
+    dj_library::index::PageQuery {
+        order: query
+            .order
+            .iter()
+            .map(|order| {
+                let column = match order.column {
+                    CollectionSort::Artist => dj_library::index::OrderBy::Artist,
+                    CollectionSort::Album => dj_library::index::OrderBy::Album,
+                    CollectionSort::Title => dj_library::index::OrderBy::Title,
+                    CollectionSort::Bpm => dj_library::index::OrderBy::Bpm,
+                    CollectionSort::Key => dj_library::index::OrderBy::Key,
+                    CollectionSort::Time => dj_library::index::OrderBy::Time,
+                };
+                (column, order.ascending)
+            })
+            .collect(),
+        genres: query.genres.clone(),
+        search: query.search.clone(),
+        offset: query.offset,
+        limit: query.limit,
+    }
+}
+
+/// One row as the wire spells it.
+pub fn collection_row(row: &dj_library::TrackRow) -> dj_domain::CollectionRow {
+    dj_domain::CollectionRow {
+        fingerprint: row.fingerprint.clone(),
+        path: row.path.clone(),
+        artist: row.artist.clone(),
+        title: row.title.clone(),
+        album: row.album.clone(),
+        genre: row.genre.clone(),
+        year: row.year,
+        bpm: row.bpm,
+        musical_key: row.musical_key.clone(),
+        rating: row.rating,
+        duration_frames: row.duration_frames,
+        // The rate travels in the record, and the row the index keeps does not carry it: the frame
+        // count alone already says the length to the list, which rounds it to seconds.
+        sample_rate: None,
+    }
 }
 
 /// Decide where a command goes without applying it.
@@ -1791,6 +1858,10 @@ pub fn route(command: &ScheduledCommand) -> Routed {
             parallel: *parallel,
         },
         DjCommand::AnalyzeCancel => Routed::AnalyzeStop,
+        DjCommand::QueryCollection { query } => Routed::Query {
+            command_id: command.id,
+            query: query.clone(),
+        },
         DjCommand::AnalyzeTempo { deck, path } => Routed::Analyze {
             deck: *deck,
             path: path.clone(),
