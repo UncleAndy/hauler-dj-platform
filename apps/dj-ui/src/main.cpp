@@ -4053,11 +4053,19 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
     }
     // Four names that parse as artist and title, so the list has something to sort by without tags.
     // The keys are what a secondary sort by tone has to see: `2d` before `10d`, and `8d` before `8m`.
+    // The tempo is written with the precision the measurement has — `142.004` against `142.0` — and
+    // the tone has to decide between them: that is the case the DJ hit with BPM first and Key second.
     const QList<QPair<QString, QString>> toneKeys = {
         {QStringLiteral("Alpha - Zebra"), QStringLiteral("2d")},
         {QStringLiteral("Beta - Apple"), QStringLiteral("8m")},
         {QStringLiteral("Alpha - Apple"), QStringLiteral("10d")},
         {QStringLiteral("Gamma - Mango"), QStringLiteral("8d")},
+    };
+    const QList<QPair<QString, double>> tempos = {
+        {QStringLiteral("Alpha - Zebra"), 142.0},
+        {QStringLiteral("Beta - Apple"), 143.0},
+        {QStringLiteral("Alpha - Apple"), 142.004},
+        {QStringLiteral("Gamma - Mango"), 141.5},
     };
     if (!root.mkpath(QStringLiteral(".djmeta"))) {
         std::fprintf(stderr, "dj-ui: cannot make the metadata folder under %s\n",
@@ -4077,7 +4085,15 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
             std::fprintf(stderr, "dj-ui: cannot write the record for %s\n", qPrintable(pair.first));
             return 1;
         }
-        const QJsonObject meta{{QStringLiteral("key"), pair.second}};
+        double bpm = 0.0;
+        for (const auto &tempo : tempos) {
+            if (tempo.first == pair.first) {
+                bpm = tempo.second;
+            }
+        }
+        const QJsonObject meta{{QStringLiteral("key"), pair.second},
+                               {QStringLiteral("beatgrid"),
+                                QJsonObject{{QStringLiteral("bpm"), bpm}}}};
         record.write(QJsonDocument(meta).toJson());
     }
 
@@ -4286,6 +4302,24 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
         return 1;
     }
     if (keys() != QStringLiteral("artist+,key+")) {
+        std::fprintf(stderr, "dj-ui: the shift click on the key left «%s»\n", qPrintable(keys()));
+        return 1;
+    }
+    // The tempo first, the tone second: `142.0` and `142.004` are one tempo on the display, and the
+    // tone decides between them. `141.5` and `143.0` stay where the tempo puts them.
+    clickColumn(QStringLiteral("bpm"), Qt::NoModifier);
+    if (!require(QStringLiteral("click bpm"),
+                 {QStringLiteral("Gamma - Mango"), QStringLiteral("Alpha - Apple"),
+                  QStringLiteral("Alpha - Zebra"), QStringLiteral("Beta - Apple")})) {
+        return 1;
+    }
+    clickColumn(QStringLiteral("key"), Qt::ShiftModifier);
+    if (!require(QStringLiteral("bpm then shift key"),
+                 {QStringLiteral("Gamma - Mango"), QStringLiteral("Alpha - Zebra"),
+                  QStringLiteral("Alpha - Apple"), QStringLiteral("Beta - Apple")})) {
+        return 1;
+    }
+    if (keys() != QStringLiteral("bpm+,key+")) {
         std::fprintf(stderr, "dj-ui: the shift click on the key left «%s»\n", qPrintable(keys()));
         return 1;
     }

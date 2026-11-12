@@ -435,8 +435,14 @@ int compareColumn(const QVariantMap &left, const QVariantMap &right, const QStri
                      right.value(QStringLiteral("duration_ms")).toDouble());
     }
     if (column == QStringLiteral("bpm")) {
-        return three(left.value(QStringLiteral("bpm")).toDouble(),
-                     right.value(QStringLiteral("bpm")).toDouble());
+        // Two decimals, no more: the measurement carries arbitrary precision, and a column that is
+        // never equal to its neighbour is a column that never lets the next key decide. The column
+        // shows whole numbers, so nothing visible is lost by comparing hundredths.
+        const auto hundredths = [](const QVariantMap &row) {
+            return qRound64(row.value(QStringLiteral("bpm")).toDouble() * 100.0);
+        };
+        return three(static_cast<double>(hundredths(left)),
+                     static_cast<double>(hundredths(right)));
     }
     if (column == QStringLiteral("key")) {
         bool leftRead = false;
