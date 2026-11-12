@@ -2497,7 +2497,7 @@ pub fn run_import(
     answers: Receiver<dj_domain::DuplicateAnswer>,
     cancel: Arc<AtomicBool>,
     running: Arc<AtomicBool>,
-    after_place: Box<dyn Fn(&std::path::Path) + Send>,
+    after_place: Arc<dyn Fn(&std::path::Path) + Send + Sync>,
 ) {
     let root = std::path::PathBuf::from(&request.root);
     let files = collect_audio(&request.paths);
@@ -2514,6 +2514,8 @@ pub fn run_import(
     cells.set_import(Some(state.clone()));
 
     let mut catalog = dj_library::identity::Catalog::scan(&root);
+    // What landed, and is waiting for the analysis an import cannot do itself.
+    let mut placed: Vec<std::path::PathBuf> = Vec::new();
     for file in files {
         if cancel.load(Ordering::Relaxed) {
             break;
@@ -2601,14 +2603,58 @@ pub fn run_import(
                 }
             }
         }
-        // A file that arrived without a grid or a key is measured now, while the DJ still sees it in
-        // the progress window: a collection row with no tempo is a row he cannot mix from.
         if let Some(path) = landed {
-            after_place(&path);
+            placed.push(path);
         }
         state.done += 1;
         state.current = None;
         cells.set_import(Some(state.clone()));
+    }
+
+    // The analysis is the expensive half of an import — a tempo measurement and a key measurement,
+    // two full decodes per file — and it is the only part that may run at once: the duplicate decision
+    // above must stay one at a time, or two copies of one recording would both pass the check.
+    if !placed.is_empty() {
+        let workers = if request.parallel {
+            dj_library::queue::threads_for(0).min(placed.len())
+        } else {
+            1
+        }
+        .max(1);
+        if workers > 1 {
+            state.current = Some(format!(
+                "analysing {} files on {} threads",
+                placed.len(),
+                workers
+            ));
+            cells.set_import(Some(state.clone()));
+        }
+        if workers == 1 {
+            for path in &placed {
+                after_place(path);
+            }
+        } else {
+            let queue = std::sync::Mutex::new(placed.into_iter());
+            let hook = Arc::clone(&after_place);
+            std::thread::scope(|scope| {
+                for _ in 0..workers {
+                    let queue = &queue;
+                    let hook = Arc::clone(&hook);
+                    scope.spawn(move || {
+                        loop {
+                            let next = queue
+                                .lock()
+                                .unwrap_or_else(|error| error.into_inner())
+                                .next();
+                            let Some(path) = next else {
+                                break;
+                            };
+                            hook(&path);
+                        }
+                    });
+                }
+            });
+        }
     }
 
     state.running = false;

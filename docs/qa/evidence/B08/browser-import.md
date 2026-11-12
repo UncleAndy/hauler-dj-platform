@@ -31,6 +31,8 @@
 | курсор коллекции | после визита в файлы вернулся на строку 1 из 1 |
 | курсор файлов | после визита в коллекцию вернулся на строку 1 из 1 |
 | курсоры в сессии | запись и чтение сессии вернули обе строки |
+| параллельный анализ | `parallel_analysis_takes_several_files_at_once`: пик одновременных анализов > 1 |
+| без флага | `without_parallel_the_analysis_is_one_file_at_a_time`: пик ровно 1 |
 | файл без тегов | `Shadow Rhythm - Aura of Oresa - Treblo.flac` — теги пусты, запись имён не пишется; строка покажет исполнителя и название из имени файла |
 
 Тесты: `apps/dj-engine/tests/import.rs` — `a_duplicate_is_asked_about_and_the_answer_is_obeyed`,

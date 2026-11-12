@@ -1401,7 +1401,7 @@ fn serve_client(
                                 answers_rx,
                                 cancel,
                                 running,
-                                Box::new(move |path: &std::path::Path| {
+                                std::sync::Arc::new(move |path: &std::path::Path| {
                                     // `self::root`, not `root`: the import request's collection root
                                     // shadows the function of that name in this arm.
                                     dj_engine::meta::analyze_file(
