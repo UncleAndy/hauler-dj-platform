@@ -4349,6 +4349,32 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
         std::fprintf(stderr, "dj-ui: the list has no row height\n");
         return 1;
     }
+    // Probe: a cursor that arrives without a key — the remembered row of a section left behind, or a
+    // row the DJ clicked. Where is the window then?
+    const QVariantList rows = browser.entries();
+    const QString deep = rows.at(30).toMap().value(QStringLiteral("path")).toString();
+    browser.setCursor(deep);
+    for (int tick = 0; tick < 8; ++tick) {
+        QCoreApplication::processEvents();
+        QThread::msleep(20);
+    }
+    // A row that arrives without a key must land in the middle too: that is what the DJ sees when a
+    // section opens at the remembered row, or when a click lands on a row the window had lost.
+    {
+        const int restoreRow = browser.rowOf(deep);
+        const double windowCentre = list->property("contentY").toDouble() + list->height() / 2.0;
+        const double rowCentre = restoreRow * rowHeight + rowHeight / 2.0;
+        if (std::abs(windowCentre - rowCentre) > rowHeight) {
+            std::fprintf(stderr,
+                         "dj-ui: the restored row %d is not in the middle (row centre %.1f, "
+                         "window centre %.1f)\n",
+                         restoreRow, rowCentre, windowCentre);
+            return 1;
+        }
+        std::fprintf(stderr, "dj-ui: the restored row %d is in the middle (contentY %.1f)\n",
+                     restoreRow, list->property("contentY").toDouble());
+    }
+
     browser.setCursor(browser.entries().first().toMap().value(QStringLiteral("path")).toString());
     QCoreApplication::processEvents();
     for (int step = 0; step < 30; ++step) {

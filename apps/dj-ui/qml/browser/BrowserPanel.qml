@@ -156,6 +156,61 @@ Pane {
         list.positionViewAtIndex(next, ListView.Center);
     }
 
+    /// Put the cursor row in the middle of the window.
+    ///
+    /// A key is not the only way a cursor arrives: a remembered row comes back when the section is
+    /// opened, a click lands anywhere in the list, the list itself is rebuilt under the cursor. Qt
+    /// scrolls to a new current row on its own, but it scrolls the row to the nearest edge — the very
+    /// placement the DJ reported as wrong — so the middle has to be asked for after that scroll.
+    function centreOnCursor() {
+        const row = Browser.rowOf(Browser.cursor);
+        if (row < 0 || row >= list.count) {
+            return;
+        }
+        list.positionViewAtIndex(row, ListView.Center);
+        // Qt's own scroll to the current row runs after this call in the same turn; asking again when
+        // the turn is over is what makes the middle stick.
+        Qt.callLater(function () {
+            if (row < list.count) {
+                list.positionViewAtIndex(row, ListView.Center);
+            }
+        });
+    }
+
+    /// Centre the cursor row only if the window has lost it.
+    ///
+    /// A key is centred by `stepCursor` itself; this is for the cursor that arrives on its own — the
+    /// remembered row of a section being opened, a row rebuilt under the cursor. A click lands on a row
+    /// that is already visible, and moving the list under the mouse would put a different row there for
+    /// the second click of a double click.
+    function centreIfLost() {
+        const row = Browser.rowOf(Browser.cursor);
+        if (row < 0 || row >= list.count) {
+            return;
+        }
+        const top = row * rowHeight;
+        if (top < list.contentY || top + rowHeight > list.contentY + list.height) {
+            centreOnCursor();
+        }
+    }
+
+    // A click selects a row that is already under the pointer; it must not move the list, or the second
+    // click of a double click lands on a different row. Everything else that moves the cursor — a key, a
+    // remembered row coming back with its section, a list rebuilt under it — centres the row.
+    property bool keepScrollOnCursor: false
+
+    Connections {
+        target: Browser
+        function onCursorChanged() {
+            if (!browser.keepScrollOnCursor) {
+                centreOnCursor();
+            }
+        }
+        function onChanged() {
+            centreIfLost();
+        }
+    }
+
     /// Where a named column sits now: a row cell belongs to its column, not to a position, so a
     /// moved column takes its numbers with it.
     /// The mark a sorted column carries: filled for the key that decides, hollow for the one after it.
@@ -1305,7 +1360,9 @@ Pane {
                             }
                             browser.choose(row.index, mouse.modifiers);
                             // A click is a choice of place, not only of row.
+                            browser.keepScrollOnCursor = true;
                             Browser.setCursor(row.modelData.path);
+                            browser.keepScrollOnCursor = false;
                         }
                         onDoubleClicked: {
                             // Folders only: opening one is navigation. A track needs a deck button or
