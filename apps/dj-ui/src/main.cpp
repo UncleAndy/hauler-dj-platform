@@ -4441,6 +4441,39 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
         std::fprintf(stderr, "dj-ui: the wheel moved the cursor to row %d, still in the middle\n",
                      afterWheel);
     }
+    // The DJ's own flow: the cursor is remembered from the last session and the rows arrive after it.
+    // A single positioning against a half-built list lands short — the row ends up below the window,
+    // which is what he saw when he opened the collection.
+    {
+        root.mkpath(QStringLiteral("empty"));
+        const QString remembered = root.filePath(QStringLiteral("Scroll 30.wav"));
+        browser.openCollection({root.filePath(QStringLiteral("empty"))});
+        QCoreApplication::processEvents();
+        browser.setCursor(remembered);
+        browser.openCollection({collectionRoot});
+        clock.restart();
+        while (browser.entries().size() < 44 && clock.elapsed() < 5000) {
+            QCoreApplication::processEvents();
+            QThread::msleep(20);
+        }
+        for (int tick = 0; tick < 12; ++tick) {
+            QCoreApplication::processEvents();
+            QThread::msleep(20);
+        }
+        const int rememberedRow = browser.rowOf(browser.cursor());
+        const double windowCentre = list->property("contentY").toDouble() + list->height() / 2.0;
+        const double rowCentre = rememberedRow * rowHeight + rowHeight / 2.0;
+        if (rememberedRow < 0 || std::abs(windowCentre - rowCentre) > rowHeight) {
+            std::fprintf(stderr,
+                         "dj-ui: the remembered row %d is not in the middle (row centre %.1f, "
+                         "window centre %.1f)\n",
+                         rememberedRow, rowCentre, windowCentre);
+            return 1;
+        }
+        std::fprintf(stderr, "dj-ui: the remembered row %d is in the middle (contentY %.1f)\n",
+                     rememberedRow, list->property("contentY").toDouble());
+    }
+
     std::fprintf(stderr, "dj-ui: sort check done\n");
     return 0;
 }

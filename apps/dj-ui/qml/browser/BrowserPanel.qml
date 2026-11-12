@@ -162,18 +162,24 @@ Pane {
     /// opened, a click lands anywhere in the list, the list itself is rebuilt under the cursor. Qt
     /// scrolls to a new current row on its own, but it scrolls the row to the nearest edge — the very
     /// placement the DJ reported as wrong — so the middle has to be asked for after that scroll.
-    function centreOnCursor() {
+    function centreOnCursor(attempt) {
         const row = Browser.rowOf(Browser.cursor);
-        if (row < 0 || row >= list.count) {
+        if (row < 0) {
             return;
         }
         list.positionViewAtIndex(row, ListView.Center);
-        // Qt's own scroll to the current row runs after this call in the same turn; asking again when
-        // the turn is over is what makes the middle stick.
+        // The list is laid out lazily and the window is sized after it: when the cursor comes back while
+        // the rows are still arriving, one `positionViewAtIndex` is computed against a half-built list
+        // and lands short — the row ends up below the window. Ask again on the next turns until the
+        // offset the row needs is the offset the view has.
+        const wanted = Math.max(0, Math.min(row * rowHeight + rowHeight / 2 - list.height / 2,
+                                            list.contentHeight - list.height));
+        const tries = attempt === undefined ? 0 : attempt;
+        if (Math.abs(list.contentY - wanted) <= 0.5 || tries >= 12) {
+            return;
+        }
         Qt.callLater(function () {
-            if (row < list.count) {
-                list.positionViewAtIndex(row, ListView.Center);
-            }
+            centreOnCursor(tries + 1);
         });
     }
 
@@ -207,7 +213,10 @@ Pane {
             }
         }
         function onChanged() {
-            centreIfLost();
+            // The rows can arrive after the cursor, and Qt then scrolls the row to the nearest edge —
+            // which makes it «visible» and would keep it out of the middle. With the wheel moving the
+            // cursor, the middle is where the DJ put it, so the request is unconditional here too.
+            centreOnCursor();
         }
     }
 
@@ -1210,6 +1219,9 @@ Pane {
                 // the row it already knows reads as lag, not as motion.
                 highlightMoveDuration: 0
                 highlightResizeDuration: 0
+                // The window is laid out after the list: a height that arrives late must not leave the
+                // cursor outside the new window.
+                onHeightChanged: browser.centreIfLost()
                 // Arrow keys move the cursor and say so. Deliberately not `onCurrentIndexChanged`:
                 // a view handed a new model resets its index to the first row, and that reset would
                 // be remembered as the DJ's choice, wiping the place he actually left.
