@@ -154,6 +154,15 @@ type Subscribers = Arc<Mutex<Vec<Sender<ServerMessage>>>>;
 
 fn main() -> std::process::ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
+    // The writer brings the database up to the current schema, once, at start. A reader no longer does
+    // it — a reader that migrates takes the writer's lock away from a load that is recording names — so
+    // if nobody else did, the page query would look for a column that is not there and answer "nothing".
+    if !argv.iter().any(|arg| arg == "--help" || arg == "-h") {
+        match dj_library::Index::open_default() {
+            Ok(index) => drop(index),
+            Err(error) => eprintln!("dj-engine: the index stayed as it was: {error}"),
+        }
+    }
     match run(&argv) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(message) => {
