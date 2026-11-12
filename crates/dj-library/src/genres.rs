@@ -19,6 +19,18 @@ pub struct GenreName {
     pub key: String,
 }
 
+/// Одно имя, готовое для индекса: обрезано, пробелы схлопнуты, в пределах длины.
+///
+/// Возвращает `None`, когда из строки жанр не получается: пусто или абзац вместо имени.
+pub fn normalise(raw: &str) -> Option<GenreName> {
+    let name = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    if name.is_empty() || name.chars().count() > MAX_NAME_CHARS {
+        return None;
+    }
+    let key = name.to_lowercase();
+    Some(GenreName { name, key })
+}
+
 /// Разобрать тег жанра на жанры.
 ///
 /// `,` `;` и `/` перечисляют жанры; `&` — нет: «Drum & Bass» это один жанр. Пробелы обрезаются и
@@ -26,15 +38,13 @@ pub struct GenreName {
 pub fn split(raw: &str) -> Vec<GenreName> {
     let mut genres: Vec<GenreName> = Vec::new();
     for piece in raw.split([',', ';', '/']) {
-        let name = piece.split_whitespace().collect::<Vec<_>>().join(" ");
-        if name.is_empty() || name.chars().count() > MAX_NAME_CHARS {
+        let Some(genre) = normalise(piece) else {
+            continue;
+        };
+        if genres.iter().any(|seen| seen.key == genre.key) {
             continue;
         }
-        let key = name.to_lowercase();
-        if genres.iter().any(|genre| genre.key == key) {
-            continue;
-        }
-        genres.push(GenreName { name, key });
+        genres.push(genre);
         if genres.len() == MAX_GENRES {
             break;
         }

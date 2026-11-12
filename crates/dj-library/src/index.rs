@@ -8,6 +8,8 @@ use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, params};
 
+use crate::genres::{self, GenreName};
+
 /// A row of the index: the searchable face of one track.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrackRow {
@@ -160,6 +162,133 @@ impl Index {
             bind(&mut statement, row)?;
         }
         transaction.commit()?;
+        Ok(())
+    }
+
+    /// Replace the genres of one track.
+    ///
+    /// A tag is a statement about the track, not a growing list: setting the genres of a track that
+    /// already has some replaces them, or a retagged track would keep both the old and the new genre.
+    pub fn set_genres(
+        &mut self,
+        fingerprint: &str,
+        genres: &[GenreName],
+    ) -> Result<(), IndexError> {
+        let transaction = self.connection.transaction()?;
+        Self::write_genres(&transaction, fingerprint, genres)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// A row and its genres in one transaction: a track is never listed without the genres its tag
+    /// carried, and a genre is never left pointing at a row that was rolled back.
+    pub fn upsert_with_genres(
+        &mut self,
+        row: &TrackRow,
+        genres: &[GenreName],
+    ) -> Result<(), IndexError> {
+        let transaction = self.connection.transaction()?;
+        {
+            let mut statement = transaction.prepare(INSERT)?;
+            bind(&mut statement, row)?;
+        }
+        Self::write_genres(&transaction, &row.fingerprint, genres)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// The genres of one track, by name.
+    pub fn genres_of(&self, fingerprint: &str) -> Result<Vec<String>, IndexError> {
+        let mut statement = self.connection.prepare(
+            "SELECT g.name FROM track_genres tg JOIN genres g ON g.id = tg.genre_id
+             WHERE tg.fingerprint = ?1 ORDER BY g.name COLLATE NOCASE",
+        )?;
+        let names = statement
+            .query_map([fingerprint], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(names)
+    }
+
+    /// Every genre the collection carries, with the number of tracks, sorted by name.
+    pub fn genre_list(&self) -> Result<Vec<(String, u64)>, IndexError> {
+        let mut statement = self.connection.prepare(
+            "SELECT g.name, COUNT(*) FROM genres g
+             JOIN track_genres tg ON tg.genre_id = g.id
+             GROUP BY g.id ORDER BY g.name COLLATE NOCASE",
+        )?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?.max(0) as u64,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Fingerprints of the tracks carrying any of these genres.
+    ///
+    /// An empty list selects nothing: «no genre chosen» is the whole collection, and a filter that
+    /// returned every track for an empty list would make the caller's mistake look like a feature.
+    pub fn tracks_with_genres(&self, wanted: &[String]) -> Result<Vec<String>, IndexError> {
+        let mut keys: Vec<String> = Vec::new();
+        for raw in wanted {
+            let Some(genre) = genres::normalise(raw) else {
+                continue;
+            };
+            if !keys.contains(&genre.key) {
+                keys.push(genre.key);
+            }
+        }
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders = (1..=keys.len())
+            .map(|index| format!("?{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT DISTINCT tg.fingerprint FROM track_genres tg
+             JOIN genres g ON g.id = tg.genre_id
+             WHERE g.key IN ({placeholders}) ORDER BY tg.fingerprint"
+        );
+        let mut statement = self.connection.prepare(&sql)?;
+        let bound: Vec<&dyn rusqlite::ToSql> =
+            keys.iter().map(|key| key as &dyn rusqlite::ToSql).collect();
+        let rows = statement
+            .query_map(bound.as_slice(), |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Write the links of one track: replace what was there, reuse genres that already exist.
+    fn write_genres(
+        transaction: &rusqlite::Transaction<'_>,
+        fingerprint: &str,
+        genres: &[GenreName],
+    ) -> Result<(), IndexError> {
+        transaction.execute(
+            "DELETE FROM track_genres WHERE fingerprint = ?1",
+            [fingerprint],
+        )?;
+        for genre in genres {
+            // The first spelling of a genre wins: `key` is unique, so a later `House` does not
+            // overwrite the name the collection already shows.
+            transaction.execute(
+                "INSERT INTO genres (name, key) VALUES (?1, ?2) ON CONFLICT(key) DO NOTHING",
+                params![genre.name, genre.key],
+            )?;
+            let id: i64 = transaction.query_row(
+                "SELECT id FROM genres WHERE key = ?1",
+                [&genre.key],
+                |row| row.get(0),
+            )?;
+            transaction.execute(
+                "INSERT OR IGNORE INTO track_genres (fingerprint, genre_id) VALUES (?1, ?2)",
+                params![fingerprint, id],
+            )?;
+        }
         Ok(())
     }
 

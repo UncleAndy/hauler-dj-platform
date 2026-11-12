@@ -4,6 +4,8 @@
 //! консервативные: неразобранное остаётся одним жанром как есть, потерять жанр хуже, чем показать
 //! его странно.
 
+#![allow(clippy::expect_used)]
+
 use dj_library::genres::{GenreName, MAX_GENRES, MAX_NAME_CHARS, split};
 
 fn names(raw: &str) -> Vec<String> {
@@ -84,4 +86,163 @@ fn the_structured_form_is_public() {
     let genres: Vec<GenreName> = split("Techno");
     assert_eq!(genres[0].name, "Techno");
     assert_eq!(genres[0].key, "techno");
+}
+
+// ---- индекс: жанры трека, список жанров, фильтр по ним -------------------------------------------
+
+use std::path::PathBuf;
+
+use dj_library::{Index, TrackRow};
+
+fn scratch(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("dj-genres-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("scratch");
+    dir
+}
+
+fn row(fingerprint: &str, title: &str) -> TrackRow {
+    TrackRow {
+        fingerprint: fingerprint.to_owned(),
+        path: format!("/music/{fingerprint}.flac"),
+        artist: "Artist".to_owned(),
+        title: title.to_owned(),
+        album: String::new(),
+        genre: String::new(),
+        year: None,
+        bpm: None,
+        musical_key: None,
+        rating: 0,
+        duration_frames: None,
+        gain: 1.0,
+        play_count: 0,
+        last_played_ms: None,
+        analysis_lock: false,
+    }
+}
+
+fn with_genres(index: &mut Index, fingerprint: &str, raw: &str) {
+    index.upsert(&row(fingerprint, fingerprint)).expect("row");
+    index.set_genres(fingerprint, &split(raw)).expect("genres");
+}
+
+#[test]
+fn setting_the_same_genres_twice_leaves_one_link_each() {
+    let dir = scratch("twice");
+    let mut index = Index::open(&dir.join("library.db")).expect("open");
+    with_genres(&mut index, "a", "House, Techno");
+    index
+        .set_genres("a", &split("House, Techno"))
+        .expect("second set");
+    assert_eq!(
+        index.genres_of("a").expect("genres"),
+        vec!["House", "Techno"]
+    );
+    assert_eq!(
+        index.genre_list().expect("list"),
+        vec![("House".to_owned(), 1), ("Techno".to_owned(), 1)]
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn setting_genres_replaces_them_instead_of_appending() {
+    let dir = scratch("replace");
+    let mut index = Index::open(&dir.join("library.db")).expect("open");
+    with_genres(&mut index, "a", "House, Techno");
+    index.set_genres("a", &split("House")).expect("narrow");
+    assert_eq!(index.genres_of("a").expect("genres"), vec!["House"]);
+    assert_eq!(
+        index.genre_list().expect("list"),
+        vec![("House".to_owned(), 1)],
+        "a genre nobody carries any more is not in the list"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn the_genre_list_counts_the_tracks_that_carry_each_genre() {
+    let dir = scratch("counts");
+    let mut index = Index::open(&dir.join("library.db")).expect("open");
+    with_genres(&mut index, "a", "House, Techno");
+    with_genres(&mut index, "b", "House");
+    with_genres(&mut index, "c", "Ambient");
+    assert_eq!(
+        index.genre_list().expect("list"),
+        vec![
+            ("Ambient".to_owned(), 1),
+            ("House".to_owned(), 2),
+            ("Techno".to_owned(), 1),
+        ]
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn several_genres_are_a_union_of_tracks() {
+    let dir = scratch("union");
+    let mut index = Index::open(&dir.join("library.db")).expect("open");
+    with_genres(&mut index, "a", "House");
+    with_genres(&mut index, "b", "Techno");
+    with_genres(&mut index, "c", "Ambient");
+    let found = index
+        .tracks_with_genres(&["Techno".to_owned(), "Ambient".to_owned()])
+        .expect("tracks");
+    assert_eq!(found, vec!["b", "c"]);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn an_empty_genre_filter_selects_no_tracks() {
+    let dir = scratch("empty");
+    let mut index = Index::open(&dir.join("library.db")).expect("open");
+    with_genres(&mut index, "a", "House");
+    assert!(
+        index.tracks_with_genres(&[]).expect("tracks").is_empty(),
+        "no genres chosen is not «all genres»"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn the_genre_filter_ignores_case() {
+    let dir = scratch("case");
+    let mut index = Index::open(&dir.join("library.db")).expect("open");
+    with_genres(&mut index, "a", "House");
+    assert_eq!(
+        index
+            .tracks_with_genres(&["house".to_owned()])
+            .expect("tracks"),
+        vec!["a"]
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_rebuild_that_drops_the_tracks_drops_their_genres() {
+    let dir = scratch("cascade");
+    let mut index = Index::open(&dir.join("library.db")).expect("open");
+    with_genres(&mut index, "a", "House");
+    index.rebuild(&[]).expect("rebuild empty");
+    assert_eq!(index.count().expect("count"), 0);
+    assert!(
+        index.genre_list().expect("list").is_empty(),
+        "a genre left behind would point at a track that is gone"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_row_and_its_genres_are_written_together() {
+    let dir = scratch("together");
+    let mut index = Index::open(&dir.join("library.db")).expect("open");
+    index
+        .upsert_with_genres(&row("a", "Track"), &split("Deep House; Soulful"))
+        .expect("upsert");
+    assert_eq!(
+        index.genres_of("a").expect("genres"),
+        vec!["Deep House", "Soulful"]
+    );
+    assert_eq!(index.count().expect("count"), 1);
+    std::fs::remove_dir_all(&dir).ok();
 }
