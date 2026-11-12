@@ -942,6 +942,22 @@ static int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         QVariant returned;
         QMetaObject::invokeMethod(panel, "loadInto", Q_RETURN_ARG(QVariant, returned),
                                   Q_ARG(QVariant, deck));
+        // The deck is the witness: the panel answers "loaded" only once the engine shows the track, so
+        // the answer is waited for instead of read on the next line.
+        if (!panel->property("lastAction").toString().startsWith(QStringLiteral("loading "))) {
+            return panel->property("lastAction").toString();
+        }
+        QElapsedTimer wait;
+        wait.start();
+        while (wait.elapsed() < 60000) {
+            QCoreApplication::processEvents();
+            QThread::msleep(50);
+            const QString now = panel->property("lastAction").toString();
+            if (now.startsWith(QStringLiteral("loaded "))
+                || now.contains(QStringLiteral("did not take"))) {
+                return now;
+            }
+        }
         return panel->property("lastAction").toString();
     };
 
@@ -949,7 +965,16 @@ static int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     // The path in the answer is the path of the row that was chosen: a load that moves the folder
     // must not make the panel report a row it never sent.
     const QString chosenPath = entries.at(fileIndex).toMap().value(QStringLiteral("path")).toString();
-    if (onTrack != QStringLiteral("loaded ") + chosenPath + QStringLiteral(" into A")) {
+    const bool hasEngine = !onTrack.startsWith(QStringLiteral("no engine for "));
+    if (!hasEngine) {
+        // --smoke runs without an engine: the panel must refuse and say why, not claim a load.
+        if (onTrack != QStringLiteral("no engine for A")) {
+            std::fprintf(stderr, "dj-ui: without an engine the browser said '%s'\n",
+                         qPrintable(onTrack));
+            return 1;
+        }
+        std::fprintf(stdout, "dj-ui: no engine, the load is refused and said so\n");
+    } else if (onTrack != QStringLiteral("loaded ") + chosenPath + QStringLiteral(" into A")) {
         std::fprintf(stderr, "dj-ui: the browser reported a path it did not choose (%s, wanted %s)\n",
                      qPrintable(onTrack), qPrintable(chosenPath));
         return 1;
@@ -961,7 +986,9 @@ static int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     const QString onFolder = invoke("openFolder", folderIndex);
     std::fprintf(stdout, "dj-ui: browser track  -> %s\n", qPrintable(onTrack));
     std::fprintf(stdout, "dj-ui: browser folder -> %s\n", qPrintable(onFolder));
-    if (!onTrack.startsWith(QStringLiteral("loaded ")) || !onTrack.endsWith(QStringLiteral("into A"))) {
+    if (hasEngine
+        && (!onTrack.startsWith(QStringLiteral("loaded "))
+            || !onTrack.endsWith(QStringLiteral("into A")))) {
         std::fprintf(stderr, "dj-ui: a track click did not load into the chosen deck\n");
         return 1;
     }
@@ -1023,10 +1050,26 @@ static int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     }
     QMetaObject::invokeMethod(buttonB, "clicked");
     QCoreApplication::processEvents();
+    // The button answers "loading" and the deck answers later: wait for the deck's word, not for the
+    // request.
+    QElapsedTimer deckWait;
+    deckWait.start();
+    while (deckWait.elapsed() < 60000
+           && panel->property("lastAction").toString().startsWith(QStringLiteral("loading "))) {
+        QCoreApplication::processEvents();
+        QThread::msleep(50);
+    }
     const QString onDeckButton = panel->property("lastAction").toString();
     std::fprintf(stdout, "dj-ui: browser deck B button -> %s\n", qPrintable(onDeckButton));
-    if (!onDeckButton.startsWith(QStringLiteral("loaded ")) || !onDeckButton.endsWith(QStringLiteral("into B"))) {
-        std::fprintf(stderr, "dj-ui: a deck button did not load the chosen track\n");
+    if (hasEngine) {
+        if (!onDeckButton.startsWith(QStringLiteral("loaded "))
+            || !onDeckButton.endsWith(QStringLiteral("into B"))) {
+            std::fprintf(stderr, "dj-ui: a deck button did not load the chosen track\n");
+            return 1;
+        }
+    } else if (onDeckButton != QStringLiteral("no engine for B")) {
+        std::fprintf(stderr, "dj-ui: without an engine the deck button said '%s'\n",
+                     qPrintable(onDeckButton));
         return 1;
     }
     // The way up is a row, not a button: it is first, it is called "..", and it goes up.
@@ -1361,14 +1404,26 @@ static int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     QMetaObject::invokeMethod(panel, "loadInto", Q_RETURN_ARG(QVariant, fromCollection),
                               Q_ARG(QVariant, QStringLiteral("C")));
     QCoreApplication::processEvents();
+    QElapsedTimer collectionWait;
+    collectionWait.start();
+    while (collectionWait.elapsed() < 60000
+           && panel->property("lastAction").toString().startsWith(QStringLiteral("loading "))) {
+        QCoreApplication::processEvents();
+        QThread::msleep(50);
+    }
     const QString onCollection = panel->property("lastAction").toString();
     std::fprintf(stdout, "dj-ui: collection track -> %s\n", qPrintable(onCollection));
     const QString expected = QStringLiteral("loaded ")
         + chosen.value(QStringLiteral("path")).toString() + QStringLiteral(" into C");
-    if (onCollection != expected) {
+    if (hasEngine && onCollection != expected) {
         std::fprintf(stderr, "dj-ui: a collection track did not load into the chosen deck (%s, "
                              "wanted %s)\n",
                      qPrintable(onCollection), qPrintable(expected));
+        return 1;
+    }
+    if (!hasEngine && onCollection != QStringLiteral("no engine for C")) {
+        std::fprintf(stderr, "dj-ui: without an engine the collection said '%s'\n",
+                     qPrintable(onCollection));
         return 1;
     }
     // A load from the collection leaves the list in the collection: the section is a place the DJ
@@ -4491,6 +4546,13 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
         QVariant returned;
         QMetaObject::invokeMethod(panel, "loadInto", Q_RETURN_ARG(QVariant, returned),
                                   Q_ARG(QVariant, QStringLiteral("A")));
+        QElapsedTimer wait;
+        wait.start();
+        while (wait.elapsed() < 60000
+               && !panel->property("lastAction").toString().startsWith(QStringLiteral("loaded "))) {
+            QCoreApplication::processEvents();
+            QThread::msleep(50);
+        }
         const QString action = panel->property("lastAction").toString();
         if (clicked < 0 || path.isEmpty() || !returned.toBool()
             || !action.startsWith(QStringLiteral("loaded "))) {
@@ -4591,6 +4653,13 @@ static int runCollectionLoadCheck(QQmlApplicationEngine &engine, FileBrowser &br
     QCoreApplication::processEvents();
     const bool accepted = !panel->property("lastAction").toString().isEmpty();
     const QVariant returned = accepted;
+    QElapsedTimer settle;
+    settle.start();
+    while (settle.elapsed() < 90000
+           && !panel->property("lastAction").toString().startsWith(QStringLiteral("loaded "))) {
+        QCoreApplication::processEvents();
+        QThread::msleep(50);
+    }
     const QString action = panel->property("lastAction").toString();
     std::fprintf(stderr,
                  "dj-ui: collection load: %d rows, row 5 '%s', selected '%s', loadInto %s, action "
@@ -10627,6 +10696,16 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: the shell has no deck buttons\n");
             return 1;
         }
+        // The fixture is three seconds long, and the blink takes over half a second: rewind the deck
+        // first, or the track ends during the blink and the colour under test belongs to a stopped deck
+        // instead of a refused load. Pausing before the seek is what makes the seek land.
+        bridge->play(QStringLiteral("A"), false);
+        bridge->seek(QStringLiteral("A"), 0);
+        bridge->play(QStringLiteral("A"), true);
+        QCoreApplication::processEvents();
+        QThread::msleep(200);
+        QCoreApplication::processEvents();
+
         // A playing deck's button is blue before anything is pressed: the browser tells the truth
         // about the decks it feeds.
         const QColor accent(settings.themeAccent());
@@ -10649,13 +10728,15 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: the refusal did not turn the button red\n");
             return 1;
         }
-        // ... and it has to come back to blue, not to grey, once the blink is over.
+        // ... and it has to come back to blue, not to grey, once the blink is over. The end of the
+        // blink is the button's own flag: a guessed duration is a duration that races the track.
         QElapsedTimer blink;
         blink.start();
-        while (blink.elapsed() < 1200) {
+        while (blink.elapsed() < 2000 && deckButton->property("flashing").toBool()) {
             QCoreApplication::processEvents(QEventLoop::AllEvents, 30);
             QThread::msleep(20);
         }
+        QCoreApplication::processEvents();
         const QColor afterBlink = faceOf(deckButton);
         std::fprintf(stdout, "dj-ui: after the blink the button is %s\n",
                      qPrintable(afterBlink.name()));

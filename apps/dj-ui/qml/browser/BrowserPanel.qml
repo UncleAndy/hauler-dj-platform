@@ -20,6 +20,10 @@ Pane {
     property string target: "A"
     // What the last activation did: read by --browser-check, so the click path can be measured.
     property string lastAction: ""
+    // A load in flight: what was asked for, and how long the deck has had to take it.
+    property string pendingDeck: ""
+    property string pendingPath: ""
+    property int pendingTicks: 0
     // Which section the list is showing. The browser object holds the mode; this is its name, so the
     // rail can light the row the list belongs to instead of guessing.
     readonly property string section: Browser.mode === "collection" ? "collection" : "files"
@@ -204,6 +208,53 @@ Pane {
     // click of a double click lands on a different row. Everything else that moves the cursor — a key, a
     // remembered row coming back with its section, a list rebuilt under it — centres the row.
     property bool keepScrollOnCursor: false
+
+    /// Does this snapshot value, anywhere inside it, name the file?
+    function snapshotHas(value, name) {
+        if (value === null || value === undefined) {
+            return false;
+        }
+        if (Array.isArray(value)) {
+            for (let index = 0; index < value.length; ++index) {
+                if (browser.snapshotHas(value[index], name)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        if (typeof value === "object") {
+            for (const key in value) {
+                if (browser.snapshotHas(value[key], name)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        return String(value).indexOf(name) >= 0;
+    }
+
+    // 200 ms is quick enough to look instant and cheap enough to cost nothing; 300 ticks are a minute,
+    // which is what a long lossless file needs before it can be called loaded.
+    Timer {
+        id: loadWatch
+        objectName: "loadWatch"
+        interval: 200
+        repeat: true
+        running: browser.pendingDeck !== ""
+        onTriggered: {
+            const name = browser.pendingPath.split("/").pop();
+            if (browser.snapshotHas(Bridge.snapshot, name)) {
+                browser.lastAction = "loaded " + browser.pendingPath + " into " + browser.pendingDeck;
+                browser.pendingDeck = "";
+                return;
+            }
+            browser.pendingTicks += 1;
+            if (browser.pendingTicks >= 300) {
+                browser.lastAction = "deck " + browser.pendingDeck + " did not take " + name;
+                browser.pendingDeck = "";
+            }
+        }
+    }
 
     Connections {
         target: Browser
@@ -420,6 +471,11 @@ Pane {
             browser.lastAction = "nothing to load";
             return false;
         }
+        // No engine, no deck: saying "loaded" here would be the same lie the panel used to tell.
+        if (!Bridge.connected) {
+            browser.lastAction = "no engine for " + deck;
+            return false;
+        }
         if (browser.deckIsPlaying(deck)) {
             browser.lastAction = "deck " + deck + " is playing";
             return false;
@@ -429,7 +485,13 @@ Pane {
         const path = browser.selected.path;
         browser.target = deck;
         Bridge.load(deck, path);
-        browser.lastAction = "loaded " + path + " into " + deck;
+        // A load is a request, not an outcome: the deck is the only witness. Until the engine shows the
+        // track the panel says "loading", and if it never shows it the panel says that instead — a
+        // panel that claims a load the deck never took hides a deck that is stuck.
+        browser.pendingDeck = deck;
+        browser.pendingPath = path;
+        browser.pendingTicks = 0;
+        browser.lastAction = "loading " + path + " into " + deck;
         return true;
     }
 
