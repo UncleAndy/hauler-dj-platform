@@ -140,6 +140,23 @@ impl Index {
         Ok(Self { connection })
     }
 
+    /// The index in the user's data folder: `$XDG_DATA_HOME/hauler-dj/db/library.db`, or
+    /// `~/.local/share/hauler-dj/db/library.db` when the variable is unset.
+    ///
+    /// The database is a cache over the metadata files, so a missing one is not an error to report:
+    /// the caller opens it, writes what it has, and a rebuild fills the rest.
+    pub fn open_default() -> Result<Self, IndexError> {
+        let base = std::env::var_os("XDG_DATA_HOME")
+            .map(std::path::PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .or_else(|| {
+                std::env::var_os("HOME")
+                    .map(|home| std::path::PathBuf::from(home).join(".local").join("share"))
+            })
+            .ok_or_else(|| IndexError::Io(std::io::Error::other("no data folder for the index")))?;
+        Self::open(&base.join("hauler-dj").join("db").join("library.db"))
+    }
+
     /// Replace the whole index with these rows: the rebuild path after the database is deleted.
     pub fn rebuild(&mut self, rows: &[TrackRow]) -> Result<usize, IndexError> {
         let transaction = self.connection.transaction()?;

@@ -107,6 +107,7 @@ fn a_duplicate_is_asked_about_and_the_answer_is_obeyed() {
             cancel,
             running_flag,
             Arc::new(|_| {}),
+            None,
         );
     });
 
@@ -179,6 +180,7 @@ fn a_stopped_batch_takes_no_more_files() {
             cancel,
             running_flag,
             Arc::new(|_| {}),
+            None,
         );
     });
     handle.join().expect("работник закончил");
@@ -260,6 +262,7 @@ fn peak_analysis_concurrency(parallel: bool) -> usize {
             cancel,
             running_flag,
             hook,
+            None,
         );
     });
     handle.join().expect("работник закончил");

@@ -303,6 +303,10 @@ pub fn write_names(store: &Store, volume: &str, root: &Path, path: &Path) -> boo
         artist: tags.artist,
         album: tags.album,
         title: tags.title,
+        genres: dj_library::genres::split(&tags.genre)
+            .into_iter()
+            .map(|genre| genre.name)
+            .collect(),
     });
     if existed {
         meta.bump(now_ms);

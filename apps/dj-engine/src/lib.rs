@@ -2531,6 +2531,20 @@ pub struct ImportJob {
 ///
 /// Runs on its own thread: a batch of files must not block the mix, and a question must not block the
 /// audio either. The state goes to the publisher's cells, which is what the browser draws.
+/// Put one imported track into the index, with the genres its tag carried.
+///
+/// The database is a cache over the metadata files: a failed write is reported and the import goes on.
+/// Losing a row costs a rescan; failing an import costs the DJ his file.
+fn write_index(index: Option<&mut dj_library::Index>, imported: &dj_library::import::Imported) {
+    let Some(index) = index else {
+        return;
+    };
+    let (row, genres) = dj_library::import::index_row(imported);
+    if let Err(error) = index.upsert_with_genres(&row, &genres) {
+        eprintln!("dj-engine: index write failed for {}: {error}", row.path);
+    }
+}
+
 pub fn run_import(
     request: ImportRequest,
     cells: Arc<StateCells>,
@@ -2538,6 +2552,7 @@ pub fn run_import(
     cancel: Arc<AtomicBool>,
     running: Arc<AtomicBool>,
     after_place: Arc<dyn Fn(&std::path::Path) + Send + Sync>,
+    mut index: Option<&mut dj_library::Index>,
 ) {
     let root = std::path::PathBuf::from(&request.root);
     let files = collect_audio(&request.paths);
@@ -2579,12 +2594,14 @@ pub fn run_import(
                 Ok(dj_library::import::Outcome::Placed(imported)) => {
                     state.placed += 1;
                     catalog.add(imported.path.clone(), imported.identity.clone());
+                    write_index(index.as_deref_mut(), &imported);
                     landed = Some(imported.path.clone());
                     break;
                 }
                 Ok(dj_library::import::Outcome::Version { imported, .. }) => {
                     state.placed += 1;
                     catalog.add(imported.path.clone(), imported.identity.clone());
+                    write_index(index.as_deref_mut(), &imported);
                     landed = Some(imported.path.clone());
                     break;
                 }

@@ -1422,6 +1422,9 @@ fn serve_client(
                         };
                         let worker_store = work.store.clone();
                         std::thread::spawn(move || {
+                            // The index is a cache: if it cannot be opened the import still runs, and
+                            // the rebuild fills it later.
+                            let mut index = dj_library::Index::open_default().ok();
                             dj_engine::run_import(
                                 request,
                                 worker_cells,
@@ -1439,6 +1442,7 @@ fn serve_client(
                                         false,
                                     );
                                 }),
+                                index.as_mut(),
                             );
                         });
                         if alerts

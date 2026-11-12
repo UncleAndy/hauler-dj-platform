@@ -12,8 +12,36 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::identity::{self, Identity};
+use crate::index::TrackRow;
 use crate::quality::{self, Quality};
-use crate::{TrackMeta, fingerprint, layout, meta, sidecar, tags};
+use crate::{TrackMeta, fingerprint, genres, layout, meta, sidecar, tags};
+
+/// The index row for a placed track, and the genres its tag carried.
+///
+/// The import itself does not write the index: the database is a cache over the metadata files, and a
+/// library function that reaches for a global database path cannot be run twice by one test. The
+/// caller — the engine after an import, or a test — writes what this returns, in one transaction
+/// (`Index::upsert_with_genres`), so a track never appears without its genres.
+pub fn index_row(imported: &Imported) -> (TrackRow, Vec<genres::GenreName>) {
+    let row = TrackRow {
+        fingerprint: imported.fingerprint.key(),
+        path: imported.path.to_string_lossy().into_owned(),
+        artist: imported.tags.artist.clone(),
+        title: imported.tags.title.clone(),
+        album: imported.tags.album.clone(),
+        genre: imported.tags.genre.clone(),
+        year: imported.tags.year.trim().parse::<i64>().ok(),
+        bpm: None,
+        musical_key: None,
+        rating: 0,
+        duration_frames: imported.fingerprint.duration_frames,
+        gain: 1.0,
+        play_count: 0,
+        last_played_ms: None,
+        analysis_lock: false,
+    };
+    (row, genres::split(&imported.tags.genre))
+}
 
 /// The folder that holds the files the collection refused.
 pub const DUPLICATES_DIR: &str = "_duplicates";
@@ -71,6 +99,8 @@ pub struct Imported {
     pub named_from_file: bool,
     /// The marker that tells this copy from the one it duplicates, when the policy keeps both.
     pub variant: Option<String>,
+    /// What the copy is recognised by, measured on the copy: the index row is keyed by it.
+    pub fingerprint: meta::Fingerprint,
 }
 
 /// What an import decided about a file that may already be in the collection.
@@ -306,7 +336,7 @@ fn place(
         print.duration_frames = Some(frames);
         print.sample_rate = Some(prepared.identity.sample_rate);
     }
-    let mut record = TrackMeta::new(print, now_ms);
+    let mut record = TrackMeta::new(print.clone(), now_ms);
     // The file may already carry its metadata where it lies — a collection being moved, a folder
     // imported twice. A grid or a key measured once is a decision: measuring it again would cost a
     // decode and could answer differently. What belongs to this copy — its fingerprint, its names,
@@ -331,6 +361,12 @@ fn place(
         artist: prepared.tags.artist.clone(),
         album: prepared.tags.album.clone(),
         title: prepared.tags.title.clone(),
+        // The list the collection filters by: `.djmeta` is the source of truth, the index is built
+        // from it, so the genres are written here even when nothing reads the database.
+        genres: genres::split(&prepared.tags.genre)
+            .into_iter()
+            .map(|genre| genre.name)
+            .collect(),
     });
     let meta_path = sidecar::file_of(&target).ok_or_else(|| ImportError::Io {
         path: target.clone(),
@@ -346,6 +382,7 @@ fn place(
         repaired: prepared.repaired,
         named_from_file: prepared.named_from_file,
         variant,
+        fingerprint: print,
     })
 }
 

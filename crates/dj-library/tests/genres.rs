@@ -246,3 +246,115 @@ fn a_row_and_its_genres_are_written_together() {
     assert_eq!(index.count().expect("count"), 1);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+// ---- импорт: жанры в сайдкар и в индекс ----------------------------------------------------------
+
+use dj_library::import::index_row;
+use dj_library::sidecar;
+
+/// Короткий тон с шагом по высоте: ровный тон даёт вырожденный отпечаток, а повторяющаяся гамма —
+/// сдвиг не там, где он есть.
+fn write_tone(path: &std::path::Path) {
+    const PITCHES: [f64; 12] = [
+        1.0, 1.122, 1.26, 1.335, 1.498, 1.682, 1.782, 2.0, 2.245, 2.52, 2.67, 2.997,
+    ];
+    let rate = 22_050_u32;
+    let seconds = 2_u32;
+    let samples = rate * seconds;
+    let mut data = Vec::with_capacity(samples as usize * 2);
+    let mut phase = 0.0_f64;
+    let mut noise = 0x2545_F491_4F6C_DD1D_u64;
+    let mut step = 440.0_f64;
+    for index in 0..samples {
+        if index.is_multiple_of(rate / 4) {
+            noise = noise
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
+            step = 440.0 * PITCHES[(noise >> 33) as usize % PITCHES.len()];
+        }
+        phase += std::f64::consts::TAU * step / f64::from(rate);
+        data.extend_from_slice(&((phase.sin() * 12_000.0) as i16).to_le_bytes());
+    }
+    let mut file = Vec::new();
+    file.extend_from_slice(b"RIFF");
+    file.extend_from_slice(&(36_u32 + data.len() as u32).to_le_bytes());
+    file.extend_from_slice(b"WAVEfmt ");
+    file.extend_from_slice(&16_u32.to_le_bytes());
+    file.extend_from_slice(&1_u16.to_le_bytes());
+    file.extend_from_slice(&1_u16.to_le_bytes());
+    file.extend_from_slice(&rate.to_le_bytes());
+    file.extend_from_slice(&(rate * 2).to_le_bytes());
+    file.extend_from_slice(&2_u16.to_le_bytes());
+    file.extend_from_slice(&16_u16.to_le_bytes());
+    file.extend_from_slice(b"data");
+    file.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    file.extend_from_slice(&data);
+    std::fs::write(path, file).expect("wav");
+}
+
+#[test]
+fn an_imported_track_is_listed_by_the_genres_of_its_tag() {
+    let dir = scratch("import");
+    let source = dir.join("Artist - Track.wav");
+    write_tone(&source);
+    let collection = dir.join("collection");
+    std::fs::create_dir_all(&collection).expect("collection");
+    let mut imported = dj_library::import(&source, &collection, 1_000).expect("import");
+    // The tag of the copy: the import reads it from the container, and a WAV written by this test
+    // cannot carry one that the reader gives back — the container path itself is `tags::read`, which
+    // is covered by its own tests and by the probe over the real collection.
+    imported.tags.genre = "House, Techno".to_owned();
+
+    let (row, genres) = index_row(&imported);
+    assert_eq!(row.genre, "House, Techno", "the raw tag stays in the row");
+    assert_eq!(row.path, imported.path.to_string_lossy());
+    assert_eq!(
+        genres
+            .iter()
+            .map(|genre| genre.name.clone())
+            .collect::<Vec<_>>(),
+        vec!["House", "Techno"]
+    );
+
+    let mut index = Index::open(&dir.join("library.db")).expect("index");
+    index
+        .upsert_with_genres(&row, &genres)
+        .expect("index write");
+    assert_eq!(
+        index.genres_of(&row.fingerprint).expect("genres"),
+        vec!["House", "Techno"],
+        "the track is found by both genres it carries"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn an_imported_track_writes_an_empty_genre_list_when_the_tag_has_none() {
+    let dir = scratch("import-empty");
+    let source = dir.join("Artist - Track.wav");
+    write_tone(&source);
+    let collection = dir.join("collection");
+    std::fs::create_dir_all(&collection).expect("collection");
+    let imported = dj_library::import(&source, &collection, 1_000).expect("import");
+    let meta = sidecar::read(&imported.meta).expect("sidecar");
+    let written = meta.tags.expect("tags in the sidecar");
+    assert!(
+        written.genres.is_empty(),
+        "a track without a genre tag carries no genres, not a missing field"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_sidecar_without_genres_still_reads() {
+    // A record written before the field existed: the browser must read it, not fail on it.
+    let record = r#"{"schema":"djmeta/1","revision":1,"updated_at_ms":1000,
+                     "fingerprint":{"size":1,"head":"a","tail":"b"},
+                     "tags":{"artist":"A","album":"B","title":"C"}}"#;
+    let meta: dj_library::TrackMeta = serde_json::from_str(record).expect("old sidecar");
+    let written = meta.tags.expect("tags");
+    assert!(
+        written.genres.is_empty(),
+        "старая запись — без жанров, не с ошибкой"
+    );
+}

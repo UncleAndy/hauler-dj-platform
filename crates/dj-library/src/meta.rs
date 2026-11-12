@@ -95,6 +95,10 @@ pub struct FileTags {
     pub album: String,
     #[serde(default)]
     pub title: String,
+    /// The genres the tag carried, already split by `genres::split`: one string can list several, and
+    /// the collection filters by them. An older record has none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub genres: Vec<String>,
 }
 
 /// Everything the metadata file holds.
