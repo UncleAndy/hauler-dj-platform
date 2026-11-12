@@ -250,6 +250,11 @@ pub fn detect(mono: &[f32], rate: f64) -> Option<Tempo> {
 /// stretch of it answers a different beat for a section, the grid is built from stretches, and a track
 /// that changes tempo is described as one instead of being averaged into a tempo it never plays.
 pub fn detect_in_envelope(envelope: &[f32], rate: f64) -> Option<Tempo> {
+    primary_tempo(envelope, rate).or_else(|| fallback_tempo(envelope, rate))
+}
+
+/// The walk the analyser has always taken. Unchanged: a track it answers keeps exactly the grid it had.
+fn primary_tempo(envelope: &[f32], rate: f64) -> Option<Tempo> {
     let per_second = rate / HOP as f64;
     let (bpm, clear) = choose_tempo(envelope, per_second)?;
     // The windows answer a periodicity; which beat it is, is a second question — see [`decide_level`].
@@ -555,6 +560,232 @@ fn stretches_of_followed(beats: &[f64], per_second: f64) -> Vec<TempoSegment> {
         });
     }
     segments
+}
+
+/// A window whose onsets are this much quieter than the loudest window is not evidence against the beat:
+/// a breakdown is ignorance, not counter-evidence.
+const QUIET_WINDOW_SHARE: f32 = 0.25;
+
+/// How much of a track must carry the beat before the fallback publishes a tempo anyway, as a share of
+/// all its forty-second windows. Half a track is the case this exists for; one good bar is not.
+const MIN_CARRIED_SHARE: f64 = 0.40;
+
+/// How far the fallback looks from a seed: the same beat an octave or a third away, which is where a
+/// window vote lands when it hears the hats or the triplets instead of the beat.
+const FALLBACK_RATIOS: [f64; 6] = [1.0, 2.0, 0.5, 3.0, 1.0 / 3.0, 1.5];
+
+/// How many of the strongest spectral peaks the fallback asks.
+const FALLBACK_PEAKS: usize = 8;
+
+/// The contrast the fallback asks for, well above the gate's own floor.
+///
+/// The gate measures one candidate the walk chose; the fallback tries a few hundred, and a search over
+/// noise finds a lattice that clears 1,2 by luck — three minutes of rubato comes out at 1,78 on its best
+/// candidate. A beat that is really there stands far above that: on the tracks this fallback exists for,
+/// the carrying windows measured 11,9 and 30,1.
+const FALLBACK_CONTRAST_FLOOR: f64 = 3.0;
+
+/// How far apart the fallback's coarse sweep of the range steps, as a ratio.
+const FALLBACK_SWEEP: f64 = 1.02;
+
+/// How close two answers may be before the one nearer 120 BPM wins.
+const FALLBACK_TIE: f64 = 0.05;
+
+/// The tempo of a track the walk refused, found from the windows and the spectrum together.
+///
+/// The walk answers with the tempo the windows agree on, then refuses the grid if it does not carry the
+/// music. On long tracks the windows often agree on the wrong thing — the hats, the triplets — and the
+/// grid at that tempo carries nothing while a grid at the beat carries it three times over. So when the
+/// walk has nothing to say, every answer the windows gave is a seed, the strongest lines of the whole
+/// file's spectrum are seeds too, and each seed with its octaves and thirds is put to the same question
+/// the gate asks. A track whose beat lives in half of it is judged by the windows that have onsets, not
+/// by the ones that have none.
+fn fallback_tempo(envelope: &[f32], rate: f64) -> Option<Tempo> {
+    let per_second = rate / HOP as f64;
+    let mut seeds: Vec<f64> = Vec::new();
+
+    // What the windows heard, including the answers the walk did not take: it keeps one cluster, and on a
+    // long track the beat is often in another.
+    let window = (per_second * WINDOW_SECONDS) as usize;
+    if window > 0 {
+        let mut start = 0usize;
+        while start + window <= envelope.len() {
+            if let Some(bpm) = tempo_of_window(&envelope[start..start + window], per_second) {
+                seeds.push(bpm);
+            }
+            start += window;
+        }
+        if start < envelope.len()
+            && envelope.len() - start >= window / 2
+            && let Some(bpm) = tempo_of_window(&envelope[start..], per_second)
+        {
+            seeds.push(bpm);
+        }
+    }
+
+    // And what the whole file's spectrum says: the beat is its strongest line.
+    let mut peaks = spectral_peaks(envelope, per_second);
+    peaks.sort_by(|a, b| b.1.total_cmp(&a.1));
+    peaks.truncate(FALLBACK_PEAKS);
+    seeds.extend(peaks.into_iter().map(|(bpm, _)| bpm));
+
+    // And a coarse sweep of the whole range: the windows and the spectrum both answer in round numbers,
+    // and a beat that sits between two of their answers would otherwise never be asked at all.
+    let mut bpm = MIN_BPM;
+    while bpm <= MAX_BPM {
+        seeds.push(bpm);
+        bpm *= FALLBACK_SWEEP;
+    }
+
+    let mut candidates: Vec<f64> = Vec::new();
+    for seed in seeds {
+        for ratio in FALLBACK_RATIOS {
+            let bpm = seed * ratio;
+            if !(MIN_BPM..=MAX_BPM).contains(&bpm) {
+                continue;
+            }
+            // An octave is the same beat counted differently: asking both would only split the vote.
+            if candidates
+                .iter()
+                .any(|known| (known / bpm).log2().abs() < 0.01)
+            {
+                continue;
+            }
+            candidates.push(bpm);
+        }
+    }
+
+    let mut best: Option<(f64, f64)> = None;
+    for bpm in candidates {
+        let period = per_second * 60.0 / bpm;
+        if !(period.is_finite() && period >= 2.0) {
+            continue;
+        }
+        let phase = phase_where_the_beat_is(envelope, per_second, period);
+        let (share, contrast) = carried_windows(envelope, per_second, period, phase);
+        if share < MIN_CARRIED_SHARE || contrast < FALLBACK_CONTRAST_FLOOR {
+            continue;
+        }
+        let better = match best {
+            None => true,
+            Some((known_contrast, known_bpm)) => {
+                let margin = contrast - known_contrast;
+                margin > FALLBACK_TIE * known_contrast
+                    || (margin.abs() <= FALLBACK_TIE * known_contrast
+                        && (bpm / PREFERRED_BPM).log2().abs()
+                            < (known_bpm / PREFERRED_BPM).log2().abs())
+            }
+        };
+        if better {
+            best = Some((contrast, bpm));
+        }
+    }
+
+    let (_, bpm) = best?;
+    let period = per_second * 60.0 / bpm;
+    let phase = phase_where_the_beat_is(envelope, per_second, period);
+    tempo_at(envelope, per_second, bpm, phase)
+}
+
+/// Where the lattice starts, read in the window that hears the beat best.
+///
+/// The phase belongs to the whole track, but a file's own answer is taken over all of it: a track whose
+/// beat begins after a long intro would take its phase from the intro, and the beat would then be read
+/// half a beat out of place — the very thing that made the gate refuse the track. So the phase is read
+/// where the beat is clearest, and every window is judged on that one lattice.
+fn phase_where_the_beat_is(envelope: &[f32], per_second: f64, period: f64) -> f64 {
+    let window = (per_second * WINDOW_SECONDS) as usize;
+    if window == 0 || envelope.len() < window {
+        return best_phase_for(envelope, period).0;
+    }
+    let mut best: Option<(f64, usize, f64)> = None;
+    let mut start = 0usize;
+    while start + window <= envelope.len() {
+        let slice = &envelope[start..start + window];
+        let (local, _) = best_phase_for(slice, period);
+        let (on, halfway) = beat_against_halfway(slice, period, local);
+        let contrast = if halfway > 0.0 { on / halfway } else { 3.0 };
+        if best.is_none_or(|(known, _, _)| contrast > known) {
+            best = Some((contrast, start, local));
+        }
+        start += window;
+    }
+    match best {
+        Some((_, at, local)) => (local + at as f64).rem_euclid(period),
+        None => best_phase_for(envelope, period).0,
+    }
+}
+
+/// How much of a track carries the beat, and how strongly it carries it where it does.
+///
+/// Judged in windows of forty seconds, the same windows the tempo is voted on. A window with almost no
+/// onsets — a breakdown, an ambient intro — says nothing about the beat and is left out of the contrast;
+/// it still counts towards the share, so a track with one good bar does not qualify.
+fn carried_windows(envelope: &[f32], per_second: f64, period: f64, phase: f64) -> (f64, f64) {
+    let window = (per_second * WINDOW_SECONDS) as usize;
+    if window == 0 || envelope.len() < window {
+        return (0.0, 0.0);
+    }
+    let loudest = envelope
+        .chunks(window)
+        .map(|chunk| chunk.iter().copied().sum::<f32>())
+        .fold(0.0f32, f32::max);
+    if loudest <= 0.0 {
+        return (0.0, 0.0);
+    }
+    let mut total = 0usize;
+    let mut carrying = 0usize;
+    let mut weight = 0.0f64;
+    let mut sum = 0.0f64;
+    let mut start = 0usize;
+    while start + window <= envelope.len() {
+        let slice = &envelope[start..start + window];
+        total += 1;
+        let energy: f32 = slice.iter().copied().sum();
+        if energy >= loudest * QUIET_WINDOW_SHARE {
+            // The phase belongs to the file; a window has its own origin.
+            let local = (phase - start as f64).rem_euclid(period);
+            let (on, halfway) = beat_against_halfway(slice, period, local);
+            let contrast = if halfway > 0.0 { on / halfway } else { 3.0 };
+            if contrast >= BEAT_CONTRAST_FLOOR {
+                carrying += 1;
+                weight += f64::from(energy);
+                sum += f64::from(energy) * contrast;
+            }
+        }
+        start += window;
+    }
+    if total == 0 {
+        return (0.0, 0.0);
+    }
+    let share = carrying as f64 / total as f64;
+    let contrast = if weight > 0.0 { sum / weight } else { 0.0 };
+    (share, contrast)
+}
+
+/// A one-segment grid at a tempo the fallback chose.
+///
+/// The metre stays four: a bar is counted on the kick band, and the fallback works on the full spectrum
+/// alone. [`detect`] puts the bar right afterwards for the tracks that have a kick to count by.
+fn tempo_at(envelope: &[f32], per_second: f64, bpm: f64, phase: f64) -> Option<Tempo> {
+    let period = per_second * 60.0 / bpm;
+    if !(period.is_finite() && period >= 2.0) {
+        return None;
+    }
+    let frames = phase * HOP as f64 + BLOCK as f64 / 2.0;
+    if !(frames.is_finite() && frames >= 0.0) {
+        return None;
+    }
+    let (share, _) = share_for(envelope, period, phase);
+    Some(Tempo {
+        segments: vec![TempoSegment {
+            bpm,
+            first_beat_frame: frames.round() as u64,
+            beat: 0,
+        }],
+        confidence: share as f32,
+        metre: DEFAULT_METRE,
+    })
 }
 
 /// Whether the grid's beats carry the music or sit between its hits.
