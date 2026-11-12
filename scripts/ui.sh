@@ -88,6 +88,45 @@ case "${1:-}" in
       exit 1
     fi
     ;;
+  --collection-load-check)
+    # One track out of a real collection into a deck, read only.
+    #
+    # The DJ's own collection is not a fixture: hashed folders, sidecars, names taken from tags. The
+    # check opens it, picks a row, presses the deck button in the header and requires the deck to carry
+    # the track — the panel's own message is not evidence. Nothing is written into the collection.
+    root="${2:-${COLLECTION_ROOT:-$HOME/.local/share/hauler-dj/collection}}"
+    if [ ! -d "$root" ]; then
+      echo "ui.sh: no collection at $root" >&2
+      exit 1
+    fi
+    if [ -z "${DJ_ENGINE_BIN:-}" ]; then
+      if ! command -v cargo >/dev/null 2>&1; then
+        echo "ui.sh: cargo is not in PATH; run this inside the dev shell" >&2
+        exit 1
+      fi
+      cargo build --quiet -p dj-engine || exit 1
+    fi
+    engine_bin="${DJ_ENGINE_BIN:-${CARGO_TARGET_DIR:-$HOME/.cache/dj-platform-target}/debug/dj-engine}"
+    run_dir="$(mktemp -d)"
+    export XDG_DATA_HOME="$run_dir/data"
+    export XDG_CONFIG_HOME="$run_dir/config"
+    socket="$run_dir/engine.sock"
+    "$engine_bin" --null-sink --socket "$socket" --block 256 &
+    engine_pid=$!
+    cleanup() {
+      kill "$engine_pid" 2>/dev/null || true
+      wait "$engine_pid" 2>/dev/null || true
+      rm -rf "$run_dir"
+    }
+    trap cleanup EXIT
+    for _ in $(seq 1 100); do
+      [ -S "$socket" ] && break
+      sleep 0.05
+    done
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
+        --collection-load-check --collection-root "$root"
+    ;;
+
   --engine-check)
     # The A06 acceptance, without a display or a sound card: run the real engine on a null sink,
     # let the real UI press Play, and require the ack and the published state to agree.

@@ -4474,12 +4474,147 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
                      rememberedRow, list->property("contentY").toDouble());
     }
 
+    // Probe: a track out of the collection into a deck — the gesture the DJ says stopped working. The
+    // existing check loads from the files section only, which is why this went unnoticed.
+    {
+        const QPointF point = list->mapToScene(QPointF(20.0, 5 * rowHeight + 9.0));
+        for (const QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+            QMouseEvent event(type, point, window->mapToGlobal(point.toPoint()), Qt::LeftButton,
+                              Qt::LeftButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(window, &event);
+        }
+        QCoreApplication::processEvents();
+        const int clicked = list->property("currentIndex").toInt();
+        const QVariant selected = panel->property("selected");
+        const QString path = selected.toMap().value(QStringLiteral("path")).toString();
+        panel->setProperty("lastAction", QString());
+        QVariant returned;
+        QMetaObject::invokeMethod(panel, "loadInto", Q_RETURN_ARG(QVariant, returned),
+                                  Q_ARG(QVariant, QStringLiteral("A")));
+        const QString action = panel->property("lastAction").toString();
+        if (clicked < 0 || path.isEmpty() || !returned.toBool()
+            || !action.startsWith(QStringLiteral("loaded "))) {
+            std::fprintf(stderr,
+                         "dj-ui: a collection row did not load into a deck (clicked %d, selected "
+                         "'%s', action '%s')\n",
+                         clicked, qPrintable(path), qPrintable(action));
+            return 1;
+        }
+        std::fprintf(stderr, "dj-ui: a collection row loads into a deck: %s\n", qPrintable(action));
+    }
+
     std::fprintf(stderr, "dj-ui: sort check done\n");
     return 0;
 }
 
 // The collection's Analyze…: one track gets a progress window, a selection gets a question with the
 // parallel box and then the same window. Afterwards the numbers are in the list, not only in the files.
+/// Does this value, anywhere inside it, name the file?
+static bool holdsName(const QVariant &value, const QString &name)
+{
+    if (value.typeId() == QMetaType::QVariantMap) {
+        const QVariantMap map = value.toMap();
+        for (auto entry = map.cbegin(); entry != map.cend(); ++entry) {
+            if (holdsName(entry.value(), name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if (value.typeId() == QMetaType::QVariantList) {
+        for (const QVariant &item : value.toList()) {
+            if (holdsName(item, name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    return value.canConvert<QString>() && value.toString().contains(name);
+}
+
+/// A track out of a real collection into a deck, read only.
+///
+/// The other checks load from the files section and from a collection this program wrote itself. A
+/// collection the DJ made is a different thing: hashed folders, sidecars, names taken from tags. And
+/// the panel's own message is not evidence — the deck's track is, so the engine's snapshot is what
+/// gets read here.
+static int runCollectionLoadCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
+                                  BridgeClient &bridge, const QString &collectionRoot)
+{
+    if (collectionRoot.isEmpty()) {
+        std::fprintf(stderr, "dj-ui: --collection-load-check needs --collection-root\n");
+        return 1;
+    }
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().value(0));
+    if (window == nullptr) {
+        std::fprintf(stderr, "dj-ui: no shell window\n");
+        return 1;
+    }
+    auto *panel = findItem(window->contentItem(), QStringLiteral("browserPanel"));
+    if (panel == nullptr) {
+        std::fprintf(stderr, "dj-ui: the shell has no browser\n");
+        return 1;
+    }
+    browser.openCollection({collectionRoot});
+    QElapsedTimer clock;
+    clock.start();
+    while (browser.entries().size() < 6 && clock.elapsed() < 60000) {
+        QCoreApplication::processEvents();
+        QThread::msleep(50);
+    }
+    const int rows = static_cast<int>(browser.entries().size());
+    if (rows < 6) {
+        std::fprintf(stderr, "dj-ui: the collection lists %d rows\n", rows);
+        return 1;
+    }
+    const QVariantMap entry = browser.entries().at(5).toMap();
+    const QString path = entry.value(QStringLiteral("path")).toString();
+    browser.setCursor(path);
+    QCoreApplication::processEvents();
+    const QString selectedPath =
+        panel->property("selected").toMap().value(QStringLiteral("path")).toString();
+    // The button, not the function: the DJ presses a deck button in the header, and a handler that is
+    // never reached by a real press is a handler that does not exist.
+    auto *button = findItem(window->contentItem(), QStringLiteral("deckButton_A"));
+    if (button == nullptr) {
+        std::fprintf(stderr, "dj-ui: the header has no deck A button\n");
+        return 1;
+    }
+    panel->setProperty("lastAction", QString());
+    const QPointF centre(button->width() / 2.0, button->height() / 2.0);
+    const QPointF scene = button->mapToScene(centre);
+    for (const QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+        QMouseEvent event(type, scene, window->mapToGlobal(scene.toPoint()), Qt::LeftButton,
+                          Qt::LeftButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(window, &event);
+    }
+    QCoreApplication::processEvents();
+    const bool accepted = !panel->property("lastAction").toString().isEmpty();
+    const QVariant returned = accepted;
+    const QString action = panel->property("lastAction").toString();
+    std::fprintf(stderr,
+                 "dj-ui: collection load: %d rows, row 5 '%s', selected '%s', loadInto %s, action "
+                 "'%s'\n",
+                 rows, qPrintable(path), qPrintable(selectedPath),
+                 returned.toBool() ? "true" : "false", qPrintable(action));
+    if (selectedPath.isEmpty() || !returned.toBool()) {
+        return 1;
+    }
+    const QString name = QFileInfo(path).fileName();
+    const auto loaded = [&]() { return holdsName(bridge.snapshot(), name); };
+    clock.restart();
+    while (!loaded() && clock.elapsed() < 90000) {
+        QCoreApplication::processEvents();
+        QThread::msleep(50);
+    }
+    if (!loaded()) {
+        std::fprintf(stderr, "dj-ui: deck A does not carry '%s' after the load\n", qPrintable(name));
+        return 1;
+    }
+    std::fprintf(stderr, "dj-ui: the collection track reached deck A: %s\n", qPrintable(name));
+    return 0;
+}
+
 static int runAnalyzeCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSettings &layout,
                            const QString &fixture, const QString &collectionRoot)
 {
@@ -5343,6 +5478,10 @@ int main(int argc, char *argv[])
         QStringLiteral("sort-check"),
         QStringLiteral("From the collection: a click on a column sorts by it, a second click turns it "
                        "around, a Shift click adds the next key — and the rail's order."));
+    const QCommandLineOption collectionLoadCheckOption(
+        QStringLiteral("collection-load-check"),
+        QStringLiteral("From a real collection, read only: choose a row and load it into deck A — the "
+                       "engine must report the track in the deck, not only the panel its message."));
     const QCommandLineOption analyzeCheckOption(
         QStringLiteral("analyze-check"),
         QStringLiteral("From the collection: Analyze… on one track and on three — a progress window, "
@@ -5589,6 +5728,7 @@ int main(int argc, char *argv[])
     parser.addOption(importCheckOption);
     parser.addOption(analyzeCheckOption);
     parser.addOption(sortCheckOption);
+    parser.addOption(collectionLoadCheckOption);
     parser.addOption(importFixtureOption);
     parser.addOption(gridReconnectOption);
     parser.addOption(metronomeOption);
@@ -10866,6 +11006,12 @@ int main(int argc, char *argv[])
         bridge->connectToEngine(parser.value(connectOption));
         return runSortCheck(engine, browser, layout, parser.value(importFixtureOption),
                             parser.values(collectionRootOption).value(0));
+    }
+
+    if (parser.isSet(collectionLoadCheckOption)) {
+        bridge->connectToEngine(parser.value(connectOption));
+        return runCollectionLoadCheck(engine, browser, *bridge,
+                                      parser.values(collectionRootOption).value(0));
     }
 
     if (parser.isSet(analyzeCheckOption)) {
