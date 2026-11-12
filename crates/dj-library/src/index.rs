@@ -149,15 +149,17 @@ impl Index {
     /// The database is a cache over the metadata files, so a missing one is not an error to report:
     /// the caller opens it, writes what it has, and a rebuild fills the rest.
     pub fn open_default() -> Result<Self, IndexError> {
-        let base = std::env::var_os("XDG_DATA_HOME")
-            .map(std::path::PathBuf::from)
-            .filter(|path| path.is_absolute())
-            .or_else(|| {
-                std::env::var_os("HOME")
-                    .map(|home| std::path::PathBuf::from(home).join(".local").join("share"))
-            })
+        let folder = data_folder()
             .ok_or_else(|| IndexError::Io(std::io::Error::other("no data folder for the index")))?;
-        Self::open(&base.join("hauler-dj").join("db").join("library.db"))
+        Self::open_in(&folder)
+    }
+
+    /// The index under a data folder: `<folder>/hauler-dj/db/library.db`, with the folders made.
+    ///
+    /// Every caller — the engine writing, the browser reading, the rebuild — comes through here, so
+    /// there is one path and one file. A caller that builds the path itself is a second truth.
+    pub fn open_in(folder: &Path) -> Result<Self, IndexError> {
+        Self::open(&folder.join("hauler-dj").join("db").join("library.db"))
     }
 
     /// Replace the whole index with these rows: the rebuild path after the database is deleted.
@@ -463,6 +465,28 @@ impl Index {
 }
 
 /// One statement for both paths: a rebuild and a single row must write the same columns.
+/// The user's data folder: `$XDG_DATA_HOME` when it is absolute, else `$HOME/.local/share`.
+///
+/// The environment is read here and nowhere else: a second reader of `XDG_DATA_HOME` is a second
+/// opinion about where the database lives.
+pub fn data_folder() -> Option<PathBuf> {
+    data_folder_from(
+        std::env::var_os("XDG_DATA_HOME").as_deref().map(Path::new),
+        std::env::var_os("HOME").as_deref().map(Path::new),
+    )
+}
+
+/// The same decision, taken from values instead of the environment.
+///
+/// A relative `XDG_DATA_HOME` is not a data folder: the spec says so, and a database that follows the
+/// working directory is a database found twice.
+pub fn data_folder_from(xdg: Option<&Path>, home: Option<&Path>) -> Option<PathBuf> {
+    if let Some(folder) = xdg.filter(|folder| folder.is_absolute()) {
+        return Some(folder.to_path_buf());
+    }
+    home.map(|home| home.join(".local").join("share"))
+}
+
 /// What a rebuild found and wrote.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RebuildReport {
