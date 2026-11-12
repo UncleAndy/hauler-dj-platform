@@ -6,7 +6,8 @@
 
 use std::path::{Path, PathBuf};
 
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::types::Value;
+use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 
 use crate::Progress;
 use crate::genres::{self, GenreName};
@@ -432,6 +433,87 @@ impl Index {
         Ok(rows)
     }
 
+    /// One page of the collection: ordered, filtered and searched **in SQL**.
+    ///
+    /// This is the question the interface asks over the bridge. A page keeps the cost of opening the
+    /// section the same on a hundred thousand rows as on a thousand, and the ordering is the database's
+    /// job — a second sort in the caller is a second opinion about what the DJ clicked.
+    pub fn page(&self, query: &PageQuery) -> Result<Page, IndexError> {
+        let mut args: Vec<Value> = Vec::new();
+        let mut filters: Vec<String> = Vec::new();
+
+        if let Some(search) = query
+            .search
+            .as_deref()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+        {
+            args.push(Value::Text(format!("%{}%", search.to_lowercase())));
+            let at = args.len();
+            filters.push(format!(
+                "(lower(artist) LIKE ?{at} OR lower(album) LIKE ?{at} OR lower(title) LIKE ?{at})"
+            ));
+        }
+
+        let keys: Vec<String> = query
+            .genres
+            .iter()
+            .filter_map(|raw| genres::normalise(raw))
+            .map(|genre| genre.key)
+            .collect();
+        if !keys.is_empty() {
+            let mut marks = Vec::with_capacity(keys.len());
+            for key in keys {
+                args.push(Value::Text(key));
+                marks.push(format!("?{}", args.len()));
+            }
+            // One genre is enough: the chips are a union, not a demand that a track be both at once.
+            filters.push(format!(
+                "EXISTS (SELECT 1 FROM track_genres tg JOIN genres g ON g.id = tg.genre_id \
+                 WHERE tg.fingerprint = tracks.fingerprint AND g.key IN ({}))",
+                marks.join(", ")
+            ));
+        }
+
+        let where_sql = if filters.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", filters.join(" AND "))
+        };
+
+        // The count is what the filter found, not what the page holds: the list needs to know how long
+        // it is before it has been scrolled to the end.
+        let total: i64 = self.connection.query_row(
+            &format!("SELECT COUNT(*) FROM tracks{where_sql}"),
+            params_from_iter(args.iter()),
+            |row| row.get(0),
+        )?;
+
+        // A page of zero is not a page of nothing: it is a caller that did not choose a width.
+        let limit = if query.limit == 0 { 100 } else { query.limit };
+        args.push(Value::Integer(i64::try_from(limit).unwrap_or(i64::MAX)));
+        let limit_at = args.len();
+        args.push(Value::Integer(
+            i64::try_from(query.offset).unwrap_or(i64::MAX),
+        ));
+        let offset_at = args.len();
+
+        let sql = format!(
+            "SELECT fingerprint, path, artist, title, album, genre, year, bpm, musical_key,
+                    rating, duration_frames, gain, play_count, last_played_ms, analysis_lock
+             FROM tracks{where_sql}{} LIMIT ?{limit_at} OFFSET ?{offset_at}",
+            order_clause(&query.order)
+        );
+        let mut statement = self.connection.prepare(&sql)?;
+        let rows = statement
+            .query_map(params_from_iter(args.iter()), Self::row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Page {
+            rows,
+            total: usize::try_from(total).unwrap_or(usize::MAX),
+        })
+    }
+
     /// Column names, so a test can prove that cue points do not live here.
     pub fn columns(&self) -> Result<Vec<String>, IndexError> {
         let mut statement = self.connection.prepare("PRAGMA table_info(tracks)")?;
@@ -485,6 +567,66 @@ pub fn data_folder_from(xdg: Option<&Path>, home: Option<&Path>) -> Option<PathB
         return Some(folder.to_path_buf());
     }
     home.map(|home| home.join(".local").join("share"))
+}
+
+/// A column the collection can be ordered by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderBy {
+    Artist,
+    Album,
+    Title,
+    Bpm,
+    Key,
+    Time,
+}
+
+/// One question about a page of the collection.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PageQuery {
+    /// The sort keys in order, each with its direction. Empty means artist, album, title.
+    pub order: Vec<(OrderBy, bool)>,
+    /// Genres to narrow to: a track is kept when it carries any of them. Empty is the whole collection.
+    pub genres: Vec<String>,
+    /// What the DJ typed: artist, album or title.
+    pub search: Option<String>,
+    pub offset: usize,
+    /// How many rows the page holds. Zero means a hundred — a caller that did not choose a width.
+    pub limit: usize,
+}
+
+/// The answer: the rows of the page, and how many the filter found in all.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Page {
+    pub rows: Vec<TrackRow>,
+    pub total: usize,
+}
+
+/// The ORDER BY the sort keys ask for.
+///
+/// A row with nothing to say in the column goes last whichever way the sort runs: an empty BPM at the
+/// top of a descending sort is not the fastest track, it is a missing number.
+fn order_clause(order: &[(OrderBy, bool)]) -> String {
+    if order.is_empty() {
+        return " ORDER BY artist COLLATE NOCASE, album COLLATE NOCASE, title COLLATE NOCASE"
+            .to_string();
+    }
+    let mut parts: Vec<String> = Vec::with_capacity(order.len() * 2);
+    for (column, ascending) in order {
+        let (empty, name) = match column {
+            OrderBy::Artist => ("trim(artist) = ''", "artist COLLATE NOCASE"),
+            OrderBy::Album => ("trim(album) = ''", "album COLLATE NOCASE"),
+            OrderBy::Title => ("trim(title) = ''", "title COLLATE NOCASE"),
+            OrderBy::Bpm => ("bpm IS NULL", "bpm"),
+            OrderBy::Key => ("trim(musical_key) = ''", "musical_key COLLATE NOCASE"),
+            OrderBy::Time => ("duration_frames IS NULL", "duration_frames"),
+        };
+        parts.push(format!("CASE WHEN {empty} THEN 1 ELSE 0 END"));
+        parts.push(format!(
+            "{name} {}",
+            if *ascending { "ASC" } else { "DESC" }
+        ));
+    }
+    format!(" ORDER BY {}", parts.join(", "))
 }
 
 /// What a rebuild found and wrote.
