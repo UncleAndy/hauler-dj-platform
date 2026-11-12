@@ -1445,7 +1445,7 @@ fn serve_client(
                         std::thread::spawn(move || {
                             // The index is a cache over the records: a query that cannot open it is an
                             // empty answer, not a failure — the browser then shows what it walked itself.
-                            let page = dj_library::Index::open_default()
+                            let page = dj_library::Index::reader_default()
                                 .and_then(|index| index.page(&dj_engine::page_query(&query)))
                                 .map(|page| dj_domain::CollectionPage {
                                     id: query.id,

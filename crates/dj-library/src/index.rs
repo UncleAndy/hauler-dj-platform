@@ -170,6 +170,34 @@ impl Index {
         Self::open_in(&folder)
     }
 
+    /// The index for a reader: opened read-only, with no schema and no migrations.
+    ///
+    /// `open` runs the schema and the older-column migration, which is a write. A reader that does this
+    /// while the engine's loader is writing metadata takes the writer's lock away for a moment — and a
+    /// load that cannot record its names drops the track it was loading. The deck then keeps the file it
+    /// had, which looks like a card that ignores its buttons. A reader gets exactly these rights: if the
+    /// file or the column is not there, the answer is "nothing to show", and the writer builds it.
+    pub fn reader_default() -> Result<Self, IndexError> {
+        let folder = data_folder()
+            .ok_or_else(|| IndexError::Io(std::io::Error::other("no data folder for the index")))?;
+        Self::reader_in(&folder)
+    }
+
+    /// The reader's door under a data folder: the same file as `open_in`, opened read-only.
+    pub fn reader_in(folder: &Path) -> Result<Self, IndexError> {
+        let path = folder.join("hauler-dj").join("db").join("library.db");
+        if !path.exists() {
+            return Err(IndexError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "no index yet",
+            )));
+        }
+        let connection =
+            Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        connection.pragma_update(None, "busy_timeout", 3000)?;
+        Ok(Self { connection })
+    }
+
     /// The index under a data folder: `<folder>/hauler-dj/db/library.db`, with the folders made.
     ///
     /// Every caller — the engine writing, the browser reading, the rebuild — comes through here, so

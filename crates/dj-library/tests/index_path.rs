@@ -79,3 +79,31 @@ fn the_data_folder_follows_the_environment() {
     );
     assert_eq!(dj_library::index::data_folder_from(None, None), None);
 }
+
+#[test]
+fn a_reader_never_builds_or_moves_the_database() {
+    let dir = scratch("reader");
+    // No file yet: the reader says so and leaves nothing behind. A reader that creates the file takes
+    // the writer's lock while the engine's loader records a track, and the load is then dropped.
+    assert!(
+        Index::reader_in(&dir).is_err(),
+        "читатель не открывает несуществующую базу"
+    );
+    let path = dir.join("hauler-dj").join("db").join("library.db");
+    assert!(
+        !path.exists(),
+        "читатель не создаёт файл базы: {}",
+        path.display()
+    );
+
+    let mut index = Index::open_in(&dir).expect("open");
+    index.upsert(&row()).expect("write");
+    drop(index);
+
+    let reader = Index::reader_in(&dir).expect("reader");
+    assert_eq!(
+        reader.count().expect("count"),
+        1,
+        "читатель видит записанную строку"
+    );
+}
