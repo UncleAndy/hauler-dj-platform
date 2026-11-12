@@ -297,13 +297,26 @@ fn an_imported_track_is_listed_by_the_genres_of_its_tag() {
     let dir = scratch("import");
     let source = dir.join("Artist - Track.wav");
     write_tone(&source);
+    let mut tag = dj_library::tags::read(&source).expect("read tags");
+    tag.artist = "Artist".to_owned();
+    tag.title = "Track".to_owned();
+    tag.genre = "House, Techno".to_owned();
+    dj_library::tags::write(&source, &tag).expect("write tags");
+    assert_eq!(
+        dj_library::tags::read(&source).expect("read back").genre,
+        "House, Techno",
+        "предпосылка: жанр должен читаться из файла"
+    );
+
     let collection = dir.join("collection");
     std::fs::create_dir_all(&collection).expect("collection");
-    let mut imported = dj_library::import(&source, &collection, 1_000).expect("import");
-    // The tag of the copy: the import reads it from the container, and a WAV written by this test
-    // cannot carry one that the reader gives back — the container path itself is `tags::read`, which
-    // is covered by its own tests and by the probe over the real collection.
-    imported.tags.genre = "House, Techno".to_owned();
+    let imported = dj_library::import(&source, &collection, 1_000).expect("import");
+    let meta = sidecar::read(&imported.meta).expect("sidecar");
+    assert_eq!(
+        meta.tags.expect("tags in the sidecar").genres,
+        vec!["House", "Techno"],
+        "жанры в .djmeta"
+    );
 
     let (row, genres) = index_row(&imported);
     assert_eq!(row.genre, "House, Techno", "the raw tag stays in the row");

@@ -35,7 +35,55 @@ impl Tags {
 
 /// Read the container's tags. A file the reader cannot parse yields an empty set, not an error: the
 /// import still has a name to build from the file name itself.
+///
+/// Two readers are asked, in that order. `symphonia` reads the audio stream and, for most containers,
+/// its tags; `symphonia-format-riff` 0.6 has no tag support at all — it never looks at `INFO` or `id3`
+/// — so a WAV with names comes back empty from it. `lofty` is the writer, and what we write we can
+/// read back: it is asked only when the first reader found nothing, which keeps the formats that work
+/// on the fast path.
 pub fn read(path: &Path) -> io::Result<Tags> {
+    let tags = read_stream(path)?;
+    if tags.count > 0 {
+        return Ok(tags);
+    }
+    Ok(read_container(path).unwrap_or(tags))
+}
+
+/// Read the tags through lofty: the container's own tag, written by us or by another program.
+fn read_container(path: &Path) -> io::Result<Tags> {
+    use lofty::file::TaggedFileExt;
+    use lofty::tag::ItemKey;
+
+    let tagged = lofty::read_from_path(path).map_err(io::Error::other)?;
+    let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) else {
+        return Ok(Tags::default());
+    };
+    let take = |key: ItemKey| tag.get_string(&key).unwrap_or_default().to_owned();
+    let mut tags = Tags {
+        artist: take(ItemKey::TrackArtist),
+        title: take(ItemKey::TrackTitle),
+        album: take(ItemKey::AlbumTitle),
+        genre: take(ItemKey::Genre),
+        year: take(ItemKey::RecordingDate),
+        track: take(ItemKey::TrackNumber),
+        count: 0,
+    };
+    tags.count = [
+        &tags.artist,
+        &tags.title,
+        &tags.album,
+        &tags.genre,
+        &tags.year,
+        &tags.track,
+    ]
+    .iter()
+    .filter(|value| !value.trim().is_empty())
+    .count();
+    Ok(tags)
+}
+
+/// Read the tags the audio reader knows about.
+fn read_stream(path: &Path) -> io::Result<Tags> {
     let file = File::open(path)?;
     let source = MediaSourceStream::new(Box::new(file), Default::default());
     let mut hint = Hint::new();

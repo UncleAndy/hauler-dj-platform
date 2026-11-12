@@ -100,6 +100,23 @@ fn write_wav(path: &Path, rate: u32, data: &[u8]) {
     fs::write(path, wav).expect("wav");
 }
 
+/// Все звуковые файлы под каталогом: коллекция считается файлами, а не записями в каталоге.
+fn wav_files(root: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let Ok(entries) = fs::read_dir(root) else {
+        return found;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            found.extend(wav_files(&path));
+        } else if path.extension().is_some_and(|extension| extension == "wav") {
+            found.push(path);
+        }
+    }
+    found
+}
+
 /// Тон с добивкой: тот же звук, но файл тяжелее — «лучшая копия» по среднему битрейту.
 fn padded(root: &Path, name: &str, seconds: u32, frequency: f64, junk: usize) -> PathBuf {
     const RATE: u32 = 44_100;
@@ -120,9 +137,13 @@ fn padded(root: &Path, name: &str, seconds: u32, frequency: f64, junk: usize) ->
         data.extend_from_slice(&((phase.sin() * 12_000.0) as i16).to_le_bytes());
     }
     write_wav_padded(&path, RATE, &data, junk);
+    // Каждая копия несёт своё название: теги WAV теперь читаются, и одинаковое название увело бы
+    // обе копии в один файл — тогда «замена» проверяла бы не то.
+    let stem = name.strip_suffix(".wav").unwrap_or(name);
+    let title = stem.strip_prefix("A - ").unwrap_or(stem);
     let written = tags::Tags {
         artist: "A".to_owned(),
-        title: "Track".to_owned(),
+        title: title.to_owned(),
         count: 2,
         ..tags::Tags::default()
     };
@@ -464,7 +485,17 @@ fn replacing_a_worse_copy_is_the_djs_choice() {
                 "старая копия не уехала в _duplicates: {}",
                 rejected.display()
             );
-            assert!(!placed.path.exists(), "старая копия осталась в коллекции");
+            // У обеих копий одно название, поэтому новая встаёт ровно туда, где стояла старая: пропасть
+            // должны байты старой, а не путь. В коллекции остаётся одна копия.
+            let left: Vec<_> = wav_files(&collection)
+                .into_iter()
+                .filter(|path| !path.starts_with(collection.join(DUPLICATES_DIR)))
+                .collect();
+            assert_eq!(
+                left,
+                vec![imported.path.clone()],
+                "в коллекции должна остаться одна копия, а не две"
+            );
         }
         other => panic!("замена не произошла: {other:?}"),
     }
