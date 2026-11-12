@@ -151,7 +151,9 @@ Pane {
         const from = row < 0 ? 0 : row;
         const next = Math.max(0, Math.min(count - 1, from + delta));
         Browser.setCursor(Browser.entries[next].path);
-        list.positionViewAtIndex(next, ListView.Contain);
+        // The row the DJ is on sits in the middle of the window, not against its edge: a list that
+        // parks the cursor under the last visible row gives the eye nothing below it to read next.
+        list.positionViewAtIndex(next, ListView.Center);
     }
 
     /// Where a named column sits now: a row cell belongs to its column, not to a position, so a

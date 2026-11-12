@@ -4370,9 +4370,14 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
                      settled, later);
         return 1;
     }
-    if (settled > row * rowHeight + 1.0 || settled + viewHeight < (row + 1) * rowHeight - 1.0) {
-        std::fprintf(stderr, "dj-ui: row %d is outside the window (contentY %.1f, height %.1f)\n",
-                     row, settled, viewHeight);
+    // The row must sit in the middle of the window, not against its edge: a cursor under the last
+    // visible row is exactly what the owner reported as wrong.
+    const double windowCentre = settled + viewHeight / 2.0;
+    const double rowCentre = row * rowHeight + rowHeight / 2.0;
+    if (std::abs(windowCentre - rowCentre) > rowHeight) {
+        std::fprintf(stderr,
+                     "dj-ui: row %d is not in the middle (row centre %.1f, window centre %.1f)\n",
+                     row, rowCentre, windowCentre);
         return 1;
     }
     std::fprintf(stderr, "dj-ui: the view is at row %d at once (contentY %.1f, row height %.1f)\n",
