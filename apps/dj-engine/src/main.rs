@@ -551,15 +551,30 @@ fn run(argv: &[String]) -> Result<(), String> {
 
     // Files the collection asks to measure: a full decode each, so a worker of their own, never a
     // client thread and never the audio callback.
-    let (file_requests, file_requests_rx) = std::sync::mpsc::channel::<String>();
+    let (file_requests, file_requests_rx) = std::sync::mpsc::channel::<AnalysisBatch>();
+    let analysis_cancel = Arc::new(AtomicBool::new(false));
+    let analysis_running = Arc::new(AtomicBool::new(false));
     {
         let store = store.clone();
+        let cells = Arc::clone(&cells);
+        let cancel = Arc::clone(&analysis_cancel);
+        let running = Arc::clone(&analysis_running);
         std::thread::spawn(move || {
-            while let Ok(path) = file_requests_rx.recv() {
-                let path = std::path::PathBuf::from(path);
-                if !dj_engine::meta::analyze_file(&store, volume(), root(), &path, true) {
-                    eprintln!("dj-engine: {} could not be analysed", path.display());
-                }
+            while let Ok(job) = file_requests_rx.recv() {
+                running.store(true, Ordering::Relaxed);
+                cancel.store(false, Ordering::Relaxed);
+                dj_engine::run_analysis(
+                    job.paths,
+                    Arc::clone(&cells),
+                    dj_engine::AnalysisTarget {
+                        store: store.clone(),
+                        volume: volume().to_string(),
+                        root: root().to_path_buf(),
+                    },
+                    Arc::clone(&cancel),
+                    Arc::clone(&running),
+                    job.parallel,
+                );
             }
         });
     }
@@ -572,6 +587,7 @@ fn run(argv: &[String]) -> Result<(), String> {
             cells: Arc::clone(&cells),
             store: store.clone(),
             files: file_requests.clone(),
+            analysis_cancel: Arc::clone(&analysis_cancel),
             loads: load_requests.clone(),
             analyses: analysis_requests.clone(),
             grids: grid_edits.clone(),
@@ -1275,13 +1291,24 @@ struct Workers {
     /// The metadata store: the import worker writes the analysis of what it placed through it.
     store: dj_library::Store,
     /// Files to measure that are not on a deck (DJP-MEDIA-004).
-    files: Sender<String>,
+    files: Sender<AnalysisBatch>,
+    /// Stops the running batch between files.
+    analysis_cancel: Arc<AtomicBool>,
     /// Decodes a track and prepares a deck.
     loads: Sender<LoadRequest>,
     /// Measures a deck's tempo again (B02).
     analyses: Sender<AnalysisRequest>,
     /// Edits the grid of what a deck plays (DJP-SYNC-003).
     grids: Sender<GridEditRequest>,
+}
+
+/// Files to measure off the deck: a batch, and whether to spread it over threads.
+#[derive(Debug, Clone)]
+struct AnalysisBatch {
+    /// The files to measure.
+    paths: Vec<String>,
+    /// Spread the batch over several workers.
+    parallel: bool,
 }
 
 /// A request to measure a deck's tempo again (B02).
@@ -1506,13 +1533,39 @@ fn serve_client(
                     dj_engine::Routed::AnalyzeFile { path } => {
                         // Answered at once: the measurement takes as long as a decode, and the new
                         // numbers reach the file and the next listing, not this snapshot.
-                        let ack = match work.files.send(path) {
+                        let ack = match work.files.send(AnalysisBatch {
+                            paths: vec![path],
+                            parallel: false,
+                        }) {
                             Ok(()) => dj_domain::Ack::accepted(command.id),
                             Err(_) => dj_domain::Ack::rejected(
                                 command.id,
                                 dj_domain::RejectReason::InvalidValue,
                             ),
                         };
+                        if alerts.send(ServerMessage::Ack(ack)).is_err() {
+                            return;
+                        }
+                        continue;
+                    }
+                    dj_engine::Routed::AnalyzeFiles { paths, parallel } => {
+                        let ack = match work.files.send(AnalysisBatch { paths, parallel }) {
+                            Ok(()) => dj_domain::Ack::accepted(command.id),
+                            Err(_) => dj_domain::Ack::rejected(
+                                command.id,
+                                dj_domain::RejectReason::InvalidValue,
+                            ),
+                        };
+                        if alerts.send(ServerMessage::Ack(ack)).is_err() {
+                            return;
+                        }
+                        continue;
+                    }
+                    dj_engine::Routed::AnalyzeStop => {
+                        // Between files, never inside one: a measurement in hand is finished, and its
+                        // answer is still written.
+                        work.analysis_cancel.store(true, Ordering::Relaxed);
+                        let ack = dj_domain::Ack::accepted(command.id);
                         if alerts.send(ServerMessage::Ack(ack)).is_err() {
                             return;
                         }

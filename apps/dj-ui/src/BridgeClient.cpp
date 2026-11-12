@@ -654,6 +654,27 @@ int BridgeClient::analyzeTrack(const QStringList &paths)
     return sent;
 }
 
+int BridgeClient::analyzePaths(const QStringList &paths, bool parallel)
+{
+    QJsonArray list;
+    for (const QString &path : paths) {
+        list.append(path);
+    }
+    QJsonObject options;
+    options.insert(QStringLiteral("paths"), list);
+    options.insert(QStringLiteral("parallel"), parallel);
+    QJsonObject command;
+    command.insert(QStringLiteral("AnalyzeTracks"), options);
+    return sendCommand(QString(), command);
+}
+
+int BridgeClient::cancelAnalysis()
+{
+    QJsonObject command;
+    command.insert(QStringLiteral("AnalyzeCancel"), QJsonObject());
+    return sendCommand(QString(), command);
+}
+
 int BridgeClient::load(const QString &deck, const QString &path)
 {
     // Remembered before the command is sent and regardless of its fate: the folder is where the

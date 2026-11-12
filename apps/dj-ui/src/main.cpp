@@ -4037,6 +4037,181 @@ static int runLayoutCheck(QQmlApplicationEngine &engine,
 /// The browser's way into the collection: pick rows, ask for the batch, confirm it, answer the
 /// duplicate question, and require the files to be in the collection. Runs against a real engine,
 /// because the import is the engine's work and a shell that only draws dialogs proves nothing.
+// The collection's Analyze…: one track gets a progress window, a selection gets a question with the
+// parallel box and then the same window. Afterwards the numbers are in the list, not only in the files.
+static int runAnalyzeCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSettings &layout,
+                           BridgeClient &bridge, const QString &fixture, const QString &collectionRoot)
+{
+    Q_UNUSED(layout);
+    if (fixture.isEmpty() || collectionRoot.isEmpty()) {
+        std::fprintf(stderr, "dj-ui: --analyze-check needs --import-fixture and --collection-root\n");
+        return 1;
+    }
+    QDir root(collectionRoot);
+    if (!root.mkpath(QStringLiteral("."))) {
+        std::fprintf(stderr, "dj-ui: cannot make %s\n", qPrintable(collectionRoot));
+        return 1;
+    }
+    // Three copies without metadata: the batch has to measure them from scratch, which is the case
+    // the DJ complains about — a collection full of rows with no tempo.
+    for (int index = 0; index < 3; ++index) {
+        const QString target = root.filePath(QStringLiteral("Analyze %1.wav").arg(index));
+        QFile::remove(target);
+        if (!QFile::copy(fixture, target)) {
+            std::fprintf(stderr, "dj-ui: cannot place %s\n", qPrintable(target));
+            return 1;
+        }
+    }
+
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().value(0));
+    if (window == nullptr) {
+        std::fprintf(stderr, "dj-ui: no shell window\n");
+        return 1;
+    }
+    auto *panel = findItem(window->contentItem(), QStringLiteral("browserPanel"));
+    if (panel == nullptr) {
+        std::fprintf(stderr, "dj-ui: the shell has no browser\n");
+        return 1;
+    }
+    browser.openCollection({collectionRoot});
+    QElapsedTimer clock;
+    clock.start();
+    while (browser.entries().size() < 3 && clock.elapsed() < 5000) {
+        QCoreApplication::processEvents();
+        QThread::msleep(20);
+    }
+    if (browser.entries().size() < 3) {
+        std::fprintf(stderr, "dj-ui: the collection lists %d rows, wanted 3\n",
+                     static_cast<int>(browser.entries().size()));
+        return 1;
+    }
+
+    const auto choose = [&](int index, Qt::KeyboardModifiers modifiers) {
+        QVariant returned;
+        QMetaObject::invokeMethod(panel, "choose", Q_RETURN_ARG(QVariant, returned),
+                                  Q_ARG(QVariant, index),
+                                  Q_ARG(QVariant, static_cast<int>(modifiers)));
+        QCoreApplication::processEvents();
+    };
+    const auto analyze = [&]() {
+        QVariant returned;
+        QMetaObject::invokeMethod(panel, "analyzeSelection", Q_RETURN_ARG(QVariant, returned));
+        QCoreApplication::processEvents();
+        return returned.toBool();
+    };
+    const auto state = [&]() { return panel->property("analysisState").toMap(); };
+    const auto showing = [&](const char *name) {
+        auto *dialog = panel->findChild<QObject *>(QString::fromLatin1(name));
+        return dialog != nullptr && dialog->property("visible").toBool();
+    };
+    const auto wait = [&](const auto &done, int timeoutMs) {
+        QElapsedTimer until;
+        until.start();
+        while (until.elapsed() < timeoutMs) {
+            if (done()) {
+                return true;
+            }
+            QCoreApplication::processEvents();
+            QThread::msleep(10);
+        }
+        return done();
+    };
+    const auto finished = [&]() {
+        const QVariantMap now = state();
+        return !now.isEmpty() && now.value(QStringLiteral("running")).toBool() == false;
+    };
+
+    // One track: no question, and a window that says how far it has come.
+    choose(0, Qt::NoModifier);
+    if (!analyze()) {
+        std::fprintf(stderr, "dj-ui: one track did not start\n");
+        return 1;
+    }
+    if (!wait([&]() { return showing("analyzeProgress"); }, 5000)) {
+        std::fprintf(stderr, "dj-ui: one track ran with no progress window\n");
+        return 1;
+    }
+    const QVariantMap one = state();
+    std::fprintf(stderr, "dj-ui: one track: progress window, %d of %d\n",
+                 one.value(QStringLiteral("done")).toInt(),
+                 one.value(QStringLiteral("total")).toInt());
+    if (!wait(finished, 180000)) {
+        std::fprintf(stderr, "dj-ui: the single analysis never finished\n");
+        return 1;
+    }
+
+    // Three tracks: the question first, with the parallel box, then the same window.
+    choose(0, Qt::NoModifier);
+    choose(1, Qt::ControlModifier);
+    choose(2, Qt::ControlModifier);
+    if (!analyze()) {
+        std::fprintf(stderr, "dj-ui: the selection did not start\n");
+        return 1;
+    }
+    if (!showing("analyzeDialog")) {
+        std::fprintf(stderr, "dj-ui: three tracks started with no confirmation window\n");
+        return 1;
+    }
+    auto *parallelBox = panel->findChild<QObject *>(QStringLiteral("analyzeParallelBox"));
+    if (parallelBox == nullptr || !parallelBox->property("checked").toBool()) {
+        std::fprintf(stderr, "dj-ui: the confirmation has no parallel box, or it is off\n");
+        return 1;
+    }
+    auto *start = panel->findChild<QObject *>(QStringLiteral("analyzeStart"));
+    if (start == nullptr) {
+        std::fprintf(stderr, "dj-ui: the confirmation has no start button\n");
+        return 1;
+    }
+    std::fprintf(stderr, "dj-ui: three tracks: confirmation with the parallel box, starting\n");
+    QMetaObject::invokeMethod(start, "clicked");
+    QCoreApplication::processEvents();
+    if (!wait([&]() { return showing("analyzeProgress"); }, 5000)) {
+        std::fprintf(stderr, "dj-ui: the batch ran with no progress window\n");
+        return 1;
+    }
+    const QVariantMap batch = state();
+    std::fprintf(stderr, "dj-ui: batch: progress window, %d of %d\n",
+                 batch.value(QStringLiteral("done")).toInt(),
+                 batch.value(QStringLiteral("total")).toInt());
+    if (batch.value(QStringLiteral("total")).toInt() != 3) {
+        std::fprintf(stderr, "dj-ui: the batch counts %d files, wanted 3\n",
+                     batch.value(QStringLiteral("total")).toInt());
+        return 1;
+    }
+    if (!wait(finished, 180000)) {
+        std::fprintf(stderr, "dj-ui: the batch never finished\n");
+        return 1;
+    }
+
+    // And the rows: a tempo for every one of the three, read from the files.
+    const auto withTempo = [&]() {
+        int count = 0;
+        for (const QVariant &row : browser.entries()) {
+            const QVariantMap entry = row.toMap();
+            if (entry.value(QStringLiteral("bpm")).toDouble() > 0.0) {
+                ++count;
+            }
+        }
+        return count;
+    };
+    QMetaObject::invokeMethod(panel, "refreshCollection");
+    QElapsedTimer settle;
+    settle.start();
+    while (withTempo() < 3 && settle.elapsed() < 20000) {
+        QCoreApplication::processEvents();
+        QThread::msleep(50);
+    }
+    const int measured = withTempo();
+    std::fprintf(stderr, "dj-ui: rows with a tempo after the batch: %d of %d\n", measured,
+                 static_cast<int>(browser.entries().size()));
+    if (measured < 3) {
+        std::fprintf(stderr, "dj-ui: the batch left rows without a tempo\n");
+        return 1;
+    }
+    std::fprintf(stderr, "dj-ui: analyze check done\n");
+    return 0;
+}
+
 static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
                           LayoutSettings &layout, BridgeClient &bridge, const QString &fixture,
                           const QString &collectionRoot)
@@ -4723,6 +4898,10 @@ int main(int argc, char *argv[])
         QStringLiteral("import-check"),
         QStringLiteral("With --connect: pick two rows in the browser, add them to the collection, "
                        "answer the duplicate question and require the files to be there."));
+    const QCommandLineOption analyzeCheckOption(
+        QStringLiteral("analyze-check"),
+        QStringLiteral("From the collection: Analyze… on one track and on three — a progress window, "
+                       "the parallel box, and the numbers in the rows afterwards."));
     const QCommandLineOption importFixtureOption(
         QStringLiteral("import-fixture"),
         QStringLiteral("A real track the import check copies twice."), QStringLiteral("path"));
@@ -4963,6 +5142,7 @@ int main(int argc, char *argv[])
     parser.addOption(curveCheckOption);
     parser.addOption(masterCheckOption);
     parser.addOption(importCheckOption);
+    parser.addOption(analyzeCheckOption);
     parser.addOption(importFixtureOption);
     parser.addOption(gridReconnectOption);
     parser.addOption(metronomeOption);
@@ -10234,6 +10414,16 @@ int main(int argc, char *argv[])
         bridge->connectToEngine(parser.value(connectOption));
         return runImportCheck(engine, browser, layout, *bridge, parser.value(importFixtureOption),
                               parser.values(collectionRootOption).value(0));
+    }
+
+    if (parser.isSet(analyzeCheckOption)) {
+        if (!parser.isSet(connectOption)) {
+            std::fprintf(stderr, "dj-ui: --analyze-check needs --connect\n");
+            return 1;
+        }
+        bridge->connectToEngine(parser.value(connectOption));
+        return runAnalyzeCheck(engine, browser, layout, *bridge, parser.value(importFixtureOption),
+                               parser.values(collectionRootOption).value(0));
     }
 
     if (parser.isSet(themeCheckOption) || parser.isSet(screenshotOption)) {

@@ -194,6 +194,10 @@ impl Engine {
                 self.playing = enabled;
                 Some(Ack::applied(command_id, at_sample))
             }
+            DjCommand::AnalyzeTracks { .. } | DjCommand::AnalyzeCancel => Some(Ack::rejected(
+                command_id,
+                dj_domain::RejectReason::NotSupported,
+            )),
             DjCommand::SetCrossfaderCurve { .. }
             | DjCommand::SetMasterGain { .. }
             | DjCommand::SetChannelEq { .. }
@@ -266,6 +270,7 @@ impl Engine {
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
             import: None,
+            analysis: None,
             protocol: STATE_PROTOCOL.to_string(),
             // The A01 renderer has no cache: nothing is allowed and nothing is spent.
             cache_budget_bytes: 0,

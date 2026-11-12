@@ -210,6 +210,17 @@ case "${1:-}" in
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --collection-root "$run_dir/collection" --import-check --import-fixture "$import_track" \
         --layout-file "$run_dir/import-layout.json"
+    # The collection's Analyze…: one track gets a progress window, a selection gets the parallel box
+    # and then the same window, and the numbers land in the rows. A beat is needed, not a tone: the
+    # detector votes in forty-second windows, and a pure sine has no onsets to find a beat in.
+    analyze_track="$run_dir/analyze-track.wav"
+    if command -v ffmpeg >/dev/null 2>&1; then
+      ffmpeg -v error -y -stream_loop 7 -c:a pcm_s16le \
+        -i crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav "$analyze_track"
+    fi
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
+        --collection-root "$run_dir/analyze-collection" --analyze-check \
+        --import-fixture "$analyze_track" --layout-file "$run_dir/analyze-layout.json"
     # Every crossfader law must reach the engine and come back in the snapshot, and the selector must
     # show the one in force — a selector that lights up on the click is a selector that lies.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --curve-check

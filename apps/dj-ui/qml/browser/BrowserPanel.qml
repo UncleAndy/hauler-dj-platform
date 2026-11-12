@@ -35,6 +35,17 @@ Pane {
     readonly property var importQuestion: browser.importState !== null
                                           && browser.importState.question !== undefined
                                           ? browser.importState.question : null
+    // What the engine says about the analysis started from this panel.
+    readonly property var analysisState: Bridge.snapshot !== undefined && Bridge.snapshot.analysis !== undefined
+                                         ? Bridge.snapshot.analysis : null
+
+    // The numbers land in the files, not in a snapshot: the list is read again while the batch runs,
+    // and once more when it stops.
+    onAnalysisStateChanged: {
+        if (browser.analysisState !== null && browser.analysisState.running === false) {
+            Browser.refreshCollection();
+        }
+    }
 
     function isChosen(path) {
         return browser.selection.indexOf(path) >= 0;
@@ -83,18 +94,21 @@ Pane {
         return true;
     }
 
-    /// Measure the chosen tracks: one command each, then the list is read again until the numbers
-    /// land in the files.
+    /// Measure the chosen tracks: one batch, with a window that says how far it has come. A single
+    /// track asks nothing — there is nothing to decide — and goes straight to the progress.
     function analyzeSelection() {
         const chosen = browser.selection.slice();
         if (chosen.length === 0) {
             browser.lastAction = "nothing to analyse";
             return false;
         }
-        Bridge.analyzeTrack(chosen);
-        browser.lastAction = "analysing " + chosen.length;
-        analyzePoll.ticks = 0;
-        analyzePoll.running = true;
+        if (chosen.length === 1) {
+            Bridge.analyzePaths(chosen, true);
+            browser.lastAction = "analysing 1";
+            return true;
+        }
+        analyzeDialog.paths = chosen;
+        analyzeDialog.open();
         return true;
     }
 
@@ -365,17 +379,109 @@ Pane {
     Timer {
         id: analyzePoll
         objectName: "analyzePoll"
-        interval: 800
+        interval: 900
         repeat: true
-        running: false
-        property int ticks: 0
-        onTriggered: {
-            analyzePoll.ticks += 1;
-            if (analyzePoll.ticks > 25) {
-                analyzePoll.running = false;
-                return;
+        running: browser.analysisState !== null && browser.analysisState.running === true
+        onTriggered: Browser.refreshCollection()
+    }
+
+    // The collection's batch: how many tracks, and whether to measure them at once. A single track
+    // skips the question — there is nothing to decide — and goes straight to the progress window.
+    Dialog {
+        id: analyzeDialog
+        objectName: "analyzeDialog"
+        title: qsTr("Analyze")
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        closePolicy: Popup.NoAutoClose
+        standardButtons: Dialog.NoButton
+        property var paths: []
+        // The checkbox lives in the dialog's content, and its id is not visible from the footer:
+        // the choice is kept here, where both sides can read it.
+        property bool parallel: true
+        ColumnLayout {
+            spacing: 8
+            Label {
+                objectName: "analyzeDialogText"
+                text: qsTr("%1 track(s) will be measured: tempo and key, written beside the files.")
+                      .arg(analyzeDialog.paths.length)
+                color: UiSettings.themeText
+                font.pixelSize: browser.listFont
             }
-            Browser.refreshCollection();
+            CheckBox {
+                objectName: "analyzeParallelBox"
+                text: qsTr("Выполнять параллельно")
+                checked: analyzeDialog.parallel
+                onToggled: analyzeDialog.parallel = checked
+                font.pixelSize: browser.listFont
+            }
+        }
+        footer: RowLayout {
+            Item { Layout.fillWidth: true }
+            Button {
+                objectName: "analyzeStart"
+                text: qsTr("Анализировать")
+                font.pixelSize: browser.listFont
+                onClicked: {
+                    analyzeDialog.close();
+                    Bridge.analyzePaths(analyzeDialog.paths, analyzeDialog.parallel);
+                }
+            }
+            Button {
+                objectName: "analyzeDialogCancel"
+                text: qsTr("Отменить")
+                font.pixelSize: browser.listFont
+                onClicked: analyzeDialog.close()
+            }
+        }
+    }
+
+    // What the batch is doing: a decode per file takes seconds, and a list that changes with no
+    // explanation is a list the DJ does not trust.
+    Dialog {
+        id: analyzeProgress
+        objectName: "analyzeProgress"
+        title: qsTr("Analyzing")
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        closePolicy: Popup.NoAutoClose
+        standardButtons: Dialog.NoButton
+        visible: browser.analysisState !== null && browser.analysisState.running === true
+        ColumnLayout {
+            spacing: 8
+            Label {
+                objectName: "analyzeProgressText"
+                text: qsTr("%1 of %2 measured")
+                      .arg(browser.analysisState !== null ? browser.analysisState.done : 0)
+                      .arg(browser.analysisState !== null ? browser.analysisState.total : 0)
+                color: UiSettings.themeText
+                font.pixelSize: browser.listFont
+            }
+            Label {
+                objectName: "analyzeProgressCurrent"
+                text: browser.analysisState !== null && browser.analysisState.current !== undefined
+                      ? browser.analysisState.current : ""
+                elide: Text.ElideMiddle
+                Layout.preferredWidth: 320
+                color: UiSettings.themeTextDim
+                font.pixelSize: browser.listFont
+            }
+            ProgressBar {
+                objectName: "analyzeProgressBar"
+                from: 0
+                to: browser.analysisState !== null ? Math.max(1, browser.analysisState.total) : 1
+                value: browser.analysisState !== null ? browser.analysisState.done : 0
+                Layout.fillWidth: true
+            }
+        }
+        footer: RowLayout {
+            Item { Layout.fillWidth: true }
+            Button {
+                objectName: "analyzeStop"
+                text: qsTr("Отменить")
+                font.pixelSize: browser.listFont
+                onClicked: Bridge.cancelAnalysis()
+            }
         }
     }
 

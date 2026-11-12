@@ -158,6 +158,11 @@ public:
     /// Measure tempo and key of files already in the collection (DJP-MEDIA-004). One command each:
     /// the engine answers at once and the numbers reach the file when the worker is done.
     Q_INVOKABLE int analyzeTrack(const QStringList &paths);
+    /// Measure files off the deck: one batch, with progress published the way an import publishes it
+    /// (DJP-MEDIA-004). `parallel` spreads it over threads.
+    Q_INVOKABLE int analyzePaths(const QStringList &paths, bool parallel);
+    /// Stop the running analysis between files.
+    Q_INVOKABLE int cancelAnalysis();
 
     // Called with the folder a track was loaded from, so the browser can open there next time.
     void setLoadFolderHandler(std::function<void(const QString &)> handler) {

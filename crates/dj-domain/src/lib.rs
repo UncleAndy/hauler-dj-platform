@@ -423,6 +423,18 @@ pub enum DjCommand {
         /// The file to measure.
         path: String,
     },
+    /// Measure several files at once, with progress published the way an import publishes it.
+    ///
+    /// The collection asks for this: one file from its menu, or a whole selection. The batch runs on a
+    /// worker — a measurement is two full decodes per file — and `parallel` spreads it over threads.
+    AnalyzeTracks {
+        /// The files to measure.
+        paths: Vec<String>,
+        /// Run the batch on several workers.
+        parallel: bool,
+    },
+    /// Stop a running analysis between files: the file in hand is finished.
+    AnalyzeCancel,
     /// Answer the duplicate question the engine is waiting on.
     ImportAnswer {
         /// What to do with the file in question.
@@ -666,6 +678,8 @@ impl DjCommand {
             | DjCommand::Import { .. }
             | DjCommand::ImportCancel
             | DjCommand::AnalyzeTrack { .. }
+            | DjCommand::AnalyzeTracks { .. }
+            | DjCommand::AnalyzeCancel
             | DjCommand::ImportAnswer { .. }
             | DjCommand::Eject { .. } => true,
             DjCommand::SetTempoRatio { .. }
@@ -1209,6 +1223,22 @@ pub struct ImportState {
     pub question: Option<DuplicateQuestion>,
 }
 
+/// State of the analysis the DJ started from the collection (DJP-MEDIA-004).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AnalyzeState {
+    /// Files the batch will try.
+    pub total: usize,
+    /// Files already measured.
+    pub done: usize,
+    /// Files that got a tempo or a key written beside them.
+    pub measured: usize,
+    /// True while the batch is running.
+    pub running: bool,
+    /// The file being worked on, when there is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current: Option<String>,
+}
+
 /// Read-only state published to the UI and controllers (DJP-ARCH-004).
 ///
 /// `revision` grows monotonically and `epoch` changes when the engine restarts, so a
@@ -1255,6 +1285,9 @@ pub struct Snapshot {
     /// imports is not a protocol error.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub import: Option<ImportState>,
+    /// The analysis the DJ started from the collection: progress, absent when none ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub analysis: Option<AnalyzeState>,
 }
 
 #[cfg(test)]

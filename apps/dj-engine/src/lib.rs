@@ -381,6 +381,7 @@ pub fn snapshot(
     fill_phase_errors(&mut published_decks, beats_per_bar(decks));
     Snapshot {
         import: None,
+        analysis: None,
         protocol: dj_domain::STATE_PROTOCOL.to_string(),
         // A snapshot taken from the mixer alone says nothing about the loader's cache.
         cache_budget_bytes: 0,
@@ -935,6 +936,8 @@ pub struct StateCells {
     /// The worker writes here and the publisher reads; neither is the audio callback, and a batch of
     /// files never blocks the mix.
     import: std::sync::Mutex<Option<dj_domain::ImportState>>,
+    /// The analysis the DJ started from the collection: progress of the batch.
+    analysis: std::sync::Mutex<Option<dj_domain::AnalyzeState>>,
 }
 
 impl Default for StateCells {
@@ -1114,6 +1117,23 @@ impl StateCells {
             .clone()
     }
 
+    /// What the analysis worker published, for the snapshot.
+    pub fn set_analysis(&self, state: Option<dj_domain::AnalyzeState>) {
+        let mut guard = self
+            .analysis
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        *guard = state;
+    }
+
+    /// What the analysis worker published, for a test or a reader that needs nothing else.
+    pub fn analysis(&self) -> Option<dj_domain::AnalyzeState> {
+        self.analysis
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+
     /// Empty state, room for [`MAX_DECKS`] decks.
     pub fn new() -> Self {
         Self {
@@ -1133,6 +1153,7 @@ impl StateCells {
             loop_mode: std::sync::Mutex::new(Vec::new()),
             active_loops: std::sync::Mutex::new(Vec::new()),
             import: std::sync::Mutex::new(None),
+            analysis: std::sync::Mutex::new(None),
         }
     }
 
@@ -1386,6 +1407,11 @@ impl StateCells {
         Snapshot {
             import: self
                 .import
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .clone(),
+            analysis: self
+                .analysis
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
                 .clone(),
@@ -1702,6 +1728,15 @@ pub enum Routed {
         /// The file to measure.
         path: String,
     },
+    /// Handed to the worker that measures files off the deck: a batch, with its own progress.
+    AnalyzeFiles {
+        /// The files to measure.
+        paths: Vec<String>,
+        /// Spread the batch over several workers.
+        parallel: bool,
+    },
+    /// Stop the running batch between files.
+    AnalyzeStop,
     /// Handed to the worker that edits grids: it owns the file write and the publication.
     EditGrid {
         /// Target deck.
@@ -1740,6 +1775,11 @@ pub fn route(command: &ScheduledCommand) -> Routed {
             answer: *answer,
         },
         DjCommand::AnalyzeTrack { path } => Routed::AnalyzeFile { path: path.clone() },
+        DjCommand::AnalyzeTracks { paths, parallel } => Routed::AnalyzeFiles {
+            paths: paths.clone(),
+            parallel: *parallel,
+        },
+        DjCommand::AnalyzeCancel => Routed::AnalyzeStop,
         DjCommand::AnalyzeTempo { deck, path } => Routed::Analyze {
             deck: *deck,
             path: path.clone(),
@@ -2660,6 +2700,116 @@ pub fn run_import(
     state.running = false;
     state.current = None;
     cells.set_import(Some(state));
+    running.store(false, Ordering::Relaxed);
+}
+
+/// Where an analysis writes: the store, the volume the mirror is filed under, and the collection root.
+///
+/// One value instead of three arguments: the worker needs all three together, and a signature of eight
+/// is a signature nobody reads.
+#[derive(Clone)]
+pub struct AnalysisTarget {
+    /// The metadata store the measurement is written through.
+    pub store: dj_library::Store,
+    /// The volume label the mirror is filed under.
+    pub volume: String,
+    /// The collection root the file belongs to.
+    pub root: std::path::PathBuf,
+}
+
+/// Measure files that are not on a deck: tempo and key, written beside them (DJP-MEDIA-004).
+///
+/// A measurement is two full decodes per file, so the batch runs on a worker and publishes its progress
+/// the way an import does: a collection row that changes with no explanation is a row the DJ does not
+/// trust. The files are independent — nothing is compared and nothing is asked — so `parallel` spreads
+/// them over threads.
+pub fn run_analysis(
+    paths: Vec<String>,
+    cells: Arc<StateCells>,
+    target: AnalysisTarget,
+    cancel: Arc<AtomicBool>,
+    running: Arc<AtomicBool>,
+    parallel: bool,
+) {
+    let total = paths.len();
+    let state = Arc::new(std::sync::Mutex::new(dj_domain::AnalyzeState {
+        total,
+        done: 0,
+        measured: 0,
+        running: true,
+        current: None,
+    }));
+    let publish = {
+        let state = Arc::clone(&state);
+        let cells = Arc::clone(&cells);
+        move || {
+            let snapshot = state
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .clone();
+            cells.set_analysis(Some(snapshot));
+        }
+    };
+    publish();
+
+    let queue = std::sync::Mutex::new(paths.into_iter());
+    let workers = if parallel {
+        dj_library::queue::threads_for(0).min(total)
+    } else {
+        1
+    }
+    .max(1);
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            let queue = &queue;
+            let state = &state;
+            let publish = &publish;
+            let cancel = Arc::clone(&cancel);
+            let target = target.clone();
+            scope.spawn(move || {
+                loop {
+                    if cancel.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let next = queue
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .next();
+                    let Some(path) = next else {
+                        break;
+                    };
+                    {
+                        let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
+                        guard.current = Some(path.clone());
+                    }
+                    publish();
+                    let file = std::path::PathBuf::from(&path);
+                    let measured = crate::meta::analyze_file(
+                        &target.store,
+                        &target.volume,
+                        &target.root,
+                        &file,
+                        true,
+                    );
+                    {
+                        let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
+                        guard.done += 1;
+                        if measured {
+                            guard.measured += 1;
+                        }
+                    }
+                    publish();
+                }
+            });
+        }
+    });
+
+    let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
+    guard.running = false;
+    guard.current = None;
+    let finished = guard.clone();
+    drop(guard);
+    cells.set_analysis(Some(finished));
     running.store(false, Ordering::Relaxed);
 }
 

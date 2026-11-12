@@ -32,6 +32,7 @@ fn play_command(id: u64) -> ScheduledCommand {
 fn empty_snapshot(revision: u64) -> Snapshot {
     Snapshot {
         import: None,
+        analysis: None,
         cache_budget_bytes: 0,
         protocol: dj_domain::STATE_PROTOCOL.to_string(),
         revision,
@@ -259,6 +260,7 @@ fn a_split_connection_writes_while_its_reader_is_blocked() {
     // Meanwhile the writer must still be able to answer.
     let snapshot = ServerMessage::Snapshot(Box::new(dj_domain::Snapshot {
         import: None,
+        analysis: None,
         cache_budget_bytes: 0,
         protocol: dj_domain::STATE_PROTOCOL.to_string(),
         revision: 4,
