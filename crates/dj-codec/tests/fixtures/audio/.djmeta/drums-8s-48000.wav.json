@@ -1,7 +1,7 @@
 {
   "schema": "djp-track-v1",
-  "revision": 4,
-  "updated_at_ms": 1794012004424,
+  "revision": 30,
+  "updated_at_ms": 1794514235110,
   "fingerprint": {
     "size": 1536044,
     "head": "4552d1d6cb86790a",
@@ -13,8 +13,15 @@
       "frame": 2048
     }
   ],
+  "beatgrid": {
+    "bpm": 119.99998980622507,
+    "first_beat_frame": 47937,
+    "anchors": [],
+    "beats_per_bar": 4
+  },
   "loops": [],
   "gain": 1.0,
+  "key": "5m",
   "rating": 0,
   "analysis_lock": false
 }

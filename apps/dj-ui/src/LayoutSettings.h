@@ -35,6 +35,8 @@ class LayoutSettings : public QObject
     // The folders the browser's Collection section lists. One collection may live on several disks,
     // and each root holds its own tracks and its own .djmeta; empty means the default root.
     Q_PROPERTY(QStringList collectionRoots READ collectionRoots WRITE setCollectionRoots NOTIFY changed)
+    /// The genres the collection is narrowed to: the chips the DJ left on, kept between runs.
+    Q_PROPERTY(QStringList collectionGenres READ collectionGenres WRITE setCollectionGenres NOTIFY changed)
     // Visible fraction of a track in a deck's main waveform. Zero means "the deck's own default", so a
     // file that has never held a value still opens at the built-in zoom.
     Q_PROPERTY(double waveformSpan READ waveformSpan WRITE setWaveformSpan NOTIFY changed)
@@ -66,7 +68,10 @@ public:
     int browserRailWidth() const { return m_browserRailWidth; }
     void setBrowserRailWidth(int pixels);
     QStringList collectionRoots() const { return m_collectionRoots; }
+    QStringList collectionGenres() const { return m_collectionGenres; }
     void setCollectionRoots(const QStringList &roots);
+    /// Narrow the collection to these genres. An empty list is the whole collection.
+    void setCollectionGenres(const QStringList &genres);
     /// The root with the most free space: an import goes where there is room for it.
     Q_INVOKABLE QString roomiestRoot() const;
     /// The collection's columns in the DJ's order: `[{id, width}]`, the width a share of the list.
@@ -117,6 +122,7 @@ private:
     int m_browserFont = 11;
     int m_browserRailWidth = 92;
     QStringList m_collectionRoots;
+    QStringList m_collectionGenres;
     /// The collection's columns, in order: id and its share of the list. These are the defaults; a
     /// saved arrangement replaces them, and a column the file forgot joins at the end.
     QVector<QPair<QString, double>> m_columns = {

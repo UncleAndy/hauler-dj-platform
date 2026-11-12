@@ -392,6 +392,22 @@ Pane {
     // The row grows with its text: a bigger font in a fixed row is a clipped font.
     readonly property int rowHeight: browser.listFont + 7
 
+    // The genre chips the DJ left on: read from the layout file at start and written back when they
+    // change, like the font and the rail width (DJP-UI-001).
+    property bool genresSeeded: false
+    Component.onCompleted: {
+        Browser.genreFilter = LayoutState.collectionGenres;
+        genresSeeded = true;
+    }
+    Connections {
+        target: Browser
+        function onGenresChanged() {
+            if (browser.genresSeeded) {
+                LayoutState.collectionGenres = Browser.genreFilter;
+            }
+        }
+    }
+
     // Width of the sections rail, in pixels, and the range a drag may leave it in: a rail narrower
     // than its longest word is a smudge, a rail wider than the download is a list with no room.
     property int railWidth: LayoutState.browserRailWidth
@@ -1045,6 +1061,81 @@ Pane {
                     // would make the field a second source of truth for what the list shows.
                     if (text !== Browser.filter) {
                         Browser.setFilter(text);
+                    }
+                }
+            }
+
+            // The genres the collection carries, as chips: one click narrows the list, a second widens
+            // it back. The chips are a union — a track belongs to every genre its tag lists, and a DJ
+            // looking for house and techno wants both, not the tracks that are both at once.
+            Flow {
+                objectName: "collectionGenres"
+                visible: browser.section === "collection" && genresRepeater.count > 0
+                Layout.fillWidth: true
+                // One row of chips: a Flow inside a column has no height of its own, and an item with
+                // no height is an item nothing can click.
+                Layout.preferredHeight: Math.round(browser.rowHeight * 0.8)
+                spacing: 4
+
+                Repeater {
+                    id: genresRepeater
+                    model: Browser.genres
+
+                    delegate: Rectangle {
+                        id: chip
+                        required property var modelData
+                        // Named for the check that clicks it: a chip nobody can find is a chip nobody
+                        // can test.
+                        objectName: "genreChip_" + modelData.name
+                        readonly property bool chosen: Browser.genreFilter.indexOf(modelData.name) >= 0
+                        width: chipLabel.implicitWidth + 14
+                        height: Math.round(browser.rowHeight * 0.8)
+                        radius: 3
+                        color: chip.chosen ? UiSettings.themeAccent : UiSettings.themePanel
+                        border.color: UiSettings.themeBorder
+                        Text {
+                            id: chipLabel
+                            anchors.centerIn: parent
+                            font.pixelSize: Math.max(8, browser.listFont - 1)
+                            color: chip.chosen ? UiSettings.themeTextOnAccent : UiSettings.themeText
+                            text: chip.modelData.name + "  " + chip.modelData.count
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: {
+                                const wanted = Browser.genreFilter.slice();
+                                const at = wanted.indexOf(chip.modelData.name);
+                                if (at >= 0) {
+                                    wanted.splice(at, 1);
+                                } else {
+                                    wanted.push(chip.modelData.name);
+                                }
+                                Browser.genreFilter = wanted;
+                            }
+                        }
+                    }
+                }
+
+                // Reset appears only when there is something to reset: a button that can do nothing
+                // is a button that teaches nothing.
+                Rectangle {
+                    objectName: "collectionGenresReset"
+                    visible: Browser.genreFilter.length > 0
+                    width: resetLabel.implicitWidth + 14
+                    height: Math.round(browser.rowHeight * 0.8)
+                    radius: 3
+                    color: "transparent"
+                    border.color: UiSettings.themeBorder
+                    Text {
+                        id: resetLabel
+                        anchors.centerIn: parent
+                        font.pixelSize: Math.max(8, browser.listFont - 1)
+                        color: UiSettings.themeTextDim
+                        text: qsTr("reset")
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        onClicked: Browser.genreFilter = []
                     }
                 }
             }

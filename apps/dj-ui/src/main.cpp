@@ -5437,6 +5437,194 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     return 0;
 }
 
+/// `--genre-check`: the genre chips of the Collection, from the tags to the rows.
+///
+/// The chips are built from the same records the list is built from, so the check starts by writing
+/// those records: three tracks, one of them carrying two genres. Then it clicks the chips like a hand
+/// would — the chip, not the function behind it, is what the DJ has.
+static int runGenreCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSettings &layout,
+                         const QString &fixture, const QString &collectionRoot)
+{
+    if (fixture.isEmpty() || collectionRoot.isEmpty()) {
+        std::fprintf(stderr, "dj-ui: --genre-check needs a fixture and a collection root\n");
+        return 1;
+    }
+    const QList<QPair<QString, QStringList>> rows = {
+        {QStringLiteral("Alpha - House One"),
+         {QStringLiteral("House"), QStringLiteral("Techno")}},
+        {QStringLiteral("Beta - House Two"), {QStringLiteral("House")}},
+        {QStringLiteral("Gamma - Ambient Three"), {QStringLiteral("Ambient")}},
+    };
+    QDir dir;
+    if (!dir.mkpath(collectionRoot + QStringLiteral("/.djmeta"))) {
+        std::fprintf(stderr, "dj-ui: cannot make the metadata folder under %s\n",
+                     qPrintable(collectionRoot));
+        return 1;
+    }
+    for (const auto &row : rows) {
+        const QString target = collectionRoot + QStringLiteral("/") + row.first
+            + QStringLiteral(".wav");
+        QFile::remove(target);
+        if (!QFile::copy(fixture, target)) {
+            std::fprintf(stderr, "dj-ui: cannot place %s\n", qPrintable(target));
+            return 1;
+        }
+        QFile record(collectionRoot + QStringLiteral("/.djmeta/") + row.first
+                     + QStringLiteral(".wav.json"));
+        if (!record.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            std::fprintf(stderr, "dj-ui: cannot write the record for %s\n", qPrintable(row.first));
+            return 1;
+        }
+        QJsonArray genres;
+        for (const QString &genre : row.second) {
+            genres.append(genre);
+        }
+        const QJsonObject meta{
+            {QStringLiteral("tags"),
+             QJsonObject{
+                 {QStringLiteral("artist"), row.first.section(QStringLiteral(" - "), 0, 0)},
+                 {QStringLiteral("title"), row.first.section(QStringLiteral(" - "), 1, 1)},
+                 {QStringLiteral("genres"), genres}}}};
+        record.write(QJsonDocument(meta).toJson());
+    }
+
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().value(0));
+    if (window == nullptr) {
+        std::fprintf(stderr, "dj-ui: no window for the genre check\n");
+        return 1;
+    }
+    const auto pump = [](int ms) {
+        QElapsedTimer timer;
+        timer.start();
+        while (timer.elapsed() < ms) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        }
+    };
+
+    // Offscreen there is no window manager to size the shell: a resize tells the layouts their space,
+    // and without it the browser body keeps the width it was born with — zero.
+    window->resize(1200, 800);
+    QCoreApplication::processEvents();
+    // The shell lays itself out over the first frames: a panel measured before that has no width, and
+    // nothing inside a panel of no width can be clicked.
+    for (int tick = 0; tick < 300; ++tick) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        QThread::msleep(5);
+        QQuickItem *panel = findItem(window->contentItem(), QStringLiteral("browserPanel"));
+        if (panel != nullptr && panel->width() > 0.0) {
+            break;
+        }
+    }
+    browser.openCollection({collectionRoot});
+    for (int tick = 0; tick < 200 && browser.entries().size() < 3; ++tick) {
+        pump(20);
+    }
+    const auto visibleRows = [&]() {
+        QStringList names;
+        for (const QVariant &entry : browser.entries()) {
+            names.append(entry.toMap().value(QStringLiteral("name")).toString());
+        }
+        return names;
+    };
+    const auto chips = [&]() {
+        QStringList shown;
+        for (const QVariant &entry : browser.genreList()) {
+            const QVariantMap map = entry.toMap();
+            shown.append(map.value(QStringLiteral("name")).toString() + QStringLiteral(" ")
+                         + QString::number(map.value(QStringLiteral("count")).toInt()));
+        }
+        return shown;
+    };
+
+    // The chip is a widget of the panel: a check that calls `setGenreFilter` directly would pass with
+    // no chips on the screen at all.
+    const auto click = [&](const QString &name) -> bool {
+        QQuickItem *item = findItem(window->contentItem(), name);
+        if (item == nullptr) {
+            return false;
+        }
+        const QPointF at = item->mapToScene(QPointF(item->width() / 2.0, item->height() / 2.0));
+        for (const QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+            QMouseEvent event(type, at, window->mapToGlobal(at.toPoint()), Qt::LeftButton,
+                              Qt::LeftButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(window, &event);
+            QCoreApplication::processEvents();
+        }
+        pump(30);
+        return true;
+    };
+
+    if (visibleRows() != QStringList{QStringLiteral("Alpha - House One"),
+                                     QStringLiteral("Beta - House Two"),
+                                     QStringLiteral("Gamma - Ambient Three")}) {
+        std::fprintf(stderr, "dj-ui: the collection did not open: %s\n",
+                     qPrintable(visibleRows().join(QStringLiteral(", "))));
+        return 1;
+    }
+    if (chips() != QStringList{QStringLiteral("Ambient 1"), QStringLiteral("House 2"),
+                               QStringLiteral("Techno 1")}) {
+        std::fprintf(stderr, "dj-ui: the chips do not say what the records say: %s\n",
+                     qPrintable(chips().join(QStringLiteral(", "))));
+        return 1;
+    }
+    std::printf("dj-ui: genre chips: %s\n", qPrintable(chips().join(QStringLiteral(", "))));
+
+    // The offscreen shell leaves the panel's inner rows at zero size (the column itself is laid out,
+    // its children are not), and a child of a zero-size parent cannot be clicked. Give the chips row
+    // the size the layout would give it on screen, so the click goes to the chip and not to nothing.
+    if (QQuickItem *flow = findItem(window->contentItem(), QStringLiteral("collectionGenres"))) {
+        if (flow->width() <= 0.0) {
+            flow->setWidth(600.0);
+            flow->setHeight(20.0);
+            pump(30);
+        }
+    }
+    if (!click(QStringLiteral("genreChip_Techno"))) {
+        std::fprintf(stderr, "dj-ui: no Techno chip to click\n");
+        return 1;
+    }
+    if (visibleRows() != QStringList{QStringLiteral("Alpha - House One")}) {
+        std::fprintf(stderr, "dj-ui: the Techno chip left %s\n",
+                     qPrintable(visibleRows().join(QStringLiteral(", "))));
+        return 1;
+    }
+    std::printf("dj-ui: the Techno chip leaves %s\n",
+                qPrintable(visibleRows().join(QStringLiteral(", "))));
+
+    // Two chips are a union: a track belongs to every genre its tag lists.
+    if (!click(QStringLiteral("genreChip_Ambient"))) {
+        std::fprintf(stderr, "dj-ui: no Ambient chip to click\n");
+        return 1;
+    }
+    if (visibleRows() != QStringList{QStringLiteral("Alpha - House One"),
+                                     QStringLiteral("Gamma - Ambient Three")}) {
+        std::fprintf(stderr, "dj-ui: two chips left %s\n",
+                     qPrintable(visibleRows().join(QStringLiteral(", "))));
+        return 1;
+    }
+    std::printf("dj-ui: Techno and Ambient leave %d rows\n", int(visibleRows().size()));
+
+    // The chips are a setting: the layout file has to agree with the panel.
+    if (!layout.collectionGenres().contains(QStringLiteral("Techno"))) {
+        std::fprintf(stderr, "dj-ui: the chips did not reach the layout: %s\n",
+                     qPrintable(layout.collectionGenres().join(QStringLiteral(", "))));
+        return 1;
+    }
+
+    if (!click(QStringLiteral("collectionGenresReset"))) {
+        std::fprintf(stderr, "dj-ui: no reset chip to click\n");
+        return 1;
+    }
+    if (visibleRows().size() != 3 || !browser.genreFilter().isEmpty()) {
+        std::fprintf(stderr, "dj-ui: reset left %d rows and filter %s\n",
+                     int(visibleRows().size()),
+                     qPrintable(browser.genreFilter().join(QStringLiteral(", "))));
+        return 1;
+    }
+    std::printf("dj-ui: reset brings back %d rows\n", int(visibleRows().size()));
+    return 0;
+}
+
 int main(int argc, char *argv[])
 {
     qInstallMessageHandler(collectMessages);
@@ -5583,6 +5771,10 @@ int main(int argc, char *argv[])
         QStringLiteral("sort-check"),
         QStringLiteral("From the collection: a click on a column sorts by it, a second click turns it "
                        "around, a Shift click adds the next key — and the rail's order."));
+    const QCommandLineOption genreCheckOption(
+        QStringLiteral("genre-check"),
+        QStringLiteral("From a collection: the genre chips say how many tracks each genre has, a chip "
+                       "narrows the list, two chips are a union, and reset brings everything back."));
     const QCommandLineOption collectionProbeOption(
         QStringLiteral("collection-probe"),
         QStringLiteral("Time the listing of a collection root: how many rows, and how long the walk "
@@ -5837,6 +6029,7 @@ int main(int argc, char *argv[])
     parser.addOption(importCheckOption);
     parser.addOption(analyzeCheckOption);
     parser.addOption(sortCheckOption);
+    parser.addOption(genreCheckOption);
     parser.addOption(collectionLoadCheckOption);
     parser.addOption(collectionProbeOption);
     parser.addOption(importFixtureOption);
@@ -10580,6 +10773,37 @@ int main(int argc, char *argv[])
             QThread::msleep(10);
         }
         if (!track.isEmpty()) {
+            // A check that needs a load unloads the deck first: the check before this one can leave a
+            // track playing in deck A, and a load onto a playing deck is refused as `Busy` — the colour
+            // under test would then belong to somebody else's track, which ends mid-blink.
+            const auto emptied = [&]() {
+                QElapsedTimer attempt;
+                attempt.start();
+                while (attempt.elapsed() < 5000) {
+                    QString title;
+                    bool busy = false;
+                    for (const QVariant &entry :
+                         bridge->snapshot().value(QStringLiteral("decks")).toList()) {
+                        const QVariantMap deck = entry.toMap();
+                        if (deck.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                            title = deck.value(QStringLiteral("title")).toString();
+                            busy = deck.value(QStringLiteral("playing")).toBool();
+                        }
+                    }
+                    if (title.isEmpty() && !busy) {
+                        return true;
+                    }
+                    bridge->play(QStringLiteral("A"), false);
+                    bridge->eject(QStringLiteral("A"));
+                    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                    QThread::msleep(20);
+                }
+                return false;
+            };
+            if (!emptied()) {
+                std::fprintf(stderr, "dj-ui: deck A never emptied before the space check loaded\n");
+                return 1;
+            }
             bridge->load(QStringLiteral("A"), track);
         }
 
@@ -11128,6 +11352,11 @@ int main(int argc, char *argv[])
         bridge->connectToEngine(parser.value(connectOption));
         return runSortCheck(engine, browser, layout, parser.value(importFixtureOption),
                             parser.values(collectionRootOption).value(0));
+    }
+
+    if (parser.isSet(genreCheckOption)) {
+        return runGenreCheck(engine, browser, layout, parser.value(importFixtureOption),
+                             parser.values(collectionRootOption).value(0));
     }
 
     if (parser.isSet(collectionProbeOption)) {

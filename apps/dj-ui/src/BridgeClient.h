@@ -58,6 +58,17 @@ public:
     Q_INVOKABLE void seedCursors(const QString &files, const QString &collection);
     /// Where `path` sits in the list that is showing; -1 when it is not there any more.
     Q_INVOKABLE int rowOf(const QString &path) const;
+    /// The genres the collection carries, each with how many tracks have it: `{name, count}`.
+    ///
+    /// Read from the same records the list is built from, so a genre appears when a track that carries
+    /// it does — no second source and nothing to keep in step.
+    Q_PROPERTY(QVariantList genres READ genreList NOTIFY genresChanged)
+    Q_PROPERTY(QStringList genreFilter READ genreFilter WRITE setGenreFilter NOTIFY genresChanged)
+    Q_INVOKABLE QVariantList genreList() const;
+    /// Narrow the collection to these genres: a track is kept when it carries any of them. An empty
+    /// list is the whole collection, which is what "reset" means.
+    Q_INVOKABLE void setGenreFilter(const QStringList &genres);
+    QStringList genreFilter() const { return m_genres; }
     /// The collection's sort keys, in order: `{column, ascending}`.
     QVariantList collectionSort() const { return m_sort; }
     /// Sort the collection by `column`. A plain click makes it the only key and turns it around on a
@@ -90,6 +101,8 @@ public:
 
 signals:
     void changed();
+    /// The chips have new counts, or the filter itself moved: the panel redraws them.
+    void genresChanged();
     /// The remembered row moved. Its own signal: `changed()` rebuilds the list, and a rebuild resets
     /// the very index the cursor is about.
     void cursorChanged();
@@ -106,6 +119,8 @@ private:
     QString m_error;
     QString m_mode = QStringLiteral("files");
     QString m_filter;
+    /// The genres the collection is narrowed to. Empty is the whole collection.
+    QStringList m_genres;
     int m_total = 0;
     // The collection's tracks before the filter, and the folder the file list was showing.
     QVariantList m_all;

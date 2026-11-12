@@ -155,6 +155,35 @@ void LayoutSettings::setCollectionRoots(const QStringList &roots)
     scheduleSave();
 }
 
+void LayoutSettings::setCollectionGenres(const QStringList &genres)
+{
+    // The names are kept as the collection spells them; the comparison is what ignores case. A genre
+    // named twice is one chip, because two chips that filter the same rows are a lie about the choice.
+    QStringList clean;
+    for (const QString &genre : genres) {
+        const QString name = genre.trimmed();
+        if (name.isEmpty()) {
+            continue;
+        }
+        bool known = false;
+        for (const QString &kept : std::as_const(clean)) {
+            if (kept.compare(name, Qt::CaseInsensitive) == 0) {
+                known = true;
+                break;
+            }
+        }
+        if (!known) {
+            clean.append(name);
+        }
+    }
+    if (clean == m_collectionGenres) {
+        return;
+    }
+    m_collectionGenres = clean;
+    emit changed();
+    scheduleSave();
+}
+
 void LayoutSettings::setWaveformSpan(double span)
 {
     // Zero is the "never set" marker; anything else has to be a span the deck can draw.
@@ -372,6 +401,18 @@ bool LayoutSettings::load()
         roots.append(root.value(QStringLiteral("collection_root")).toString());
     }
     m_collectionRoots = normalisedRoots(roots);
+    // The chips the DJ left on. A file without them is the whole collection, which is what an empty
+    // list means — no migration and no marker.
+    m_collectionGenres.clear();
+    const QJsonValue storedGenres = root.value(QStringLiteral("collection_genres"));
+    if (storedGenres.isArray()) {
+        for (const QJsonValue &value : storedGenres.toArray()) {
+            const QString genre = value.toString().trimmed();
+            if (!genre.isEmpty()) {
+                m_collectionGenres.append(genre);
+            }
+        }
+    }
     // The columns the file knows, in the order it has them; anything missing joins at the end.
     // The defaults are what a file without a setting means, so the file's own columns replace them
     // rather than joining them: six defaults plus six saved is still six, and the defaults would win.
@@ -413,6 +454,11 @@ bool LayoutSettings::save() const
         roots.append(path);
     }
     root.insert(QStringLiteral("collection_roots"), roots);
+    QJsonArray genres;
+    for (const QString &genre : m_collectionGenres) {
+        genres.append(genre);
+    }
+    root.insert(QStringLiteral("collection_genres"), genres);
     QJsonArray columns;
     for (const auto &column : m_columns) {
         QJsonObject entry;

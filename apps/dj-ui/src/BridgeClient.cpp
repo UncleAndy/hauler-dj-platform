@@ -8,6 +8,7 @@
 #include <QFileInfoList>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QStandardPaths>
@@ -288,6 +289,7 @@ void FileBrowser::collect(const QStringList &roots)
             QString artist;
             QString album;
             QString title;
+            QStringList genres;
             qint64 durationMs = 0;
             QVariantMap entry{{QStringLiteral("name"), info.completeBaseName()},
                               {QStringLiteral("path"), info.absoluteFilePath()},
@@ -314,6 +316,14 @@ void FileBrowser::collect(const QStringList &roots)
                 artist = names.value(QStringLiteral("artist")).toString();
                 album = names.value(QStringLiteral("album")).toString();
                 title = names.value(QStringLiteral("title")).toString();
+                // The genres the record kept, already split: the filter reads them from here, so it
+                // works on the same walk that builds the list.
+                for (const QJsonValue &value : names.value(QStringLiteral("genres")).toArray()) {
+                    const QString genre = value.toString().trimmed();
+                    if (!genre.isEmpty()) {
+                        genres.append(genre);
+                    }
+                }
                 // Frames and the rate that gives them meaning: the length without decoding again.
                 const QJsonObject print = object.value(QStringLiteral("fingerprint")).toObject();
                 const double rate = print.value(QStringLiteral("sample_rate")).toDouble();
@@ -338,6 +348,7 @@ void FileBrowser::collect(const QStringList &roots)
             entry.insert(QStringLiteral("album"), album);
             entry.insert(QStringLiteral("title"), title);
             entry.insert(QStringLiteral("duration_ms"), durationMs);
+            entry.insert(QStringLiteral("genres"), genres);
             tracks.append(entry);
         }
     }
@@ -347,6 +358,9 @@ void FileBrowser::collect(const QStringList &roots)
         return QString::localeAwareCompare(a, b) < 0;
     });
     m_all = tracks;
+    // A filter that no longer matches anything after a refresh would show an empty list with no chip
+    // to blame; the chips are rebuilt from the same rows, so the DJ sees what is left.
+    emit genresChanged();
     m_total = tracks.size();
     // A refresh reads the disks again: the sort the DJ chose outlives it.
     applySort();
@@ -361,9 +375,61 @@ void FileBrowser::setFilter(const QString &text)
     applyFilter();
 }
 
+QVariantList FileBrowser::genreList() const
+{
+    // First spelling wins, counting ignores case: `House` and `house` are one chip with two tracks.
+    QMap<QString, QString> spelling;
+    QMap<QString, int> counts;
+    for (const QVariant &entry : m_all) {
+        for (const QString &genre : entry.toMap().value(QStringLiteral("genres")).toStringList()) {
+            const QString key = genre.toLower();
+            if (!counts.contains(key)) {
+                spelling.insert(key, genre);
+            }
+            counts[key] += 1;
+        }
+    }
+    QVariantList list;
+    for (auto it = counts.cbegin(); it != counts.cend(); ++it) {
+        QVariantMap item;
+        item.insert(QStringLiteral("name"), spelling.value(it.key()));
+        item.insert(QStringLiteral("count"), it.value());
+        list.append(item);
+    }
+    return list;
+}
+
+void FileBrowser::setGenreFilter(const QStringList &genres)
+{
+    QStringList clean;
+    for (const QString &genre : genres) {
+        const QString name = genre.trimmed();
+        if (name.isEmpty()) {
+            continue;
+        }
+        bool known = false;
+        for (const QString &kept : std::as_const(clean)) {
+            if (kept.compare(name, Qt::CaseInsensitive) == 0) {
+                known = true;
+                break;
+            }
+        }
+        if (!known) {
+            clean.append(name);
+        }
+    }
+    if (clean == m_genres) {
+        return;
+    }
+    m_genres = clean;
+    emit genresChanged();
+    applyFilter();
+}
+
 void FileBrowser::applyFilter()
 {
-    if (m_filter.isEmpty()) {
+    const bool byGenre = !m_genres.isEmpty();
+    if (m_filter.isEmpty() && !byGenre) {
         m_entries = m_all;
         emit changed();
         return;
@@ -371,19 +437,41 @@ void FileBrowser::applyFilter()
     QVariantList kept;
     const QString needle = m_filter.toLower();
     for (const QVariant &entry : std::as_const(m_all)) {
-        // A DJ searches for what he knows: the artist, the album, the title — and the file name for
-        // the tracks that came in without tags.
         const QVariantMap fields = entry.toMap();
-        bool hit = false;
-        for (const char *field : {"artist", "album", "title", "name"}) {
-            if (fields.value(QLatin1String(field)).toString().toLower().contains(needle)) {
-                hit = true;
-                break;
+        if (byGenre) {
+            // One genre is enough: several chips are a union, not an intersection — a DJ looking for
+            // house and techno wants both, not the tracks that are somehow both at once.
+            bool carried = false;
+            for (const QString &genre : fields.value(QStringLiteral("genres")).toStringList()) {
+                for (const QString &wanted : m_genres) {
+                    if (genre.compare(wanted, Qt::CaseInsensitive) == 0) {
+                        carried = true;
+                        break;
+                    }
+                }
+                if (carried) {
+                    break;
+                }
+            }
+            if (!carried) {
+                continue;
             }
         }
-        if (hit) {
-            kept.append(entry);
+        if (!needle.isEmpty()) {
+            // A DJ searches for what he knows: the artist, the album, the title — and the file name for
+            // the tracks that came in without tags.
+            bool hit = false;
+            for (const char *field : {"artist", "album", "title", "name"}) {
+                if (fields.value(QLatin1String(field)).toString().toLower().contains(needle)) {
+                    hit = true;
+                    break;
+                }
+            }
+            if (!hit) {
+                continue;
+            }
         }
+        kept.append(entry);
     }
     m_entries = kept;
     emit changed();
