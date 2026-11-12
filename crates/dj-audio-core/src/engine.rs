@@ -173,6 +173,11 @@ impl Engine {
         let at_sample = self.clock;
         let command_id = scheduled.id;
         let status = match scheduled.command {
+            // A collection query is not an audio command: the engine answers it where the index can be
+            // opened, never on the audio thread.
+            DjCommand::QueryCollection { .. } => {
+                Some(Ack::rejected(command_id, RejectReason::NotSupported))
+            }
             // The A01 renderer holds one tone and no beat: a deck to follow or to lead does not exist
             // here, and saying so is better than pretending the flag did something.
             // The library is not the audio engine's business: this renderer holds one tone and no
@@ -271,6 +276,7 @@ impl Engine {
         Snapshot {
             import: None,
             analysis: None,
+            collection: None,
             protocol: STATE_PROTOCOL.to_string(),
             // The A01 renderer has no cache: nothing is allowed and nothing is spent.
             cache_budget_bytes: 0,

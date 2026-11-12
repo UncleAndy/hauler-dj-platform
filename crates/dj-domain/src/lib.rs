@@ -647,6 +647,15 @@ pub enum DjCommand {
         /// Beats to move: positive is later in the track, negative is earlier.
         beats: i32,
     },
+    /// Ask for a page of the collection (DJP-MEDIA-007).
+    ///
+    /// Not a deck command: it never reaches the audio path. The answer arrives in the snapshot's
+    /// `collection`, carrying the `id` of this question — an answer to somebody else's question is not
+    /// an answer.
+    QueryCollection {
+        /// What to show: the order, the genres, the search and the page.
+        query: CollectionQuery,
+    },
 }
 
 impl DjCommand {
@@ -681,6 +690,7 @@ impl DjCommand {
             | DjCommand::AnalyzeTracks { .. }
             | DjCommand::AnalyzeCancel
             | DjCommand::ImportAnswer { .. }
+            | DjCommand::QueryCollection { .. }
             | DjCommand::Eject { .. } => true,
             DjCommand::SetTempoRatio { .. }
             | DjCommand::Nudge { .. }
@@ -1387,6 +1397,9 @@ pub struct Snapshot {
     /// The analysis the DJ started from the collection: progress, absent when none ran.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub analysis: Option<AnalyzeState>,
+    /// The last collection page the engine was asked for: the browser reads it from here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collection: Option<CollectionPage>,
 }
 
 #[cfg(test)]

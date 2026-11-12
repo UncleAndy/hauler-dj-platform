@@ -33,6 +33,7 @@ fn empty_snapshot(revision: u64) -> Snapshot {
     Snapshot {
         import: None,
         analysis: None,
+        collection: None,
         cache_budget_bytes: 0,
         protocol: dj_domain::STATE_PROTOCOL.to_string(),
         revision,
@@ -261,6 +262,7 @@ fn a_split_connection_writes_while_its_reader_is_blocked() {
     let snapshot = ServerMessage::Snapshot(Box::new(dj_domain::Snapshot {
         import: None,
         analysis: None,
+        collection: None,
         cache_budget_bytes: 0,
         protocol: dj_domain::STATE_PROTOCOL.to_string(),
         revision: 4,

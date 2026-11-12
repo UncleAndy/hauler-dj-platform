@@ -382,6 +382,7 @@ pub fn snapshot(
     Snapshot {
         import: None,
         analysis: None,
+        collection: None,
         protocol: dj_domain::STATE_PROTOCOL.to_string(),
         // A snapshot taken from the mixer alone says nothing about the loader's cache.
         cache_budget_bytes: 0,
@@ -938,6 +939,8 @@ pub struct StateCells {
     import: std::sync::Mutex<Option<dj_domain::ImportState>>,
     /// The analysis the DJ started from the collection: progress of the batch.
     analysis: std::sync::Mutex<Option<dj_domain::AnalyzeState>>,
+    /// The last collection page the browser asked for: the engine writes it, the panel reads it.
+    collection: std::sync::Mutex<Option<dj_domain::CollectionPage>>,
 }
 
 impl Default for StateCells {
@@ -1154,6 +1157,7 @@ impl StateCells {
             active_loops: std::sync::Mutex::new(Vec::new()),
             import: std::sync::Mutex::new(None),
             analysis: std::sync::Mutex::new(None),
+            collection: std::sync::Mutex::new(None),
         }
     }
 
@@ -1405,6 +1409,13 @@ impl StateCells {
             }
         }
         Snapshot {
+            // The page is not an atomic cell: it is written and read on the engine's own thread, under
+            // the mutex that guards the import for the same reason.
+            collection: self
+                .collection
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .clone(),
             import: self
                 .import
                 .lock()
