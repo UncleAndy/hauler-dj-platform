@@ -101,8 +101,9 @@ CREATE INDEX IF NOT EXISTS track_genres_genre  ON track_genres(genre_id, fingerp
 
 ### Задача 1. Схема v2 и миграция
 
-**Файлы:** `crates/dj-library/src/index.rs` (`open`, `SCHEMA`), `crates/dj-library/tests/index_schema.rs`
-(новый).
+**Файлы:** `crates/dj-library/src/index.rs` (`open`, `SCHEMA`) и модуль `#[cfg(test)] mod tests` в нём же:
+тесту миграции нужен приватный `connection`, поэтому это модульный тест, а не интеграционный (иначе
+`rusqlite` пришлось бы тащить в dev-dependencies ради одного файла).
 
 **Шаг 1 — падающий тест.** База версии 1 с одной строкой в `tracks`; `Index::open` на ней; проверяем:
 `user_version = 2`, таблицы `genres` и `track_genres` есть, старая строка на месте.

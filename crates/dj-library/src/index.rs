@@ -75,6 +75,45 @@ impl From<std::io::Error> for IndexError {
     }
 }
 
+/// The schema, version 2.
+///
+/// It only ever grows: a table added here is added to every existing database on the next open, and
+/// nothing the DJ already has is dropped. The database is a cache over the metadata files, so a broken
+/// one is rebuilt by scanning — but a cache that throws away a working row forces a rescan of the whole
+/// collection, which is not something a version bump may do.
+const SCHEMA: &str = "\
+CREATE TABLE IF NOT EXISTS tracks (
+    fingerprint TEXT PRIMARY KEY,
+    path TEXT NOT NULL,
+    artist TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL DEFAULT '',
+    album TEXT NOT NULL DEFAULT '',
+    genre TEXT NOT NULL DEFAULT '',
+    year INTEGER,
+    bpm REAL,
+    musical_key TEXT,
+    rating INTEGER NOT NULL DEFAULT 0,
+    duration_frames INTEGER,
+    gain REAL NOT NULL DEFAULT 1.0,
+    play_count INTEGER NOT NULL DEFAULT 0,
+    last_played_ms INTEGER,
+    analysis_lock INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS genres (
+    id   INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    key  TEXT NOT NULL UNIQUE
+);
+CREATE TABLE IF NOT EXISTS track_genres (
+    fingerprint TEXT NOT NULL REFERENCES tracks(fingerprint) ON DELETE CASCADE,
+    genre_id    INTEGER NOT NULL REFERENCES genres(id) ON DELETE CASCADE,
+    PRIMARY KEY (fingerprint, genre_id)
+);
+CREATE INDEX IF NOT EXISTS genres_key         ON genres(key);
+CREATE INDEX IF NOT EXISTS track_genres_genre ON track_genres(genre_id, fingerprint);
+PRAGMA user_version = 2;
+";
+
 /// The database file. One writer, opened off the audio path.
 pub struct Index {
     connection: Connection,
@@ -90,26 +129,12 @@ impl Index {
         // WAL keeps a reader from blocking the writer; the schema is versioned so a migration can
         // rebuild rather than guess.
         connection.pragma_update(None, "journal_mode", "WAL")?;
-        connection.execute_batch(
-            "CREATE TABLE IF NOT EXISTS tracks (
-                fingerprint TEXT PRIMARY KEY,
-                path TEXT NOT NULL,
-                artist TEXT NOT NULL DEFAULT '',
-                title TEXT NOT NULL DEFAULT '',
-                album TEXT NOT NULL DEFAULT '',
-                genre TEXT NOT NULL DEFAULT '',
-                year INTEGER,
-                bpm REAL,
-                musical_key TEXT,
-                rating INTEGER NOT NULL DEFAULT 0,
-                duration_frames INTEGER,
-                gain REAL NOT NULL DEFAULT 1.0,
-                play_count INTEGER NOT NULL DEFAULT 0,
-                last_played_ms INTEGER,
-                analysis_lock INTEGER NOT NULL DEFAULT 0
-            );
-            PRAGMA user_version = 1;",
-        )?;
+        // Two processes touch this file — the engine writes while the browser reads — so a lock is
+        // waited for instead of failing, and a link row cannot be left half-written.
+        connection.pragma_update(None, "synchronous", "NORMAL")?;
+        connection.pragma_update(None, "busy_timeout", 3000)?;
+        connection.pragma_update(None, "foreign_keys", "ON")?;
+        connection.execute_batch(SCHEMA)?;
         Ok(Self { connection })
     }
 
@@ -234,4 +259,105 @@ fn bind(statement: &mut rusqlite::Statement<'_>, row: &TrackRow) -> Result<(), I
         row.analysis_lock,
     ])?;
     Ok(())
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    /// A database as the previous build left it: the `tracks` table, one row, version 1.
+    fn version_one(path: &Path) {
+        let connection = Connection::open(path).expect("open");
+        connection
+            .execute_batch(
+                "CREATE TABLE tracks (
+                    fingerprint TEXT PRIMARY KEY,
+                    path TEXT NOT NULL,
+                    artist TEXT NOT NULL DEFAULT '',
+                    title TEXT NOT NULL DEFAULT '',
+                    album TEXT NOT NULL DEFAULT '',
+                    genre TEXT NOT NULL DEFAULT '',
+                    year INTEGER,
+                    bpm REAL,
+                    musical_key TEXT,
+                    rating INTEGER NOT NULL DEFAULT 0,
+                    duration_frames INTEGER,
+                    gain REAL NOT NULL DEFAULT 1.0,
+                    play_count INTEGER NOT NULL DEFAULT 0,
+                    last_played_ms INTEGER,
+                    analysis_lock INTEGER NOT NULL DEFAULT 0
+                );
+                INSERT INTO tracks (fingerprint, path, artist, title)
+                    VALUES ('abc', '/music/a.flac', 'Artist', 'Title');
+                PRAGMA user_version = 1;",
+            )
+            .expect("version one schema");
+    }
+
+    fn table_exists(index: &Index, name: &str) -> bool {
+        index
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                [name],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("sqlite_master")
+            == 1
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("dj-index-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        dir
+    }
+
+    /// The schema moves forward on open, and nothing the DJ already had is lost: the database is a
+    /// cache over the metadata files, but a cache that throws away a working row is a cache that
+    /// forces a rescan of the whole collection.
+    #[test]
+    fn a_version_one_index_gains_genres_and_keeps_its_rows() {
+        let dir = scratch("schema");
+        let path = dir.join("library.db");
+        version_one(&path);
+
+        let index = Index::open(&path).expect("open");
+        let version: i64 = index
+            .connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user_version");
+        assert_eq!(version, 2, "the schema must move to version 2");
+        assert!(table_exists(&index, "genres"), "genres table");
+        assert!(table_exists(&index, "track_genres"), "track_genres table");
+        assert_eq!(
+            index.count().expect("count"),
+            1,
+            "the row from version one survives"
+        );
+        let row = index.by_fingerprint("abc").expect("read").expect("row");
+        assert_eq!(row.artist, "Artist");
+        assert_eq!(row.title, "Title");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Opening twice is what every start does: the second open must not undo the first.
+    #[test]
+    fn opening_an_index_twice_is_harmless() {
+        let dir = scratch("twice");
+        let path = dir.join("library.db");
+        {
+            let index = Index::open(&path).expect("first open");
+            assert_eq!(index.count().expect("count"), 0);
+        }
+        let index = Index::open(&path).expect("second open");
+        let version: i64 = index
+            .connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user_version");
+        assert_eq!(version, 2);
+        assert!(table_exists(&index, "track_genres"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }
