@@ -138,12 +138,18 @@ Pane {
     }
     // Which column the pointer is over: the drop target of a dragged header.
     /// Move the cursor by one row and remember it: the keyboard is a hand too.
+    ///
+    /// The row is counted from the remembered cursor, not from the view's index: the index follows the
+    /// cursor through a binding, and reading it in the same call gives the row the list had before the
+    /// key — the view then moves a step behind the hand.
     function stepCursor(delta) {
         const count = Browser.entries.length;
         if (count === 0) {
             return;
         }
-        const next = Math.max(0, Math.min(count - 1, list.currentIndex + delta));
+        const row = Browser.rowOf(Browser.cursor);
+        const from = row < 0 ? 0 : row;
+        const next = Math.max(0, Math.min(count - 1, from + delta));
         Browser.setCursor(Browser.entries[next].path);
         list.positionViewAtIndex(next, ListView.Contain);
     }
@@ -1143,6 +1149,10 @@ Pane {
                 // back puts it there, and a row that is gone leaves no highlight at all. Written as a
                 // binding on purpose — setting the index by hand would break it and lose the place.
                 currentIndex: Browser.entries.length >= 0 ? Browser.rowOf(Browser.cursor) : -1
+                // The cursor is placed by hand, and the view goes there at once: a list that glides to
+                // the row it already knows reads as lag, not as motion.
+                highlightMoveDuration: 0
+                highlightResizeDuration: 0
                 // Arrow keys move the cursor and say so. Deliberately not `onCurrentIndexChanged`:
                 // a view handed a new model resets its index to the first row, and that reset would
                 // be remembered as the DJ's choice, wiping the place he actually left.

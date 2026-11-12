@@ -4323,6 +4323,60 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
         std::fprintf(stderr, "dj-ui: the shift click on the key left «%s»\n", qPrintable(keys()));
         return 1;
     }
+    // A list long enough to scroll: the cursor is driven by the keyboard, and the view must be at the
+    // row at once — a window that glides to it reads as lag, not as motion.
+    for (int index = 0; index < 40; ++index) {
+        const QString target =
+            root.filePath(QStringLiteral("Scroll %1.wav").arg(index, 2, 10, QLatin1Char('0')));
+        if (!QFile::exists(target) && !QFile::copy(fixture, target)) {
+            std::fprintf(stderr, "dj-ui: cannot place %s\n", qPrintable(target));
+            return 1;
+        }
+    }
+    browser.openCollection({collectionRoot});
+    clock.restart();
+    while (browser.entries().size() < 44 && clock.elapsed() < 5000) {
+        QCoreApplication::processEvents();
+        QThread::msleep(20);
+    }
+    auto *list = findItem(window->contentItem(), QStringLiteral("browserList"));
+    if (list == nullptr) {
+        std::fprintf(stderr, "dj-ui: the browser has no list\n");
+        return 1;
+    }
+    const double rowHeight = panel->property("rowHeight").toDouble();
+    if (rowHeight <= 0.0) {
+        std::fprintf(stderr, "dj-ui: the list has no row height\n");
+        return 1;
+    }
+    browser.setCursor(browser.entries().first().toMap().value(QStringLiteral("path")).toString());
+    QCoreApplication::processEvents();
+    for (int step = 0; step < 30; ++step) {
+        QKeyEvent press(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+        QCoreApplication::sendEvent(list, &press);
+        QCoreApplication::processEvents();
+    }
+    const int row = browser.rowOf(browser.cursor());
+    const double settled = list->property("contentY").toDouble();
+    // An animation would still be running: give it the frames and require the window not to move.
+    for (int tick = 0; tick < 8; ++tick) {
+        QCoreApplication::processEvents();
+        QThread::msleep(20);
+    }
+    const double later = list->property("contentY").toDouble();
+    const double viewHeight = list->height();
+    if (std::abs(later - settled) > 0.5) {
+        std::fprintf(stderr, "dj-ui: the view was still gliding to the row (%.1f -> %.1f)\n",
+                     settled, later);
+        return 1;
+    }
+    if (settled > row * rowHeight + 1.0 || settled + viewHeight < (row + 1) * rowHeight - 1.0) {
+        std::fprintf(stderr, "dj-ui: row %d is outside the window (contentY %.1f, height %.1f)\n",
+                     row, settled, viewHeight);
+        return 1;
+    }
+    std::fprintf(stderr, "dj-ui: the view is at row %d at once (contentY %.1f, row height %.1f)\n",
+                 row, settled, rowHeight);
     std::fprintf(stderr, "dj-ui: sort check done\n");
     return 0;
 }
