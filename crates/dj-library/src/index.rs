@@ -4,11 +4,14 @@
 //! metadata files, so this database can be deleted and rebuilt by scanning without losing one bit of
 //! what the user decided. Writes happen off the audio thread; the audio path never touches a file.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OptionalExtension, params};
 
+use crate::Progress;
 use crate::genres::{self, GenreName};
+use crate::meta::TrackMeta;
+use crate::sidecar;
 
 /// A row of the index: the searchable face of one track.
 #[derive(Debug, Clone, PartialEq)]
@@ -169,6 +172,85 @@ impl Index {
         }
         transaction.commit()?;
         Ok(rows.len())
+    }
+
+    /// Make the index out of the `.djmeta` records under these roots.
+    ///
+    /// The records are the source of truth and the database is a cache, so a rebuild starts from
+    /// nothing: rows whose records are gone must not survive. The audio is never opened — a record
+    /// carries the fingerprint, the names and the genres already.
+    pub fn rebuild_from(&mut self, roots: &[PathBuf]) -> Result<RebuildReport, IndexError> {
+        self.rebuild_from_with(roots, &mut |_| {})
+    }
+
+    /// The same rebuild, reporting how far it has come: the same [`Progress`] the import uses, so the
+    /// window that shows an import can show this too.
+    pub fn rebuild_from_with(
+        &mut self,
+        roots: &[PathBuf],
+        progress: &mut dyn FnMut(&Progress),
+    ) -> Result<RebuildReport, IndexError> {
+        let records = records_under(roots);
+        let mut state = Progress {
+            total: records.len(),
+            running: true,
+            ..Progress::default()
+        };
+        progress(&state);
+        let mut report = RebuildReport::default();
+        let mut batch: Vec<(TrackRow, Vec<GenreName>)> = Vec::new();
+        let mut clear = true;
+        for record in records {
+            state.current = Some(record.clone());
+            match read_record(&record) {
+                Some((row, genres)) => {
+                    report.tracks += 1;
+                    report.genres += genres.len();
+                    state.done = report.tracks;
+                    batch.push((row, genres));
+                }
+                None => {
+                    report.skipped += 1;
+                    state.failed += 1;
+                }
+            }
+            if batch.len() >= REBUILD_BATCH {
+                self.write_batch(&mut batch, clear)?;
+                clear = false;
+                progress(&state);
+            }
+        }
+        self.write_batch(&mut batch, clear)?;
+        state.running = false;
+        progress(&state);
+        Ok(report)
+    }
+
+    /// Write one batch in one transaction. The first batch also empties the index.
+    fn write_batch(
+        &mut self,
+        batch: &mut Vec<(TrackRow, Vec<GenreName>)>,
+        clear: bool,
+    ) -> Result<(), IndexError> {
+        if batch.is_empty() && !clear {
+            return Ok(());
+        }
+        let transaction = self.connection.transaction()?;
+        if clear {
+            transaction.execute("DELETE FROM tracks", [])?;
+        }
+        {
+            let mut statement = transaction.prepare(INSERT)?;
+            for (row, _) in batch.iter() {
+                bind(&mut statement, row)?;
+            }
+        }
+        for (row, genres) in batch.iter() {
+            Self::write_genres(&transaction, &row.fingerprint, genres)?;
+        }
+        transaction.commit()?;
+        batch.clear();
+        Ok(())
     }
 
     /// Insert or replace one row, leaving the rest of the index alone.
@@ -381,6 +463,106 @@ impl Index {
 }
 
 /// One statement for both paths: a rebuild and a single row must write the same columns.
+/// What a rebuild found and wrote.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RebuildReport {
+    /// Rows written: one per readable record.
+    pub tracks: usize,
+    /// Genre links written, counting one per genre a track carries.
+    pub genres: usize,
+    /// Records that could not be read: a broken `.djmeta` costs its own row, not the rebuild.
+    pub skipped: usize,
+}
+
+/// How many records one transaction holds: a batch keeps the write fast without holding a lock over
+/// a whole collection.
+const REBUILD_BATCH: usize = 500;
+
+/// The index row for a record: what the browser sorts by and a search looks in.
+///
+/// The row is built from the record, not from the file: a name the DJ corrected is the name the list
+/// shows. `genre` is the split names joined back together — the links, not this column, decide what
+/// the track belongs to.
+pub fn row_of(meta: &TrackMeta, path: &Path) -> TrackRow {
+    let tags = meta.tags.clone().unwrap_or_default();
+    TrackRow {
+        fingerprint: meta.fingerprint.key(),
+        path: path.to_string_lossy().into_owned(),
+        artist: tags.artist,
+        title: tags.title,
+        album: tags.album,
+        genre: tags.genres.join(", "),
+        year: None,
+        bpm: meta.beatgrid.as_ref().map(|grid| grid.bpm),
+        musical_key: meta.key.clone(),
+        rating: meta.rating,
+        duration_frames: meta.fingerprint.duration_frames,
+        gain: meta.gain,
+        play_count: 0,
+        last_played_ms: None,
+        analysis_lock: meta.analysis_lock,
+    }
+}
+
+/// One record and its genres, or nothing when the record cannot be read.
+fn read_record(record: &Path) -> Option<(TrackRow, Vec<GenreName>)> {
+    let meta = sidecar::read(record).ok()?;
+    // The track sits next to the record's directory: `.djmeta/<name>.json` describes `<dir>/<name>`.
+    let name = record.file_stem()?;
+    let dir = record.parent()?.parent()?;
+    let track = dir.join(name);
+    let genres = meta
+        .tags
+        .as_ref()
+        .map(|tags| {
+            tags.genres
+                .iter()
+                .filter_map(|name| genres::normalise(name))
+                .collect()
+        })
+        .unwrap_or_default();
+    Some((row_of(&meta, &track), genres))
+}
+
+/// Every record under these roots. `_duplicates/` is not a collection, and a record directory holds
+/// records rather than more tracks.
+fn records_under(roots: &[PathBuf]) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    for root in roots {
+        let mut stack = vec![root.clone()];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                let name = path.file_name().and_then(|name| name.to_str());
+                if name == Some(sidecar::DIRECTORY) {
+                    let Ok(records) = std::fs::read_dir(&path) else {
+                        continue;
+                    };
+                    for record in records.flatten() {
+                        let record = record.path();
+                        if record
+                            .extension()
+                            .is_some_and(|extension| extension == "json")
+                        {
+                            found.push(record);
+                        }
+                    }
+                } else if name != Some(crate::import::DUPLICATES_DIR) {
+                    stack.push(path);
+                }
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
 const INSERT: &str = "INSERT OR REPLACE INTO tracks
      (fingerprint, path, artist, title, album, genre, year, bpm, musical_key, rating,
       duration_frames, gain, play_count, last_played_ms, analysis_lock)

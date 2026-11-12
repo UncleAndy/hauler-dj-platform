@@ -361,7 +361,7 @@ fn an_imported_track_writes_an_empty_genre_list_when_the_tag_has_none() {
 #[test]
 fn a_sidecar_without_genres_still_reads() {
     // A record written before the field existed: the browser must read it, not fail on it.
-    let record = r#"{"schema":"djmeta/1","revision":1,"updated_at_ms":1000,
+    let record = r#"{"schema":"djp-track-v1","revision":1,"updated_at_ms":1000,
                      "fingerprint":{"size":1,"head":"a","tail":"b"},
                      "tags":{"artist":"A","album":"B","title":"C"}}"#;
     let meta: dj_library::TrackMeta = serde_json::from_str(record).expect("old sidecar");

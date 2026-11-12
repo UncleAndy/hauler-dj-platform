@@ -72,6 +72,7 @@ Usage:
             [--auto-gain-share 0..1]
             [--seconds S] [--autoplay] [--state-hz N] [--crossfader-curve LAW]
   dj-engine [--socket PATH] --stop      ask a running engine to shut down
+  dj-engine --rebuild-index ROOT...     make the index out of the .djmeta records and exit
 
 Defaults: socket $XDG_RUNTIME_DIR/hauler-dj-engine.sock, null sink, 48 kHz, block 256.
 --device SUBSTR opens the real output (substring of the backend name); --null-sink keeps a
@@ -162,6 +163,33 @@ fn main() -> std::process::ExitCode {
     }
 }
 
+/// Make the index out of the `.djmeta` records under these roots, then leave.
+///
+/// The records are the source of truth, so this is the recovery path after a lost database and the
+/// command for a collection that was filled before the index existed. The audio is never opened.
+fn rebuild_index(roots: &[PathBuf]) -> Result<(), String> {
+    let mut index = dj_library::Index::open_default().map_err(|error| error.to_string())?;
+    let mut shown = 0usize;
+    let report = index
+        .rebuild_from_with(roots, &mut |progress| {
+            // A line per tenth: walking a large collection is a minute, and silence looks like a hang.
+            let step = (progress.total / 10).max(1);
+            if progress.done >= shown + step || !progress.running {
+                shown = progress.done;
+                println!(
+                    "dj-engine: rebuild {} of {} ({} skipped)",
+                    progress.done, progress.total, progress.failed
+                );
+            }
+        })
+        .map_err(|error| error.to_string())?;
+    println!(
+        "dj-engine: rebuild wrote {} tracks, {} genre links, skipped {} records",
+        report.tracks, report.genres, report.skipped
+    );
+    Ok(())
+}
+
 fn run(argv: &[String]) -> Result<(), String> {
     if argv.iter().any(|arg| arg == "--help" || arg == "-h") {
         print!("{USAGE}");
@@ -204,6 +232,15 @@ fn run(argv: &[String]) -> Result<(), String> {
             "--socket" => {
                 socket = Some(PathBuf::from(value(1)?));
                 index += 2;
+            }
+            "--rebuild-index" => {
+                // Everything after the flag is a collection root. This run makes the database out of
+                // the records and exits: no socket, no audio, no engine.
+                let roots: Vec<PathBuf> = argv[index + 1..].iter().map(PathBuf::from).collect();
+                if roots.is_empty() {
+                    return Err("--rebuild-index needs at least one collection root".to_string());
+                }
+                return rebuild_index(&roots);
             }
             "--null-sink" => {
                 null_sink = true;
