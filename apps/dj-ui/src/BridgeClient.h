@@ -33,6 +33,9 @@ class FileBrowser : public QObject
     // How many tracks the collection holds before the filter: the header says both numbers, so an
     // empty search result cannot pass for an empty collection.
     Q_PROPERTY(int total READ total NOTIFY changed)
+    // Where the cursor stands in the list that is showing: the panel puts the highlight there when
+    // the list comes back, and a row that is gone simply has no highlight.
+    Q_PROPERTY(QString cursor READ cursor NOTIFY cursorChanged)
 
 public:
     explicit FileBrowser(QObject *parent = nullptr);
@@ -42,6 +45,17 @@ public:
     QString error() const { return m_error; }
     QString mode() const { return m_mode; }
     QString filter() const { return m_filter; }
+    /// The remembered row of the list that is showing.
+    QString cursor() const;
+    /// The remembered rows, per place: the file list and the collection are two different places.
+    QString filesCursor() const { return m_filesCursor; }
+    QString collectionCursor() const { return m_collectionCursor; }
+    /// Remember where the cursor stands in the list that is showing.
+    Q_INVOKABLE void setCursor(const QString &path);
+    /// Seed both places at startup, before either list has been built.
+    Q_INVOKABLE void seedCursors(const QString &files, const QString &collection);
+    /// Where `path` sits in the list that is showing; -1 when it is not there any more.
+    Q_INVOKABLE int rowOf(const QString &path) const;
     int total() const { return m_total; }
 
     // Show `path`, or the default music folder when it is empty.
@@ -69,6 +83,9 @@ public:
 
 signals:
     void changed();
+    /// The remembered row moved. Its own signal: `changed()` rebuilds the list, and a rebuild resets
+    /// the very index the cursor is about.
+    void cursorChanged();
 
 private:
     void load(const QString &path);
@@ -85,6 +102,10 @@ private:
     QVariantList m_all;
     // The roots the collection section was opened with: a refresh reads the same disks.
     QStringList m_roots;
+    // The row each place remembers: a folder and a collection are visited for different reasons, and
+    // one must not lose its place because the DJ looked at the other.
+    QString m_filesCursor;
+    QString m_collectionCursor;
     QString m_filesFolder;
 };
 

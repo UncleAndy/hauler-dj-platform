@@ -23,6 +23,10 @@ public:
     explicit SessionState(QObject *parent = nullptr);
 
     QString folder() const { return m_folder; }
+    // Where the cursor stood: the file list's row and the collection's row are two different places,
+    // and each comes back where it was left.
+    QString cursor() const { return m_cursor; }
+    QString collectionCursor() const { return m_collectionCursor; }
     QString file() const { return m_file; }
     QString window() const { return m_window; }
     QString restoreTo() const { return m_restoreTo; }
@@ -30,6 +34,10 @@ public:
 
     // Remember a folder; empty paths and folders that no longer exist are ignored.
     bool rememberFolder(const QString &path);
+
+    // Remember the row the cursor stood on, per place. A file that is gone simply has no row.
+    bool rememberCursor(const QString &path);
+    bool rememberCollectionCursor(const QString &path);
 
     // Remember the window shape; anything but the three known names is refused.
     bool rememberWindow(const QString &state);
@@ -48,6 +56,8 @@ signals:
 
 private:
     QString m_folder;
+    QString m_cursor;
+    QString m_collectionCursor;
     QString m_file;
     QString m_window = QStringLiteral("window");
     QString m_restoreTo = QStringLiteral("window");

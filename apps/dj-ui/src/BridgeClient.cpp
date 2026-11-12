@@ -151,6 +151,37 @@ QString FileBrowser::defaultCollectionRoot() const
     return base + QStringLiteral("/hauler-dj/collection");
 }
 
+QString FileBrowser::cursor() const
+{
+    return m_mode == QLatin1String("collection") ? m_collectionCursor : m_filesCursor;
+}
+
+void FileBrowser::setCursor(const QString &path)
+{
+    QString &remembered = m_mode == QLatin1String("collection") ? m_collectionCursor : m_filesCursor;
+    if (remembered == path) {
+        return;
+    }
+    remembered = path;
+    emit cursorChanged();
+}
+
+void FileBrowser::seedCursors(const QString &files, const QString &collection)
+{
+    m_filesCursor = files;
+    m_collectionCursor = collection;
+}
+
+int FileBrowser::rowOf(const QString &path) const
+{
+    for (int index = 0; index < m_entries.size(); ++index) {
+        if (m_entries.at(index).toMap().value(QStringLiteral("path")).toString() == path) {
+            return index;
+        }
+    }
+    return -1;
+}
+
 void FileBrowser::refreshCollection()
 {
     if (m_mode != QLatin1String("collection")) {

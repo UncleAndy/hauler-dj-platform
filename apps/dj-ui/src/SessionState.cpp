@@ -71,6 +71,26 @@ bool SessionState::rememberRestoreTo(const QString &state)
     return true;
 }
 
+bool SessionState::rememberCursor(const QString &path)
+{
+    if (path == m_cursor) {
+        return false;
+    }
+    m_cursor = path;
+    emit changed();
+    return true;
+}
+
+bool SessionState::rememberCollectionCursor(const QString &path)
+{
+    if (path == m_collectionCursor) {
+        return false;
+    }
+    m_collectionCursor = path;
+    emit changed();
+    return true;
+}
+
 bool SessionState::load()
 {
     QFile file(m_file);
@@ -86,6 +106,8 @@ bool SessionState::load()
     bool any = false;
     const QJsonObject root = document.object();
     const QString folder = root.value(QStringLiteral("folder")).toString();
+    m_cursor = root.value(QStringLiteral("cursor")).toString();
+    m_collectionCursor = root.value(QStringLiteral("collection_cursor")).toString();
     if (!folder.isEmpty()) {
         any = rememberFolder(folder) || any;
     }
@@ -108,6 +130,8 @@ bool SessionState::save() const
     }
     QJsonObject root;
     root.insert(QStringLiteral("folder"), m_folder);
+    root.insert(QStringLiteral("cursor"), m_cursor);
+    root.insert(QStringLiteral("collection_cursor"), m_collectionCursor);
     root.insert(QStringLiteral("window"), m_window);
     root.insert(QStringLiteral("restore_to"), m_restoreTo);
     QFile file(m_file);

@@ -123,6 +123,17 @@ Pane {
         return x;
     }
     // Which column the pointer is over: the drop target of a dragged header.
+    /// Move the cursor by one row and remember it: the keyboard is a hand too.
+    function stepCursor(delta) {
+        const count = Browser.entries.length;
+        if (count === 0) {
+            return;
+        }
+        const next = Math.max(0, Math.min(count - 1, list.currentIndex + delta));
+        Browser.setCursor(Browser.entries[next].path);
+        list.positionViewAtIndex(next, ListView.Contain);
+    }
+
     /// Where a named column sits now: a row cell belongs to its column, not to a position, so a
     /// moved column takes its numbers with it.
     function columnIndexOf(id) {
@@ -347,6 +358,8 @@ Pane {
         }
     }
 
+    // A list that comes back — another folder, the collection, the same folder after a restart —
+    // puts the highlight where the DJ left it.
     // The analysis writes the file, not a snapshot: the numbers appear when the worker is done, so
     // the list is read again a few times instead of being waited on once.
     Timer {
@@ -967,6 +980,15 @@ Pane {
                 keyNavigationWraps: false
                 focus: true
                 ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                // The highlight is where the browser remembers the cursor stood: a list that comes
+                // back puts it there, and a row that is gone leaves no highlight at all. Written as a
+                // binding on purpose — setting the index by hand would break it and lose the place.
+                currentIndex: Browser.entries.length >= 0 ? Browser.rowOf(Browser.cursor) : -1
+                // Arrow keys move the cursor and say so. Deliberately not `onCurrentIndexChanged`:
+                // a view handed a new model resets its index to the first row, and that reset would
+                // be remembered as the DJ's choice, wiping the place he actually left.
+                Keys.onUpPressed: browser.stepCursor(-1)
+                Keys.onDownPressed: browser.stepCursor(1)
                 // A click selects; Enter or a double click acts, as in any file list.
                 // A folder opens with Enter; a track does not, because Enter is not a load key here.
                 Keys.onReturnPressed: browser.openFolder(list.currentIndex)
@@ -1100,7 +1122,6 @@ Pane {
                         anchors.fill: parent
                         acceptedButtons: Qt.LeftButton | Qt.RightButton
                         onClicked: function (mouse) {
-                            list.currentIndex = row.index;
                             list.forceActiveFocus();
                             if (mouse.button === Qt.RightButton) {
                                 // A right click on a row that is not chosen picks it first: a menu
@@ -1112,6 +1133,8 @@ Pane {
                                 return;
                             }
                             browser.choose(row.index, mouse.modifiers);
+                            // A click is a choice of place, not only of row.
+                            Browser.setCursor(row.modelData.path);
                         }
                         onDoubleClicked: {
                             // Folders only: opening one is navigation. A track needs a deck button or

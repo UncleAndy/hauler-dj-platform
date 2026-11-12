@@ -921,15 +921,24 @@ static int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         return 1;
     }
 
+    // The list's index is bound to the remembered cursor: selecting a row is `setCursor`, not an
+    // assignment to the index, which would break the binding and leave the list with no cursor at all.
+    const auto selectRow = [&](int index) {
+        const QVariantList rows = browser.entries();
+        if (index >= 0 && index < rows.size()) {
+            browser.setCursor(rows.at(index).toMap().value(QStringLiteral("path")).toString());
+        }
+        QCoreApplication::processEvents();
+    };
     const auto invoke = [&](const char *method, int index) {
-        list->setProperty("currentIndex", index);
+        selectRow(index);
         QVariant returned;
         QMetaObject::invokeMethod(panel, method, Q_RETURN_ARG(QVariant, returned),
                                   Q_ARG(QVariant, index));
         return panel->property("lastAction").toString();
     };
     const auto loadInto = [&](const QString &deck) {
-        list->setProperty("currentIndex", fileIndex);
+        selectRow(fileIndex);
         QVariant returned;
         QMetaObject::invokeMethod(panel, "loadInto", Q_RETURN_ARG(QVariant, returned),
                                   Q_ARG(QVariant, deck));
@@ -1006,7 +1015,7 @@ static int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     }
 
     // A deck button is also a load button when something is chosen.
-    list->setProperty("currentIndex", fileIndex);
+    selectRow(fileIndex);
     auto *buttonB = findItem(window->contentItem(), QStringLiteral("deckButton_B"));
     if (buttonB == nullptr) {
         std::fprintf(stderr, "dj-ui: the browser has no deck buttons\n");
@@ -1346,8 +1355,7 @@ static int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         return 1;
     }
     // A track from the collection loads the way a file from a folder does.
-    list->setProperty("currentIndex", 0);
-    QCoreApplication::processEvents();
+    selectRow(0);
     const QVariantMap chosen = panel->property("selected").toMap();
     QVariant fromCollection;
     QMetaObject::invokeMethod(panel, "loadInto", Q_RETURN_ARG(QVariant, fromCollection),
@@ -4490,6 +4498,83 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         return 1;
     }
 
+    // The cursor is remembered per place: leaving the collection for the file list and coming back
+    // must put the highlight where it was, and the file list must do the same after a visit to the
+    // collection.
+    QQuickItem *browserList = findItem(window->contentItem(), QStringLiteral("browserList"));
+    if (browserList == nullptr) {
+        std::fprintf(stderr, "dj-ui: the shell has no list to put the cursor in\n");
+        return 1;
+    }
+    const QString secondTrack = rows.at(1).toMap().value(QStringLiteral("path")).toString();
+    // The restore is deferred by one turn of the event loop (a view resets its index while it
+    // rebuilds), so the check waits a moment before reading the highlight.
+    const auto settleList = [](int milliseconds) {
+        QEventLoop wait;
+        QTimer::singleShot(milliseconds, &wait, &QEventLoop::quit);
+        wait.exec();
+    };
+    browser.openCollection({collectionRoot});
+    settleList(150);
+    browser.setCursor(secondTrack);
+    QCoreApplication::processEvents();
+    if (browserList->property("currentIndex").toInt() != browser.rowOf(secondTrack)) {
+        std::fprintf(stderr,
+                     "dj-ui: the highlight did not follow the cursor in the collection "
+                     "(cursor %s, row %d, current %d, timer %s)\n",
+                     qPrintable(browser.cursor()), browser.rowOf(secondTrack),
+                     browserList->property("currentIndex").toInt(),
+                     panel->findChild<QObject *>(QStringLiteral("cursorRestore")) != nullptr ? "yes"
+                                                                                             : "no");
+        return 1;
+    }
+    browser.showFiles();
+    settleList(150);
+    browser.openCollection({collectionRoot});
+    settleList(150);
+    const int backInCollection = browserList->property("currentIndex").toInt();
+    std::fprintf(stdout, "dj-ui: collection cursor came back at row %d of %d\n", backInCollection,
+                 browser.rowOf(secondTrack));
+    if (browser.cursor() != secondTrack || backInCollection != browser.rowOf(secondTrack)) {
+        std::fprintf(stderr, "dj-ui: the collection forgot where the cursor stood\n");
+        return 1;
+    }
+
+    // The same for the file list: a visit to the collection must not lose the row.
+    browser.showFiles();
+    QCoreApplication::processEvents();
+    const QString fileCursor = browser.entries().at(1).toMap().value(QStringLiteral("path")).toString();
+    browser.setCursor(fileCursor);
+    settleList(150);
+    browser.openCollection({collectionRoot});
+    settleList(150);
+    browser.showFiles();
+    settleList(150);
+    const int backInFiles = browserList->property("currentIndex").toInt();
+    std::fprintf(stdout, "dj-ui: files cursor came back at row %d of %d\n", backInFiles,
+                 browser.rowOf(fileCursor));
+    if (browser.cursor() != fileCursor || backInFiles != browser.rowOf(fileCursor)) {
+        std::fprintf(stderr, "dj-ui: the file list forgot where the cursor stood\n");
+        return 1;
+    }
+
+    // And both survive a restart: the session keeps them beside the folder.
+    SessionState probe;
+    probe.setFile(incoming.path() + QStringLiteral("/session-probe.json"));
+    probe.rememberCursor(fileCursor);
+    probe.rememberCollectionCursor(secondTrack);
+    probe.save();
+    SessionState sessionReread;
+    sessionReread.setFile(probe.file());
+    sessionReread.load();
+    std::fprintf(stdout, "dj-ui: session keeps cursors -> %s | %s\n",
+                 qPrintable(sessionReread.cursor()),
+                 qPrintable(sessionReread.collectionCursor()));
+    if (sessionReread.cursor() != fileCursor || sessionReread.collectionCursor() != secondTrack) {
+        std::fprintf(stderr, "dj-ui: the session lost the cursors\n");
+        return 1;
+    }
+
     std::fprintf(stdout,
                  "dj-ui: the browser adds files to the collection: selection, confirmation, "
                  "progress, the duplicate question and its answer\n");
@@ -4938,6 +5023,9 @@ int main(int argc, char *argv[])
     // The browser opens where the last track came from; an empty state falls back to the music
     // folder, which is what FileBrowser does when given no path.
     browser.open(session.folder());
+    // The rows the two places remember: a folder and a collection are visited for different reasons,
+    // and neither should lose its place because the DJ looked at the other.
+    browser.seedCursors(session.cursor(), session.collectionCursor());
     // Every load, from the browser or from a deck's dialog, moves that folder.
     bridge->setLoadFolderHandler([&session, &browser](const QString &folder) {
         // A track taken out of the collection lives in the collection: neither the file list nor the
@@ -5114,7 +5202,14 @@ int main(int argc, char *argv[])
     qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "LayoutState", &layout);
     // The arrangement is the user's, and it is written when the shell exits: a root adopted by
     // default must reach the file even if nothing was dragged and no flag was typed.
-    QObject::connect(&app, &QCoreApplication::aboutToQuit, [&layout]() { layout.save(); });
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, [&layout, &browser, &session]() {
+        // Where the cursor stood is part of the session, like the folder: a browser that forgets the
+        // row makes the DJ find it again every evening.
+        session.rememberCursor(browser.filesCursor());
+        session.rememberCollectionCursor(browser.collectionCursor());
+        session.save();
+        layout.save();
+    });
 
     if (parser.isSet(waveformPngOption)) {
         // The envelope drawn exactly as the deck draws it, but into a file: no display, no engine,
