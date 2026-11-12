@@ -11,6 +11,7 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 pub mod fingerprint;
+pub mod genres;
 pub mod identity;
 pub mod import;
 pub mod index;
