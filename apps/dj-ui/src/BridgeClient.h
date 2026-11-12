@@ -173,6 +173,14 @@ public:
     // Prepare a file into a deck. Acknowledged as accepted, not applied: the deck is playable when
     // a snapshot reports `Ready` (ADR-0008).
     Q_INVOKABLE int load(const QString &deck, const QString &path);
+    /// Ask the engine for a page of the collection (DJP-MEDIA-007).
+    ///
+    /// `query` is `{id, order: [{column, ascending}], genres, search, offset, limit}` — the words of the
+    /// protocol, not the words of the list. The answer comes back in the snapshot's `collection`, and
+    /// the caller recognises its own by the `id` it put here.
+    Q_INVOKABLE int queryCollection(const QVariantMap &query);
+    /// The last collection page the engine published, or an empty map when it published none.
+    QVariantMap collectionPage() const;
 
     /// Add files and folders to the collection (DJP-MEDIA-004). The engine runs the batch and
     /// publishes progress; this only says what the DJ picked.

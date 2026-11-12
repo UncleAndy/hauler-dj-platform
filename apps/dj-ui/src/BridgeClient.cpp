@@ -375,6 +375,27 @@ void FileBrowser::setFilter(const QString &text)
     applyFilter();
 }
 
+int BridgeClient::queryCollection(const QVariantMap &query)
+{
+    // The command body the protocol spells: `{"QueryCollection": {"query": …}}`. The page identity and
+    // the sort keys travel as they are — the engine speaks the same words, and a translation here would
+    // be a second vocabulary to keep in step.
+    QJsonObject body;
+    body.insert(QStringLiteral("query"), QJsonObject::fromVariantMap(query));
+    QJsonObject command;
+    command.insert(QStringLiteral("QueryCollection"), body);
+    return sendCommand(QString(), command);
+}
+
+QVariantMap BridgeClient::collectionPage() const
+{
+    const QVariant value = m_snapshot.value(QStringLiteral("collection"));
+    if (!value.isValid() || value.isNull()) {
+        return QVariantMap();
+    }
+    return value.toMap();
+}
+
 QVariantList FileBrowser::genreList() const
 {
     // First spelling wins, counting ignores case: `House` and `house` are one chip with two tracks.
