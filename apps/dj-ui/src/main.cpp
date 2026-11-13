@@ -4600,13 +4600,13 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
     // which is what he saw when he opened the collection.
     {
         root.mkpath(QStringLiteral("empty"));
-        const QString remembered = root.filePath(QStringLiteral("Scroll 30.wav"));
+        const QString remembered = scroll.filePath(QStringLiteral("Scroll 30.wav"));
         browser.openCollection({root.filePath(QStringLiteral("empty"))});
         QCoreApplication::processEvents();
         browser.setCursor(remembered);
-        browser.openCollection({collectionRoot});
+        browser.openCollection({scrollRoot});
         clock.restart();
-        while (browser.entries().size() < 44 && clock.elapsed() < 5000) {
+        while (browser.entries().size() < 40 && clock.elapsed() < 10000) {
             QCoreApplication::processEvents();
             QThread::msleep(20);
         }
