@@ -153,6 +153,9 @@ private:
     int m_pageTotal = 0;
     /// True when the list is fed by the index: then scrolling asks for the next page.
     bool m_paged = false;
+    /// The rows as they came with no genre chosen: the genus list is counted from these, so ticking one
+    /// genre does not make the others vanish.
+    QVariantList m_genreSource;
     /// The offset of the question in flight: the answer does not carry it, the question does.
     int m_askedOffset = 0;
     /// The question in flight, as one string: the same question asked again while the answer is on its

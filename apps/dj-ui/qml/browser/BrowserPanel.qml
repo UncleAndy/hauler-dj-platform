@@ -982,9 +982,19 @@ Pane {
                     color: UiSettings.themeTextDim
                     font.pixelSize: browser.headerFont
                 }
+                // The collection may live on several roots: a path here would be one of them and a lie
+                // about the others. What the DJ needs is how many tracks it holds.
+                Label {
+                    objectName: "collectionTotal"
+                    visible: browser.section === "collection"
+                    text: qsTr("(%1)").arg(Browser.total)
+                    color: UiSettings.themeTextDim
+                    font.pixelSize: browser.headerFont
+                }
                 Label {
                     objectName: "browserPath"
                     Layout.fillWidth: true
+                    visible: browser.section !== "collection"
                     text: Browser.folder
                     elide: Text.ElideMiddle
                     color: UiSettings.themeTextDim
@@ -1083,46 +1093,39 @@ Pane {
                 objectName: "collectionGenres"
                 visible: browser.section === "collection" && genresRepeater.count > 0
                 Layout.fillWidth: true
-                // One row of chips: a Flow inside a column has no height of its own, and an item with
-                // no height is an item nothing can click.
-                Layout.preferredHeight: Math.round(browser.rowHeight * 0.8)
+                // Checkboxes wrap, so the height is the number of rows they take: a Flow inside a column
+                // has no height of its own, and an item with no height is an item nothing can click.
+                Layout.preferredHeight: {
+                    const perRow = 4;
+                    const rows = Math.max(1, Math.ceil(genresRepeater.count / perRow));
+                    return Math.round(rows * browser.rowHeight * 1.1);
+                }
                 spacing: 4
 
                 Repeater {
                     id: genresRepeater
                     model: Browser.genres
 
-                    delegate: Rectangle {
+                    // A checkbox, not a chip: the list of genres must stay whole while a choice is
+                    // being made — a genre that disappears when another is ticked cannot be ticked.
+                    delegate: CheckBox {
                         id: chip
                         required property var modelData
-                        // Named for the check that clicks it: a chip nobody can find is a chip nobody
+                        // Named for the check that clicks it: a box nobody can find is a box nobody
                         // can test.
                         objectName: "genreChip_" + modelData.name
-                        readonly property bool chosen: Browser.genreFilter.indexOf(modelData.name) >= 0
-                        width: chipLabel.implicitWidth + 14
-                        height: Math.round(browser.rowHeight * 0.8)
-                        radius: 3
-                        color: chip.chosen ? UiSettings.themeAccent : UiSettings.themePanel
-                        border.color: UiSettings.themeBorder
-                        Text {
-                            id: chipLabel
-                            anchors.centerIn: parent
-                            font.pixelSize: Math.max(8, browser.listFont - 1)
-                            color: chip.chosen ? UiSettings.themeTextOnAccent : UiSettings.themeText
-                            text: chip.modelData.name + "  " + chip.modelData.count
-                        }
-                        MouseArea {
-                            anchors.fill: parent
-                            onClicked: {
-                                const wanted = Browser.genreFilter.slice();
-                                const at = wanted.indexOf(chip.modelData.name);
-                                if (at >= 0) {
-                                    wanted.splice(at, 1);
-                                } else {
-                                    wanted.push(chip.modelData.name);
-                                }
-                                Browser.genreFilter = wanted;
+                        text: chip.modelData.name + "  " + chip.modelData.count
+                        font.pixelSize: Math.max(8, browser.listFont - 1)
+                        checked: Browser.genreFilter.indexOf(chip.modelData.name) >= 0
+                        onToggled: {
+                            const wanted = Browser.genreFilter.slice();
+                            const at = wanted.indexOf(chip.modelData.name);
+                            if (at >= 0) {
+                                wanted.splice(at, 1);
+                            } else {
+                                wanted.push(chip.modelData.name);
                             }
+                            Browser.genreFilter = wanted;
                         }
                     }
                 }

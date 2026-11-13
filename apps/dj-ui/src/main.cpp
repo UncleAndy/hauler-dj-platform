@@ -6469,18 +6469,9 @@ int main(int argc, char *argv[])
     // The file is the user's last arrangement; a preset named on the command line wins over it, so a
     // single run can be compared against the measured default without editing anything.
     layout.load();
-    // A remembered folder inside a collection root is a leftover from a build that remembered loads
-    // made out of the collection. The file list has no business opening there: it opens in the music
-    // folder, which is where a DJ looks for files that are not in the collection yet.
-    const QString remembered = browser.folder();
-    for (const QString &root : layout.collectionRoots()) {
-        if (!root.isEmpty() && remembered.startsWith(root)) {
-            std::fprintf(stdout, "dj-ui: %s is inside the collection; the file list opens in %s\n",
-                         qPrintable(remembered), qPrintable(browser.defaultFolder()));
-            browser.open(browser.defaultFolder());
-            break;
-        }
-    }
+    // The remembered folder is the DJ's choice, wherever it is: a folder inside the collection is a
+    // perfectly good place to browse from. Only a folder that no longer exists falls back to the home
+    // folder, and `open` already does that on its own.
     if (parser.isSet(layoutOption) && !layout.applyPreset(parser.value(layoutOption))) {
         std::fprintf(stderr, "dj-ui: --layout expects traktor or two-deck\n");
         return 2;

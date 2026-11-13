@@ -75,13 +75,9 @@ FileBrowser::FileBrowser(QObject *parent)
 
 QString FileBrowser::defaultFolder() const
 {
-    const QString home = QDir::homePath();
-    for (const QString &candidate : {QStringLiteral("/Music"), QStringLiteral("/Музыка")}) {
-        if (QFileInfo(home + candidate).isDir()) {
-            return home + candidate;
-        }
-    }
-    return home;
+    // The home folder, not a guess at where music lives: the DJ's files are arranged his own way, and a
+    // list that opens in an empty `~/Music` looks broken. A remembered folder still wins over this.
+    return QDir::homePath();
 }
 
 void FileBrowser::open(const QString &path)
@@ -346,6 +342,10 @@ void FileBrowser::takePage()
     const QString at = cursor();
     if (offset == 0) {
         setPaged(true);
+        if (m_genres.isEmpty()) {
+            // No genre chosen: this is the whole collection, and the boxes are counted from it.
+            m_genreSource = tracks;
+        }
         m_all = tracks;
         m_pageOffset = tracks.size();
         m_pageTotal = total;
@@ -536,10 +536,11 @@ QVariantMap BridgeClient::collectionPage() const
 
 QVariantList FileBrowser::genreList() const
 {
-    // First spelling wins, counting ignores case: `House` and `house` are one chip with two tracks.
+    // First spelling wins, counting ignores case: `House` and `house` are one box with two tracks.
     QMap<QString, QString> spelling;
     QMap<QString, int> counts;
-    for (const QVariant &entry : m_all) {
+    const QVariantList &source = m_genreSource.isEmpty() ? m_all : m_genreSource;
+    for (const QVariant &entry : source) {
         for (const QString &genre : entry.toMap().value(QStringLiteral("genres")).toStringList()) {
             const QString key = genre.toLower();
             if (!counts.contains(key)) {
