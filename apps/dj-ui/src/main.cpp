@@ -4440,15 +4440,23 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
     }
     // A list long enough to scroll: the cursor is driven by the keyboard, and the view must be at the
     // row at once — a window that glides to it reads as lag, not as motion.
+    // A folder of its own: the index fills one it has never seen. Records that appear in a folder it
+    // already knows are a different question — records arriving from outside — and they wait for a rescan.
+    const QString scrollRoot = collectionRoot + QStringLiteral("-scroll");
+    if (!QDir().mkpath(scrollRoot + QStringLiteral("/.djmeta"))) {
+        std::fprintf(stderr, "dj-ui: cannot make %s\n", qPrintable(scrollRoot));
+        return 1;
+    }
+    const QDir scroll(scrollRoot);
     for (int index = 0; index < 40; ++index) {
         const QString name = QStringLiteral("Scroll %1.wav").arg(index, 2, 10, QLatin1Char('0'));
-        const QString target = root.filePath(name);
+        const QString target = scroll.filePath(name);
         if (!QFile::exists(target) && !QFile::copy(fixture, target)) {
             std::fprintf(stderr, "dj-ui: cannot place %s\n", qPrintable(target));
             return 1;
         }
         // A row is a record: forty files without one are forty files the list never shows.
-        QFile record(root.filePath(QStringLiteral(".djmeta/") + name + QStringLiteral(".json")));
+        QFile record(scroll.filePath(QStringLiteral(".djmeta/") + name + QStringLiteral(".json")));
         if (!record.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
             std::fprintf(stderr, "dj-ui: cannot write the record for %s\n", qPrintable(name));
             return 1;
@@ -4470,9 +4478,9 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
         record.write(QJsonDocument(meta).toJson());
         record.close();
     }
-    browser.openCollection({collectionRoot});
+    browser.openCollection({scrollRoot});
     clock.restart();
-    while (browser.entries().size() < 44 && clock.elapsed() < 5000) {
+    while (browser.entries().size() < 40 && clock.elapsed() < 15000) {
         QCoreApplication::processEvents();
         QThread::msleep(20);
     }
@@ -4489,6 +4497,11 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
     // Probe: a cursor that arrives without a key — the remembered row of a section left behind, or a
     // row the DJ clicked. Where is the window then?
     const QVariantList rows = browser.entries();
+    if (rows.size() < 31) {
+        std::fprintf(stderr, "dj-ui: the collection lists %d rows, wanted at least 31 to scroll\n",
+                     static_cast<int>(rows.size()));
+        return 1;
+    }
     const QString deep = rows.at(30).toMap().value(QStringLiteral("path")).toString();
     browser.setCursor(deep);
     for (int tick = 0; tick < 8; ++tick) {
@@ -4512,6 +4525,10 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
                      restoreRow, list->property("contentY").toDouble());
     }
 
+    if (browser.entries().isEmpty()) {
+        std::fprintf(stderr, "dj-ui: the list is empty, so there is no first row to stand on\n");
+        return 1;
+    }
     browser.setCursor(browser.entries().first().toMap().value(QStringLiteral("path")).toString());
     QCoreApplication::processEvents();
     for (int step = 0; step < 30; ++step) {
