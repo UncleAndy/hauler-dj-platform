@@ -227,6 +227,10 @@ void FileBrowser::openCollection(const QStringList &roots)
     m_mode = QStringLiteral("collection");
     m_pageOffset = 0;
     m_pageTotal = 0;
+    // An answer that was already on its way belongs to the list that is being replaced. Holding it to the
+    // number of the question that has just been asked is what keeps it out: without the bump it carries a
+    // current id, lands after this clearing, and the fresh list stays empty because nothing asks again.
+    ++m_pageQuery;
     m_pageAnsweredFor = 0;
     m_askedSignature.clear();
     m_genreList.clear();
