@@ -372,3 +372,22 @@ fn a_measured_grid_travels_with_the_track() {
     let json = serde_json::to_string(&unmeasured).unwrap_or_default();
     assert!(!json.contains("first_beat_frame"), "{json}");
 }
+
+#[test]
+fn a_unit_command_is_a_bare_name() {
+    // `{"ImportCancel": {}}` is a struct variant the protocol does not have: serde rejects the whole
+    // message and the engine drops it silently — the DJ presses Cancel and nothing happens.
+    assert_eq!(
+        serde_json::to_value(dj_domain::DjCommand::ImportCancel).expect("serialise"),
+        serde_json::json!("ImportCancel")
+    );
+    assert_eq!(
+        serde_json::to_value(dj_domain::DjCommand::AnalyzeCancel).expect("serialise"),
+        serde_json::json!("AnalyzeCancel")
+    );
+    // And the wrapped form is refused, so a client cannot slip it in unnoticed.
+    assert!(
+        serde_json::from_value::<dj_domain::DjCommand>(serde_json::json!({ "ImportCancel": {} }))
+            .is_err()
+    );
+}

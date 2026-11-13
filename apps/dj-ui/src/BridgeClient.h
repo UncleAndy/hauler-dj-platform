@@ -226,6 +226,12 @@ public:
     Q_INVOKABLE int importPaths(const QStringList &paths, const QString &root, bool parallel);
     /// Stop the running import between files.
     Q_INVOKABLE int cancelImport();
+    /// Send a command that carries nothing: on the wire it is a bare name, not `{"Name": {}}`.
+    ///
+    /// The protocol's unit commands are serialized as strings, and a client that wraps one in an object
+    /// makes the engine reject the whole message without a word — which is how "Cancel does nothing"
+    /// looks from the DJ's chair.
+    int sendUnit(const QString &name);
     /// Answer the duplicate question: `skip`, `replace`, `add` or `add_marked`.
     Q_INVOKABLE int answerImport(const QString &answer);
     /// Measure tempo and key of files already in the collection (DJP-MEDIA-004). One command each:

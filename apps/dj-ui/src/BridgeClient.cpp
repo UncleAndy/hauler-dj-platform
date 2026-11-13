@@ -982,6 +982,21 @@ int BridgeClient::sendCommand(const QString &deck, const QJsonObject &command)
     return id;
 }
 
+int BridgeClient::sendUnit(const QString &name)
+{
+    const int id = m_nextCommandId++;
+    QJsonObject scheduled;
+    scheduled.insert(QStringLiteral("id"), id);
+    scheduled.insert(QStringLiteral("effective_sample"), 0);
+    scheduled.insert(QStringLiteral("command"), name);
+    QJsonObject message;
+    message.insert(QStringLiteral("Command"), scheduled);
+    sendJson(message);
+    ++m_pendingCommands;
+    setStatus(QStringLiteral("waiting for the engine"));
+    return id;
+}
+
 int BridgeClient::play(const QString &deck, bool enabled)
 {
     QJsonObject options;
@@ -1030,9 +1045,7 @@ int BridgeClient::importPaths(const QStringList &paths, const QString &root, boo
 
 int BridgeClient::cancelImport()
 {
-    QJsonObject command;
-    command.insert(QStringLiteral("ImportCancel"), QJsonObject());
-    const int id = sendCommand(QString(), command);
+    const int id = sendUnit(QStringLiteral("ImportCancel"));
     // The DJ pressed stop and must see that he was heard, not a window that keeps claiming work: the
     // batch stops at the next honest point, and a file's analysis now sees the flag too.
     setStatus(QStringLiteral("stopping the batch"));
@@ -1080,9 +1093,7 @@ int BridgeClient::analyzePaths(const QStringList &paths, bool parallel)
 
 int BridgeClient::cancelAnalysis()
 {
-    QJsonObject command;
-    command.insert(QStringLiteral("AnalyzeCancel"), QJsonObject());
-    return sendCommand(QString(), command);
+    return sendUnit(QStringLiteral("AnalyzeCancel"));
 }
 
 int BridgeClient::load(const QString &deck, const QString &path)
