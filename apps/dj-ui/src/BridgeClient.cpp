@@ -423,8 +423,20 @@ void FileBrowser::takePage()
     // The page does not carry its offset back: the question does, and the id says which question.
     const int offset = m_askedOffset;
     if (offset == 0 && rows.isEmpty() && total == 0) {
-        // The index is the source: it answered, and the answer is "nothing under these roots".
+        // The index is the source: it answered, and the answer is "nothing under these roots". The list is
+        // emptied here rather than left as it was — a stale list from the previous section is not an answer —
+        // and the one retry runs: the index may be building itself from the folders at this very moment.
         setPaged(true);
+        m_all.clear();
+        m_pageOffset = 0;
+        m_pageTotal = 0;
+        m_total = 0;
+        applyFilter();
+        publishGenres();
+        if (!m_retriedEmpty && !m_roots.isEmpty()) {
+            m_retriedEmpty = true;
+            QTimer::singleShot(400, this, [this]() { askPage(0); });
+        }
         return;
     }
     QVariantList tracks;

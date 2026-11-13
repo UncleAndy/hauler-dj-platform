@@ -1490,32 +1490,23 @@ fn serve_client(
                                 .and_then(|index| index.page(&asked))
                                 .unwrap_or_default();
                             if page.total == 0 && !folders.is_empty() {
-                                // Nothing for these folders. When the whole index is empty it was never
-                                // built, and the cache is made once from the records in these folders —
-                                // only then is a writable handle opened, and only with nobody else's data
-                                // in the way.
-                                let whole = dj_engine::page_query(&dj_domain::CollectionQuery {
-                                    roots: Vec::new(),
-                                    ..query.clone()
-                                });
-                                let nothing_anywhere = dj_library::Index::reader_default()
-                                    .and_then(|index| index.page(&whole))
-                                    .map(|all| all.total == 0)
+                                // Nothing for these folders, and the folders hold records: the cache is made
+                                // from them. The whole index need not be empty — a database that holds rows
+                                // under a folder the DJ no longer opens is still a database this root is
+                                // missing from. A running import is the one thing to keep out of the way of:
+                                // it writes the same file.
+                                let importing = query_cells
+                                    .import()
+                                    .map(|state| state.running)
                                     .unwrap_or(false);
-                                eprintln!(
-                                    "dj-engine: page {} empty for {} folders, index empty: {}",
-                                    query.id,
-                                    folders.len(),
-                                    nothing_anywhere
-                                );
-                                if nothing_anywhere {
+                                if !importing {
                                     match dj_library::Index::open_default() {
                                         Ok(mut index) => match index.fill_from(&folders) {
                                             Ok(report) => eprintln!(
-                                                "dj-engine: the index was empty, filled {} rows from \
-                                                 {} folders",
-                                                report.tracks,
-                                                folders.len()
+                                                "dj-engine: the index had nothing for {} folders, filled \
+                                                 {} rows",
+                                                folders.len(),
+                                                report.tracks
                                             ),
                                             Err(error) => eprintln!(
                                                 "dj-engine: the index could not be filled: {error}"
