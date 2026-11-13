@@ -6389,6 +6389,38 @@ static int runLockCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Bri
     }
     std::fprintf(stdout, "dj-ui: the collection's Analyze... stands down for a locked track\n");
 
+    // ... and it has to look dead, not only be dead: an entry painted like its neighbours is an entry the
+    // hand keeps trying. The colours are read off the two entries, and the dead one must wear the same
+    // grey the shell's dim text wears.
+    const auto entryColour = [](QQuickItem *entry) -> QColor {
+        if (entry == nullptr) {
+            return QColor();
+        }
+        const QObject *face = entry->property("contentItem").value<QObject *>();
+        return face != nullptr ? face->property("color").value<QColor>() : QColor();
+    };
+    QQuickItem *liveEntry = findItem(window->contentItem(), QStringLiteral("rescanCollection"));
+    QQuickItem *dimText = findItem(window->contentItem(), QStringLiteral("collectionCount"));
+    const QColor liveColour = entryColour(liveEntry);
+    const QColor deadColour = entryColour(menuEntry);
+    const QColor dimColour = dimText != nullptr ? dimText->property("color").value<QColor>() : QColor();
+    if (!liveColour.isValid() || !deadColour.isValid()) {
+        std::fprintf(stderr, "dj-ui: the menu entries have no readable text colour\n");
+        return 1;
+    }
+    if (deadColour == liveColour) {
+        std::fprintf(stderr, "dj-ui: a dead menu entry is painted like a live one (%s)\n",
+                     qPrintable(deadColour.name()));
+        return 1;
+    }
+    if (!dimColour.isValid() || deadColour != dimColour) {
+        std::fprintf(stderr, "dj-ui: a dead menu entry is %s, the shell's dim text is %s\n",
+                     qPrintable(deadColour.name()), qPrintable(dimColour.name()));
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: a dead menu entry wears %s, a live one %s\n",
+                 qPrintable(deadColour.name()), qPrintable(liveColour.name()));
+
     // A selection of many where one is locked: the analysis goes to the free tracks only. The witness is
     // the files on disk — a measurement writes the track's metadata — so the free track's record must
     // move and the locked track's must not. The engine refuses a locked track anyway; this proves the
@@ -6506,6 +6538,11 @@ static int runLockCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Bri
     QQuickItem *freed = openMenu();
     if (freed == nullptr || !freed->isEnabled()) {
         std::fprintf(stderr, "dj-ui: the menu's Analyze... stayed dead after the lock came off\n");
+        return 1;
+    }
+    if (entryColour(freed) != liveColour) {
+        std::fprintf(stderr, "dj-ui: the menu's Analyze... wears %s though it answers again (%s)\n",
+                     qPrintable(entryColour(freed).name()), qPrintable(liveColour.name()));
         return 1;
     }
     std::fprintf(stdout, "dj-ui: Analyze answers again once the lock is off, in the deck and in the menu\n");

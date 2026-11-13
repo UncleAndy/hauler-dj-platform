@@ -10,6 +10,8 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
+import "../controls"
+
 import "../mixer"
 
 Pane {
@@ -556,7 +558,7 @@ Pane {
     Menu {
         id: fileMenu
         objectName: "browserMenu"
-        MenuItem {
+        MenuEntry {
             objectName: "addToCollection"
             text: qsTr("Add files to collection…")
             // A file that is already in the collection cannot be added to it: the entry belongs to the
@@ -565,7 +567,7 @@ Pane {
             enabled: browser.selection.length > 0
             onClicked: browser.askImport()
         }
-        MenuItem {
+        MenuEntry {
             objectName: "rescanCollection"
             text: qsTr("Rescan collection…")
             // Tags and metadata read from the files again, and the genre counts recounted. Files that
@@ -573,7 +575,7 @@ Pane {
             visible: browser.section === "collection"
             onClicked: Browser.rescanCollection()
         }
-        MenuItem {
+        MenuEntry {
             objectName: "analyzeSelection"
             text: qsTr("Analyze…")
             // Tempo and key, measured again: what an import could not measure, or what the DJ wants
