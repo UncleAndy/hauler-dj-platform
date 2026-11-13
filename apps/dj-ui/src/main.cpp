@@ -6368,6 +6368,17 @@ int main(int argc, char *argv[])
         }
         browser.rememberFolder(folder);
     });
+    // The folder the DJ browsed to is worth remembering even if he loaded nothing: a session that only
+    // remembers loads sends him back to the same place every start, which is what he reported.
+    QObject::connect(&browser, &FileBrowser::changed, [&session, &browser]() {
+        if (browser.mode() != QLatin1String("files")) {
+            return;
+        }
+        const QString folder = browser.folder();
+        if (!folder.isEmpty() && session.rememberFolder(folder)) {
+            session.save();
+        }
+    });
     qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "Browser", &browser);
     // A type, not a singleton: two decks hold two envelopes, and a singleton made the second deck
     // paint the first deck's waveform.
