@@ -155,6 +155,9 @@ private:
     bool m_paged = false;
     /// The offset of the question in flight: the answer does not carry it, the question does.
     int m_askedOffset = 0;
+    /// The question in flight, as one string: the same question asked again while the answer is on its
+    /// way is not a second question — it is a flush of commands the engine has to answer one by one.
+    QString m_askedSignature;
     /// The genres the collection is narrowed to. Empty is the whole collection.
     QStringList m_genres;
     int m_total = 0;

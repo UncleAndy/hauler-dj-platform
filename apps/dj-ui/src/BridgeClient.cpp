@@ -212,6 +212,7 @@ void FileBrowser::openCollection(const QStringList &roots)
     m_pageOffset = 0;
     m_pageTotal = 0;
     m_pageAnsweredFor = 0;
+    m_askedSignature.clear();
     // The interface does not walk the disks: the walk is how the database is prepared, not how it is
     // read. An empty answer here is an empty collection, and it is shown as such.
     if (!sameRoots) {
@@ -240,6 +241,20 @@ void FileBrowser::askPage(int offset)
     if (m_bridge == nullptr) {
         return;
     }
+    // The same question, still unanswered: say nothing. A panel that re-asks on every progress tick
+    // floods the engine and makes the status flicker between "waiting for the engine" and ready.
+    QString signature = QString::number(offset) + QLatin1Char('|') + m_filter + QLatin1Char('|')
+        + m_genres.join(QLatin1Char(',')) + QLatin1Char('|');
+    for (const QVariant &entry : m_sort) {
+        const QVariantMap key = entry.toMap();
+        signature += key.value(QStringLiteral("column")).toString()
+            + (key.value(QStringLiteral("ascending")).toBool() ? QStringLiteral("+") : QStringLiteral("-"))
+            + QLatin1Char(',');
+    }
+    if (signature == m_askedSignature && m_pageAnsweredFor != m_pageQuery) {
+        return;
+    }
+    m_askedSignature = signature;
     const int id = ++m_pageQuery;
     QVariantMap query;
     query.insert(QStringLiteral("id"), id);
