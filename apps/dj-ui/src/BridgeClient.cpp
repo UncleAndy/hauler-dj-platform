@@ -203,19 +203,24 @@ void FileBrowser::refreshCollection()
 void FileBrowser::openCollection(const QStringList &roots)
 {
     const QStringList listed = roots.isEmpty() ? QStringList{defaultCollectionRoot()} : roots;
+    // Same folders, same list: a refresh after an analysis must not blank the list while the answer is
+    // on its way — the DJ sees his collection vanish and come back for no reason.
+    const bool sameRoots = listed == m_roots;
     m_roots = listed;
     m_folder = listed.join(QStringLiteral(" | "));
     m_mode = QStringLiteral("collection");
     m_pageOffset = 0;
     m_pageTotal = 0;
     m_pageAnsweredFor = 0;
-    setPaged(false);
     // The interface does not walk the disks: the walk is how the database is prepared, not how it is
     // read. An empty answer here is an empty collection, and it is shown as such.
-    m_all.clear();
-    m_total = 0;
-    applyFilter();
-    emit changed();
+    if (!sameRoots) {
+        setPaged(false);
+        m_all.clear();
+        m_total = 0;
+        applyFilter();
+        emit changed();
+    }
     if (m_bridge != nullptr && m_bridge->isConnected()) {
         askPage(0);
     }
@@ -299,6 +304,16 @@ void FileBrowser::takePage()
                          {QStringLiteral("album"), row.value(QStringLiteral("album"))},
                          {QStringLiteral("title"), row.value(QStringLiteral("title"))},
                          {QStringLiteral("fingerprint"), row.value(QStringLiteral("fingerprint"))}};
+        // The tempo and the key the index holds: the table reads `bpm` and `key`, and a page that
+        // carried only names would show empty cells for tracks the deck plays with both known.
+        const double bpm = row.value(QStringLiteral("bpm")).toDouble();
+        if (bpm > 0.0) {
+            made.insert(QStringLiteral("bpm"), bpm);
+        }
+        const QString musicalKey = row.value(QStringLiteral("musical_key")).toString();
+        if (!musicalKey.isEmpty()) {
+            made.insert(QStringLiteral("key"), musicalKey);
+        }
         made.insert(QStringLiteral("duration_ms"),
                     rate > 0.0 && frames > 0.0
                         ? static_cast<qint64>(frames * 1000.0 / rate + 0.5)
