@@ -5804,6 +5804,11 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
             QPointF(headerItem->width() * artistWidth, headerItem->height() / 2.0));
     }
     std::fprintf(stdout, "dj-ui: the splitter sits at %.1f,%.1f px\n", edge.x(), edge.y());
+    // The press needs the frame the header was laid out in: measuring the cells and pressing in the same
+    // breath sends the press into a header that has not finished placing them, and the drag does nothing.
+    // A hand cannot do this faster, and the check should not either.
+    QCoreApplication::processEvents();
+    QThread::msleep(80);
     const QPointF pulled = edge + QPointF(40.0, 0.0);
     for (const auto &step : {std::make_pair(QEvent::MouseButtonPress, edge),
                              std::make_pair(QEvent::MouseMove, pulled),
