@@ -4762,14 +4762,19 @@ static bool writeClickTrack(const QString &path, double bpm, double seconds)
 {
     const int rate = 48000;
     const int frames = int(seconds * rate);
-    const int clickFrames = rate / 200; // 5 ms: an onset, not a note
+    const int clickFrames = rate / 100; // 10 ms: an onset, not a note
     QByteArray audio(size_t(frames) * 2, '\0');
     const double beatFrames = 60.0 / bpm * rate;
+    // Noise, not a tone: a tempo detector votes on spectral flux, and a burst with energy across the
+    // spectrum is what it hears as a beat. A square wave only moves two partials and reads as nothing.
+    quint32 noise = 0x9e3779b9u;
     for (double beat = 0.0; beat + clickFrames < frames; beat += beatFrames) {
         const int start = int(beat);
         for (int at = 0; at < clickFrames; ++at) {
+            noise = noise * 1664525u + 1013904223u;
             const double decay = 1.0 - double(at) / double(clickFrames);
-            const short value = short(14000.0 * decay * (at % 2 == 0 ? 1.0 : -1.0));
+            const double sample = (double((noise >> 9) & 0x7fff) / 16384.0 - 1.0) * decay;
+            const short value = short(12000.0 * sample);
             audio[start * 2 + at * 2] = char(value & 0xff);
             audio[start * 2 + at * 2 + 1] = char((value >> 8) & 0xff);
         }
