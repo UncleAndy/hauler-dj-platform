@@ -5838,20 +5838,39 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     // A hand cannot do this faster, and the check should not either.
     QCoreApplication::processEvents();
     QThread::msleep(80);
-    const QPointF pulled = edge + QPointF(40.0, 0.0);
-    // Each step gets a frame of its own: a hand cannot press, move and let go inside one, and the handler
-    // needs the frame — the press is what grabs the splitter, and a move that arrives in the same breath
-    // as it is a move with nothing grabbed. That is the difference between 0,22 and 0,25 on a busy machine.
-    for (const auto &step : {std::make_pair(QEvent::MouseButtonPress, edge),
-                             std::make_pair(QEvent::MouseMove, pulled),
-                             std::make_pair(QEvent::MouseButtonRelease, pulled)}) {
-        const Qt::MouseButtons buttons =
-            step.first == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton;
-        QMouseEvent event(step.first, step.second, window->mapToGlobal(step.second.toPoint()),
-                          Qt::LeftButton, buttons, Qt::NoModifier);
-        QCoreApplication::sendEvent(window, &event);
-        QCoreApplication::processEvents();
-        QThread::msleep(40);
+    QPointF pulled = edge + QPointF(40.0, 0.0);
+    // The press is measured and then delivered, and the panel can be resized in between: the boundary
+    // moves by a fifth of whatever the header gained, which is more than the five pixels a press may miss
+    // by. So the point is asked again for each press, and the press counts only when the strip took hold
+    // of the splitter — a miss costs one more press, not a false green.
+    // Each step also gets a frame of its own: a hand cannot press, move and let go inside one, and the
+    // handler needs the frame to grab what the press named.
+    auto *drag = byName(window->contentItem(), QStringLiteral("collectionHeaderDrag"));
+    auto *header = byName(window->contentItem(), QStringLiteral("collectionHeader"));
+    bool grabbed = false;
+    for (int attempt = 0; attempt < 4 && !grabbed; ++attempt) {
+        if (header != nullptr) {
+            QVariant where;
+            if (QMetaObject::invokeMethod(header, "boundaryX", Q_RETURN_ARG(QVariant, where),
+                                          Q_ARG(QVariant, QVariant(0)))) {
+                edge = header->mapToScene(QPointF(where.toDouble(), header->height() / 2.0));
+                pulled = edge + QPointF(40.0, 0.0);
+            }
+        }
+        for (const auto &step : {std::make_pair(QEvent::MouseButtonPress, edge),
+                                 std::make_pair(QEvent::MouseMove, pulled),
+                                 std::make_pair(QEvent::MouseButtonRelease, pulled)}) {
+            const Qt::MouseButtons buttons =
+                step.first == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton;
+            QMouseEvent event(step.first, step.second, window->mapToGlobal(step.second.toPoint()),
+                              Qt::LeftButton, buttons, Qt::NoModifier);
+            QCoreApplication::sendEvent(window, &event);
+            QCoreApplication::processEvents();
+            if (step.first == QEvent::MouseButtonPress && drag != nullptr) {
+                grabbed = drag->property("resizeIndex").toInt() >= 0;
+            }
+            QThread::msleep(40);
+        }
     }
     QCoreApplication::processEvents();
     const double dragged = layout.collectionColumns().at(0).toMap().value(QStringLiteral("width")).toDouble();
