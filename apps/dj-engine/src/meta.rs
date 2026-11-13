@@ -213,11 +213,9 @@ pub fn write_beatgrid(
     if !force && (meta.analysis_lock || meta.beatgrid.is_some()) {
         return Ok(false);
     }
-    // A grid written because a person asked for it is a decision: the automatic measurement must not
-    // quietly replace it on the next load, and the flag is what says so.
-    if force {
-        meta.analysis_lock = true;
-    }
+    // A stored grid is already the decision: the condition above keeps the automatic pass away from a
+    // track that has one, so no flag is needed for that. The lock is the DJ's switch and stays his —
+    // setting it here took the Measure button away the moment he used it once.
     meta.beatgrid = Some(dj_library::BeatGrid {
         bpm: grid.bpm(),
         first_beat_frame: grid.first_beat_frame(),

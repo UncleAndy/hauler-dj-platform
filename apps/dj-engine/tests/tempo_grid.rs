@@ -190,12 +190,17 @@ fn a_measurement_the_dj_asked_for_replaces_the_stored_grid() {
         grid.bpm
     );
     assert_eq!(grid.first_beat_frame, 9_000);
-    // A grid the DJ asked for is locked against the next automatic measurement: a hand edit outranks a
-    // detector, and this flag is the only thing that remembers it after a restart.
+    // The lock is the DJ's switch: measuring leaves it alone, and the grid itself is what keeps the next
+    // automatic pass away. A flag set here would grey the Measure button after the first press.
     assert!(
-        loaded.meta.analysis_lock,
-        "a hand edit must lock the grid against re-measurement"
+        !loaded.meta.analysis_lock,
+        "a measurement must not lock the track on the DJ's behalf"
     );
+    // The automatic pass still skips a track that has a grid, whether or not anything is locked.
+    let automatic = dj_domain::BeatGrid::single(120.0, 1_000).expect("a grid");
+    let skipped = dj_engine::meta::write_beatgrid(&store, "vol", &dir, &track, &automatic, false)
+        .expect("second");
+    assert!(!skipped, "a stored grid outranks the automatic pass");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
