@@ -383,6 +383,7 @@ pub fn snapshot(
         import: None,
         analysis: None,
         collection: None,
+        genres: Vec::new(),
         protocol: dj_domain::STATE_PROTOCOL.to_string(),
         // A snapshot taken from the mixer alone says nothing about the loader's cache.
         cache_budget_bytes: 0,
@@ -941,6 +942,8 @@ pub struct StateCells {
     analysis: std::sync::Mutex<Option<dj_domain::AnalyzeState>>,
     /// The last collection page the browser asked for: the engine writes it, the panel reads it.
     collection: std::sync::Mutex<Option<dj_domain::CollectionPage>>,
+    /// The genres of the collection, with their counts: the answer to the genre question.
+    genres: std::sync::Mutex<Vec<dj_domain::GenreCount>>,
 }
 
 impl Default for StateCells {
@@ -1158,6 +1161,7 @@ impl StateCells {
             import: std::sync::Mutex::new(None),
             analysis: std::sync::Mutex::new(None),
             collection: std::sync::Mutex::new(None),
+            genres: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -1165,6 +1169,14 @@ impl StateCells {
     ///
     /// The writer is the engine's own thread and the reader is the publisher: a mutex, not an atomic —
     /// a page is a vector, and half a vector is not a page.
+    /// Put the genre counts where the snapshot publishes them.
+    pub fn set_genres(&self, genres: Vec<dj_domain::GenreCount>) {
+        if let Ok(mut slot) = self.genres.lock() {
+            *slot = genres;
+        }
+    }
+
+    /// Put a collection page where the snapshot publishes it.
     pub fn set_collection(&self, page: dj_domain::CollectionPage) {
         if let Ok(mut slot) = self.collection.lock() {
             *slot = Some(page);
@@ -1423,6 +1435,11 @@ impl StateCells {
             // the mutex that guards the import for the same reason.
             collection: self
                 .collection
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .clone(),
+            genres: self
+                .genres
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
                 .clone(),

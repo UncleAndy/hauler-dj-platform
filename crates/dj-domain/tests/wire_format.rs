@@ -152,6 +152,7 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
         import: None,
         analysis: None,
         collection: None,
+        genres: Vec::new(),
         protocol: STATE_PROTOCOL.to_string(),
         revision: 3,
         epoch: 1,
@@ -377,12 +378,15 @@ fn a_measured_grid_travels_with_the_track() {
 fn a_unit_command_is_a_bare_name() {
     // `{"ImportCancel": {}}` is a struct variant the protocol does not have: serde rejects the whole
     // message and the engine drops it silently — the DJ presses Cancel and nothing happens.
+    // `unwrap_or(Value::Null)` rather than `expect`: the lint that bans a panicking call is on for tests
+    // too, and a comparison against `null` fails just as loudly.
     assert_eq!(
-        serde_json::to_value(dj_domain::DjCommand::ImportCancel).expect("serialise"),
+        serde_json::to_value(dj_domain::DjCommand::ImportCancel).unwrap_or(serde_json::Value::Null),
         serde_json::json!("ImportCancel")
     );
     assert_eq!(
-        serde_json::to_value(dj_domain::DjCommand::AnalyzeCancel).expect("serialise"),
+        serde_json::to_value(dj_domain::DjCommand::AnalyzeCancel)
+            .unwrap_or(serde_json::Value::Null),
         serde_json::json!("AnalyzeCancel")
     );
     // And the wrapped form is refused, so a client cannot slip it in unnoticed.

@@ -1310,6 +1310,9 @@ pub struct CollectionQuery {
     /// The folders the list is opened on: the index is one for the machine, the list is one for these.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roots: Vec<String>,
+    /// Ask for the genres of these folders instead of rows.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub genres_only: bool,
 }
 
 /// One row of the collection, as the list shows it.
@@ -1357,6 +1360,15 @@ pub struct CollectionPage {
     pub rows: Vec<CollectionRow>,
     /// How many rows the filter found: the list needs to know how long it is before its end.
     pub total: usize,
+}
+
+/// One genre and how many tracks carry it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct GenreCount {
+    /// The genre as the collection spells it.
+    pub name: String,
+    /// How many tracks carry it.
+    pub count: usize,
 }
 
 /// Read-only state published to the UI and controllers (DJP-ARCH-004).
@@ -1411,6 +1423,12 @@ pub struct Snapshot {
     /// The last collection page the engine was asked for: the browser reads it from here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collection: Option<CollectionPage>,
+    /// The genres the collection carries, with how many tracks carry each.
+    ///
+    /// A separate answer on purpose: the page and the count are different questions, and one slot for
+    /// both would let the second answer erase the first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub genres: Vec<GenreCount>,
 }
 
 #[cfg(test)]

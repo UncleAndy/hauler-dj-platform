@@ -23,6 +23,7 @@ fn the_question_reaches_the_index_unchanged() {
         offset: 40,
         limit: 20,
         roots: Vec::new(),
+        genres_only: false,
     };
     let asked = dj_engine::page_query(&query);
     assert_eq!(

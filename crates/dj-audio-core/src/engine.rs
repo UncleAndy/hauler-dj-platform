@@ -279,6 +279,7 @@ impl Engine {
             import: None,
             analysis: None,
             collection: None,
+            genres: Vec::new(),
             protocol: STATE_PROTOCOL.to_string(),
             // The A01 renderer has no cache: nothing is allowed and nothing is spent.
             cache_budget_bytes: 0,

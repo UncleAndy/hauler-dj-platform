@@ -1327,6 +1327,21 @@ static int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     browser.openCollection({collectionRoot});
     QCoreApplication::processEvents();
     const QVariantList collected = browser.entries();
+    // How many the list held before the search narrowed it: printed with the summary at the end.
+    int unfiltered = 0;
+    if (!hasEngine) {
+        // The collection is the index, and this check runs without an engine to ask: an empty list is the
+        // honest answer, not a lost collection. What the list contains is measured by
+        // --collection-page-check, which brings its own engine and index.
+        std::fprintf(stdout,
+                     "dj-ui: without an engine the collection is empty (%d of %d), as the index says\n",
+                     static_cast<int>(collected.size()), browser.total());
+        if (!collected.isEmpty() || browser.mode() != QStringLiteral("collection")) {
+            std::fprintf(stderr, "dj-ui: without an engine the collection is not empty (%d, mode %s)\n",
+                         static_cast<int>(collected.size()), qPrintable(browser.mode()));
+            return 1;
+        }
+    } else {
     // A rejected copy is not part of the collection: three files on disk, two in the list.
     std::fprintf(stdout, "dj-ui: collection %s -> %d tracks in mode %s\n",
                  qPrintable(browser.folder()), static_cast<int>(collected.size()),
@@ -1389,7 +1404,7 @@ static int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     const int filtered = static_cast<int>(browser.entries().size());
     browser.setFilter(QString());
     QCoreApplication::processEvents();
-    const int unfiltered = static_cast<int>(browser.entries().size());
+    unfiltered = static_cast<int>(browser.entries().size());
     std::fprintf(stdout, "dj-ui: collection search -> %d of %d, then %d\n", filtered,
                  browser.total(), unfiltered);
     if (filtered != 1 || unfiltered != 2) {
@@ -1397,6 +1412,8 @@ static int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
                      filtered, unfiltered);
         return 1;
     }
+    }
+
     // A track from the collection loads the way a file from a folder does.
     selectRow(0);
     const QVariantMap chosen = panel->property("selected").toMap();
@@ -1421,7 +1438,10 @@ static int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
                      qPrintable(onCollection), qPrintable(expected));
         return 1;
     }
-    if (!hasEngine && onCollection != QStringLiteral("no engine for C")) {
+    // Without an engine there is no index, so the list is empty and there is no row to choose: the press
+    // on an empty list says exactly that, and the refusal of a real track is checked above.
+    if (!hasEngine && onCollection != QStringLiteral("no engine for C")
+        && onCollection != QStringLiteral("nothing to load")) {
         std::fprintf(stderr, "dj-ui: without an engine the collection said '%s'\n",
                      qPrintable(onCollection));
         return 1;
@@ -1482,7 +1502,9 @@ static int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     const QString afterFiles = browser.mode();
     std::fprintf(stdout, "dj-ui: sections -> %s (%d tracks), then %s\n",
                  qPrintable(afterCollection), pressedCount, qPrintable(afterFiles));
-    if (afterCollection != QStringLiteral("collection") || pressedCount != 2
+    // Two tracks from the index when there is an engine, none when there is not.
+    const int wantedPressed = hasEngine ? 2 : 0;
+    if (afterCollection != QStringLiteral("collection") || pressedCount != wantedPressed
         || afterFiles != QStringLiteral("files")) {
         std::fprintf(stderr, "dj-ui: pressing a section did not move the list\n");
         return 1;
@@ -5118,6 +5140,55 @@ static int runCollectionPageCheck(QQmlApplicationEngine &engine, FileBrowser &br
     }
     std::fprintf(stdout, "dj-ui: the index and the walk agree on every row\n");
 
+    // The genre boxes: the engine counts them in its own table and publishes them apart from the page. The
+    // walk knows the same genres from the same files, so the two counts must agree — that is what makes
+    // "the boxes come from the database" a measurement instead of a claim.
+    {
+        QMap<QString, int> walkedGenres;
+        for (const QVariant &entry : walked) {
+            for (const QString &genre : entry.toMap().value(QStringLiteral("genres")).toStringList()) {
+                walkedGenres[genre.toLower()] += 1;
+            }
+        }
+        QMap<QString, int> counted;
+        QElapsedTimer waitForGenres;
+        waitForGenres.start();
+        while (waitForGenres.elapsed() < 5000) {
+            QCoreApplication::processEvents();
+            const QVariantList said = bridge.snapshot().value(QStringLiteral("genres")).toList();
+            if (!said.isEmpty()) {
+                counted.clear();
+                for (const QVariant &entry : said) {
+                    const QVariantMap box = entry.toMap();
+                    counted.insert(box.value(QStringLiteral("name")).toString().toLower(),
+                                   box.value(QStringLiteral("count")).toInt());
+                }
+                break;
+            }
+            QThread::msleep(20);
+        }
+        if (counted.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: the index said nothing about genres\n");
+            return 1;
+        }
+        if (counted != walkedGenres) {
+            std::fprintf(stderr, "dj-ui: the genre table disagrees with the walk\n");
+            for (auto it = counted.cbegin(); it != counted.cend(); ++it) {
+                std::fprintf(stderr, "dj-ui:   table %s %d, walk %d\n", qPrintable(it.key()),
+                             it.value(), walkedGenres.value(it.key(), -1));
+            }
+            for (auto it = walkedGenres.cbegin(); it != walkedGenres.cend(); ++it) {
+                if (!counted.contains(it.key())) {
+                    std::fprintf(stderr, "dj-ui:   only in the walk: %s %d\n", qPrintable(it.key()),
+                                 it.value());
+                }
+            }
+            return 1;
+        }
+        std::fprintf(stdout, "dj-ui: the genre boxes come from the table: %d genres, the walk agrees\n",
+                     static_cast<int>(counted.size()));
+    }
+
     // A genre filter must narrow the list, not empty it: the answer is already narrowed by the index and
     // must be shown as it came. This is the bug the DJ reported — a saved genre left an empty collection.
     if (!pageRows.isEmpty()) {
@@ -5405,25 +5476,21 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         std::fprintf(stderr, "dj-ui: a single file asked for confirmation\n");
         return 1;
     }
+    // The same recording, the same duration, bitrate and depth: the batch sets it aside on its own, without
+    // stopping to ask. A question here would be the very thing the rule exists to stop.
     batch.restart();
-    while (batch.elapsed() < 30000 && !questionOpen()) {
-        QCoreApplication::processEvents();
-        QThread::msleep(10);
-    }
-    if (!questionOpen()) {
-        std::fprintf(stderr, "dj-ui: the single file did not reach the duplicate question\n");
-        return 1;
-    }
-    // The file is already there: skipping is the answer, and nothing may be added.
-    QMetaObject::invokeMethod(skipButton, "clicked");
     if (!waitDone(30000)) {
         std::fprintf(stderr, "dj-ui: the single-file batch did not finish\n");
+        return 1;
+    }
+    if (questionOpen()) {
+        std::fprintf(stderr, "dj-ui: an identical file asked a question\n");
         return 1;
     }
     const int afterSkip = collectionFiles(collectionRoot);
     std::fprintf(stdout, "dj-ui: the collection still holds %d files\n", afterSkip);
     if (afterSkip != 2) {
-        std::fprintf(stderr, "dj-ui: skipping added something (%d files)\n", afterSkip);
+        std::fprintf(stderr, "dj-ui: a set-aside copy added something (%d files)\n", afterSkip);
         return 1;
     }
 
@@ -5434,8 +5501,10 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     QTimer::singleShot(300, &settled, &QEventLoop::quit);
     settled.exec();
     const QVariantList rows = browser.entries();
-    if (rows.size() != 2) {
-        std::fprintf(stderr, "dj-ui: the collection section lists %d rows, wanted 2\n",
+    // One row, not two: the batch placed one file and set the identical copy aside, and the list is the
+    // index, so it holds what the import actually placed.
+    if (rows.size() != 1) {
+        std::fprintf(stderr, "dj-ui: the collection section lists %d rows, wanted 1\n",
                      static_cast<int>(rows.size()));
         return 1;
     }
@@ -5520,8 +5589,15 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         std::fprintf(stderr, "dj-ui: the header is not on screen to drag\n");
         return 1;
     }
-    const QPointF edge =
-        headerItem->mapToScene(QPointF(headerItem->width() * artistWidth, headerItem->height() / 2.0));
+    // The edge is where the header's first cell ends, measured on the cell itself: a share of the header's
+    // width is a guess that misses the splitter as soon as the list's width changes — one row instead of two
+    // is enough to move it out of reach, and a check that misses its own target reports a bug that is not
+    // there.
+    QQuickItem *firstHeaderCell = byName(window->contentItem(), QStringLiteral("collectionHeaderCell_0"));
+    const QPointF edge = firstHeaderCell != nullptr && firstHeaderCell->width() > 0.0
+        ? firstHeaderCell->mapToScene(
+              QPointF(firstHeaderCell->width() - 1.0, firstHeaderCell->height() / 2.0))
+        : headerItem->mapToScene(QPointF(headerItem->width() * artistWidth, headerItem->height() / 2.0));
     const QPointF pulled = edge + QPointF(40.0, 0.0);
     for (const auto &step : {std::make_pair(QEvent::MouseButtonPress, edge),
                              std::make_pair(QEvent::MouseMove, pulled),

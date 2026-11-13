@@ -19,23 +19,31 @@ fn melody(path: &Path, seconds: u32) {
 /// The same tune on another root. Two files that differ only in length are the same recording, and a
 /// batch of them would be a batch of duplicate questions rather than four jobs.
 fn melody_at(path: &Path, seconds: u32, base: f64) {
+    melody_rate(path, seconds, base, 44_100);
+}
+
+/// The same tune recorded at another sample rate: the duration matches, the bitrate does not.
+///
+/// That is what makes it a version of one recording rather than a second copy of it: files identical in
+/// duration, bitrate and depth are set aside without a question, and a test that wanted a question would
+/// never see one.
+fn melody_rate(path: &Path, seconds: u32, base: f64, rate: u32) {
     const PITCHES: [f64; 12] = [
         1.0, 1.122, 1.26, 1.335, 1.498, 1.682, 1.782, 2.0, 2.245, 2.52, 2.67, 2.997,
     ];
-    const RATE: u32 = 44_100;
-    let samples = RATE * seconds;
+    let samples = rate * seconds;
     let mut data = Vec::with_capacity(samples as usize * 2);
     let mut phase = 0.0_f64;
     let mut noise = 0x2545_F491_4F6C_DD1D_u64;
     let mut step = base;
     for index in 0..samples {
-        if index.is_multiple_of(RATE / 4) {
+        if index.is_multiple_of(rate / 4) {
             noise = noise
                 .wrapping_mul(6_364_136_223_846_793_005)
                 .wrapping_add(1);
             step = base * PITCHES[(noise >> 33) as usize % PITCHES.len()];
         }
-        phase += std::f64::consts::TAU * step / f64::from(RATE);
+        phase += std::f64::consts::TAU * step / f64::from(rate);
         data.extend_from_slice(&((phase.sin() * 12_000.0) as i16).to_le_bytes());
     }
     let mut wav = Vec::new();
@@ -45,8 +53,8 @@ fn melody_at(path: &Path, seconds: u32, base: f64) {
     wav.extend_from_slice(&16u32.to_le_bytes());
     wav.extend_from_slice(&1u16.to_le_bytes());
     wav.extend_from_slice(&1u16.to_le_bytes());
-    wav.extend_from_slice(&RATE.to_le_bytes());
-    wav.extend_from_slice(&(RATE * 2).to_le_bytes());
+    wav.extend_from_slice(&rate.to_le_bytes());
+    wav.extend_from_slice(&(rate * 2).to_le_bytes());
     wav.extend_from_slice(&2u16.to_le_bytes());
     wav.extend_from_slice(&16u16.to_le_bytes());
     wav.extend_from_slice(b"data");
@@ -86,7 +94,7 @@ fn a_duplicate_is_asked_about_and_the_answer_is_obeyed() {
     let first = sources.join("A - Track.wav");
     let second = sources.join("A - Track (copy).wav");
     melody(&first, 20);
-    melody(&second, 20);
+    melody_rate(&second, 20, 220.0, 22_050);
 
     let cells = Arc::new(StateCells::new());
     let worker_cells = Arc::clone(&cells);

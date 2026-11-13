@@ -1454,18 +1454,93 @@ fn serve_client(
                         std::thread::spawn(move || {
                             // The index is a cache over the records: a query that cannot open it is an
                             // empty answer, not a failure — the browser then shows what it walked itself.
-                            let page = dj_library::Index::reader_default()
-                                .and_then(|index| index.page(&dj_engine::page_query(&query)))
-                                .map(|page| dj_domain::CollectionPage {
-                                    id: query.id,
-                                    total: page.total,
-                                    rows: page.rows.iter().map(dj_engine::collection_row).collect(),
-                                })
-                                .unwrap_or(dj_domain::CollectionPage {
-                                    id: query.id,
-                                    rows: Vec::new(),
-                                    total: 0,
+                            if query.genres_only {
+                                // The boxes ask the genre table itself: a count over a page of two
+                                // hundred rows is a count over a page, not over the collection.
+                                let folders: Vec<std::path::PathBuf> =
+                                    query.roots.iter().map(std::path::PathBuf::from).collect();
+                                let genres = dj_library::Index::reader_default()
+                                    .and_then(|index| index.genre_list_in(&folders))
+                                    .map(|list| {
+                                        list.into_iter()
+                                            .map(|(name, count)| dj_domain::GenreCount {
+                                                name,
+                                                count: usize::try_from(count).unwrap_or(usize::MAX),
+                                            })
+                                            .collect::<Vec<_>>()
+                                    })
+                                    .unwrap_or_default();
+                                eprintln!(
+                                    "dj-engine: genre question answered with {} genres",
+                                    genres.len()
+                                );
+                                query_cells.set_genres(genres);
+                                let _ = query_alerts.send(ServerMessage::Ack(
+                                    dj_domain::Ack::applied(command_id, 0),
+                                ));
+                                return;
+                            }
+                            let folders: Vec<std::path::PathBuf> =
+                                query.roots.iter().map(std::path::PathBuf::from).collect();
+                            let asked = dj_engine::page_query(&query);
+                            // Reading the index is cheap and never takes a write lock: the importer and
+                            // the walks are writing, and a question that queues behind them is a list that
+                            // never appears.
+                            let mut page = dj_library::Index::reader_default()
+                                .and_then(|index| index.page(&asked))
+                                .unwrap_or_default();
+                            if page.total == 0 && !folders.is_empty() {
+                                // Nothing for these folders. When the whole index is empty it was never
+                                // built, and the cache is made once from the records in these folders —
+                                // only then is a writable handle opened, and only with nobody else's data
+                                // in the way.
+                                let whole = dj_engine::page_query(&dj_domain::CollectionQuery {
+                                    roots: Vec::new(),
+                                    ..query.clone()
                                 });
+                                let nothing_anywhere = dj_library::Index::reader_default()
+                                    .and_then(|index| index.page(&whole))
+                                    .map(|all| all.total == 0)
+                                    .unwrap_or(false);
+                                eprintln!(
+                                    "dj-engine: page {} empty for {} folders, index empty: {}",
+                                    query.id,
+                                    folders.len(),
+                                    nothing_anywhere
+                                );
+                                if nothing_anywhere {
+                                    match dj_library::Index::open_default() {
+                                        Ok(mut index) => match index.fill_from(&folders) {
+                                            Ok(report) => eprintln!(
+                                                "dj-engine: the index was empty, filled {} rows from \
+                                                 {} folders",
+                                                report.tracks,
+                                                folders.len()
+                                            ),
+                                            Err(error) => eprintln!(
+                                                "dj-engine: the index could not be filled: {error}"
+                                            ),
+                                        },
+                                        Err(error) => eprintln!(
+                                            "dj-engine: the index could not be opened to fill it: {error}"
+                                        ),
+                                    }
+                                    if let Ok(index) = dj_library::Index::reader_default() {
+                                        page = index.page(&asked).unwrap_or(page);
+                                    }
+                                }
+                            }
+                            let page = dj_domain::CollectionPage {
+                                id: query.id,
+                                total: page.total,
+                                rows: page.rows.iter().map(dj_engine::collection_row).collect(),
+                            };
+                            eprintln!(
+                                "dj-engine: page question {} answered with {} rows of {}",
+                                query.id,
+                                page.rows.len(),
+                                page.total
+                            );
                             query_cells.set_collection(page);
                             let _ = query_alerts
                                 .send(ServerMessage::Ack(dj_domain::Ack::applied(command_id, 0)));

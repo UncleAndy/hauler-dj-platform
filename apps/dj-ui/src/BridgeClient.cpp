@@ -198,7 +198,27 @@ void FileBrowser::refreshCollection()
 
 void FileBrowser::openCollection(const QStringList &roots)
 {
-    const QStringList listed = roots.isEmpty() ? QStringList{defaultCollectionRoot()} : roots;
+    QStringList listed = roots.isEmpty() ? QStringList{defaultCollectionRoot()} : roots;
+    // A root that is no longer there is not a root: a temporary folder or a moved disk leaves a path that
+    // can never list anything, and the DJ would see an empty collection with no way to know why. What
+    // survives stays; when nothing survives, the default root takes over.
+    {
+        QStringList alive;
+        for (const QString &root : listed) {
+            if (QFileInfo::exists(root)) {
+                alive.append(root);
+            }
+        }
+        if (alive.isEmpty()) {
+            alive.append(defaultCollectionRoot());
+        }
+        if (alive != listed) {
+            std::fprintf(stderr, "dj-ui: dropped %d roots that are gone, opening %d\n",
+                         static_cast<int>(listed.size() - alive.size()),
+                         static_cast<int>(alive.size()));
+        }
+        listed = alive;
+    }
     // Same folders, same list: a refresh after an analysis must not blank the list while the answer is
     // on its way — the DJ sees his collection vanish and come back for no reason.
     const bool sameRoots = listed == m_roots;
@@ -209,7 +229,7 @@ void FileBrowser::openCollection(const QStringList &roots)
     m_pageTotal = 0;
     m_pageAnsweredFor = 0;
     m_askedSignature.clear();
-    m_genreSource.clear();
+    m_genreList.clear();
     m_censusAsked = false;
     // The interface does not walk the disks: the walk is how the database is prepared, not how it is
     // read. An empty answer here is an empty collection, and it is shown as such.
@@ -227,9 +247,9 @@ void FileBrowser::openCollection(const QStringList &roots)
         // asked with a filter at all.
         std::fprintf(stderr, "dj-ui: collection opened, %d roots, %d genres chosen\n",
                      static_cast<int>(m_roots.size()), static_cast<int>(m_genres.size()));
-        // A filter restored from the layout would narrow the first page, and the boxes would be counted
-        // from it: the census goes first, so all genres are on screen from the start.
-        if (!m_genres.isEmpty() && !m_censusAsked) {
+        // The genres are asked once per opening, whatever the filter: their answer travels in its own slot,
+        // so it neither waits for the page nor erases it.
+        if (!m_censusAsked) {
             m_censusAsked = true;
             askCensus();
         }
@@ -331,23 +351,41 @@ void FileBrowser::askCensus()
     if (m_bridge == nullptr) {
         return;
     }
+    // A question of its own, never mixed with a page: the engine answers it from the genre table into the
+    // snapshot's own slot, so a page and a count cannot overwrite each other.
     QVariantMap query;
-    // -1 marks the census: its answer feeds the genre boxes and nothing else.
-    query.insert(QStringLiteral("id"), -1);
-    QVariantList order;
-    for (const QVariant &entry : m_sort) {
-        const QVariantMap key = entry.toMap();
-        QVariantMap asked;
-        asked.insert(QStringLiteral("column"), key.value(QStringLiteral("column")));
-        asked.insert(QStringLiteral("ascending"), key.value(QStringLiteral("ascending")));
-        order.append(asked);
-    }
-    query.insert(QStringLiteral("order"), order);
-    query.insert(QStringLiteral("genres"), QStringList());
+    // An id no page question reaches: page ids count up from one. It cannot be negative — the wire's id is
+    // an unsigned number, and a message carrying -1 is refused whole, connection and all: the list then
+    // sits empty with no error to show for it.
+    query.insert(QStringLiteral("id"), 2000000000);
+    query.insert(QStringLiteral("genres_only"), true);
     query.insert(QStringLiteral("roots"), m_roots);
     query.insert(QStringLiteral("offset"), 0);
-    query.insert(QStringLiteral("limit"), 2000);
+    query.insert(QStringLiteral("limit"), 0);
     m_bridge->queryCollection(query);
+}
+
+void FileBrowser::takeGenres()
+{
+    if (m_bridge == nullptr || m_mode != QLatin1String("collection")) {
+        return;
+    }
+    // The genres come as their own answer, in the snapshot's own slot: name and count, straight from the
+    // index's genre table.
+    const QVariantList counted = m_bridge->snapshot().value(QStringLiteral("genres")).toList();
+    if (counted.isEmpty()) {
+        return;
+    }
+    QVariantList boxes;
+    for (const QVariant &entry : counted) {
+        boxes.append(entry.toMap());
+    }
+    if (boxes == m_genreList) {
+        return;
+    }
+    std::fprintf(stderr, "dj-ui: the index knows %d genres\n", static_cast<int>(boxes.size()));
+    m_genreList = boxes;
+    emit genresChanged();
 }
 
 void FileBrowser::loadMore()
@@ -365,19 +403,7 @@ void FileBrowser::takePage()
     }
     const QVariantMap answer = m_bridge->collectionPage();
     const int id = answer.value(QStringLiteral("id")).toInt();
-    if (id == -1) {
-        // The census: the boxes are counted from a page taken with no genre chosen, so a restored
-        // filter does not leave one box on screen and hide the rest.
-        const QVariantList census = answer.value(QStringLiteral("rows")).toList();
-        if (!census.isEmpty()) {
-            m_genreSource = rowsOf(census);
-            std::fprintf(stderr, "dj-ui: genre census -> %d rows\n",
-                         static_cast<int>(m_genreSource.size()));
-            emit genresChanged();
-        }
-        return;
-    }
-    if (id != m_pageQuery || id == m_pageAnsweredFor) {
+    if (id == 2000000000 || id != m_pageQuery || id == m_pageAnsweredFor) {
         return;
     }
     m_pageAnsweredFor = id;
@@ -430,14 +456,6 @@ void FileBrowser::takePage()
     const QString at = cursor();
     if (offset == 0) {
         setPaged(true);
-        if (m_genres.isEmpty()) {
-            // No genre chosen: this is the whole collection, and the boxes are counted from it.
-            m_genreSource = tracks;
-        } else if (m_genreSource.isEmpty() && !m_censusAsked) {
-            // A filter was restored: ask one unfiltered page for the count alone.
-            m_censusAsked = true;
-            askCensus();
-        }
         m_all = tracks;
         m_pageOffset = tracks.size();
         m_pageTotal = total;
@@ -468,6 +486,18 @@ void FileBrowser::attachBridge(BridgeClient *bridge)
     m_bridge = bridge;
     if (bridge != nullptr) {
         connect(bridge, &BridgeClient::snapshotChanged, this, &FileBrowser::takePage);
+        connect(bridge, &BridgeClient::snapshotChanged, this, &FileBrowser::takeGenres);
+        // The section can be chosen before the handshake finishes — the shell opens on Files, but a DJ who
+        // clicks Collection at once would get a list that never asked anything and never fills. When the
+        // engine comes up, the open collection asks again.
+        connect(bridge, &BridgeClient::connectedChanged, this, [this, bridge]() {
+            if (bridge->isConnected() && m_mode == QLatin1String("collection") && m_all.isEmpty()
+                && !m_roots.isEmpty()) {
+                m_censusAsked = false;
+                askCensus();
+                askPage(0);
+            }
+        });
     }
 }
 
@@ -628,11 +658,15 @@ QVariantMap BridgeClient::collectionPage() const
 
 QVariantList FileBrowser::genreList() const
 {
+    if (!m_genreList.isEmpty()) {
+        // The index answered with name and count: no counting here.
+        return m_genreList;
+    }
+    // Before the index answers — or where there is no index — the boxes are counted from the rows in hand.
     // First spelling wins, counting ignores case: `House` and `house` are one box with two tracks.
     QMap<QString, QString> spelling;
     QMap<QString, int> counts;
-    const QVariantList &source = m_genreSource.isEmpty() ? m_all : m_genreSource;
-    for (const QVariant &entry : source) {
+    for (const QVariant &entry : m_all) {
         for (const QString &genre : entry.toMap().value(QStringLiteral("genres")).toStringList()) {
             const QString key = genre.toLower();
             if (!counts.contains(key)) {

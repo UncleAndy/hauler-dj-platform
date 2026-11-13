@@ -136,6 +136,8 @@ private:
     void setPaged(bool paged);
     /// Take the engine's page if the snapshot carries the answer this list is waiting for.
     void takePage();
+    /// Read the genre answer out of the snapshot and refresh the boxes.
+    void takeGenres();
     /// Ask the index for the rows at `offset`: one door for the first page and for the next ones.
     void askPage(int offset);
     /// One unfiltered page for the genre boxes alone: the census a restored filter needs.
@@ -159,10 +161,9 @@ private:
     int m_pageTotal = 0;
     /// True when the list is fed by the index: then scrolling asks for the next page.
     bool m_paged = false;
-    /// The rows as they came with no genre chosen: the genre list is counted from these, so ticking one
-    /// genre does not make the others vanish. Restored filters need this on the first run too, which is
-    /// why one census question is asked when a narrowed page arrives first.
-    QVariantList m_genreSource;
+    /// The genres as the index answered them, with how many tracks carry each: the boxes come from the
+    /// `genres` table, never from counting the rows of a page.
+    QVariantList m_genreList;
     /// The census question has been asked: it is a question of the session, not of every page.
     bool m_censusAsked = false;
     /// The offset of the question in flight: the answer does not carry it, the question does.

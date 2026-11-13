@@ -229,6 +229,33 @@ impl Index {
         self.rebuild_from_with(roots, &mut |_| {})
     }
 
+    /// Fill the index from the records under these roots, keeping every row it already holds.
+    ///
+    /// A rebuild starts from nothing because the records are the truth; this one is for the other case —
+    /// the list reads the database, the database was never built, and the folders do hold records. Rows
+    /// that are already there stay, so filling one folder cannot erase another.
+    pub fn fill_from(&mut self, roots: &[PathBuf]) -> Result<RebuildReport, IndexError> {
+        let records = records_under(roots);
+        let mut report = RebuildReport::default();
+        let mut batch: Vec<(TrackRow, Vec<GenreName>)> = Vec::new();
+        for record in records {
+            match read_record(&record) {
+                Some((row, genres)) => {
+                    report.tracks += 1;
+                    report.genres += genres.len();
+                    batch.push((row, genres));
+                }
+                None => report.skipped += 1,
+            }
+            if batch.len() >= REBUILD_BATCH {
+                // `false`: this is a fill, not a rebuild — nothing is deleted.
+                self.write_batch(&mut batch, false)?;
+            }
+        }
+        self.write_batch(&mut batch, false)?;
+        Ok(report)
+    }
+
     /// The same rebuild, reporting how far it has come: the same [`Progress`] the import uses, so the
     /// window that shows an import can show this too.
     pub fn rebuild_from_with(
@@ -370,6 +397,41 @@ impl Index {
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    /// The genres carried under these roots, with how many tracks carry each.
+    ///
+    /// Empty roots is the whole index. This is what the genre boxes ask: the answer comes from the
+    /// `genres` table and its links, never from counting the rows of one page.
+    pub fn genre_list_in(
+        &self,
+        roots: &[std::path::PathBuf],
+    ) -> Result<Vec<(String, u64)>, IndexError> {
+        let mut args: Vec<Value> = Vec::new();
+        let mut filter = String::new();
+        if !roots.is_empty() {
+            let mut marks = Vec::with_capacity(roots.len());
+            for folder in roots {
+                let prefix = format!("{}/", folder.to_string_lossy().trim_end_matches('/'));
+                args.push(Value::Text(prefix));
+                marks.push(format!("t.path LIKE ?{} || '%'", args.len()));
+            }
+            filter = format!(" WHERE ({})", marks.join(" OR "));
+        }
+        let sql = format!(
+            "SELECT g.name, COUNT(*) FROM genres g
+             JOIN track_genres tg ON tg.genre_id = g.id
+             JOIN tracks t ON t.fingerprint = tg.fingerprint{filter}
+             GROUP BY g.id ORDER BY g.name COLLATE NOCASE"
+        );
+        let mut statement = self.connection.prepare(&sql)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(args.iter()), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?.max(0) as u64,
+            ))
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
     /// Fingerprints of the tracks carrying any of these genres.
