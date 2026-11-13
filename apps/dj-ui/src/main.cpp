@@ -5804,6 +5804,16 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
             QPointF(headerItem->width() * artistWidth, headerItem->height() / 2.0));
     }
     std::fprintf(stdout, "dj-ui: the splitter sits at %.1f,%.1f px\n", edge.x(), edge.y());
+    // The edge is asked of the header, not measured from the cells: the header decides what a splitter
+    // is, and a second arithmetic in the check is a second answer that can be five pixels off.
+    if (QQuickItem *header = byName(window->contentItem(), QStringLiteral("collectionHeader"));
+        header != nullptr) {
+        QVariant where;
+        if (QMetaObject::invokeMethod(header, "boundaryX", Q_RETURN_ARG(QVariant, where),
+                                      Q_ARG(QVariant, QVariant(0)))) {
+            edge = header->mapToScene(QPointF(where.toDouble(), header->height() / 2.0));
+        }
+    }
     // The press needs the frame the header was laid out in: measuring the cells and pressing in the same
     // breath sends the press into a header that has not finished placing them, and the drag does nothing.
     // A hand cannot do this faster, and the check should not either.

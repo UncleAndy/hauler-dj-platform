@@ -453,6 +453,12 @@ void FileBrowser::loadMore()
     if (!m_paged || m_bridge == nullptr || m_pageOffset <= 0 || m_pageOffset >= m_pageTotal) {
         return;
     }
+    // A list that is still waiting for its first page has nothing to continue: the view calls for more as
+    // soon as it is at an end, which an empty list always is. Asking would outbid the first question, and
+    // the answer that was already on its way would then be an answer to a question the shell had dropped.
+    if (m_pageQuery != m_pageAnsweredFor) {
+        return;
+    }
     askPage(m_pageOffset);
 }
 

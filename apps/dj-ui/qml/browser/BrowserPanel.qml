@@ -1189,11 +1189,17 @@ Pane {
                 Layout.fillWidth: true
                 Layout.preferredHeight: Math.round(browser.rowHeight * 0.85)
 
-                // Where a column ends, in pixels: the line the pointer catches to change a width.
+                // Where a column ends, in pixels: the line the pointer catches to change a width. One
+                // definition, because a check that measures the edge from the cells and a header that
+                // measures it from the shares disagree by the inset, and a press beside the line is a click.
+                function boundaryX(index) {
+                    return browser.columnX(index, header.width)
+                        + browser.columnWidth(index, header.width);
+                }
+
                 function boundaryAt(x) {
                     for (let index = 0; index < browser.columns.length; ++index) {
-                        const edge = browser.columnX(index, header.width)
-                            + browser.columnWidth(index, header.width);
+                        const edge = boundaryX(index);
                         if (Math.abs(x - edge) <= 5) {
                             return index;
                         }
