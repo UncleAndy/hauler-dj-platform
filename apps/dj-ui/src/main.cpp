@@ -5810,11 +5810,22 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         header != nullptr) {
         // The header has no size until it has been laid out, and a boundary measured in a header of no
         // width is the left edge: the press lands on the wrong column and the splitter never moves.
+        // Not just nonzero: still. The panel is resized as the check sets the window up, and a boundary
+        // measured in a header that is still growing is a boundary that has moved by the time the press
+        // arrives — the same lines, the same pixels, and sometimes the column does not move.
         QElapsedTimer laid;
         laid.start();
-        while ((header->width() <= 0.0 || header->height() <= 0.0) && laid.elapsed() < 3000) {
+        double lastWidth = -1.0;
+        int still = 0;
+        while (laid.elapsed() < 3000) {
             QCoreApplication::processEvents();
             QThread::msleep(20);
+            const bool sized = header->width() > 0.0 && header->height() > 0.0;
+            still = sized && qFuzzyCompare(header->width(), lastWidth) ? still + 1 : 0;
+            lastWidth = header->width();
+            if (still >= 3) {
+                break;
+            }
         }
         QVariant where;
         if (QMetaObject::invokeMethod(header, "boundaryX", Q_RETURN_ARG(QVariant, where),
@@ -5828,6 +5839,9 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     QCoreApplication::processEvents();
     QThread::msleep(80);
     const QPointF pulled = edge + QPointF(40.0, 0.0);
+    // Each step gets a frame of its own: a hand cannot press, move and let go inside one, and the handler
+    // needs the frame — the press is what grabs the splitter, and a move that arrives in the same breath
+    // as it is a move with nothing grabbed. That is the difference between 0,22 and 0,25 on a busy machine.
     for (const auto &step : {std::make_pair(QEvent::MouseButtonPress, edge),
                              std::make_pair(QEvent::MouseMove, pulled),
                              std::make_pair(QEvent::MouseButtonRelease, pulled)}) {
@@ -5836,6 +5850,8 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         QMouseEvent event(step.first, step.second, window->mapToGlobal(step.second.toPoint()),
                           Qt::LeftButton, buttons, Qt::NoModifier);
         QCoreApplication::sendEvent(window, &event);
+        QCoreApplication::processEvents();
+        QThread::msleep(40);
     }
     QCoreApplication::processEvents();
     const double dragged = layout.collectionColumns().at(0).toMap().value(QStringLiteral("width")).toDouble();
