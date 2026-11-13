@@ -6293,6 +6293,82 @@ static int runLockCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Bri
         return 1;
     }
     std::fprintf(stdout, "dj-ui: the measure button reads \"Analyze\"\n");
+
+    // A locked grid means no measurement, and the button says so before the hand finds out: it is off,
+    // and its face is the flat pale one every deck tool wears when it cannot act.
+    const auto deckAnalyze = [&]() { return findItem(window->contentItem(), QStringLiteral("tempo_A")); };
+    const auto analyzeStandsDown = [&]() -> QString {
+        QQuickItem *button = deckAnalyze();
+        if (button == nullptr) {
+            return QStringLiteral("the deck has no Analyze button");
+        }
+        if (button->property("text").toString() != QStringLiteral("Analyze")) {
+            return QStringLiteral("the deck's measure button reads \"")
+                + button->property("text").toString() + QStringLiteral("\"");
+        }
+        if (button->isEnabled()) {
+            return QStringLiteral("Analyze still answers with the grid locked");
+        }
+        const QObject *buttonFace = button->property("background").value<QObject *>();
+        const double opacity = buttonFace != nullptr ? buttonFace->property("opacity").toDouble() : 1.0;
+        if (opacity > 0.5) {
+            return QStringLiteral("Analyze looks live with the grid locked (face %1)").arg(opacity);
+        }
+        return QString();
+    };
+    if (const QString complaint = analyzeStandsDown(); !complaint.isEmpty()) {
+        std::fprintf(stderr, "dj-ui: %s\n", qPrintable(complaint));
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: Analyze stands down under the lock, and looks stood down\n");
+
+    // The collection's own door to the same measurement: a right click on the locked row, and the entry
+    // that would measure it again is dead in the menu.
+    const auto rightClick = [&](QQuickItem *item) {
+        const QPointF centre = item->mapToScene(QPointF(item->width() / 2.0, item->height() / 2.0));
+        for (const QEvent::Type type : {QEvent::MouseMove, QEvent::MouseButtonPress,
+                                        QEvent::MouseButtonRelease}) {
+            const Qt::MouseButtons buttons =
+                type == QEvent::MouseButtonPress ? Qt::RightButton : Qt::NoButton;
+            const Qt::MouseButton button = type == QEvent::MouseMove ? Qt::NoButton : Qt::RightButton;
+            QMouseEvent event(type, centre, window->mapToGlobal(centre.toPoint()), button, buttons,
+                              Qt::NoModifier);
+            QCoreApplication::sendEvent(window, &event);
+            QCoreApplication::processEvents();
+            QThread::msleep(40);
+        }
+    };
+    const auto openMenu = [&]() -> QQuickItem * {
+        // A menu left open from the last look is not this look: Escape first, always.
+        QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+        QCoreApplication::sendEvent(window, &escape);
+        QCoreApplication::processEvents();
+        QThread::msleep(60);
+        QQuickItem *line = findItem(window->contentItem(), QStringLiteral("collectionRow_0"));
+        if (line == nullptr) {
+            return nullptr;
+        }
+        rightClick(line);
+        for (int tick = 0; tick < 60; ++tick) {
+            QQuickItem *entry = findItem(window->contentItem(), QStringLiteral("analyzeSelection"));
+            if (entry != nullptr && entry->isVisible()) {
+                return entry;
+            }
+            QThread::msleep(20);
+            QCoreApplication::processEvents();
+        }
+        return findItem(window->contentItem(), QStringLiteral("analyzeSelection"));
+    };
+    QQuickItem *menuEntry = openMenu();
+    if (menuEntry == nullptr) {
+        std::fprintf(stderr, "dj-ui: the collection menu did not open on the locked row\n");
+        return 1;
+    }
+    if (menuEntry->isEnabled()) {
+        std::fprintf(stderr, "dj-ui: Analyze... in the collection still answers for a locked track\n");
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: the collection's Analyze... stands down for a locked track\n");
     std::fprintf(stdout, "dj-ui: the lock reached the collection at once\n");
     // The second press goes in as the signal the suite presses buttons with: what is under test here is
     // that the collection follows the switch, not the mouse plumbing of a lit toggle.
@@ -6308,6 +6384,21 @@ static int runLockCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Bri
         return 1;
     }
     std::fprintf(stdout, "dj-ui: the lock left the collection with the second press\n");
+    // ... and both doors come back: a rule that only ever disables is a rule whose opposite is untested.
+    if (!waitFor([&]() { QQuickItem *button = deckAnalyze(); return button != nullptr && button->isEnabled(); },
+                 5000)) {
+        std::fprintf(stderr, "dj-ui: Analyze stayed grey after the lock came off\n");
+        return 1;
+    }
+    QQuickItem *freed = openMenu();
+    if (freed == nullptr || !freed->isEnabled()) {
+        std::fprintf(stderr, "dj-ui: the menu's Analyze... stayed dead after the lock came off\n");
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: Analyze answers again once the lock is off, in the deck and in the menu\n");
+    QKeyEvent leave(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QCoreApplication::sendEvent(window, &leave);
+    QCoreApplication::processEvents();
     // The deck is left standing, as every check leaves it.
     bridge.play(QStringLiteral("A"), false);
     std::fprintf(stdout, "dj-ui: lock check done\n");

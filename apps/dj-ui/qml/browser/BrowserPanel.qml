@@ -31,6 +31,20 @@ Pane {
     // The rows the DJ picked: a list of paths, so a folder and a file can travel to the collection
     // together. Ctrl toggles one, Shift takes the run between the anchor and the click.
     property var selection: []
+    /// The chosen tracks whose grid is locked. A locked grid is the DJ's decision, so the analysis stands
+    /// down for these: the collection cannot rewrite what the lock protects.
+    readonly property var lockedSelection: {
+        const locked = [];
+        for (const path of browser.selection) {
+            for (const entry of Browser.entries) {
+                if (entry.path === path && entry.analysis_lock === true) {
+                    locked.push(path);
+                    break;
+                }
+            }
+        }
+        return locked;
+    }
     property int anchorIndex: -1
 
     // What the engine says about the import, if one was started since it came up.
@@ -106,14 +120,27 @@ Pane {
     /// Measure the chosen tracks: one batch, with a window that says how far it has come. A single
     /// track asks nothing — there is nothing to decide — and goes straight to the progress.
     function analyzeSelection() {
-        const chosen = browser.selection.slice();
+        // The locked tracks are left out rather than measured: the engine refuses them anyway, and a
+        // batch that quietly rewrote a locked grid would be the one thing the lock exists to prevent.
+        const chosen = [];
+        for (const path of browser.selection) {
+            if (browser.lockedSelection.indexOf(path) < 0) {
+                chosen.push(path);
+            }
+        }
+        const skipped = browser.selection.length - chosen.length;
         if (chosen.length === 0) {
-            browser.lastAction = "nothing to analyse";
+            browser.lastAction = skipped > 0 ? "all chosen tracks are locked" : "nothing to analyse";
             return false;
+        }
+        if (skipped > 0) {
+            browser.lastAction = "analysing %1, %2 locked".arg(chosen.length).arg(skipped);
         }
         if (chosen.length === 1) {
             Bridge.analyzePaths(chosen, true);
-            browser.lastAction = "analysing 1";
+            if (skipped === 0) {
+                browser.lastAction = "analysing 1";
+            }
             return true;
         }
         analyzeDialog.paths = chosen;
@@ -552,7 +579,10 @@ Pane {
             // Tempo and key, measured again: what an import could not measure, or what the DJ wants
             // re-measured after a remaster.
             visible: browser.section === "collection"
+            // Nothing chosen is nothing to ask for, and every chosen track locked is a request the lock
+            // has already answered: the entry stands down instead of promising a rewrite.
             enabled: browser.selection.length > 0
+                     && browser.lockedSelection.length < browser.selection.length
             onClicked: browser.analyzeSelection()
         }
     }

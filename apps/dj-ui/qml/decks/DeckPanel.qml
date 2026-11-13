@@ -945,16 +945,20 @@ Pane {
             // The tempo the deck shows was measured once, at load. When the answer is wrong the DJ
             // asks again — a full decode, so it is asked for, never done behind their back, and a
             // confirmation stands between the click and the new grid (B02).
-            Button {
+            GridTool {
                 objectName: "tempo_" + panel.deckId
                 text: qsTr("Analyze")
                 font.pixelSize: 10
                 // A second question while the first is being answered would queue another decode of
-                // the same file for the same answer.
-                enabled: panel.live && !panel.analyzing
+                // the same file for the same answer; a locked grid is the DJ's decision, and a
+                // measurement would rewrite it. The face goes with the state: a tool that only refuses
+                // clicks is a tool the hand keeps trying.
+                enabled: panel.live && !panel.analyzing && !panel.analysisLock
                 focusPolicy: Qt.NoFocus
                 ToolTip.visible: hovered
-                ToolTip.text: qsTr("Analyse this track again: measure its tempo and rebuild the grid")
+                ToolTip.text: panel.analysisLock
+                              ? qsTr("The grid is locked: unlock it to measure this track again")
+                              : qsTr("Analyse this track again: measure its tempo and rebuild the grid")
                 onClicked: tempoConfirm.open()
             }
             Item { Layout.fillWidth: true }
