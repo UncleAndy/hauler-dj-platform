@@ -528,6 +528,14 @@ Pane {
             onClicked: browser.askImport()
         }
         MenuItem {
+            objectName: "rescanCollection"
+            text: qsTr("Rescan collection…")
+            // Tags and metadata read from the files again, and the genre counts recounted. Files that
+            // already have a record keep their measured tempo and key; only the missing ones are measured.
+            visible: browser.section === "collection"
+            onClicked: Browser.rescanCollection()
+        }
+        MenuItem {
             objectName: "analyzeSelection"
             text: qsTr("Analyze…")
             // Tempo and key, measured again: what an import could not measure, or what the DJ wants
@@ -542,6 +550,18 @@ Pane {
     // puts the highlight where the DJ left it.
     // The analysis writes the file, not a snapshot: the numbers appear when the worker is done, so
     // the list is read again a few times instead of being waited on once.
+    // The rescan writes records and rebuilds the index; the list is read again while it runs, so the
+    // rows and the counts follow the files instead of appearing only after a restart.
+    Timer {
+        id: rescanPoll
+        objectName: "rescanPoll"
+        interval: 900
+        repeat: true
+        running: browser.section === "collection" && browser.importState !== null
+                 && browser.importState.running === true
+        onTriggered: Browser.refreshCollection()
+    }
+
     Timer {
         id: analyzePoll
         objectName: "analyzePoll"

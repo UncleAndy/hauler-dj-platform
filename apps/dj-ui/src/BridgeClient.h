@@ -91,6 +91,8 @@ public:
     Q_INVOKABLE void openCollection(const QStringList &roots);
     /// The list reached its end: append the next batch of the index, a page at a time.
     Q_INVOKABLE void loadMore();
+    /// Read the collection again from the files: what the Rescan command does, for the DJ's menu.
+    Q_INVOKABLE void rescanCollection();
     /// Where the collection lives until the DJ names another root: `$XDG_DATA_HOME/hauler-dj/collection`,
     /// the same tree the engine keeps its metadata in.
     Q_INVOKABLE QString defaultCollectionRoot() const;
@@ -229,6 +231,9 @@ public:
     Q_INVOKABLE int importPaths(const QStringList &paths, const QString &root, bool parallel);
     /// Stop the running import between files.
     Q_INVOKABLE int cancelImport();
+    /// Read the collection again from the files: tags and metadata, then the genre counts. The engine
+    /// walks the disks; the browser only asks.
+    Q_INVOKABLE int rescan(const QStringList &roots);
     /// Send a command that carries nothing: on the wire it is a bare name, not `{"Name": {}}`.
     ///
     /// The protocol's unit commands are serialized as strings, and a client that wraps one in an object

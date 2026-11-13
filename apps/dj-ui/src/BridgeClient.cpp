@@ -1044,6 +1044,29 @@ int BridgeClient::importPaths(const QStringList &paths, const QString &root, boo
     return sendCommand(QString(), command);
 }
 
+int BridgeClient::rescan(const QStringList &roots)
+{
+    QJsonObject options;
+    QJsonArray folders;
+    for (const QString &folder : roots) {
+        folders.append(folder);
+    }
+    options.insert(QStringLiteral("roots"), folders);
+    QJsonObject command;
+    command.insert(QStringLiteral("Rescan"), options);
+    const int id = sendCommand(QString(), command);
+    setStatus(QStringLiteral("reading the collection again"));
+    return id;
+}
+
+void FileBrowser::rescanCollection()
+{
+    if (m_bridge == nullptr) {
+        return;
+    }
+    m_bridge->rescan(m_roots);
+}
+
 int BridgeClient::cancelImport()
 {
     const int id = sendUnit(QStringLiteral("ImportCancel"));

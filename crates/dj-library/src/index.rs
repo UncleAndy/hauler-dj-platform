@@ -754,6 +754,44 @@ fn read_record(record: &Path) -> Option<(TrackRow, Vec<GenreName>)> {
 
 /// Every record under these roots. `_duplicates/` is not a collection, and a record directory holds
 /// records rather than more tracks.
+/// Every audio file under these roots, without opening one.
+///
+/// The rescan needs the files themselves, not the records: a track that arrived without a `.djmeta`
+/// is exactly the one it has to measure.
+pub fn audio_files_under(roots: &[PathBuf]) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    for root in roots {
+        let mut stack = vec![root.clone()];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    let name = path.file_name().and_then(|name| name.to_str());
+                    if name != Some(sidecar::DIRECTORY)
+                        && name != Some(crate::import::DUPLICATES_DIR)
+                    {
+                        stack.push(path);
+                    }
+                    continue;
+                }
+                let audio = path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .and_then(dj_codec::MediaFormat::from_extension)
+                    .is_some();
+                if audio {
+                    found.push(path);
+                }
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
 fn records_under(roots: &[PathBuf]) -> Vec<PathBuf> {
     let mut found = Vec::new();
     for root in roots {

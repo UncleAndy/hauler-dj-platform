@@ -412,6 +412,13 @@ pub enum DjCommand {
         /// Run the batch on several workers.
         parallel: bool,
     },
+    /// Read the collection again from the files: tags and metadata, then the genre counts.
+    ///
+    /// Files without a record are measured, the rest keep their measured tempo and key.
+    Rescan {
+        /// The folders to read.
+        roots: Vec<String>,
+    },
     /// Stop the running import between files: the file in hand is finished.
     ImportCancel,
     /// Measure a file that is not on a deck: tempo and key, written beside it (DJP-MEDIA-004).
@@ -685,6 +692,7 @@ impl DjCommand {
             | DjCommand::AnalyzeTempo { .. }
             | DjCommand::EditGrid { .. }
             | DjCommand::Import { .. }
+            | DjCommand::Rescan { .. }
             | DjCommand::ImportCancel
             | DjCommand::AnalyzeTrack { .. }
             | DjCommand::AnalyzeTracks { .. }

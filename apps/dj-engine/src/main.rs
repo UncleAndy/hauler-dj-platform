@@ -1549,6 +1549,64 @@ fn serve_client(
                         }
                         continue;
                     }
+                    dj_engine::Routed::Rescan { command_id, roots } => {
+                        // The walk belongs to the engine: the browser must not touch the disks for a list.
+                        // Every file is asked for what it knows — a record with a grid and a key is left
+                        // alone, a file without one is measured and gets a record. Then the index is
+                        // rebuilt from the records, which is where the genre counts come from.
+                        let worker_cells = Arc::clone(&cells);
+                        let worker_store = work.store.clone();
+                        std::thread::spawn(move || {
+                            let folders: Vec<std::path::PathBuf> =
+                                roots.iter().map(std::path::PathBuf::from).collect();
+                            let files = dj_library::index::audio_files_under(&folders);
+                            let mut state = dj_domain::ImportState {
+                                total: files.len(),
+                                done: 0,
+                                placed: 0,
+                                skipped: 0,
+                                failed: 0,
+                                running: true,
+                                current: None,
+                                question: None,
+                            };
+                            worker_cells.set_import(Some(state.clone()));
+                            for file in &files {
+                                state.current = Some(file.display().to_string());
+                                worker_cells.set_import(Some(state.clone()));
+                                // `force = false`: a record that already has a grid and a key is not
+                                // measured again — only what is missing is measured.
+                                if dj_engine::meta::analyze_file(
+                                    &worker_store,
+                                    volume(),
+                                    self::root(),
+                                    file,
+                                    false,
+                                ) {
+                                    state.placed += 1;
+                                } else {
+                                    state.skipped += 1;
+                                }
+                                state.done += 1;
+                                worker_cells.set_import(Some(state.clone()));
+                            }
+                            // The records are the source: the index is rebuilt from them, so the genre
+                            // counts and the list both follow what the files say now.
+                            if let Ok(mut index) = dj_library::Index::open_default() {
+                                let _ = index.rebuild_from(&folders);
+                            }
+                            state.running = false;
+                            state.current = None;
+                            worker_cells.set_import(Some(state));
+                        });
+                        if alerts
+                            .send(ServerMessage::Ack(dj_domain::Ack::accepted(command_id)))
+                            .is_err()
+                        {
+                            return;
+                        }
+                        continue;
+                    }
                     dj_engine::Routed::ImportCancel { command_id } => {
                         // An answer, not a gesture: a cancel with no batch to stop is refused, because a
                         // panel that shows "stopping" for a batch that already ended is lying.

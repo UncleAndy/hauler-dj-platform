@@ -175,6 +175,8 @@ impl Engine {
         let status = match scheduled.command {
             // A collection query is not an audio command: the engine answers it where the index can be
             // opened, never on the audio thread.
+            // The collection is the engine's index, not the audio path: refused here, answered there.
+            DjCommand::Rescan { .. } => Some(Ack::rejected(command_id, RejectReason::NotSupported)),
             DjCommand::QueryCollection { .. } => {
                 Some(Ack::rejected(command_id, RejectReason::NotSupported))
             }

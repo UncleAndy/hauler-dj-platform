@@ -1763,6 +1763,13 @@ pub enum Routed {
         /// What to show.
         query: dj_domain::CollectionQuery,
     },
+    /// Read the collection again from the files: the walk lives here, not in the browser.
+    Rescan {
+        /// The command being answered.
+        command_id: u64,
+        /// The folders to read.
+        roots: Vec<String>,
+    },
     /// Stop the running batch between files.
     AnalyzeStop,
     /// Handed to the worker that edits grids: it owns the file write and the publication.
@@ -1843,6 +1850,10 @@ pub fn route(command: &ScheduledCommand) -> Routed {
             paths: paths.clone(),
             root: root.clone(),
             parallel: *parallel,
+        },
+        DjCommand::Rescan { roots } => Routed::Rescan {
+            command_id: command.id,
+            roots: roots.clone(),
         },
         DjCommand::ImportCancel => Routed::ImportCancel {
             command_id: command.id,
