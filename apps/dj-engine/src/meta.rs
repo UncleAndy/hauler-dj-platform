@@ -233,7 +233,10 @@ pub fn write_beatgrid(
     }
     store
         .save(volume, root, path, &meta)
-        .map(|_| true)
+        .map(|_| {
+            refresh_row(path, &meta);
+            true
+        })
         .map_err(|error| error.to_string())
 }
 
@@ -270,7 +273,10 @@ pub fn set_analysis_lock(
     }
     store
         .save(volume, root, path, &meta)
-        .map(|_| true)
+        .map(|_| {
+            refresh_row(path, &meta);
+            true
+        })
         .map_err(|error| error.to_string())
 }
 
@@ -381,6 +387,17 @@ pub fn write_names(
 /// The row is built from the record, not from the file: a name the DJ corrected is the name the list
 /// shows. `genre` is the raw tag joined back together — the links, not this column, decide what the
 /// track belongs to.
+/// Put the record that was just written into the collection, so the list shows it without a rescan.
+///
+/// The list is built from the index, and a record on disk that the index has not seen is a track whose
+/// tempo, key and rating are all missing on screen. A write that changes what the row says calls this: a
+/// grid, a key, a lock, the names.
+pub fn refresh_row(path: &Path, meta: &TrackMeta) {
+    if let Ok(mut index) = dj_library::Index::open_default() {
+        let _ = index.upsert(&row_of(meta, path));
+    }
+}
+
 pub fn row_of(meta: &TrackMeta, path: &Path) -> dj_library::TrackRow {
     let tags = meta.tags.clone().unwrap_or_default();
     dj_library::TrackRow {
@@ -439,7 +456,10 @@ pub fn write_key(
     }
     store
         .save(volume, root, path, &meta)
-        .map(|_| true)
+        .map(|_| {
+            refresh_row(path, &meta);
+            true
+        })
         .map_err(|error| error.to_string())
 }
 

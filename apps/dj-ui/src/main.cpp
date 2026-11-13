@@ -4149,7 +4149,9 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
                      qPrintable(collectionRoot));
         return 1;
     }
+    int index = 0;
     for (const auto &pair : toneKeys) {
+        ++index;
         const QString target = root.filePath(pair.first + QStringLiteral(".wav"));
         QFile::remove(target);
         if (!QFile::copy(fixture, target)) {
@@ -4168,9 +4170,24 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
                 bpm = tempo.second;
             }
         }
-        const QJsonObject meta{{QStringLiteral("key"), pair.second},
-                               {QStringLiteral("beatgrid"),
-                                QJsonObject{{QStringLiteral("bpm"), bpm}}}};
+        // A record the index can read: the schema, the revision, when it was written and what identifies
+        // the file. The fingerprint is the row's key, so four tracks sharing one file's bytes would be
+        // one row — the size stands in for the bytes this check did not measure.
+        const QJsonObject fingerprint{
+            {QStringLiteral("size"), 1000 + index},
+            {QStringLiteral("head"), QString(16, QLatin1Char(char('a' + index)))},
+            {QStringLiteral("tail"), QString(16, QLatin1Char(char('p' + index)))},
+        };
+        const QJsonObject grid{{QStringLiteral("bpm"), bpm},
+                               {QStringLiteral("first_beat_frame"), 0},
+                               {QStringLiteral("anchors"), QJsonArray{}},
+                               {QStringLiteral("beats_per_bar"), 4}};
+        const QJsonObject meta{{QStringLiteral("schema"), QStringLiteral("djp-track-v1")},
+                               {QStringLiteral("revision"), 1},
+                               {QStringLiteral("updated_at_ms"), 1},
+                               {QStringLiteral("fingerprint"), fingerprint},
+                               {QStringLiteral("key"), pair.second},
+                               {QStringLiteral("beatgrid"), grid}};
         record.write(QJsonDocument(meta).toJson());
     }
 
@@ -5010,7 +5027,8 @@ static int runAnalyzeCheck(QQmlApplicationEngine &engine, FileBrowser &browser, 
         }
         return count;
     };
-    QMetaObject::invokeMethod(panel, "refreshCollection");
+    // The rows refresh themselves: the engine puts the measured record into the index, and the page
+    // question that follows carries the tempo. A refresh call of our own would be a second door.
     QElapsedTimer settle;
     settle.start();
     while (withTempo() < 3 && settle.elapsed() < 20000) {
