@@ -751,8 +751,20 @@ fn order_clause(order: &[(OrderBy, bool)]) -> String {
             OrderBy::Artist => ("trim(artist) = ''", "artist COLLATE NOCASE"),
             OrderBy::Album => ("trim(album) = ''", "album COLLATE NOCASE"),
             OrderBy::Title => ("trim(title) = ''", "title COLLATE NOCASE"),
-            OrderBy::Bpm => ("bpm IS NULL", "bpm"),
-            OrderBy::Key => ("trim(musical_key) = ''", "musical_key COLLATE NOCASE"),
+            // Tempo is compared to a hundredth, the precision the measurement has: `142.0` and `142.004`
+            // are the same tempo to a DJ, and the name decides between them — the list says so, and the
+            // index has to say the same or the order changes when an answer arrives.
+            OrderBy::Bpm => ("bpm IS NULL", "CAST(round(bpm * 100) AS INTEGER)"),
+            // A key is read on the circle, not in the alphabet: `2d` is the first, `10d` is the tenth, and
+            // sorting the text puts ten before two. The wheel number and the side are what a DJ hears as
+            // near, so the index sorts by them and falls back to the text only for keys it cannot read.
+            OrderBy::Key => (
+                "trim(musical_key) = ''",
+                "CASE WHEN musical_key GLOB '*[0-9][dDmAaBb]' THEN CAST(substr(trim(musical_key), 1, \
+                 length(trim(musical_key)) - 1) AS INTEGER) * 2 + CASE WHEN \
+                 lower(substr(trim(musical_key), -1)) IN ('m', 'b') THEN 1 ELSE 0 END ELSE 999 END, \
+                 musical_key COLLATE NOCASE",
+            ),
             OrderBy::Time => ("duration_frames IS NULL", "duration_frames"),
         };
         parts.push(format!("CASE WHEN {empty} THEN 1 ELSE 0 END"));
@@ -761,6 +773,12 @@ fn order_clause(order: &[(OrderBy, bool)]) -> String {
             if *ascending { "ASC" } else { "DESC" }
         ));
     }
+    // Rows the keys cannot tell apart stand in name order: equal tempos keep their albums together, and a
+    // list that reshuffles between them jumps under the hand. The fallback comes last, so a second key the
+    // DJ chose still decides before it.
+    parts.push("artist COLLATE NOCASE".to_string());
+    parts.push("album COLLATE NOCASE".to_string());
+    parts.push("title COLLATE NOCASE".to_string());
     format!(" ORDER BY {}", parts.join(", "))
 }
 
