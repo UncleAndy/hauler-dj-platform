@@ -11608,11 +11608,13 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: the shell has no deck buttons\n");
             return 1;
         }
-        // The fixture is three seconds long, and the blink takes over half a second: rewind the deck
-        // first, or the track ends during the blink and the colour under test belongs to a stopped deck
-        // instead of a refused load. Pausing before the seek is what makes the seek land.
+        // The fixture is short and a null device spends it faster than a hand can blink: rewind it and
+        // put a loop on the deck, so the track cannot end while the colour is under test. A deck that
+        // stopped is a deck whose button is grey for a reason that has nothing to do with the refusal.
+        // Pausing before the seek is what makes the seek land.
         bridge->play(QStringLiteral("A"), false);
         bridge->seek(QStringLiteral("A"), 0);
+        bridge->setLoop(QStringLiteral("A"), true, 0, 96000);
         bridge->play(QStringLiteral("A"), true);
         QCoreApplication::processEvents();
         QThread::msleep(200);
