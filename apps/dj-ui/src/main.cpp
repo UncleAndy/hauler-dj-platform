@@ -6216,6 +6216,35 @@ static int runLockCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Bri
         return 1;
     }
     std::fprintf(stdout, "dj-ui: a lit switch wears %s, the same as Snap\n", qPrintable(worn.name()));
+    // The lock takes every tool that can move the grid, not just the one the eye lands on: a run of
+    // buttons that still answer is a lock that does not lock.
+    for (const char *name : {"gridHere_A", "gridTempo_A", "gridTempoDown_A", "gridTempoUp_A",
+                             "gridTap_A", "gridLeft_A", "gridRight_A", "gridBeatLeft_A",
+                             "gridBeatRight_A", "gridHalf_A", "gridDouble_A", "metronome_A"}) {
+        auto *tool = findItem(window->contentItem(), QString::fromLatin1(name));
+        if (tool == nullptr) {
+            std::fprintf(stderr, "dj-ui: the grid row has no %s\n", name);
+            return 1;
+        }
+        if (tool->isEnabled()) {
+            std::fprintf(stderr, "dj-ui: %s still answers with the grid locked\n", name);
+            return 1;
+        }
+    }
+    if (!lock->isEnabled()) {
+        std::fprintf(stderr, "dj-ui: the lock itself went grey, so nobody can open the grid again\n");
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: every tool that moves the grid is grey, and the lock answers\n");
+    // The button that asks for a measurement says what it does.
+    auto *measure = findItem(window->contentItem(), QStringLiteral("tempo_A"));
+    const QString label = measure != nullptr ? measure->property("text").toString() : QString();
+    if (label != QStringLiteral("Analyze")) {
+        std::fprintf(stderr, "dj-ui: the measure button reads \"%s\", not \"Analyze\"\n",
+                     qPrintable(label));
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: the measure button reads \"Analyze\"\n");
     std::fprintf(stdout, "dj-ui: the lock reached the collection at once\n");
     // The second press goes in as the signal the suite presses buttons with: what is under test here is
     // that the collection follows the switch, not the mouse plumbing of a lit toggle.

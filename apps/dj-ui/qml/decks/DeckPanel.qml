@@ -60,8 +60,12 @@ Pane {
     /// True while the engine is measuring this deck's tempo again (B02).
     readonly property bool analyzing: panel.deck.analyzing === true
     readonly property var track: panel.deck.track !== undefined ? panel.deck.track : null
+    /// The grid this deck carries, or null. A track can arrive without one, and a grid that is missing is
+    /// not a grid with no segments: reading `segments` off `undefined` throws, and a binding that throws
+    /// answers nothing for the rest of the run.
+    readonly property var grid: panel.track !== null && panel.track.grid !== undefined ? panel.track.grid : null
     /// Whether there is a grid to edit at all.
-    readonly property bool gridReady: panel.track !== null && panel.track.grid !== undefined
+    readonly property bool gridReady: panel.grid !== null
     /// The DJ locked this track's grid: no measurement and no edit may move it.
     readonly property bool analysisLock: panel.deck ? panel.deck.analysis_lock === true : false
     // The collection draws the lock in a column that comes from the index, so a press has to come back as
@@ -70,9 +74,11 @@ Pane {
     property bool lockWanted: false
     /// Grid edits are open only while there is a grid to edit and nobody has locked it.
     readonly property bool gridEditable: panel.gridReady && !panel.analysisLock
-                                      && panel.track.grid !== null
-                                      && panel.track.grid.segments !== undefined
-                                      && panel.track.grid.segments.length > 0
+                                      && panel.grid.segments !== undefined
+                                      && panel.grid.segments.length > 0
+    /// The tools that can change the grid at all. They stay live while there is nothing to read yet — a
+    /// track without a grid needs its creators — and the lock takes every one of them, creators included.
+    readonly property bool gridToolsLive: panel.track !== null && !panel.analysisLock
     /// The file's own rate: a millisecond is `rate / 1000` frames of the track, not of the device.
     readonly property int gridRate: panel.deck.source_rate > 0 ? panel.deck.source_rate : 48000
     /// Taps in the last few seconds, for the tempo the DJ beats out by hand.
@@ -941,14 +947,14 @@ Pane {
             // confirmation stands between the click and the new grid (B02).
             Button {
                 objectName: "tempo_" + panel.deckId
-                text: qsTr("BPM ⟳")
+                text: qsTr("Analyze")
                 font.pixelSize: 10
                 // A second question while the first is being answered would queue another decode of
                 // the same file for the same answer.
                 enabled: panel.live && !panel.analyzing
                 focusPolicy: Qt.NoFocus
                 ToolTip.visible: hovered
-                ToolTip.text: qsTr("Measure the tempo of this track again")
+                ToolTip.text: qsTr("Analyse this track again: measure its tempo and rebuild the grid")
                 onClicked: tempoConfirm.open()
             }
             Item { Layout.fillWidth: true }
@@ -1241,6 +1247,7 @@ Pane {
                 rightPadding: 0
                 focusPolicy: Qt.NoFocus
                 ToolTip.visible: hovered
+                enabled: panel.gridToolsLive
                 ToolTip.text: qsTr("Put a beat of the grid under the play head")
                 onClicked: panel.gridHere()
                 contentItem: Item {
@@ -1319,6 +1326,7 @@ Pane {
             }
             Button {
                 objectName: "gridTempo_" + panel.deckId
+                enabled: panel.gridToolsLive
                 text: qsTr("BPM…")
                 font.pixelSize: 9
                 Layout.preferredHeight: 18
@@ -1332,6 +1340,7 @@ Pane {
             // move the grid, these move the tempo).
             Button {
                 objectName: "gridTempoDown_" + panel.deckId
+                enabled: panel.gridToolsLive
                 text: qsTr("▼")
                 font.pixelSize: 9
                 Layout.preferredWidth: 18
@@ -1343,6 +1352,7 @@ Pane {
             }
             Button {
                 objectName: "gridTempoUp_" + panel.deckId
+                enabled: panel.gridToolsLive
                 text: qsTr("▲")
                 font.pixelSize: 9
                 Layout.preferredWidth: 18
@@ -1354,6 +1364,7 @@ Pane {
             }
             Button {
                 objectName: "gridTap_" + panel.deckId
+                enabled: panel.gridToolsLive
                 text: qsTr("Tap")
                 font.pixelSize: 9
                 Layout.preferredHeight: 18

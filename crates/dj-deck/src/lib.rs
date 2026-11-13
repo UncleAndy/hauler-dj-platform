@@ -2114,6 +2114,13 @@ impl Deck {
                 .map(|source| source.read(&mut out[written * 2..(written + take) * 2]));
             match result {
                 Some(Ok(0)) => {
+                    // Nothing left to read at the end of the material is the track ending, not an
+                    // underrun: the deck stands still, and the next load is welcome. A deck that went on
+                    // saying "playing" after the last frame refused every load that followed as Busy.
+                    if total.is_some_and(|total| self.heard_at(self.position) >= total) {
+                        self.playing = false;
+                        break;
+                    }
                     self.stats.underruns += 1;
                     break;
                 }

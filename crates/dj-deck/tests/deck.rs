@@ -102,6 +102,31 @@ fn code_deck(frames: u64) -> Deck {
     deck
 }
 
+#[test]
+fn a_track_that_ends_stops_the_deck() {
+    // A deck that keeps saying "playing" after the last frame refuses the next load as Busy, and the DJ
+    // is left with a deck that will not take a track. The end of the material is not an underrun.
+    let mut deck = deck_with_ramp(1_000);
+    // Key lock reads ahead of what is heard, and a short track would be spent on the priming: this test
+    // is about the transport reaching the end, so it asks the vinyl path.
+    deck.set_keylock(false);
+    assert!(deck.play(), "the deck starts");
+    let mut out = vec![0.0f32; 512];
+    for _ in 0..8 {
+        deck.render(&mut out);
+    }
+    assert!(
+        !deck.is_playing(),
+        "the deck stands still at the end of the track"
+    );
+    assert_eq!(deck.position(), 1_000, "the head rests on the last frame");
+    assert_eq!(
+        deck.stats().underruns,
+        0,
+        "the end of a track is not an underrun"
+    );
+}
+
 fn deck_with_ramp(frames: u64) -> Deck {
     let mut deck = Deck::new(DeckId::A);
     // The ramp is 44.1 kHz material on a deck that plays 44.1 kHz: these tests are about transport and
