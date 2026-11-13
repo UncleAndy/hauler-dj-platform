@@ -64,6 +64,10 @@ Pane {
     readonly property bool gridReady: panel.track !== null && panel.track.grid !== undefined
     /// The DJ locked this track's grid: no measurement and no edit may move it.
     readonly property bool analysisLock: panel.deck ? panel.deck.analysis_lock === true : false
+    // The collection draws the lock in a column that comes from the index, so a press has to come back as
+    // rows: the deck's own snapshot is the witness that the write landed, and the list is asked once it does.
+    property bool lockPending: false
+    property bool lockWanted: false
     /// Grid edits are open only while there is a grid to edit and nobody has locked it.
     readonly property bool gridEditable: panel.gridReady && !panel.analysisLock
                                       && panel.track.grid !== null
@@ -587,6 +591,15 @@ Pane {
     onDeckChanged: {
         // A new deck means a new track: a tempo asked for on the old one means nothing here.
         panel.pendingBpm = 0;
+        // A lock press is confirmed by the engine, not by the button: the collection is asked again the
+        // moment the deck carries the flag that was asked for, so the row wears the lock at once.
+        // `undefined === false` is false, and an unlocked deck does not carry the field at all: the flag
+        // is compared as a boolean, not as a value that may be missing.
+        const landed = (panel.deck !== null && panel.deck.analysis_lock === true) === panel.lockWanted;
+        if (panel.lockPending && landed) {
+            panel.lockPending = false;
+            Browser.refreshCollection();
+        }
         reload();
     }
     Component.onCompleted: reload()
@@ -658,7 +671,7 @@ Pane {
                 // Master and the two ways of following it. The buttons say which mode is in force
                 // rather than folding three states into one: a lit SYNC that only matched the tempo
                 // would be a button lying about what it does (DJP-SYNC-001/002).
-                Button {
+                ToggleButton {
                     objectName: "syncMaster_" + panel.deckId
                     text: qsTr("MASTER")
                     font.pixelSize: 8
@@ -666,7 +679,7 @@ Pane {
                     Layout.preferredHeight: 16
                     enabled: panel.live && panel.localBpm > 0
                     focusPolicy: Qt.NoFocus
-                    highlighted: panel.isMaster
+                    lit: panel.isMaster
                     ToolTip.visible: hovered
                     ToolTip.text: panel.isMaster
                                   ? qsTr("Press again to leave the others without a leader")
@@ -675,7 +688,7 @@ Pane {
                     // The decks that followed stop following and keep playing as they were.
                     onClicked: panel.isMaster ? Bridge.clearMaster() : Bridge.setMaster(panel.deckId)
                 }
-                Button {
+                ToggleButton {
                     objectName: "syncBeat_" + panel.deckId
                     text: qsTr("SYNC")
                     font.pixelSize: 8
@@ -683,13 +696,13 @@ Pane {
                     Layout.preferredHeight: 16
                     enabled: panel.live && panel.localBpm > 0
                     focusPolicy: Qt.NoFocus
-                    highlighted: panel.syncMode === "beat"
+                    lit: panel.syncMode === "beat"
                     ToolTip.visible: hovered
                     ToolTip.text: qsTr("Follow the master's beat: same tempo and the same beat")
                     onClicked: Bridge.setSync(panel.deckId,
                                               panel.syncMode === "beat" ? "off" : "beat")
                 }
-                Button {
+                ToggleButton {
                     objectName: "syncTempo_" + panel.deckId
                     text: qsTr("TEMPO")
                     font.pixelSize: 8
@@ -697,7 +710,7 @@ Pane {
                     Layout.preferredHeight: 16
                     enabled: panel.live && panel.localBpm > 0
                     focusPolicy: Qt.NoFocus
-                    highlighted: panel.syncMode === "tempo"
+                    lit: panel.syncMode === "tempo"
                     ToolTip.visible: hovered
                     ToolTip.text: qsTr("Follow the master's tempo and keep this deck's beat where it is")
                     onClicked: Bridge.setSync(panel.deckId,
@@ -837,7 +850,7 @@ Pane {
             Layout.fillWidth: true
             spacing: 4
 
-            Button {
+            ToggleButton {
                 objectName: "play_" + panel.deckId
                 text: panel.playing ? qsTr("Pause") : qsTr("Play")
                 font.pixelSize: 11
@@ -845,7 +858,7 @@ Pane {
                 // Buttons must not take keyboard focus: Space belongs to the browser, not to
                 // whichever control happened to be focused.
                 focusPolicy: Qt.NoFocus
-                highlighted: panel.playing
+                lit: panel.playing
                 onClicked: Bridge.play(panel.deckId, !panel.playing)
             }
             // The cue button of a transport, not a hotcue button: pressed, it stops the deck on the cue
@@ -864,13 +877,13 @@ Pane {
                 onReleased: Bridge.play(panel.deckId, true)
             }
             // The scrub mode of this deck, where the hand already is: silent, or heard as a scratch.
-            Button {
+            ToggleButton {
                 objectName: "scrubMode_" + panel.deckId
                 text: panel.scrubAudio ? qsTr("scrub ♪") : qsTr("scrub ␀")
                 font.pixelSize: 10
                 enabled: panel.live
                 focusPolicy: Qt.NoFocus
-                highlighted: panel.scrubAudio
+                lit: panel.scrubAudio
                 onClicked: panel.scrubAudio = !panel.scrubAudio
             }
             Button {
@@ -1121,7 +1134,7 @@ Pane {
                 onCanceled: Bridge.nudge(panel.deckId, 0.0)
             }
             // Slip wears the same colour as Loop when it is on: a mode has to look like a mode.
-            Button {
+            ToggleButton {
                 objectName: "slip_" + panel.deckId
                 text: qsTr("Slip")
                 font.pixelSize: 11
@@ -1129,7 +1142,7 @@ Pane {
                 height: 20
                 enabled: panel.live
                 focusPolicy: Qt.NoFocus
-                highlighted: panel.deck.slip === true
+                lit: panel.deck.slip === true
                 ToolTip.visible: hovered
                 ToolTip.text: qsTr("The sound may jump or repeat while the track under it keeps "
                                    + "running; leaving a loop puts the sound back on the track's clock")
@@ -1137,20 +1150,7 @@ Pane {
             }
             // Reverse walks the material backwards from the playhead. It lights like the other modes,
             // and it refuses on a track that is still streaming: the engine says so instead of stalling.
-            Button {
-                objectName: "gridLock_" + panel.deckId
-                text: "\uD83D\uDD12"
-                checkable: true
-                checked: panel.analysisLock
-                enabled: panel.track !== null
-                font.pixelSize: 12
-                Layout.preferredHeight: 18
-                focusPolicy: Qt.NoFocus
-                ToolTip.visible: hovered
-                ToolTip.text: qsTr("Lock the grid: no measurement and no edit may move it")
-                onClicked: Bridge.setAnalysisLock(panel.deckId, checked)
-            }
-            Button {
+            ToggleButton {
                 objectName: "reverse_" + panel.deckId
                 text: qsTr("Rev")
                 font.pixelSize: 11
@@ -1158,7 +1158,7 @@ Pane {
                 height: 20
                 enabled: panel.live
                 focusPolicy: Qt.NoFocus
-                highlighted: panel.deck.reverse === true
+                lit: panel.deck.reverse === true
                 ToolTip.visible: hovered
                 ToolTip.text: qsTr("Plays the material backwards from the playhead; a track held in "
                                    + "the cache can do it, one still reading from disk cannot")
@@ -1181,7 +1181,7 @@ Pane {
             // The click, first in the row: it is the tool the ear judges everything after it with, and a
             // grid compared against itself proves nothing. Only this deck's grid clicks, so two decks are
             // compared one at a time.
-            Button {
+            ToggleButton {
                 objectName: "metronome_" + panel.deckId
                 enabled: panel.gridEditable
                 text: qsTr("♪")
@@ -1190,7 +1190,7 @@ Pane {
                 Layout.preferredHeight: 18
                 focusPolicy: Qt.NoFocus
                 // Lit while it clicks: a reference the DJ cannot see is one they cannot trust.
-                highlighted: panel.metronome
+                lit: panel.metronome
                 ToolTip.visible: hovered
                 ToolTip.text: qsTr("Click on every beat of this deck's grid")
                 onClicked: Bridge.metronome(panel.deckId, !panel.metronome)
@@ -1359,6 +1359,24 @@ Pane {
                 ToolTip.visible: hovered
                 ToolTip.text: qsTr("Tap the tempo: the grid is put on your taps, from the fourth one")
                 onClicked: panel.tap()
+            }
+            // The lock lives beside the tools it guards: it stops the measurement and every edit of this
+            // grid, and it says so on the deck and in the collection at the same time.
+            ToggleButton {
+                objectName: "gridLock_" + panel.deckId
+                text: "\uD83D\uDD12"
+                lit: panel.analysisLock
+                enabled: panel.track !== null
+                font.pixelSize: 11
+                Layout.preferredWidth: 24
+                Layout.preferredHeight: 18
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Lock the grid: no measurement and no edit may move it")
+                onClicked: {
+                    panel.lockWanted = !panel.analysisLock;
+                    panel.lockPending = true;
+                    Bridge.setAnalysisLock(panel.deckId, panel.lockWanted);
+                }
             }
             Item { Layout.fillWidth: true }
             Label {

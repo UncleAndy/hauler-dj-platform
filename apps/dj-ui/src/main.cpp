@@ -6061,6 +6061,182 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
 /// The chips are built from the same records the list is built from, so the check starts by writing
 /// those records: three tracks, one of them carrying two genres. Then it clicks the chips like a hand
 /// would — the chip, not the function behind it, is what the DJ has.
+/// One switch, two places: the button on the deck and the column in the collection. A press has to land in
+/// both, and the collection has to say so at once — its rows come from the index, so the list is asked
+/// again the moment the engine carries the flag.
+static int runLockCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient &bridge,
+                        const QString &fixture, const QString &collectionRoot)
+{
+    if (fixture.isEmpty() || collectionRoot.isEmpty()) {
+        std::fprintf(stderr, "dj-ui: --lock-check needs --import-fixture and --collection-root\n");
+        return 1;
+    }
+    QDir root(collectionRoot);
+    if (!root.mkpath(QStringLiteral("."))) {
+        std::fprintf(stderr, "dj-ui: cannot make %s\n", qPrintable(collectionRoot));
+        return 1;
+    }
+    const QString track = root.filePath(QStringLiteral("Locked - Track.wav"));
+    QFile::remove(track);
+    if (!QFile::copy(fixture, track)) {
+        std::fprintf(stderr, "dj-ui: cannot place %s\n", qPrintable(track));
+        return 1;
+    }
+
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().value(0));
+    if (window == nullptr) {
+        std::fprintf(stderr, "dj-ui: no shell window\n");
+        return 1;
+    }
+    auto *panel = findItem(window->contentItem(), QStringLiteral("browserPanel"));
+    if (panel == nullptr) {
+        std::fprintf(stderr, "dj-ui: the shell has no browser\n");
+        return 1;
+    }
+    const auto waitFor = [](const std::function<bool()> &ready, int budget) {
+        QElapsedTimer clock;
+        clock.start();
+        while (clock.elapsed() < budget) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            if (ready()) {
+                return true;
+            }
+            QThread::msleep(20);
+        }
+        return ready();
+    };
+    const auto importState = [&]() { return panel->property("importState").toMap(); };
+    // The import lays the file out by its tags, so the row's path is the import's answer, not the path
+    // that was handed in: the check reads it back and loads what the collection actually holds.
+    QString listed;
+    const auto row = [&]() {
+        const QVariantList rows = browser.entries();
+        for (const QVariant &entry : rows) {
+            const QVariantMap candidate = entry.toMap();
+            const QString path = candidate.value(QStringLiteral("path")).toString();
+            if (!listed.isEmpty() ? path == listed : path.endsWith(QStringLiteral("Locked - Track.wav"))) {
+                listed = path;
+                return candidate;
+            }
+        }
+        return QVariantMap{};
+    };
+
+    // A file on disk is not a row: the index is, and the import is what puts it there.
+    bridge.importPaths({track}, collectionRoot, false);
+    const bool imported = waitFor(
+        [&]() {
+            const QVariantMap state = importState();
+            return state.value(QStringLiteral("total")).toInt() >= 1 &&
+                   state.value(QStringLiteral("running")).toBool() == false;
+        },
+        20000);
+    if (!imported) {
+        std::fprintf(stderr, "dj-ui: the import never finished\n");
+        return 1;
+    }
+    browser.openCollection({collectionRoot});
+    if (!waitFor([&]() { return !row().isEmpty(); }, 10000)) {
+        std::fprintf(stderr, "dj-ui: the collection has no row for the track\n");
+        return 1;
+    }
+
+    // Only a deck carrying a track can be asked about its grid.
+    bridge.load(QStringLiteral("A"), listed);
+    auto *lock = findItem(window->contentItem(), QStringLiteral("gridLock_A"));
+    auto *tap = findItem(window->contentItem(), QStringLiteral("gridTap_A"));
+    if (!waitFor([&]() { return lock != nullptr && lock->isEnabled(); }, 15000)) {
+        std::fprintf(stderr, "dj-ui: the deck never carried the track, so the lock stayed grey\n");
+        return 1;
+    }
+    if (tap == nullptr) {
+        std::fprintf(stderr, "dj-ui: the grid row has no Tap button\n");
+        return 1;
+    }
+    // The lock belongs to the grid tools: to the right of Tap, on the same line.
+    const QRectF lockRect = lock->mapRectToScene(QRectF(0, 0, lock->width(), lock->height()));
+    const QRectF tapRect = tap->mapRectToScene(QRectF(0, 0, tap->width(), tap->height()));
+    if (lockRect.left() < tapRect.right() ||
+        std::abs(lockRect.center().y() - tapRect.center().y()) > 6.0) {
+        std::fprintf(stderr, "dj-ui: the lock is not beside Tap (lock %.1f,%.1f, tap edge %.1f,%.1f)\n",
+                     lockRect.left(), lockRect.center().y(), tapRect.right(), tapRect.center().y());
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: the lock sits %.1f px right of Tap, on the same line\n",
+                 lockRect.left() - tapRect.right());
+
+    const auto click = [&](QQuickItem *item) {
+        const QPointF centre = item->mapToScene(QPointF(item->width() / 2.0, item->height() / 2.0));
+        for (const QEvent::Type type : {QEvent::MouseMove, QEvent::MouseButtonPress,
+                                        QEvent::MouseButtonRelease}) {
+            const Qt::MouseButtons buttons = type == QEvent::MouseButtonPress ? Qt::LeftButton
+                                                                             : Qt::NoButton;
+            const Qt::MouseButton button =
+                type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton;
+            QMouseEvent event(type, centre, window->mapToGlobal(centre.toPoint()), button, buttons,
+                              Qt::NoModifier);
+            QCoreApplication::sendEvent(window, &event);
+            QCoreApplication::processEvents();
+            QThread::msleep(40);
+        }
+    };
+    const auto lit = [&]() { return lock->property("lit").toBool(); };
+    // The hand first: a press on the button is what the DJ does. A synthetic press in an offscreen window
+    // sometimes never arrives (the same flakiness the column drag had), and the check must not report that
+    // as the collection failing — so a press that did not land falls back to the signal the suite presses
+    // buttons with, and says which path it took.
+    click(lock);
+    if (!waitFor([&]() { return lit(); }, 3000)) {
+        std::fprintf(stderr, "dj-ui: the press did not land, pressing the signal\n");
+        QMetaObject::invokeMethod(lock, "clicked");
+        QCoreApplication::processEvents();
+    }
+    if (!waitFor([&]() { return row().value(QStringLiteral("analysis_lock")).toBool(); }, 10000)) {
+        std::fprintf(stderr, "dj-ui: the lock did not reach the collection (the button is %s)\n",
+                     lit() ? "lit" : "dark");
+        return 1;
+    }
+    if (!lit()) {
+        std::fprintf(stderr, "dj-ui: the collection says locked, the button does not\n");
+        return 1;
+    }
+    // The switch wears the colour Snap wears when it is on: one paint for every two-state control in
+    // the deck, so a lit button means the same thing wherever the eye lands.
+    auto *snap = findItem(window->contentItem(), QStringLiteral("snap_A"));
+    if (snap == nullptr) {
+        std::fprintf(stderr, "dj-ui: the deck has no Snap switch to compare with\n");
+        return 1;
+    }
+    const QObject *face = lock->property("background").value<QObject *>();
+    const QColor worn = face != nullptr ? face->property("color").value<QColor>() : QColor();
+    const QColor reference = snap->property("color").value<QColor>();
+    if (worn != reference) {
+        std::fprintf(stderr, "dj-ui: a lit switch is %s, Snap is %s\n", qPrintable(worn.name()),
+                     qPrintable(reference.name()));
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: a lit switch wears %s, the same as Snap\n", qPrintable(worn.name()));
+    std::fprintf(stdout, "dj-ui: the lock reached the collection at once\n");
+    // The second press goes in as the signal the suite presses buttons with: what is under test here is
+    // that the collection follows the switch, not the mouse plumbing of a lit toggle.
+    QMetaObject::invokeMethod(lock, "clicked");
+    QCoreApplication::processEvents();
+    if (!waitFor([&]() { return !row().value(QStringLiteral("analysis_lock")).toBool(); }, 10000)) {
+        std::fprintf(stderr, "dj-ui: the lock stayed in the collection after the second press (button %s)\n",
+                     lit() ? "lit" : "dark");
+        return 1;
+    }
+    if (lit()) {
+        std::fprintf(stderr, "dj-ui: the collection says open, the button is still lit\n");
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: the lock left the collection with the second press\n");
+    // The deck is left standing, as every check leaves it.
+    bridge.play(QStringLiteral("A"), false);
+    std::fprintf(stdout, "dj-ui: lock check done\n");
+    return 0;
+}
+
 static int runGenreCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSettings &layout,
                          const QString &fixture, const QString &collectionRoot)
 {
@@ -6431,6 +6607,10 @@ int main(int argc, char *argv[])
         QStringLiteral("sort-check"),
         QStringLiteral("From the collection: a click on a column sorts by it, a second click turns it "
                        "around, a Shift click adds the next key — and the rail's order."));
+    const QCommandLineOption lockCheckOption(
+        QStringLiteral("lock-check"),
+        QStringLiteral("Press the grid lock on a deck and require the collection's row to wear it at once, "
+                       "then press again and require it gone."));
     const QCommandLineOption genreCheckOption(
         QStringLiteral("genre-check"),
         QStringLiteral("From a collection: the genre chips say how many tracks each genre has, a chip "
@@ -6690,6 +6870,7 @@ int main(int argc, char *argv[])
     parser.addOption(importCheckOption);
     parser.addOption(analyzeCheckOption);
     parser.addOption(sortCheckOption);
+    parser.addOption(lockCheckOption);
     parser.addOption(genreCheckOption);
     parser.addOption(collectionLoadCheckOption);
     parser.addOption(collectionProbeOption);
@@ -12025,6 +12206,12 @@ int main(int argc, char *argv[])
         bridge->connectToEngine(parser.value(connectOption));
         return runImportCheck(engine, browser, layout, *bridge, parser.value(importFixtureOption),
                               parser.values(collectionRootOption).value(0));
+    }
+
+    if (parser.isSet(lockCheckOption)) {
+        bridge->connectToEngine(parser.value(connectOption));
+        return runLockCheck(engine, browser, *bridge, parser.value(importFixtureOption),
+                            parser.values(collectionRootOption).value(0));
     }
 
     if (parser.isSet(sortCheckOption)) {

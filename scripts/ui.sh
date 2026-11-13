@@ -309,6 +309,11 @@ case "${1:-}" in
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --collection-root "$run_dir/sort-collection" --sort-check \
         --import-fixture "$analyze_track" --layout-file "$run_dir/sort-layout.json"
+    # The lock is one switch in two places: the deck's button and the column in the collection, and the
+    # collection has to say so the moment it is pressed.
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
+        --collection-root "$run_dir/lock-collection" --lock-check \
+        --import-fixture "$analyze_track" --layout-file "$run_dir/lock-layout.json"
     # The genre chips: the records say how many tracks each genre has, a chip narrows the list, two
     # chips are a union, and reset brings everything back. The chips are clicked, not the function.
     # Run it by hand — the wide set is not the place for it yet: another process between the sort and
