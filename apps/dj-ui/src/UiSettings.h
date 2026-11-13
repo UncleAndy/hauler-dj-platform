@@ -4,6 +4,7 @@
 // cache policy, thresholds) and is read where the callback lives. Colours belong to the shell.
 #pragma once
 
+#include <QFontDatabase>
 #include <QObject>
 #include <QString>
 
@@ -25,6 +26,11 @@ class UiSettings : public QObject
     // Text on the accent: near-black, because the accent is bright.
     Q_PROPERTY(QString themeTextOnAccent READ themeTextOnAccent CONSTANT)
     Q_PROPERTY(QString themeTextDim READ themeTextDim CONSTANT)
+    // The system's own fixed-pitch family, resolved at run time. The browser and the collection are
+    // tables of numbers and names, and a proportional face makes the columns wobble — but which font a
+    // desktop calls monospace is the desktop's business, and naming one here would bundle a font and its
+    // licence into every install.
+    Q_PROPERTY(QString monoFamily READ monoFamily CONSTANT)
     Q_PROPERTY(QString themeAccent READ themeAccent CONSTANT)
     Q_PROPERTY(QString themeAccentDim READ themeAccentDim CONSTANT)
     Q_PROPERTY(QString themeWarning READ themeWarning CONSTANT)
@@ -82,6 +88,14 @@ public:
     QString themeTextOnAccent() const { return QStringLiteral("#0b0b0b"); }
     QString themeText() const { return QStringLiteral("#c8c8c8"); }
     QString themeTextDim() const { return QStringLiteral("#8a8a8a"); }
+
+    QString monoFamily() const
+    {
+        // The system's fixed-pitch font as the platform defines it: fontconfig's `monospace` alias on
+        // this desktop, Consolas or Menlo where those are the ones a system calls fixed pitch.
+        const QFont fixed = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+        return fixed.family().isEmpty() ? QStringLiteral("monospace") : fixed.family();
+    }
     QString themeAccent() const { return QStringLiteral("#5090f0"); }
     QString themeAccentDim() const { return QStringLiteral("#204070"); }
     QString themeWarning() const { return QStringLiteral("#e0a06a"); }

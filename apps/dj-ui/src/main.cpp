@@ -5710,6 +5710,38 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
                  qPrintable(artist), qPrintable(title), static_cast<long long>(length),
                  rowBpm > 0.0 ? qPrintable(QString::number(rowBpm, 'f', 1)) : "-",
                  rowKey.isEmpty() ? "-" : qPrintable(rowKey));
+    // The two lists are tables, so their face is the system's fixed-pitch one — and "we asked for a
+    // monospace" is not the same as "the rows got one": the font that reached a row is read here, with
+    // two digits of equal advance as the proof.
+    // Both lists: the collection's cells and the file list's own rows, measured one at a time.
+    const auto measureList = [&](const char *name) -> QString {
+        QQuickItem *item = findItem(window->contentItem(), QString::fromLatin1(name));
+        if (item == nullptr) {
+            return QStringLiteral("%1 is not on the screen").arg(QString::fromLatin1(name));
+        }
+        const QFont face = item->property("font").value<QFont>();
+        const QFontInfo reached(face);
+        const QFontMetricsF metrics(face);
+        const double zero = metrics.horizontalAdvance(QStringLiteral("0"));
+        const double one = metrics.horizontalAdvance(QStringLiteral("1"));
+        if (!reached.fixedPitch() || std::abs(zero - one) > 0.01) {
+            return QStringLiteral("%1 wears %2, %3 pitch (0 %4 px, 1 %5 px)")
+                .arg(QString::fromLatin1(name), reached.family(),
+                     reached.fixedPitch() ? QStringLiteral("fixed") : QStringLiteral("proportional"))
+                .arg(zero)
+                .arg(one);
+        }
+        std::fprintf(stdout, "dj-ui: %s wears %s, fixed pitch (0 and 1 both %.2f px)\n", name,
+                     qPrintable(reached.family()), zero);
+        return QString();
+    };
+    for (const char *name : {"collectionCell_artist_0", "fileRow_0"}) {
+        if (const QString complaint = measureList(name); !complaint.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: %s\n", qPrintable(complaint));
+            return 1;
+        }
+    }
+
     // The fixture may be a generated tone or a real track: what matters is that the row carries the
     // names the file was filed under, not which names those are.
     if (artist.isEmpty() || title.isEmpty()) {

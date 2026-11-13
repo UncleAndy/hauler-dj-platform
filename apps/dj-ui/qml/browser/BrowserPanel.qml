@@ -33,6 +33,12 @@ Pane {
     // The rows the DJ picked: a list of paths, so a folder and a file can travel to the collection
     // together. Ctrl toggles one, Shift takes the run between the anchor and the click.
     property var selection: []
+    /// The face of the two lists: the system's fixed-pitch font at the size the browser is set to. The
+    /// panel never names a family — asking the desktop for "the monospaced one" is the whole point.
+    readonly property font listFace: Qt.font({
+        family: UiSettings.monoFamily,
+        pixelSize: browser.listFont
+    })
     /// The chosen tracks whose grid is locked. A locked grid is the DJ's decision, so the analysis stands
     /// down for these: the collection cannot rewrite what the lock protects.
     readonly property var lockedSelection: {
@@ -1307,7 +1313,7 @@ Pane {
                     text: "№"
                     horizontalAlignment: Text.AlignRight
                     color: UiSettings.themeTextDim
-                    font.pixelSize: browser.listFont
+                    font: browser.listFace
                     elide: Text.ElideRight
                 }
 
@@ -1331,7 +1337,7 @@ Pane {
                     horizontalAlignment: browser.columnAlign(browser.columnId(0))
                     color: browser.sortMark(browser.columnId(0)) === ""
                            ? UiSettings.themeTextDim : UiSettings.themeAccent
-                    font.pixelSize: browser.listFont
+                    font: browser.listFace
                     elide: Text.ElideRight
                 }
                 Label {
@@ -1344,7 +1350,7 @@ Pane {
                     horizontalAlignment: browser.columnAlign(browser.columnId(1))
                     color: browser.sortMark(browser.columnId(1)) === ""
                            ? UiSettings.themeTextDim : UiSettings.themeAccent
-                    font.pixelSize: browser.listFont
+                    font: browser.listFace
                     elide: Text.ElideRight
                 }
                 Label {
@@ -1357,7 +1363,7 @@ Pane {
                     horizontalAlignment: browser.columnAlign(browser.columnId(2))
                     color: browser.sortMark(browser.columnId(2)) === ""
                            ? UiSettings.themeTextDim : UiSettings.themeAccent
-                    font.pixelSize: browser.listFont
+                    font: browser.listFace
                     elide: Text.ElideRight
                 }
                 Label {
@@ -1370,7 +1376,7 @@ Pane {
                     horizontalAlignment: browser.columnAlign(browser.columnId(3))
                     color: browser.sortMark(browser.columnId(3)) === ""
                            ? UiSettings.themeTextDim : UiSettings.themeAccent
-                    font.pixelSize: browser.listFont
+                    font: browser.listFace
                     elide: Text.ElideRight
                 }
                 Label {
@@ -1383,7 +1389,7 @@ Pane {
                     horizontalAlignment: browser.columnAlign(browser.columnId(4))
                     color: browser.sortMark(browser.columnId(4)) === ""
                            ? UiSettings.themeTextDim : UiSettings.themeAccent
-                    font.pixelSize: browser.listFont
+                    font: browser.listFace
                     elide: Text.ElideRight
                 }
                 Label {
@@ -1396,7 +1402,7 @@ Pane {
                     horizontalAlignment: browser.columnAlign(browser.columnId(5))
                     color: browser.sortMark(browser.columnId(5)) === ""
                            ? UiSettings.themeTextDim : UiSettings.themeAccent
-                    font.pixelSize: browser.listFont
+                    font: browser.listFace
                     elide: Text.ElideRight
                 }
 
@@ -1598,7 +1604,7 @@ Pane {
                             anchors.verticalCenter: parent.verticalCenter
                             text: (row.index + 1)
                             horizontalAlignment: Text.AlignRight
-                            font.pixelSize: browser.listFont
+                            font: browser.listFace
                             color: UiSettings.themeTextDim
                             elide: Text.ElideRight
                         }
@@ -1609,7 +1615,7 @@ Pane {
                             anchors.verticalCenter: parent.verticalCenter
                             text: row.modelData.analysis_lock ? "\uD83D\uDD12" : ""
                             horizontalAlignment: Text.AlignHCenter
-                            font.pixelSize: browser.listFont
+                            font: browser.listFace
                             color: UiSettings.themeTextDim
                         }
                         Label {
@@ -1621,7 +1627,7 @@ Pane {
                             anchors.verticalCenter: parent.verticalCenter
                             text: browser.columnText(row.modelData, "artist")
                             elide: Text.ElideRight
-                            font.pixelSize: browser.listFont
+                            font: browser.listFace
                             color: row.current ? UiSettings.themePlayhead : UiSettings.themeText
                         }
                         Label {
@@ -1633,7 +1639,7 @@ Pane {
                             anchors.verticalCenter: parent.verticalCenter
                             text: browser.columnText(row.modelData, "album")
                             elide: Text.ElideRight
-                            font.pixelSize: browser.listFont
+                            font: browser.listFace
                             color: row.current ? UiSettings.themePlayhead : UiSettings.themeTextDim
                         }
                         Label {
@@ -1645,7 +1651,7 @@ Pane {
                             anchors.verticalCenter: parent.verticalCenter
                             text: browser.columnText(row.modelData, "title")
                             elide: Text.ElideRight
-                            font.pixelSize: browser.listFont
+                            font: browser.listFace
                             color: row.current ? UiSettings.themePlayhead : UiSettings.themeText
                         }
                         Label {
@@ -1657,7 +1663,7 @@ Pane {
                             anchors.verticalCenter: parent.verticalCenter
                             text: browser.columnText(row.modelData, "time")
                             horizontalAlignment: Text.AlignRight
-                            font.pixelSize: browser.listFont
+                            font: browser.listFace
                             color: row.current ? UiSettings.themePlayhead : UiSettings.themeTextDim
                         }
                         Label {
@@ -1669,7 +1675,7 @@ Pane {
                             anchors.verticalCenter: parent.verticalCenter
                             text: browser.columnText(row.modelData, "bpm")
                             horizontalAlignment: Text.AlignRight
-                            font.pixelSize: browser.listFont
+                            font: browser.listFace
                             color: row.current ? UiSettings.themePlayhead : UiSettings.themeTextDim
                         }
                         Label {
@@ -1681,7 +1687,7 @@ Pane {
                             anchors.verticalCenter: parent.verticalCenter
                             text: browser.columnText(row.modelData, "key")
                             horizontalAlignment: Text.AlignRight
-                            font.pixelSize: browser.listFont
+                            font: browser.listFace
                             color: row.current ? UiSettings.themePlayhead : UiSettings.themeTextDim
                         }
                     }
@@ -1696,13 +1702,14 @@ Pane {
                         anchors.verticalCenter: parent.verticalCenter
                         // ".." is the way up and is written as such: no folder arrow, because it is
                         // not a folder you can do anything else with.
+                        objectName: "fileRow_" + row.index
                         text: row.isParent ? ".." : (row.isFolder ? "▸ " : "  ") + row.modelData.name
                         color: row.isParent
                                ? (row.current ? UiSettings.themePlayhead : UiSettings.themeTextDim)
                                : (row.isFolder ? UiSettings.themeText
                                                : (row.current ? UiSettings.themePlayhead
                                                               : UiSettings.themeTextDim))
-                        font.pixelSize: browser.listFont
+                        font: browser.listFace
                         elide: Text.ElideRight
                     }
                     MouseArea {
