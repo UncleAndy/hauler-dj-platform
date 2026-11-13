@@ -4754,8 +4754,57 @@ static int runCollectionLoadCheck(QQmlApplicationEngine &engine, FileBrowser &br
     return 0;
 }
 
+/// A metronome as a wav file: a click on every beat, so the detector has a beat to find.
+///
+/// The checks that need several tracks cannot copy one recording: the identity check reads copies as the
+/// same track and sets them aside. Three tempos are three tracks, and each one can be measured.
+static bool writeClickTrack(const QString &path, double bpm, double seconds)
+{
+    const int rate = 48000;
+    const int frames = int(seconds * rate);
+    const int clickFrames = rate / 200; // 5 ms: an onset, not a note
+    QByteArray audio(size_t(frames) * 2, '\0');
+    const double beatFrames = 60.0 / bpm * rate;
+    for (double beat = 0.0; beat + clickFrames < frames; beat += beatFrames) {
+        const int start = int(beat);
+        for (int at = 0; at < clickFrames; ++at) {
+            const double decay = 1.0 - double(at) / double(clickFrames);
+            const short value = short(14000.0 * decay * (at % 2 == 0 ? 1.0 : -1.0));
+            audio[start * 2 + at * 2] = char(value & 0xff);
+            audio[start * 2 + at * 2 + 1] = char((value >> 8) & 0xff);
+        }
+    }
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        return false;
+    }
+    const auto put32 = [&file](quint32 value) {
+        char bytes[4]{char(value & 0xff), char((value >> 8) & 0xff), char((value >> 16) & 0xff),
+                      char((value >> 24) & 0xff)};
+        file.write(bytes, 4);
+    };
+    const auto put16 = [&file](quint16 value) {
+        char bytes[2]{char(value & 0xff), char((value >> 8) & 0xff)};
+        file.write(bytes, 2);
+    };
+    file.write("RIFF", 4);
+    put32(quint32(36 + audio.size()));
+    file.write("WAVEfmt ", 8);
+    put32(16);
+    put16(1);          // pcm
+    put16(1);          // mono
+    put32(quint32(rate));
+    put32(quint32(rate * 2));
+    put16(2);
+    put16(16);
+    file.write("data", 4);
+    put32(quint32(audio.size()));
+    file.write(audio);
+    return file.error() == QFileDevice::NoError;
+}
+
 static int runAnalyzeCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSettings &layout,
-                           const QString &fixture, const QString &collectionRoot)
+                           BridgeClient &bridge, const QString &fixture, const QString &collectionRoot)
 {
     Q_UNUSED(layout);
     if (fixture.isEmpty() || collectionRoot.isEmpty()) {
@@ -4767,16 +4816,53 @@ static int runAnalyzeCheck(QQmlApplicationEngine &engine, FileBrowser &browser, 
         std::fprintf(stderr, "dj-ui: cannot make %s\n", qPrintable(collectionRoot));
         return 1;
     }
-    // Three copies without metadata: the batch has to measure them from scratch, which is the case
+    // Three tracks with no measurements: the batch has to measure them from scratch, which is the case
     // the DJ complains about — a collection full of rows with no tempo.
+    //
+    // They are written, not copied: three copies of one recording are one track, and the import sets the
+    // extra ones aside without asking. Three clicks at three tempos are three tracks with a beat in each.
+    QTemporaryDir incoming;
+    if (!incoming.isValid()) {
+        std::fprintf(stderr, "dj-ui: cannot make a temporary folder\n");
+        return 1;
+    }
+    QStringList staged;
+    const double tempos[3] = {120.0, 128.0, 140.0};
     for (int index = 0; index < 3; ++index) {
-        const QString target = root.filePath(QStringLiteral("Analyze %1.wav").arg(index));
-        QFile::remove(target);
-        if (!QFile::copy(fixture, target)) {
-            std::fprintf(stderr, "dj-ui: cannot place %s\n", qPrintable(target));
+        const QString source = incoming.filePath(QStringLiteral("Click %1.wav").arg(index));
+        // Two minutes each: a measurement that ends in fifty milliseconds would open and close the
+        // progress window between two looks, and the check would report a window that never existed.
+        if (!writeClickTrack(source, tempos[index], 120.0)) {
+            std::fprintf(stderr, "dj-ui: cannot write %s\n", qPrintable(source));
             return 1;
         }
+        staged.append(source);
     }
+    bridge.importPaths(staged, collectionRoot, true);
+    // The import runs on the engine: the rows appear when it has written the records. Re-asking is what
+    // a list does when it is told the collection changed.
+    QElapsedTimer importClock;
+    importClock.start();
+    while (importClock.elapsed() < 30000) {
+        QCoreApplication::processEvents();
+        QThread::msleep(100);
+        if (browser.entries().size() >= 3) {
+            break;
+        }
+        browser.openCollection({collectionRoot});
+    }
+    if (browser.entries().size() < 3) {
+        std::fprintf(stderr, "dj-ui: the collection lists %d rows, wanted 3\n",
+                     static_cast<int>(browser.entries().size()));
+        return 1;
+    }
+    // The rows are in; the pages that carried them are still arriving. A selection made while a page is
+    // landing is made against a list that is about to be replaced, and it is lost.
+    for (int tick = 0; tick < 20; ++tick) {
+        QCoreApplication::processEvents();
+        QThread::msleep(50);
+    }
+    Q_UNUSED(root);
 
     auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().value(0));
     if (window == nullptr) {
@@ -4842,7 +4928,12 @@ static int runAnalyzeCheck(QQmlApplicationEngine &engine, FileBrowser &browser, 
         std::fprintf(stderr, "dj-ui: one track did not start\n");
         return 1;
     }
-    if (!wait([&]() { return showing("analyzeProgress"); }, 5000)) {
+    // The window is the point, but a track that measures faster than the check can look still measured:
+    // a finished state is proof the batch ran, and the window is proved on the three-track batch below.
+    const auto counted = [&]() {
+        return state().value(QStringLiteral("done")).toInt() > 0;
+    };
+    if (!wait([&]() { return showing("analyzeProgress") || counted(); }, 5000)) {
         std::fprintf(stderr, "dj-ui: one track ran with no progress window\n");
         return 1;
     }
@@ -4880,10 +4971,15 @@ static int runAnalyzeCheck(QQmlApplicationEngine &engine, FileBrowser &browser, 
     std::fprintf(stderr, "dj-ui: three tracks: confirmation with the parallel box, starting\n");
     QMetaObject::invokeMethod(start, "clicked");
     QCoreApplication::processEvents();
-    if (!wait([&]() { return showing("analyzeProgress"); }, 5000)) {
+    // Same tolerance as the single track: three short measurements can finish between two looks.
+    if (!wait([&]() { return showing("analyzeProgress") || counted(); }, 5000)) {
         std::fprintf(stderr, "dj-ui: the batch ran with no progress window\n");
         return 1;
     }
+    // The state is published by the engine, a frame behind the click: the selection's own count arrives
+    // one snapshot later, and reading it at once reads the batch that ran before.
+    wait(
+        [&]() { return state().value(QStringLiteral("total")).toInt() == 3; }, 5000);
     const QVariantMap batch = state();
     std::fprintf(stderr, "dj-ui: batch: progress window, %d of %d\n",
                  batch.value(QStringLiteral("done")).toInt(),
@@ -5606,10 +5702,25 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     // is enough to move it out of reach, and a check that misses its own target reports a bug that is not
     // there.
     QQuickItem *firstHeaderCell = byName(window->contentItem(), QStringLiteral("collectionHeaderCell_0"));
-    const QPointF edge = firstHeaderCell != nullptr && firstHeaderCell->width() > 0.0
-        ? firstHeaderCell->mapToScene(
-              QPointF(firstHeaderCell->width() - 1.0, firstHeaderCell->height() / 2.0))
-        : headerItem->mapToScene(QPointF(headerItem->width() * artistWidth, headerItem->height() / 2.0));
+    QQuickItem *secondHeaderCell = byName(window->contentItem(), QStringLiteral("collectionHeaderCell_1"));
+    // The splitter sits between two cells, and a cell is inset from its column on both sides: its own edge is
+    // six pixels short of the boundary, which is a pixel outside the grab zone. The midpoint of the first
+    // cell's right edge and the second cell's left edge is the boundary itself, gutter or no gutter.
+    QPointF edge;
+    if (firstHeaderCell != nullptr && firstHeaderCell->width() > 0.0 && secondHeaderCell != nullptr
+        && secondHeaderCell->width() > 0.0) {
+        const QPointF right = firstHeaderCell->mapToScene(
+            QPointF(firstHeaderCell->width(), firstHeaderCell->height() / 2.0));
+        const QPointF left = secondHeaderCell->mapToScene(QPointF(0.0, secondHeaderCell->height() / 2.0));
+        edge = QPointF((right.x() + left.x()) / 2.0, right.y());
+    } else if (firstHeaderCell != nullptr && firstHeaderCell->width() > 0.0) {
+        edge = firstHeaderCell->mapToScene(
+            QPointF(firstHeaderCell->width() + 6.0, firstHeaderCell->height() / 2.0));
+    } else {
+        edge = headerItem->mapToScene(
+            QPointF(headerItem->width() * artistWidth, headerItem->height() / 2.0));
+    }
+    std::fprintf(stdout, "dj-ui: the splitter sits at %.1f,%.1f px\n", edge.x(), edge.y());
     const QPointF pulled = edge + QPointF(40.0, 0.0);
     for (const auto &step : {std::make_pair(QEvent::MouseButtonPress, edge),
                              std::make_pair(QEvent::MouseMove, pulled),
@@ -5726,7 +5837,10 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         std::fprintf(stderr, "dj-ui: the shell has no list to put the cursor in\n");
         return 1;
     }
-    const QString secondTrack = rows.at(1).toMap().value(QStringLiteral("path")).toString();
+    // One row is the whole collection here — the item above holds it to that — so the collection cursor
+    // is that row. What the rest proves is not which row it is but that the two cursors are separate and
+    // that both survive a restart.
+    const QString secondTrack = rows.at(0).toMap().value(QStringLiteral("path")).toString();
     // The restore is deferred by one turn of the event loop (a view resets its index while it
     // rebuilds), so the check waits a moment before reading the highlight.
     const auto settleList = [](int milliseconds) {
@@ -11799,7 +11913,8 @@ int main(int argc, char *argv[])
             return 1;
         }
         bridge->connectToEngine(parser.value(connectOption));
-        return runAnalyzeCheck(engine, browser, layout, parser.value(importFixtureOption),
+        bridge->connectToEngine(parser.value(connectOption));
+        return runAnalyzeCheck(engine, browser, layout, *bridge, parser.value(importFixtureOption),
                                parser.values(collectionRootOption).value(0));
     }
 
