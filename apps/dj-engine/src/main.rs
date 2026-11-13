@@ -1490,6 +1490,7 @@ fn serve_client(
                             }
                             continue;
                         }
+                        eprintln!("dj-engine: import asked for {} files", paths.len());
                         let (answers_tx, answers_rx) = std::sync::mpsc::channel();
                         let cancel = Arc::new(AtomicBool::new(false));
                         // The same flag reaches the analysis an import triggers: a file's measuring is the
@@ -1522,6 +1523,9 @@ fn serve_client(
                                     // The flag is read between files, and a file's analysis is the long
                                     // part: a batch asked to stop must not finish the measuring it is in.
                                     if analyze_cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                                        eprintln!(
+                                            "dj-engine: analysis skipped, the batch was stopped"
+                                        );
                                         return;
                                     }
                                     // `self::root`, not `root`: the import request's collection root
@@ -1552,6 +1556,9 @@ fn serve_client(
                             .as_ref()
                             .map(|job| job.cancel.store(true, Ordering::Relaxed))
                             .is_some();
+                        // A cancel that leaves no trace in the log cannot be argued with: either the
+                        // command arrives and the batch ignores it, or it never arrives at all.
+                        eprintln!("dj-engine: cancel asked (batch present: {asked})");
                         let ack = if asked {
                             dj_domain::Ack::accepted(command_id)
                         } else {

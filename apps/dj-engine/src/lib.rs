@@ -2654,6 +2654,11 @@ pub fn run_import(
     let mut placed: Vec<std::path::PathBuf> = Vec::new();
     for file in files {
         if cancel.load(Ordering::Relaxed) {
+            eprintln!(
+                "dj-engine: batch stopped after {} of {} files",
+                state.placed + state.skipped,
+                state.total
+            );
             break;
         }
         // The copy that landed, so the caller can finish what an import cannot: measuring the tempo
