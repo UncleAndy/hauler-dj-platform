@@ -5287,7 +5287,8 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         return 1;
     }
 
-    // The batch runs: progress first, then the question about the copy.
+    // The batch runs: progress, and no question at all — the two files are identical in length and
+    // average bitrate, and an identical copy is not the DJ's decision to make.
     bool sawProgress = false;
     bool sawQuestion = false;
     QString facts;
@@ -5318,18 +5319,12 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         std::fprintf(stderr, "dj-ui: the batch ran without a progress window\n");
         return 1;
     }
-    if (!sawQuestion) {
-        std::fprintf(stderr, "dj-ui: the batch did not ask about the copy\n");
+    if (sawQuestion) {
+        std::fprintf(stderr,
+                     "dj-ui: the batch asked about an identical copy (%s) — it must not ask\n",
+                     qPrintable(facts));
         return 1;
     }
-    std::fprintf(stdout, "dj-ui: duplicate asked, %s\n", qPrintable(facts));
-    if (!facts.contains(QStringLiteral("kHz")) || !facts.contains(QStringLiteral("MB"))) {
-        std::fprintf(stderr, "dj-ui: the duplicate question carries no numbers\n");
-        return 1;
-    }
-
-    // "Добавить с меткой": both copies belong in the collection.
-    QMetaObject::invokeMethod(addMarked, "clicked");
     if (!waitDone(60000)) {
         std::fprintf(stderr, "dj-ui: the batch did not finish\n");
         return 1;
@@ -5341,10 +5336,15 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
                  finished.value(QStringLiteral("placed")).toInt(),
                  finished.value(QStringLiteral("skipped")).toInt(),
                  finished.value(QStringLiteral("failed")).toInt());
+    // One placed, one skipped: the copy is identical in length and average bitrate, so it was put aside
+    // without a question. A batch that added both would mean the rule is not in force.
     if (finished.value(QStringLiteral("total")).toInt() != 2
         || finished.value(QStringLiteral("done")).toInt() != 2
-        || finished.value(QStringLiteral("placed")).toInt() != 2) {
-        std::fprintf(stderr, "dj-ui: the batch did not add both copies\n");
+        || finished.value(QStringLiteral("placed")).toInt() != 1
+        || finished.value(QStringLiteral("skipped")).toInt() != 1) {
+        std::fprintf(stderr, "dj-ui: the batch did not put the identical copy aside (placed %d, skipped %d)\n",
+                     finished.value(QStringLiteral("placed")).toInt(),
+                     finished.value(QStringLiteral("skipped")).toInt());
         return 1;
     }
     if (questionOpen() || progressDialog->property("visible").toBool()) {

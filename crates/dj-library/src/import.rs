@@ -196,12 +196,25 @@ pub fn import_checked(
             })
         }
         identity::Verdict::Duplicate { .. } => match policy {
-            Policy::Ask => Ok(Outcome::Duplicate {
-                existing,
-                verdict,
-                candidate: prepared.identity.clone(),
-                target,
-            }),
+            Policy::Ask => {
+                // Same length and same average bitrate: the same file. There is nothing for the DJ to
+                // decide, so it is put aside like a refused copy instead of interrupting the batch with
+                // a question whose answer is obvious.
+                if identical(&existing_identity, &prepared.identity) {
+                    let stored = keep_as_duplicate(root, source, &prepared, now_ms)?;
+                    return Ok(Outcome::Rejected {
+                        existing,
+                        stored,
+                        verdict,
+                    });
+                }
+                Ok(Outcome::Duplicate {
+                    existing,
+                    verdict,
+                    candidate: prepared.identity.clone(),
+                    target,
+                })
+            }
             Policy::KeepBoth => {
                 let marker = variant_marker(&target);
                 let imported = place(source, root, prepared, now_ms, Some(marker.clone()))?;
@@ -385,6 +398,18 @@ fn place(
         variant,
         fingerprint: print,
     })
+}
+
+/// True when the two identities describe the same file, not merely the same recording.
+///
+/// The length in milliseconds and the average bitrate over the whole file: for an unchanged copy both
+/// are equal exactly, and a re-encode or a different master differs in at least one of them. This is the
+/// question the DJ never has to answer — the file is already there, byte for byte in effect.
+fn identical(existing: &Identity, candidate: &Identity) -> bool {
+    existing.duration_ms == candidate.duration_ms
+        && existing.bitrate().is_some()
+        && existing.bitrate() == candidate.bitrate()
+        && existing.lossless == candidate.lossless
 }
 
 /// Move a track out of the collection into `_duplicates/`, with its metadata file.

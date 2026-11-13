@@ -198,14 +198,20 @@ fn the_same_file_twice_is_a_duplicate_and_is_not_copied() {
 
     let second = import_checked(&source, &collection, 2_000, find_in(&catalog), Policy::Ask)
         .expect("второй импорт");
+    // The same file, not merely the same recording: the same length and the same average bitrate. There
+    // is nothing to ask — the copy is put aside and the batch goes on.
     match second {
-        Outcome::Duplicate {
-            existing, verdict, ..
+        Outcome::Rejected {
+            existing, stored, ..
         } => {
             assert_eq!(existing, placed.path);
-            assert!(matches!(verdict, Verdict::Duplicate { .. }), "{verdict:?}");
+            assert!(
+                stored.starts_with(collection.join(DUPLICATES_DIR)),
+                "копия должна уйти в {DUPLICATES_DIR}: {}",
+                stored.display()
+            );
         }
-        other => panic!("дубль не распознан: {other:?}"),
+        other => panic!("одинаковый файл не отложен без вопроса: {other:?}"),
     }
     let files = fs::read_dir(collection.join("A/T"))
         .expect("каталог")
