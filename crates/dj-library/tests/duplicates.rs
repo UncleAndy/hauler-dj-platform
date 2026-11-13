@@ -590,3 +590,41 @@ fn a_copy_at_another_sample_rate_is_still_the_same_recording() {
     }
     let _ = fs::remove_dir_all(&root);
 }
+
+#[test]
+fn a_copy_with_another_bitrate_is_a_question() {
+    // The rule about identical copies must not swallow a real decision: the same recording padded with
+    // bytes shares its length but not its average bitrate, and that is the DJ's call, not the batch's.
+    let root = scratch("askbitrate");
+    let collection = root.join("collection");
+    let source = tone(&root, "A - Track.wav", 30, 220.0);
+    let first = import_checked(
+        &source,
+        &collection,
+        1_000,
+        find_in(&Catalog::new()),
+        Policy::Ask,
+    )
+    .expect("первый импорт");
+    let Outcome::Placed(placed) = first else {
+        panic!("первый файл не лёг: {first:?}");
+    };
+    let catalog = catalogue(&placed.path, &placed.identity);
+
+    // The same tone written at another rate: the same recording, another bitrate — the DJ's decision.
+    let padded_source = root.join("A - Track 48.wav");
+    write_tone_from(&padded_source, 30, 220.0, 0, 48_000);
+    let second = import_checked(
+        &padded_source,
+        &collection,
+        2_000,
+        find_in(&catalog),
+        Policy::Ask,
+    )
+    .expect("второй импорт");
+    match second {
+        Outcome::Duplicate { .. } => {}
+        other => panic!("копия с другим битрейтом должна спрашивать: {other:?}"),
+    }
+    let _ = fs::remove_dir_all(&root);
+}
