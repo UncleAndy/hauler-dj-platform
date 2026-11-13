@@ -4264,10 +4264,13 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
             return false;
         }
         const double width = header->width();
-        double left = 0.0;
-        for (int at = 0; at < index; ++at) {
-            left += columns.at(at).toMap().value(QStringLiteral("width")).toDouble() * width;
-        }
+        // The columns start after the row number and the lock that sits beside it, and that gutter is
+        // part of the header: a left edge summed from the shares alone lands tens of pixels to the left
+        // and clicks the gutter, which sorts nothing. The panel is asked for the edge it draws at.
+        QVariant asked;
+        const bool knows = QMetaObject::invokeMethod(panel, "columnX", Q_RETURN_ARG(QVariant, asked),
+                                                     Q_ARG(QVariant, index), Q_ARG(QVariant, width));
+        const double left = knows ? asked.toDouble() : 0.0;
         const double share = columns.at(index).toMap().value(QStringLiteral("width")).toDouble();
         const QPointF at(left + share * width / 2.0, header->height() / 2.0);
         const QPointF scene = header->mapToScene(at);
@@ -4276,7 +4279,15 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
                               Qt::LeftButton, modifiers);
             QCoreApplication::sendEvent(window, &event);
         }
-        QCoreApplication::processEvents();
+        // A sort is asked of the index as well as applied here, and the answer carries the order that was
+        // asked for. Reading the list in the same breath reads the answer to the previous question, so the
+        // check waits the way a hand would: the row order settles before the next look.
+        QElapsedTimer after;
+        after.start();
+        while (after.elapsed() < 400) {
+            QCoreApplication::processEvents();
+            QThread::msleep(10);
+        }
         return true;
     };
     const auto order = [&]() {
