@@ -9752,7 +9752,13 @@ int main(int argc, char *argv[])
         };
         const auto lit = [&]() {
             auto *button = findItem(window->contentItem(), QStringLiteral("metronome_A"));
-            return button != nullptr && button->property("highlighted").toBool();
+            if (button == nullptr) {
+                return false;
+            }
+            // A two-state control in the deck paints its state through `lit`; `highlighted` is the
+            // Controls property, and with the deck's own paint nothing reads it any more.
+            const QVariant state = button->property("lit");
+            return state.isValid() ? state.toBool() : button->property("highlighted").toBool();
         };
         bridge->load(QStringLiteral("A"), fixture);
         const QString wantName = QFileInfo(fixture).fileName();
