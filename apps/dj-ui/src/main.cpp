@@ -4182,7 +4182,15 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
                                {QStringLiteral("first_beat_frame"), 0},
                                {QStringLiteral("anchors"), QJsonArray{}},
                                {QStringLiteral("beats_per_bar"), 4}};
+        // The names the columns show are the tags the import read, and the sort reads the same tags: a
+        // record without them is four rows the artist column cannot order, whatever the header asks for.
+        const QStringList parts = pair.first.split(QStringLiteral(" - "));
+        const QJsonObject tags{{QStringLiteral("artist"), parts.value(0)},
+                               {QStringLiteral("album"), QStringLiteral("Album")},
+                               {QStringLiteral("title"), parts.value(1)},
+                               {QStringLiteral("genres"), QJsonArray{}}};
         const QJsonObject meta{{QStringLiteral("schema"), QStringLiteral("djp-track-v1")},
+                               {QStringLiteral("tags"), tags},
                                {QStringLiteral("revision"), 1},
                                {QStringLiteral("updated_at_ms"), 1},
                                {QStringLiteral("fingerprint"), fingerprint},
@@ -4433,12 +4441,34 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
     // A list long enough to scroll: the cursor is driven by the keyboard, and the view must be at the
     // row at once — a window that glides to it reads as lag, not as motion.
     for (int index = 0; index < 40; ++index) {
-        const QString target =
-            root.filePath(QStringLiteral("Scroll %1.wav").arg(index, 2, 10, QLatin1Char('0')));
+        const QString name = QStringLiteral("Scroll %1.wav").arg(index, 2, 10, QLatin1Char('0'));
+        const QString target = root.filePath(name);
         if (!QFile::exists(target) && !QFile::copy(fixture, target)) {
             std::fprintf(stderr, "dj-ui: cannot place %s\n", qPrintable(target));
             return 1;
         }
+        // A row is a record: forty files without one are forty files the list never shows.
+        QFile record(root.filePath(QStringLiteral(".djmeta/") + name + QStringLiteral(".json")));
+        if (!record.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            std::fprintf(stderr, "dj-ui: cannot write the record for %s\n", qPrintable(name));
+            return 1;
+        }
+        const QJsonObject fingerprint{
+            {QStringLiteral("size"), 2000 + index},
+            {QStringLiteral("head"), QString(16, QLatin1Char(char('A' + index % 26)))},
+            {QStringLiteral("tail"), QString(16, QLatin1Char(char('Q' + index % 26)))},
+        };
+        const QJsonObject tags{{QStringLiteral("artist"), QStringLiteral("Scroll")},
+                               {QStringLiteral("album"), QStringLiteral("Album")},
+                               {QStringLiteral("title"), QString::number(index)},
+                               {QStringLiteral("genres"), QJsonArray{}}};
+        const QJsonObject meta{{QStringLiteral("schema"), QStringLiteral("djp-track-v1")},
+                               {QStringLiteral("revision"), 1},
+                               {QStringLiteral("updated_at_ms"), 1},
+                               {QStringLiteral("fingerprint"), fingerprint},
+                               {QStringLiteral("tags"), tags}};
+        record.write(QJsonDocument(meta).toJson());
+        record.close();
     }
     browser.openCollection({collectionRoot});
     clock.restart();
