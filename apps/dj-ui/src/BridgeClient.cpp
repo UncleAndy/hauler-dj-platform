@@ -685,6 +685,15 @@ void FileBrowser::setGenreFilter(const QStringList &genres)
 
 void FileBrowser::applyFilter()
 {
+    // The index answered this question already: genres and the search went to SQL, and the rows that came
+    // back are the answer. Filtering them again in memory is not a safety net — it drops rows whose genre
+    // text is empty while the link table knows the genre, and the list then looks empty for a filter that
+    // did match.
+    if (m_paged) {
+        m_entries = m_all;
+        emit changed();
+        return;
+    }
     const bool byGenre = !m_genres.isEmpty();
     if (m_filter.isEmpty() && !byGenre) {
         m_entries = m_all;
