@@ -43,12 +43,17 @@ Pane {
     readonly property var analysisState: Bridge.snapshot !== undefined && Bridge.snapshot.analysis !== undefined
                                          ? Bridge.snapshot.analysis : null
 
-    // The numbers land in the files, not in a snapshot: the list is read again while the batch runs,
-    // and once more when it stops.
+    // The numbers land in the files, not in a snapshot: the list is read again once, when the batch stops.
+    // Once, not on every snapshot: the snapshot also carries the meters and the playheads, and a refresh
+    // on each of those reopens the collection under the answer that is already on its way — the list then
+    // never fills, because every answer is an answer to a question that has just been replaced.
+    property bool analysisWasRunning: false
     onAnalysisStateChanged: {
-        if (browser.analysisState !== null && browser.analysisState.running === false) {
+        const running = browser.analysisState !== null && browser.analysisState.running === true;
+        if (analysisWasRunning && !running) {
             Browser.refreshCollection();
         }
+        analysisWasRunning = running;
     }
 
     function isChosen(path) {
