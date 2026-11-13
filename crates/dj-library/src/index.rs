@@ -796,11 +796,29 @@ pub fn row_of(meta: &TrackMeta, path: &Path) -> TrackRow {
 
 /// One record and its genres, or nothing when the record cannot be read.
 fn read_record(record: &Path) -> Option<(TrackRow, Vec<GenreName>)> {
-    let meta = sidecar::read(record).ok()?;
+    let mut meta = sidecar::read(record).ok()?;
     // The track sits next to the record's directory: `.djmeta/<name>.json` describes `<dir>/<name>`.
     let name = record.file_stem()?;
     let dir = record.parent()?.parent()?;
     let track = dir.join(name);
+    if meta.tags.is_none() {
+        // A record written before tags were kept carries none, and the list would show file names and no
+        // genres for the life of the collection — a rescan skips a record that exists. The file still has
+        // them, so they are read here, once, on the way into the index.
+        if let Ok(tags) = crate::tags::read(&track)
+            && (!tags.is_empty() || !tags.genre.trim().is_empty())
+        {
+            meta.tags = Some(crate::meta::FileTags {
+                artist: tags.artist,
+                album: tags.album,
+                title: tags.title,
+                genres: genres::split(&tags.genre)
+                    .into_iter()
+                    .map(|genre| genre.name)
+                    .collect(),
+            });
+        }
+    }
     let genres: Vec<GenreName> = meta
         .tags
         .as_ref()
