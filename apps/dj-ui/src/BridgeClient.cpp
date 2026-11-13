@@ -1032,7 +1032,11 @@ int BridgeClient::cancelImport()
 {
     QJsonObject command;
     command.insert(QStringLiteral("ImportCancel"), QJsonObject());
-    return sendCommand(QString(), command);
+    const int id = sendCommand(QString(), command);
+    // The DJ pressed stop and must see that he was heard, not a window that keeps claiming work: the
+    // batch stops at the next honest point, and a file's analysis now sees the flag too.
+    setStatus(QStringLiteral("stopping the batch"));
+    return id;
 }
 
 int BridgeClient::answerImport(const QString &answer)

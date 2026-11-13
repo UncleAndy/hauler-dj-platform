@@ -1492,6 +1492,9 @@ fn serve_client(
                         }
                         let (answers_tx, answers_rx) = std::sync::mpsc::channel();
                         let cancel = Arc::new(AtomicBool::new(false));
+                        // The same flag reaches the analysis an import triggers: a file's measuring is the
+                        // long part of a batch, and it must stop when the DJ says stop.
+                        let analyze_cancel = Arc::clone(&cancel);
                         let running = Arc::new(AtomicBool::new(true));
                         import = Some(dj_engine::ImportJob {
                             answers: answers_tx,
@@ -1516,6 +1519,11 @@ fn serve_client(
                                 cancel,
                                 running,
                                 std::sync::Arc::new(move |path: &std::path::Path| {
+                                    // The flag is read between files, and a file's analysis is the long
+                                    // part: a batch asked to stop must not finish the measuring it is in.
+                                    if analyze_cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                                        return;
+                                    }
                                     // `self::root`, not `root`: the import request's collection root
                                     // shadows the function of that name in this arm.
                                     dj_engine::meta::analyze_file(
@@ -1538,13 +1546,21 @@ fn serve_client(
                         continue;
                     }
                     dj_engine::Routed::ImportCancel { command_id } => {
-                        if let Some(job) = import.as_ref() {
-                            job.cancel.store(true, Ordering::Relaxed);
-                        }
-                        if alerts
-                            .send(ServerMessage::Ack(dj_domain::Ack::accepted(command_id)))
-                            .is_err()
-                        {
+                        // An answer, not a gesture: a cancel with no batch to stop is refused, because a
+                        // panel that shows "stopping" for a batch that already ended is lying.
+                        let asked = import
+                            .as_ref()
+                            .map(|job| job.cancel.store(true, Ordering::Relaxed))
+                            .is_some();
+                        let ack = if asked {
+                            dj_domain::Ack::accepted(command_id)
+                        } else {
+                            dj_domain::Ack::rejected(
+                                command_id,
+                                dj_domain::RejectReason::InvalidValue,
+                            )
+                        };
+                        if alerts.send(ServerMessage::Ack(ack)).is_err() {
                             return;
                         }
                         continue;
