@@ -784,6 +784,107 @@ Pane {
         }
     }
 
+    // The genre filter: the whole list with how many tracks carry each genre, and the choice applied
+    // only when the DJ says so. A box that narrows the list on the spot is a list that changes under
+    // the hand that is still choosing.
+    Dialog {
+        id: genreFilterDialog
+        objectName: "genreFilterDialog"
+        title: qsTr("Genre filter")
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        standardButtons: Dialog.NoButton
+        closePolicy: Popup.NoAutoClose
+        // What Filter will apply. The panel's own filter is untouched until then, so Cancel is free.
+        property var pending: []
+
+        onAboutToShow: pending = Browser.genreFilter.slice()
+
+        contentItem: ColumnLayout {
+            spacing: 6
+            Label {
+                objectName: "genreFilterHint"
+                text: qsTr("%1 genre(s), %2 chosen")
+                      .arg(Browser.genres.length).arg(genreFilterDialog.pending.length)
+                color: UiSettings.themeTextDim
+                font.pixelSize: browser.listFont
+            }
+            ListView {
+                id: genreFilterList
+                objectName: "genreFilterList"
+                Layout.preferredWidth: 340
+                // Tall enough to read, short enough to leave the footer on the screen. Past that the
+                // list scrolls: a collection with two hundred genres must not be a dialog off the
+                // bottom of the window.
+                Layout.preferredHeight: Math.min(320, Math.max(60, contentHeight))
+                clip: true
+                interactive: true
+                model: Browser.genres
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: ScrollBar {
+                    objectName: "genreFilterBar"
+                    policy: ScrollBar.AsNeeded
+                }
+
+                delegate: Item {
+                    id: genreRow
+                    required property var modelData
+                    objectName: "genreRow_" + genreRow.modelData.name
+                    // What the row says, read by the check: the census is the point of the dialog.
+                    property string label: genreRow.modelData.name + "  " + genreRow.modelData.count
+                    width: genreFilterList.width
+                    height: Math.round(browser.rowHeight * 0.8)
+
+                    CheckBox {
+                        objectName: "genreBox_" + genreRow.modelData.name
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: genreRow.label
+                        font.pixelSize: browser.listFont
+                        // Bound, never toggled by the control itself: the choice lives in `pending`
+                        // until Filter is pressed, and a box that keeps its own value would disagree
+                        // with the list after the dialog is reopened.
+                        checked: genreFilterDialog.pending.indexOf(genreRow.modelData.name) >= 0
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        onClicked: {
+                            const wanted = genreFilterDialog.pending.slice();
+                            const at = wanted.indexOf(genreRow.modelData.name);
+                            if (at >= 0) {
+                                wanted.splice(at, 1);
+                            } else {
+                                wanted.push(genreRow.modelData.name);
+                            }
+                            genreFilterDialog.pending = wanted;
+                        }
+                    }
+                }
+            }
+        }
+
+        footer: RowLayout {
+            spacing: 6
+            Item { Layout.fillWidth: true }
+            Button {
+                objectName: "genreFilterCancel"
+                text: qsTr("Cancel")
+                font.pixelSize: browser.listFont
+                onClicked: genreFilterDialog.close()
+            }
+            Button {
+                objectName: "genreFilterApply"
+                text: qsTr("Filter")
+                font.pixelSize: browser.listFont
+                onClicked: {
+                    Browser.genreFilter = genreFilterDialog.pending.slice();
+                    genreFilterDialog.close();
+                }
+            }
+        }
+    }
+
     // The duplicate: both copies in numbers, and four answers that mean different things.
     Dialog {
         id: duplicateDialog
@@ -1117,72 +1218,21 @@ Pane {
                 }
             }
 
-            // The genres the collection carries, as chips: one click narrows the list, a second widens
-            // it back. The chips are a union — a track belongs to every genre its tag lists, and a DJ
-            // looking for house and techno wants both, not the tracks that are both at once.
-            Flow {
-                objectName: "collectionGenres"
-                visible: browser.section === "collection" && genresRepeater.count > 0
-                Layout.fillWidth: true
-                // Checkboxes wrap, so the height is the number of rows they take: a Flow inside a column
-                // has no height of its own, and an item with no height is an item nothing can click.
-                Layout.preferredHeight: {
-                    const perRow = 4;
-                    const rows = Math.max(1, Math.ceil(genresRepeater.count / perRow));
-                    return Math.round(rows * browser.rowHeight * 1.1);
-                }
-                spacing: 4
-
-                Repeater {
-                    id: genresRepeater
-                    model: Browser.genres
-
-                    // A checkbox, not a chip: the list of genres must stay whole while a choice is
-                    // being made — a genre that disappears when another is ticked cannot be ticked.
-                    delegate: CheckBox {
-                        id: chip
-                        required property var modelData
-                        // Named for the check that clicks it: a box nobody can find is a box nobody
-                        // can test.
-                        objectName: "genreChip_" + modelData.name
-                        text: chip.modelData.name + "  " + chip.modelData.count
-                        font.pixelSize: Math.max(8, browser.listFont - 1)
-                        checked: Browser.genreFilter.indexOf(chip.modelData.name) >= 0
-                        onToggled: {
-                            const wanted = Browser.genreFilter.slice();
-                            const at = wanted.indexOf(chip.modelData.name);
-                            if (at >= 0) {
-                                wanted.splice(at, 1);
-                            } else {
-                                wanted.push(chip.modelData.name);
-                            }
-                            Browser.genreFilter = wanted;
-                        }
-                    }
-                }
-
-                // Reset appears only when there is something to reset: a button that can do nothing
-                // is a button that teaches nothing.
-                Rectangle {
-                    objectName: "collectionGenresReset"
-                    visible: Browser.genreFilter.length > 0
-                    width: resetLabel.implicitWidth + 14
-                    height: Math.round(browser.rowHeight * 0.8)
-                    radius: 3
-                    color: "transparent"
-                    border.color: UiSettings.themeBorder
-                    Text {
-                        id: resetLabel
-                        anchors.centerIn: parent
-                        font.pixelSize: Math.max(8, browser.listFont - 1)
-                        color: UiSettings.themeTextDim
-                        text: qsTr("reset")
-                    }
-                    MouseArea {
-                        anchors.fill: parent
-                        onClicked: Browser.genreFilter = []
-                    }
-                }
+            // The genre filter is a question, not a row of chips: the collection may carry fifty
+            // genres, and fifty boxes in the header push the list off the screen. One button says
+            // whether a filter is on; the choosing happens in a dialog that scrolls.
+            Button {
+                objectName: "genreFilter"
+                visible: browser.section === "collection"
+                text: Browser.genreFilter.length > 0
+                      ? qsTr("Genre filter… (%1)").arg(Browser.genreFilter.length)
+                      : qsTr("Genre filter…")
+                font.pixelSize: browser.headerButtonFont
+                implicitHeight: browser.headerButtonHeight
+                Layout.alignment: Qt.AlignLeft
+                // A button that opens an empty dialog teaches nothing: it waits for the census.
+                enabled: Browser.genres.length > 0
+                onClicked: genreFilterDialog.open()
             }
 
             // The collection's columns, named: a row of numbers with no header is a puzzle. The file

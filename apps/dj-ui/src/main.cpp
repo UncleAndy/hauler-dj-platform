@@ -29,6 +29,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QKeyEvent>
+#include <QWheelEvent>
 #include <QEventLoop>
 #include <QGuiApplication>
 #include <QPalette>
@@ -6483,18 +6484,23 @@ static int runGenreCheck(QQmlApplicationEngine &engine, FileBrowser &browser, La
         }
         return names;
     };
-    const auto chips = [&]() {
+    // What the dialog's rows say: the census the DJ chooses from, read from the widgets and not from
+    // the bridge — a list the panel forgot to draw is exactly what this has to catch.
+    const auto genreRows = [&]() {
         QStringList shown;
-        for (const QVariant &entry : browser.genreList()) {
-            const QVariantMap map = entry.toMap();
-            shown.append(map.value(QStringLiteral("name")).toString() + QStringLiteral(" ")
-                         + QString::number(map.value(QStringLiteral("count")).toInt()));
+        for (const char *name : {"Ambient", "House", "Techno"}) {
+            QQuickItem *row = findItem(window->contentItem(),
+                                       QStringLiteral("genreRow_") + QString::fromLatin1(name));
+            shown.append(row != nullptr
+                             ? row->property("label").toString()
+                             : QStringLiteral("<no row for ") + QString::fromLatin1(name)
+                                   + QStringLiteral(">"));
         }
         return shown;
     };
 
-    // The chip is a widget of the panel: a check that calls `setGenreFilter` directly would pass with
-    // no chips on the screen at all.
+    // A widget of the panel: a check that called `setGenreFilter` directly would pass with no dialog on
+    // the screen at all.
     const auto click = [&](const QString &name) -> bool {
         QQuickItem *item = nullptr;
         // A delegate one frame away from being born cannot be clicked: waiting for it is what a hand does.
@@ -6514,7 +6520,7 @@ static int runGenreCheck(QQmlApplicationEngine &engine, FileBrowser &browser, La
             QCoreApplication::sendEvent(window, &event);
             QCoreApplication::processEvents();
         }
-        pump(30);
+        pump(40);
         return true;
     };
 
@@ -6525,87 +6531,241 @@ static int runGenreCheck(QQmlApplicationEngine &engine, FileBrowser &browser, La
                      qPrintable(visibleRows().join(QStringLiteral(", "))));
         return 1;
     }
-    // Clearing the chips brings the whole list back: the filter is a question for the index, and the last
-    // untick has to ask it again. A list that keeps the rows of a filter the DJ cleared is the bug this
-    // checks for.
-    browser.setGenreFilter({QStringLiteral("Techno")});
+
+    // The button waits for the census: it is disabled while the collection says nothing about genres,
+    // and a disabled button answers no click.
+    for (int tick = 0; tick < 150 && browser.genreList().isEmpty(); ++tick) {
+        pump(20);
+    }
+    // Offscreen the header button is a child of a row the layout left at zero size, and a click on a
+    // child of nothing reaches nothing. Give it the size the layout would give it on screen.
+    if (QQuickItem *button = findItem(window->contentItem(), QStringLiteral("genreFilter"))) {
+        if (button->width() <= 0.0 || button->height() <= 0.0) {
+            button->setWidth(120.0);
+            button->setHeight(22.0);
+            pump(30);
+        }
+    } else {
+        std::fprintf(stderr, "dj-ui: there is no genre filter button in the header\n");
+        return 1;
+    }
+
+    // What a person sees is the dialog's content, so that is what the check reads: the Popup object is
+    // not a child of any item, and its `visible` is not reachable through the item tree.
+    const auto filterList = [&]() -> QQuickItem * {
+        return findItem(window->contentItem(), QStringLiteral("genreFilterList"));
+    };
+    const auto openFilter = [&]() -> bool {
+        if (!click(QStringLiteral("genreFilter"))) {
+            return false;
+        }
+        for (int tick = 0; tick < 60; ++tick) {
+            QQuickItem *list = filterList();
+            if (list != nullptr && list->width() > 0.0 && list->isVisible()) {
+                // A dialog is laid out over its opening frames: a click aimed at a row that is still
+                // moving lands on the panel behind it.
+                pump(120);
+                return true;
+            }
+            pump(20);
+        }
+        return false;
+    };
+
+    // Ticking a box is a click on its row and then a fact: the box is checked. A click that was sent is
+    // not a click that arrived, and a filter built out of missing clicks measures nothing.
+    const auto tick = [&](const QString &genre, bool wanted) -> bool {
+        const QString box = QStringLiteral("genreBox_") + genre;
+        const QString row = QStringLiteral("genreRow_") + genre;
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            QQuickItem *item = findItem(window->contentItem(), box);
+            if (item != nullptr && item->property("checked").toBool() == wanted) {
+                return true;
+            }
+            if (!click(row)) {
+                return false;
+            }
+            for (int tickTick = 0; tickTick < 40; ++tickTick) {
+                item = findItem(window->contentItem(), box);
+                if (item != nullptr && item->property("checked").toBool() == wanted) {
+                    return true;
+                }
+                pump(20);
+            }
+        }
+        QQuickItem *rowItem = findItem(window->contentItem(), row);
+        std::fprintf(stderr,
+                     "dj-ui: the %s box stays at %d (row %s %.0fx%.0f at %.0f,%.0f, visible %d)\n",
+                     qPrintable(genre),
+                     rowItem != nullptr
+                         ? int(findItem(window->contentItem(), box) != nullptr
+                                   ? findItem(window->contentItem(), box)->property("checked").toBool()
+                                   : -1)
+                         : -1,
+                     rowItem != nullptr ? "yes" : "no", rowItem != nullptr ? rowItem->width() : -1.0,
+                     rowItem != nullptr ? rowItem->height() : -1.0,
+                     rowItem != nullptr ? rowItem->mapToScene(QPointF(0, 0)).x() : -1.0,
+                     rowItem != nullptr ? rowItem->mapToScene(QPointF(0, 0)).y() : -1.0,
+                     rowItem != nullptr && rowItem->isVisible() ? 1 : 0);
+        return false;
+    };
+
+    const auto closeFilter = [&](const QString &button) -> bool {
+        return click(button);
+    };
+
+    // The census: a genre with how many tracks carry it. A list of bare names makes the DJ guess which
+    // filter is worth opening, and that guess is the work the dialog exists to remove.
+    if (!openFilter()) {
+        QQuickItem *list = filterList();
+        std::fprintf(stderr,
+                     "dj-ui: the genre filter button opened nothing "
+                     "(genres %d, list %s %.0fx%.0f visible %d)\n",
+                     int(browser.genreList().size()), list != nullptr ? "yes" : "no",
+                     list != nullptr ? list->width() : -1.0, list != nullptr ? list->height() : -1.0,
+                     list != nullptr && list->isVisible() ? 1 : 0);
+        return 1;
+    }
+    const QStringList census = genreRows();
+    if (census != QStringList{QStringLiteral("Ambient  1"), QStringLiteral("House  2"),
+                              QStringLiteral("Techno  1")}) {
+        std::fprintf(stderr, "dj-ui: the dialog does not say what the records say: %s\n",
+                     qPrintable(census.join(QStringLiteral(", "))));
+        return 1;
+    }
+    std::printf("dj-ui: genre filter says %s\n", qPrintable(census.join(QStringLiteral(", "))));
+
+    // Cancel closes and nothing else: a dialog that applies on the way out cannot be used to look.
+    if (!tick(QStringLiteral("House"), true)) {
+        std::fprintf(stderr, "dj-ui: the House box does not tick\n");
+        return 1;
+    }
+    if (!closeFilter(QStringLiteral("genreFilterCancel"))) {
+        std::fprintf(stderr, "dj-ui: no Cancel in the genre filter\n");
+        return 1;
+    }
+    if (QQuickItem *list = filterList(); list != nullptr && list->isVisible()) {
+        std::fprintf(stderr, "dj-ui: Cancel left the dialog on the screen\n");
+        return 1;
+    }
+    if (visibleRows().size() != 3 || !browser.genreFilter().isEmpty()) {
+        std::fprintf(stderr, "dj-ui: Cancel applied a filter: %d rows, filter %s\n",
+                     int(visibleRows().size()),
+                     qPrintable(browser.genreFilter().join(QStringLiteral(", "))));
+        return 1;
+    }
+    std::printf("dj-ui: Cancel closed the dialog and left the list at %d rows\n",
+                int(visibleRows().size()));
+
+    // Filter applies what was ticked.
+    if (!openFilter() || !tick(QStringLiteral("Techno"), true)) {
+        std::fprintf(stderr, "dj-ui: cannot tick Techno\n");
+        return 1;
+    }
+    if (!closeFilter(QStringLiteral("genreFilterApply"))) {
+        std::fprintf(stderr, "dj-ui: no Filter button in the genre filter\n");
+        return 1;
+    }
     for (int tick = 0; tick < 100 && visibleRows().size() != 1; ++tick) {
         pump(20);
     }
-    const int narrowed = static_cast<int>(visibleRows().size());
-    browser.setGenreFilter({});
-    for (int tick = 0; tick < 100 && visibleRows().size() != 3; ++tick) {
-        pump(20);
-    }
-    const int restored = static_cast<int>(visibleRows().size());
-    std::printf("dj-ui: chips Techno -> %d rows, cleared -> %d rows\n", narrowed, restored);
-    if (narrowed != 1 || restored != 3) {
-        std::fprintf(stderr, "dj-ui: clearing the chips left %d rows (Techno alone narrowed to %d)\n",
-                     restored, narrowed);
-        return 1;
-    }
-
-    if (chips() != QStringList{QStringLiteral("Ambient 1"), QStringLiteral("House 2"),
-                               QStringLiteral("Techno 1")}) {
-        std::fprintf(stderr, "dj-ui: the chips do not say what the records say: %s\n",
-                     qPrintable(chips().join(QStringLiteral(", "))));
-        return 1;
-    }
-    std::printf("dj-ui: genre chips: %s\n", qPrintable(chips().join(QStringLiteral(", "))));
-
-    // The offscreen shell leaves the panel's inner rows at zero size (the column itself is laid out,
-    // its children are not), and a child of a zero-size parent cannot be clicked. Give the chips row
-    // the size the layout would give it on screen, so the click goes to the chip and not to nothing.
-    if (QQuickItem *flow = findItem(window->contentItem(), QStringLiteral("collectionGenres"))) {
-        if (flow->width() <= 0.0) {
-            flow->setWidth(600.0);
-            flow->setHeight(20.0);
-            pump(30);
-        }
-    }
-    if (!click(QStringLiteral("genreChip_Techno"))) {
-        std::fprintf(stderr, "dj-ui: no Techno chip to click\n");
-        return 1;
-    }
     if (visibleRows() != QStringList{QStringLiteral("Alpha - House One")}) {
-        std::fprintf(stderr, "dj-ui: the Techno chip left %s\n",
+        std::fprintf(stderr, "dj-ui: the Techno filter left %s\n",
                      qPrintable(visibleRows().join(QStringLiteral(", "))));
         return 1;
     }
-    std::printf("dj-ui: the Techno chip leaves %s\n",
+    std::printf("dj-ui: Filter on Techno leaves %s\n",
                 qPrintable(visibleRows().join(QStringLiteral(", "))));
 
-    // Two chips are a union: a track belongs to every genre its tag lists.
-    if (!click(QStringLiteral("genreChip_Ambient"))) {
-        std::fprintf(stderr, "dj-ui: no Ambient chip to click\n");
+    // Two genres are a union: a track belongs to every genre its tag lists. The box shows what the
+    // panel already had, so a reopened dialog must agree with the filter in force.
+    if (!openFilter() || !tick(QStringLiteral("Ambient"), true)) {
+        std::fprintf(stderr, "dj-ui: cannot tick Ambient on top of Techno\n");
         return 1;
     }
-    if (visibleRows() != QStringList{QStringLiteral("Alpha - House One"),
-                                     QStringLiteral("Gamma - Ambient Three")}) {
-        std::fprintf(stderr, "dj-ui: two chips left %s\n",
+    if (!closeFilter(QStringLiteral("genreFilterApply"))) {
+        std::fprintf(stderr, "dj-ui: no Filter button for the second choice\n");
+        return 1;
+    }
+    for (int tick = 0; tick < 100 && visibleRows().size() != 2; ++tick) {
+        pump(20);
+    }
+    if (visibleRows().size() != 2) {
+        std::fprintf(stderr, "dj-ui: Techno and Ambient left %s\n",
                      qPrintable(visibleRows().join(QStringLiteral(", "))));
         return 1;
     }
     std::printf("dj-ui: Techno and Ambient leave %d rows\n", int(visibleRows().size()));
 
-    // The chips are a setting: the layout file has to agree with the panel.
+    // The filter is a setting: the layout file has to agree with the panel.
     if (!layout.collectionGenres().contains(QStringLiteral("Techno"))) {
-        std::fprintf(stderr, "dj-ui: the chips did not reach the layout: %s\n",
+        std::fprintf(stderr, "dj-ui: the filter did not reach the layout: %s\n",
                      qPrintable(layout.collectionGenres().join(QStringLiteral(", "))));
         return 1;
     }
 
-    if (!click(QStringLiteral("collectionGenresReset"))) {
-        std::fprintf(stderr, "dj-ui: no reset chip to click\n");
+    // Unticking everything is how the dialog clears the filter: the last untick has to ask the index
+    // again, and a list that keeps the rows of a filter the DJ cleared is the bug this catches.
+    if (!openFilter() || !tick(QStringLiteral("Techno"), false)
+        || !tick(QStringLiteral("Ambient"), false)) {
+        std::fprintf(stderr, "dj-ui: cannot untick the two chosen genres\n");
         return 1;
     }
+    if (!closeFilter(QStringLiteral("genreFilterApply"))) {
+        std::fprintf(stderr, "dj-ui: no Filter button for the clear\n");
+        return 1;
+    }
+    for (int tick = 0; tick < 100 && visibleRows().size() != 3; ++tick) {
+        pump(20);
+    }
     if (visibleRows().size() != 3 || !browser.genreFilter().isEmpty()) {
-        std::fprintf(stderr, "dj-ui: reset left %d rows and filter %s\n",
+        std::fprintf(stderr, "dj-ui: clearing in the dialog left %d rows and filter %s\n",
                      int(visibleRows().size()),
                      qPrintable(browser.genreFilter().join(QStringLiteral(", "))));
         return 1;
     }
-    std::printf("dj-ui: reset brings back %d rows\n", int(visibleRows().size()));
+    std::printf("dj-ui: the dialog clearing brings back %d rows\n", int(visibleRows().size()));
+
+    // Many genres must scroll rather than run off the window: the list is a view, and a collection with
+    // two hundred genres has to be reachable. The rows here are synthetic on purpose — the point is the
+    // view, not the census already measured above.
+    if (!openFilter()) {
+        std::fprintf(stderr, "dj-ui: the dialog does not open for the scroll\n");
+        return 1;
+    }
+    QQuickItem *list = filterList();
+    QQuickItem *bar = findItem(window->contentItem(), QStringLiteral("genreFilterBar"));
+    if (list == nullptr) {
+        std::fprintf(stderr, "dj-ui: the genre list is not on the screen\n");
+        return 1;
+    }
+    QVariantList many;
+    for (int index = 0; index < 60; ++index) {
+        many.append(QVariantMap{{QStringLiteral("name"), QStringLiteral("Genre %1").arg(index)},
+                                {QStringLiteral("count"), index}});
+    }
+    list->setProperty("model", many);
+    pump(300);
+    const double content = list->property("contentHeight").toDouble();
+    const double visible = list->height();
+    if (content <= visible + 1.0) {
+        std::fprintf(stderr, "dj-ui: sixty genres fit in %.0f px of rows in %.0f px of list\n", content,
+                     visible);
+        return 1;
+    }
+    const QPointF at = list->mapToScene(QPointF(list->width() / 2.0, visible / 2.0));
+    QWheelEvent wheel(at, window->mapToGlobal(at.toPoint()), QPoint(), QPoint(0, -120), Qt::NoButton,
+                      Qt::NoModifier, Qt::NoScrollPhase, false);
+    QCoreApplication::sendEvent(window, &wheel);
+    pump(150);
+    const double moved = list->property("contentY").toDouble();
+    if (moved <= 0.0) {
+        std::fprintf(stderr, "dj-ui: the genre list did not scroll (contentY %.1f)\n", moved);
+        return 1;
+    }
+    std::fprintf(stdout,
+                 "dj-ui: the genre list scrolls: %.0f px of rows in %.0f px, turned to %.0f px%s\n", content,
+                 visible, moved, bar != nullptr && bar->isVisible() ? " with the bar showing" : "");
     return 0;
 }
 
