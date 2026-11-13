@@ -115,3 +115,52 @@ fn the_lock_reaches_both_copies_of_the_metadata_and_the_collection()
     let _ = std::fs::remove_dir_all(&temp);
     Ok(())
 }
+
+#[test]
+fn a_locked_track_arrives_at_the_deck_already_locked()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    // The lock is only worth writing if the deck reads it back: a track that arrives unlocked lets the
+    // measurement run over a grid the DJ pinned.
+    let temp = std::env::temp_dir().join(format!("dj-lock-load-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&temp);
+    let music = temp.join("music");
+    let mirror = temp.join("mirror");
+    std::fs::create_dir_all(&music)?;
+    std::fs::create_dir_all(&mirror)?;
+
+    let track = music.join("Locked.wav");
+    tone(&track)?;
+
+    let store = Store::new(&mirror);
+    let volume = "vol";
+    let root = PathBuf::from(&music);
+    dj_engine::meta::set_analysis_lock(&store, volume, &root, &track, true)?;
+
+    let mut prepared =
+        dj_engine::prepare_track(&track, 48_000, 2.0, 1.0, None).unwrap_or_else(|error| {
+            panic!("the file must prepare: {error}");
+        });
+    assert!(
+        !prepared.static_info.analysis_lock,
+        "a fresh prepare knows nothing of the record"
+    );
+    let problem = dj_engine::meta::restore(&mut prepared, &store, volume, &root);
+    assert!(
+        problem.is_none(),
+        "the record must restore cleanly: {problem:?}"
+    );
+    assert!(
+        prepared.static_info.analysis_lock,
+        "the deck lost the lock the file carries"
+    );
+    assert!(
+        prepared
+            .track
+            .as_ref()
+            .is_some_and(|track| track.analysis_lock),
+        "the display lost the lock the file carries"
+    );
+
+    let _ = std::fs::remove_dir_all(&temp);
+    Ok(())
+}

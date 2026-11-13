@@ -502,6 +502,7 @@ fn run(argv: &[String]) -> Result<(), String> {
         let grids = Arc::clone(&grids);
         let rates = Arc::clone(&rates);
         let paths = Arc::clone(&paths);
+        let locks = Arc::clone(&locks);
         // The state rate is a parameter (display.state_hz): twenty snapshots a second is the
         // default, and raising it trades IPC for less projection between snapshots.
         let publish_every = Duration::from_micros(1_000_000 / u64::from(state_hz));
@@ -518,6 +519,9 @@ fn run(argv: &[String]) -> Result<(), String> {
                             let deck = update.deck;
                             let grid = update.static_info.grid.clone();
                             let rate = update.static_info.source_rate;
+                            // A track that arrives already locked must refuse an edit at once, not after the
+                            // DJ touches the button: the deck is the one that knows what the file said.
+                            let lock = update.static_info.analysis_lock;
                             if let Some(slot) = statics.iter_mut().find(|entry| entry.deck == deck)
                             {
                                 *slot = update.static_info;
@@ -531,6 +535,11 @@ fn run(argv: &[String]) -> Result<(), String> {
                                 && let Some(slot) = held.get_mut(deck.index())
                             {
                                 *slot = rate;
+                            }
+                            if let Ok(mut held) = locks.lock()
+                                && let Some(slot) = held.get_mut(deck.index())
+                            {
+                                *slot = lock;
                             }
                         }
                         Published::AnalysisLock { deck, enabled } => {

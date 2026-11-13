@@ -111,6 +111,12 @@ pub fn restore(
                 .iter()
                 .map(|stored| (stored.slot, stored.start, stored.end))
                 .collect();
+            // A locked grid is a decision too: the deck must say so the moment the track arrives, and
+            // refuse both the measurement and the editor from that first publish.
+            prepared.static_info.analysis_lock = loaded.meta.analysis_lock;
+            if let Some(track) = prepared.track.as_mut() {
+                track.analysis_lock = loaded.meta.analysis_lock;
+            }
             // A stored grid outranks the measurement: either the DJ moved it or the analysis was
             // locked, and both are decisions the detector may not overwrite (DJP-SYNC-003).
             if let Some(stored) = loaded.meta.beatgrid.as_ref() {
