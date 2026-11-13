@@ -1203,7 +1203,7 @@ Pane {
                 ToolTip.text: qsTr("Click on every beat of this deck's grid")
                 onClicked: Bridge.metronome(panel.deckId, !panel.metronome)
             }
-            Button {
+            GridTool {
                 objectName: "gridBeatLeft_" + panel.deckId
                 enabled: panel.gridEditable
                 text: qsTr("⇤")
@@ -1217,7 +1217,7 @@ Pane {
             }
             // Ten milliseconds a press: a grid a whole beat out is rare, and a few milliseconds is
             // what the ear actually hears.
-            Button {
+            GridTool {
                 objectName: "gridLeft_" + panel.deckId
                 enabled: panel.gridEditable
                 text: qsTr("◀")
@@ -1232,7 +1232,7 @@ Pane {
             // Between the arrows: the grid is put where the play head is, by the head itself.
             // The mark is drawn, not typed: the glyph for a target — ⌖, ⊕ — is set as a dot in most fonts
             // and at nine pixels it reads as one. A ring and a cross at thirteen pixels read as a target.
-            Button {
+            GridTool {
                 id: gridHereButton
                 objectName: "gridHere_" + panel.deckId
                 text: ""
@@ -1262,23 +1262,24 @@ Pane {
                         radius: width / 2
                         color: "transparent"
                         border.width: 1
-                        border.color: gridHereButton.palette.buttonText
+                        border.color: panel.gridToolsLive ? UiSettings.themeText
+                                                          : UiSettings.themeTextDim
                     }
                     Rectangle {
                         anchors.centerIn: parent
                         width: 11
                         height: 1
-                        color: gridHereButton.palette.buttonText
+                        color: panel.gridToolsLive ? UiSettings.themeText : UiSettings.themeTextDim
                     }
                     Rectangle {
                         anchors.centerIn: parent
                         width: 1
                         height: 11
-                        color: gridHereButton.palette.buttonText
+                        color: panel.gridToolsLive ? UiSettings.themeText : UiSettings.themeTextDim
                     }
                 }
             }
-            Button {
+            GridTool {
                 objectName: "gridRight_" + panel.deckId
                 enabled: panel.gridEditable
                 text: qsTr("▶")
@@ -1290,7 +1291,7 @@ Pane {
                 ToolTip.text: qsTr("Move the grid 10 ms later")
                 onClicked: panel.shiftGrid(1)
             }
-            Button {
+            GridTool {
                 objectName: "gridBeatRight_" + panel.deckId
                 enabled: panel.gridEditable
                 text: qsTr("⇥")
@@ -1302,7 +1303,7 @@ Pane {
                 ToolTip.text: qsTr("Move the grid one beat later")
                 onClicked: panel.shiftBeat(1)
             }
-            Button {
+            GridTool {
                 objectName: "gridHalf_" + panel.deckId
                 enabled: panel.gridEditable
                 text: qsTr("½")
@@ -1313,7 +1314,7 @@ Pane {
                 ToolTip.text: qsTr("Read the grid half as fast")
                 onClicked: Bridge.halveGrid(panel.deckId)
             }
-            Button {
+            GridTool {
                 objectName: "gridDouble_" + panel.deckId
                 enabled: panel.gridEditable
                 text: qsTr("×2")
@@ -1324,7 +1325,7 @@ Pane {
                 ToolTip.text: qsTr("Read the grid twice as fast")
                 onClicked: Bridge.doubleGrid(panel.deckId)
             }
-            Button {
+            GridTool {
                 objectName: "gridTempo_" + panel.deckId
                 enabled: panel.gridToolsLive
                 text: qsTr("BPM…")
@@ -1338,7 +1339,7 @@ Pane {
             // A tenth of a beat per minute either way: the number a DJ trims by ear against the other
             // deck, where a whole beat is far too much and the arrows below are a different job (they
             // move the grid, these move the tempo).
-            Button {
+            GridTool {
                 objectName: "gridTempoDown_" + panel.deckId
                 enabled: panel.gridToolsLive
                 text: qsTr("▼")
@@ -1350,7 +1351,7 @@ Pane {
                 ToolTip.text: qsTr("Tempo down by 0.1 BPM")
                 onClicked: panel.nudgeTempo(-0.1)
             }
-            Button {
+            GridTool {
                 objectName: "gridTempoUp_" + panel.deckId
                 enabled: panel.gridToolsLive
                 text: qsTr("▲")
@@ -1362,7 +1363,7 @@ Pane {
                 ToolTip.text: qsTr("Tempo up by 0.1 BPM")
                 onClicked: panel.nudgeTempo(0.1)
             }
-            Button {
+            GridTool {
                 objectName: "gridTap_" + panel.deckId
                 enabled: panel.gridToolsLive
                 text: qsTr("Tap")

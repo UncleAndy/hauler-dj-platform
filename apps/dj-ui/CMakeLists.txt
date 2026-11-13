@@ -36,6 +36,7 @@ qt_add_qml_module(dj-ui
         qml/browser/BrowserPanel.qml
         qml/decks/DeckPanel.qml
         qml/decks/ToggleButton.qml
+        qml/decks/GridTool.qml
         qml/views/WaveformView.qml
         qml/views/TrackOverview.qml
         qml/mixer/Crossfader.qml

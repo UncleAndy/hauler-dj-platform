@@ -102,6 +102,70 @@ fn code_deck(frames: u64) -> Deck {
     deck
 }
 
+/// A source that answers with an error once the material is spent: a decoder reading a file the way the
+/// engine does, rather than a test double that politely returns zero.
+struct ErrorAtEndSource {
+    frames: u64,
+    position: u64,
+}
+
+impl DeckSource for ErrorAtEndSource {
+    fn sample_rate(&self) -> u32 {
+        44_100
+    }
+
+    fn frames(&self) -> Option<u64> {
+        Some(self.frames)
+    }
+
+    fn read(&mut self, out: &mut [f32]) -> Result<usize, String> {
+        let want = out.len() / 2;
+        let available = usize::try_from(self.frames.saturating_sub(self.position)).unwrap_or(0);
+        if available == 0 {
+            return Err("end of file".to_string());
+        }
+        let take = want.min(available);
+        for index in 0..take {
+            let value = ramp(self.position + index as u64);
+            out[index * 2] = value;
+            out[index * 2 + 1] = value;
+        }
+        self.position += take as u64;
+        Ok(take)
+    }
+
+    fn seek(&mut self, frame: u64) -> Result<u64, String> {
+        self.position = frame.min(self.frames.saturating_sub(1));
+        Ok(self.position)
+    }
+}
+
+#[test]
+fn a_decoder_that_errors_at_the_end_stops_the_deck_too() {
+    // The engine reads a file through a decoder, and a spent decoder answers with an error rather than
+    // with zero bytes. The owner's track ended and the deck stayed "playing"; this is that path.
+    let mut deck = Deck::new(DeckId::A);
+    deck.set_output_rate(44_100);
+    deck.set_keylock(false);
+    deck.attach(
+        Box::new(ErrorAtEndSource {
+            frames: 1_000,
+            position: 0,
+        }),
+        None,
+    );
+    assert!(deck.play(), "the deck starts");
+    let mut out = vec![0.0f32; 512];
+    for _ in 0..8 {
+        deck.render(&mut out);
+    }
+    assert!(
+        !deck.is_playing(),
+        "the deck stands still at the end of the track"
+    );
+    assert_eq!(deck.position(), 1_000, "the head rests on the last frame");
+}
+
 #[test]
 fn a_track_that_ends_stops_the_deck() {
     // A deck that keeps saying "playing" after the last frame refuses the next load as Busy, and the DJ

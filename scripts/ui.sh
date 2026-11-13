@@ -314,6 +314,9 @@ case "${1:-}" in
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --collection-root "$run_dir/lock-collection" --lock-check \
         --import-fixture "$analyze_track" --layout-file "$run_dir/lock-layout.json"
+    # The end of a track: the deck stands still on the last frame and takes the next one.
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
+        --end-check --load "$analyze_track"
     # The genre chips: the records say how many tracks each genre has, a chip narrows the list, two
     # chips are a union, and reset brings everything back. The chips are clicked, not the function.
     # Run it by hand — the wide set is not the place for it yet: another process between the sort and

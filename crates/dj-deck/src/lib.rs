@@ -2077,6 +2077,15 @@ impl Deck {
             // A loop caps the read at its end whether the playhead is inside the region or still
             // before it: the wrap happens when the end is reached, not when it is entered.
             let active_region = self.armed_loop_at(self.heard_at(self.position));
+            // The material is spent and nothing is going to wrap: the track is over, the deck stands
+            // still where it ended, and the next load is welcome. A deck that went on saying "playing"
+            // after the last frame refused every load that followed as Busy.
+            // The read position, not the heard one: key lock reads ahead, so the heard head never
+            // reaches the last frame and a deck watching only that would play silence for ever.
+            if active_region.is_none() && total.is_some_and(|total| self.position >= total) {
+                self.playing = false;
+                break;
+            }
             let until_loop = match active_region {
                 Some(region) => region.end.0.saturating_sub(self.heard_at(self.position)),
                 None => u64::MAX,
@@ -2114,13 +2123,6 @@ impl Deck {
                 .map(|source| source.read(&mut out[written * 2..(written + take) * 2]));
             match result {
                 Some(Ok(0)) => {
-                    // Nothing left to read at the end of the material is the track ending, not an
-                    // underrun: the deck stands still, and the next load is welcome. A deck that went on
-                    // saying "playing" after the last frame refused every load that followed as Busy.
-                    if total.is_some_and(|total| self.heard_at(self.position) >= total) {
-                        self.playing = false;
-                        break;
-                    }
                     self.stats.underruns += 1;
                     break;
                 }

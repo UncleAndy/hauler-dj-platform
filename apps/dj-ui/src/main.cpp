@@ -6216,6 +6216,19 @@ static int runLockCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Bri
         return 1;
     }
     std::fprintf(stdout, "dj-ui: a lit switch wears %s, the same as Snap\n", qPrintable(worn.name()));
+    // ... and it has to be seen, not only obeyed: the face of a tool goes flat and pale, which is what the
+    // owner asked for after a lock that refused clicks while looking live.
+    for (const char *name : {"gridLeft_A", "gridTap_A"}) {
+        auto *tool = findItem(window->contentItem(), QString::fromLatin1(name));
+        const QObject *face = tool != nullptr ? tool->property("background").value<QObject *>() : nullptr;
+        const double opacity = face != nullptr ? face->property("opacity").toDouble() : 1.0;
+        if (opacity > 0.5) {
+            std::fprintf(stderr, "dj-ui: %s still looks live with the grid locked (face %.2f)\n", name,
+                         opacity);
+            return 1;
+        }
+    }
+    std::fprintf(stdout, "dj-ui: a locked tool looks locked, not only refuses the click\n");
     // The lock takes every tool that can move the grid, not just the one the eye lands on: a run of
     // buttons that still answer is a lock that does not lock.
     for (const char *name : {"gridHere_A", "gridTempo_A", "gridTempoDown_A", "gridTempoUp_A",
@@ -6263,6 +6276,115 @@ static int runLockCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Bri
     // The deck is left standing, as every check leaves it.
     bridge.play(QStringLiteral("A"), false);
     std::fprintf(stdout, "dj-ui: lock check done\n");
+    return 0;
+}
+
+/// The end of a track, through the engine: the deck stands still on the last frame and takes the next
+/// track. A deck that only pretends to have stopped refuses the load as Busy, which is what the owner met.
+static int runEndCheck(QQmlApplicationEngine &engine, BridgeClient &bridge, const QString &fixture)
+{
+    if (fixture.isEmpty()) {
+        std::fprintf(stderr, "dj-ui: --end-check needs --load\n");
+        return 1;
+    }
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().value(0));
+    if (window == nullptr) {
+        std::fprintf(stderr, "dj-ui: no shell window\n");
+        return 1;
+    }
+    const auto waitFor = [](const std::function<bool()> &ready, int budget) {
+        QElapsedTimer clock;
+        clock.start();
+        while (clock.elapsed() < budget) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            if (ready()) {
+                return true;
+            }
+            QThread::msleep(20);
+        }
+        return ready();
+    };
+    const auto deckA = [&]() {
+        const QVariantList decks = bridge.snapshot().value(QStringLiteral("decks")).toList();
+        for (const QVariant &entry : decks) {
+            const QVariantMap deck = entry.toMap();
+            if (deck.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                return deck;
+            }
+        }
+        return QVariantMap{};
+    };
+
+    bridge.load(QStringLiteral("A"), fixture);
+    // The track has to be on the deck, with a length: an empty deck reports no remaining frames, and a
+    // deck that is already at the end reports none left.
+    const auto loaded = [&]() {
+        const QVariantMap deck = deckA();
+        return deck.value(QStringLiteral("path")).toString() == fixture &&
+               deck.value(QStringLiteral("remaining_frames")).toULongLong() > 0;
+    };
+    if (!waitFor(loaded, 20000)) {
+        std::fprintf(stderr, "dj-ui: the deck never took the track\n");
+        return 1;
+    }
+    const qulonglong here = deckA().value(QStringLiteral("source_frame")).toULongLong();
+    const qulonglong left = deckA().value(QStringLiteral("remaining_frames")).toULongLong();
+    const qulonglong total = here + left;
+    // One second from the end: the check is about what happens at the last frame, not about waiting for a
+    // long track to play itself out.
+    const qulonglong target = total > 48'000 ? total - 48'000 : 0;
+    bridge.seek(QStringLiteral("A"), target);
+    if (!waitFor([&]() { return deckA().value(QStringLiteral("source_frame")).toULongLong() >= target; },
+                 5000)) {
+        std::fprintf(stderr, "dj-ui: the deck did not take the seek to the last second\n");
+        return 1;
+    }
+    bridge.play(QStringLiteral("A"), true);
+    // The deck has to be seen playing before its end means anything: a command is a message, and the
+    // snapshot that says "not playing" one moment after the press is the deck before it started.
+    if (!waitFor([&]() { return deckA().value(QStringLiteral("playing")).toBool(); }, 5000)) {
+        std::fprintf(stderr, "dj-ui: the deck never started from the last second\n");
+        return 1;
+    }
+    QElapsedTimer ended;
+    ended.start();
+    if (!waitFor([&]() { return deckA().value(QStringLiteral("playing")).toBool() == false; }, 15000)) {
+        std::fprintf(stderr, "dj-ui: the deck still says it is playing after the last frame\n");
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: the track ended, the deck stands still after %lld ms\n",
+                 static_cast<long long>(ended.elapsed()));
+    // The head rests at the end, not at the beginning: a track that "ended" by rewinding did not end.
+    const qulonglong rested = deckA().value(QStringLiteral("source_frame")).toULongLong();
+    // Key lock reads ahead of what is heard, so the deck stands still a lead short of the last frame —
+    // a hundred milliseconds of tolerance covers it and still catches a deck that "ended" by rewinding.
+    const qulonglong tolerance = 4800;
+    if (rested + tolerance < total) {
+        std::fprintf(stderr, "dj-ui: the deck stopped at frame %llu of %llu\n",
+                     static_cast<unsigned long long>(rested),
+                     static_cast<unsigned long long>(total));
+        return 1;
+    }
+
+    // A deck that stands still takes the next track. This is the half the owner could not do by hand.
+    bridge.load(QStringLiteral("A"), fixture);
+    if (!waitFor(
+            [&]() {
+                return deckA().value(QStringLiteral("source_frame")).toULongLong() < total / 2;
+            },
+            10000)) {
+        const QVariantMap now = deckA();
+        std::fprintf(stderr,
+                     "dj-ui: the deck refused a track after its own ended "
+                     "(frame %llu of %llu, playing %d, load %s)\n",
+                     static_cast<unsigned long long>(now.value(QStringLiteral("source_frame")).toULongLong()),
+                     static_cast<unsigned long long>(total),
+                     now.value(QStringLiteral("playing")).toBool() ? 1 : 0,
+                     qPrintable(now.value(QStringLiteral("load")).toString()));
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: the deck took a track again after the end\n");
+    std::fprintf(stdout, "dj-ui: end check done\n");
     return 0;
 }
 
@@ -6636,6 +6758,9 @@ int main(int argc, char *argv[])
         QStringLiteral("sort-check"),
         QStringLiteral("From the collection: a click on a column sorts by it, a second click turns it "
                        "around, a Shift click adds the next key — and the rail's order."));
+    const QCommandLineOption endCheckOption(
+        QStringLiteral("end-check"),
+        QStringLiteral("Play a deck to its last frame and require it to stand still and take a track again."));
     const QCommandLineOption lockCheckOption(
         QStringLiteral("lock-check"),
         QStringLiteral("Press the grid lock on a deck and require the collection's row to wear it at once, "
@@ -6900,6 +7025,7 @@ int main(int argc, char *argv[])
     parser.addOption(analyzeCheckOption);
     parser.addOption(sortCheckOption);
     parser.addOption(lockCheckOption);
+    parser.addOption(endCheckOption);
     parser.addOption(genreCheckOption);
     parser.addOption(collectionLoadCheckOption);
     parser.addOption(collectionProbeOption);
@@ -12241,6 +12367,11 @@ int main(int argc, char *argv[])
         bridge->connectToEngine(parser.value(connectOption));
         return runImportCheck(engine, browser, layout, *bridge, parser.value(importFixtureOption),
                               parser.values(collectionRootOption).value(0));
+    }
+
+    if (parser.isSet(endCheckOption)) {
+        bridge->connectToEngine(parser.value(connectOption));
+        return runEndCheck(engine, *bridge, parser.value(loadOption));
     }
 
     if (parser.isSet(lockCheckOption)) {
