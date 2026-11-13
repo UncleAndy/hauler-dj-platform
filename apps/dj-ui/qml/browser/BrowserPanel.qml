@@ -561,10 +561,9 @@ Pane {
         MenuEntry {
             objectName: "addToCollection"
             text: qsTr("Add files to collection…")
-            // A file that is already in the collection cannot be added to it: the entry belongs to the
-            // file list, and a menu that offers the impossible is a menu that lies.
-            visible: browser.section !== "collection"
-            enabled: browser.selection.length > 0
+            // The entry is always there: hiding it leaves a row of nothing, and a menu with holes is a
+            // menu the DJ has to guess at. It acts in the file list, with something chosen.
+            enabled: browser.section !== "collection" && browser.selection.length > 0
             onClicked: browser.askImport()
         }
         MenuEntry {
@@ -572,18 +571,17 @@ Pane {
             text: qsTr("Rescan collection…")
             // Tags and metadata read from the files again, and the genre counts recounted. Files that
             // already have a record keep their measured tempo and key; only the missing ones are measured.
-            visible: browser.section === "collection"
+            enabled: browser.section === "collection"
             onClicked: Browser.rescanCollection()
         }
         MenuEntry {
             objectName: "analyzeSelection"
             text: qsTr("Analyze…")
             // Tempo and key, measured again: what an import could not measure, or what the DJ wants
-            // re-measured after a remaster.
-            visible: browser.section === "collection"
-            // Nothing chosen is nothing to ask for, and every chosen track locked is a request the lock
-            // has already answered: the entry stands down instead of promising a rewrite.
-            enabled: browser.selection.length > 0
+            // re-measured after a remaster. Nothing chosen is nothing to ask for, and every chosen track
+            // locked is a request the lock has already answered: the entry stands down instead of
+            // promising a rewrite.
+            enabled: browser.section === "collection" && browser.selection.length > 0
                      && browser.lockedSelection.length < browser.selection.length
             onClicked: browser.analyzeSelection()
         }

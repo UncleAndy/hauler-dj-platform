@@ -6392,12 +6392,25 @@ static int runLockCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Bri
     // ... and it has to look dead, not only be dead: an entry painted like its neighbours is an entry the
     // hand keeps trying. The colours are read off the two entries, and the dead one must wear the same
     // grey the shell's dim text wears.
+    // An entry carries a row: a swatch for a colour entry and the label. The label is the one with text,
+    // so the colour is read off it rather than off the row.
     const auto entryColour = [](QQuickItem *entry) -> QColor {
         if (entry == nullptr) {
             return QColor();
         }
-        const QObject *face = entry->property("contentItem").value<QObject *>();
-        return face != nullptr ? face->property("color").value<QColor>() : QColor();
+        auto *face = qobject_cast<QQuickItem *>(entry->property("contentItem").value<QObject *>());
+        if (face == nullptr) {
+            return QColor();
+        }
+        if (face->property("text").isValid()) {
+            return face->property("color").value<QColor>();
+        }
+        for (QQuickItem *child : face->childItems()) {
+            if (child->property("text").isValid()) {
+                return child->property("color").value<QColor>();
+            }
+        }
+        return QColor();
     };
     QQuickItem *liveEntry = findItem(window->contentItem(), QStringLiteral("rescanCollection"));
     QQuickItem *dimText = findItem(window->contentItem(), QStringLiteral("collectionCount"));
@@ -6420,6 +6433,29 @@ static int runLockCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Bri
     }
     std::fprintf(stdout, "dj-ui: a dead menu entry wears %s, a live one %s\n",
                  qPrintable(deadColour.name()), qPrintable(liveColour.name()));
+
+    // An entry that does not apply here is grey, not gone: hiding it leaves a row of nothing, and the
+    // owner reads that as the menu having lost its mind. "Add files to collection…" is the one that only
+    // belongs to the file list, so in the collection it must be present and dim.
+    QQuickItem *addFiles = findItem(window->contentItem(), QStringLiteral("addToCollection"));
+    if (addFiles == nullptr) {
+        std::fprintf(stderr, "dj-ui: the collection menu has no \"Add files to collection…\" row\n");
+        return 1;
+    }
+    if (!addFiles->isVisible()) {
+        std::fprintf(stderr, "dj-ui: \"Add files to collection…\" is hidden in the collection\n");
+        return 1;
+    }
+    if (addFiles->isEnabled()) {
+        std::fprintf(stderr, "dj-ui: \"Add files to collection…\" answers inside the collection\n");
+        return 1;
+    }
+    if (entryColour(addFiles) != dimColour) {
+        std::fprintf(stderr, "dj-ui: \"Add files to collection…\" wears %s, the dim grey is %s\n",
+                     qPrintable(entryColour(addFiles).name()), qPrintable(dimColour.name()));
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: an entry that does not apply here stays in the menu, grey\n");
 
     // A selection of many where one is locked: the analysis goes to the free tracks only. The witness is
     // the files on disk — a measurement writes the track's metadata — so the free track's record must

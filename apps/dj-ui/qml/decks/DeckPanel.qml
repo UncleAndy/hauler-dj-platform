@@ -10,6 +10,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import "../views"
 import "../mixer"
+import "../controls"
 
 Pane {
     id: panel
@@ -1460,7 +1461,7 @@ Pane {
         id: cueMenu
         property int slot: 0
 
-        MenuItem {
+        MenuEntry {
             text: qsTr("Name…")
             onTriggered: {
                 rename.slot = cueMenu.slot;
@@ -1471,7 +1472,7 @@ Pane {
         MenuSeparator {}
         Repeater {
             model: 8
-            delegate: MenuItem {
+            delegate: MenuEntry {
                 required property int index
                 text: qsTr("Colour %1").arg(index + 1)
                 icon.color: panel.cuePalette[index % panel.cuePalette.length]
@@ -1480,7 +1481,7 @@ Pane {
             }
         }
         MenuSeparator {}
-        MenuItem {
+        MenuEntry {
             text: qsTr("Clear")
             onTriggered: Bridge.cue(panel.deckId, "Delete", cueMenu.slot)
         }
