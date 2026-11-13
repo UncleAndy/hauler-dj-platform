@@ -130,13 +130,16 @@ Pane {
     function columnShare(index) {
         return index < columns.length ? columns[index].width : 0;
     }
+    // The row number sits in its own gutter to the left of the columns. It is a position, not data: it cannot
+    // be dragged away, sorted or hidden, and every column shares what is left of the width after it.
+    readonly property real numberWidth: Math.round(browser.listFont * 2.4)
     function columnWidth(index, total) {
-        return columnShare(index) * total;
+        return columnShare(index) * (total - numberWidth);
     }
     function columnX(index, total) {
-        let x = 0;
+        let x = numberWidth;
         for (let i = 0; i < index && i < columns.length; ++i) {
-            x += columns[i].width * total;
+            x += columns[i].width * (total - numberWidth);
         }
         return x;
     }
@@ -1196,6 +1199,17 @@ Pane {
                 }
 
                 Label {
+                    objectName: "collectionHeaderNumber"
+                    x: 0
+                    width: browser.numberWidth - 6
+                    text: "№"
+                    horizontalAlignment: Text.AlignRight
+                    color: UiSettings.themeTextDim
+                    font.pixelSize: browser.listFont
+                    elide: Text.ElideRight
+                }
+
+                Label {
                     objectName: "collectionHeaderCell_0"
                     x: browser.columnX(0, header.width) + 6
                     width: Math.max(0, browser.columnWidth(0, header.width) - 12)
@@ -1465,6 +1479,17 @@ Pane {
                         anchors.fill: parent
                         visible: browser.section === "collection" && !row.isFolder
 
+                        Label {
+                            objectName: "collectionCell_number_" + row.index
+                            x: 0
+                            width: browser.numberWidth - 6
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: (row.index + 1)
+                            horizontalAlignment: Text.AlignRight
+                            font.pixelSize: browser.listFont
+                            color: UiSettings.themeTextDim
+                            elide: Text.ElideRight
+                        }
                         Label {
                             objectName: "collectionCell_artist_" + row.index
                             readonly property int column: browser.columnIndexOf("artist")

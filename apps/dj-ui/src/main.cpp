@@ -4682,6 +4682,18 @@ static int runCollectionLoadCheck(QQmlApplicationEngine &engine, FileBrowser &br
         QCoreApplication::processEvents();
         QThread::msleep(50);
     }
+    // The row number: a position in the list, drawn to the left of the columns and reading as the DJ counts.
+    if (auto *number = findItem(window->contentItem(), QStringLiteral("collectionCell_number_0"))) {
+        const QString shown = number->property("text").toString();
+        std::fprintf(stdout, "dj-ui: the first row is numbered '%s'\n", qPrintable(shown));
+        if (shown != QStringLiteral("1")) {
+            std::fprintf(stderr, "dj-ui: the row number reads '%s', wanted '1'\n", qPrintable(shown));
+            return 1;
+        }
+    } else {
+        std::fprintf(stderr, "dj-ui: the collection has no row numbers\n");
+        return 1;
+    }
     const int rows = static_cast<int>(browser.entries().size());
     if (rows < 6) {
         std::fprintf(stderr, "dj-ui: the collection lists %d rows\n", rows);
