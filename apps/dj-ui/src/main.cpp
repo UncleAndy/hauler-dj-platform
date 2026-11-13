@@ -4309,9 +4309,11 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
     const auto require = [&](const QString &what, const QStringList &wanted) {
         const QStringList got = order();
         if (got != wanted) {
-            std::fprintf(stderr, "dj-ui: %s -> %s, wanted %s\n", qPrintable(what),
+            // The keys say what was asked for; the rows say what the list did about it. A key that
+            // turned and rows that did not are two different faults, and the message must tell them apart.
+            std::fprintf(stderr, "dj-ui: %s -> %s, wanted %s (keys %s)\n", qPrintable(what),
                          qPrintable(got.join(QStringLiteral(" | "))),
-                         qPrintable(wanted.join(QStringLiteral(" | "))));
+                         qPrintable(wanted.join(QStringLiteral(" | "))), qPrintable(keys()));
             return false;
         }
         std::fprintf(stderr, "dj-ui: %s -> %s\n", qPrintable(what),
