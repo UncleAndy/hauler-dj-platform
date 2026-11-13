@@ -305,6 +305,24 @@ void FileBrowser::setPaged(bool paged)
     emit pagedChanged();
 }
 
+namespace {
+
+/// The protocol's name for a column the settings call something else.
+QString wireColumn(const QString &id)
+{
+    static const QHash<QString, QString> names{
+        {QStringLiteral("artist"), QStringLiteral("Artist")},
+        {QStringLiteral("album"), QStringLiteral("Album")},
+        {QStringLiteral("title"), QStringLiteral("Title")},
+        {QStringLiteral("bpm"), QStringLiteral("Bpm")},
+        {QStringLiteral("key"), QStringLiteral("Key")},
+        {QStringLiteral("time"), QStringLiteral("Time")},
+    };
+    return names.value(id, QString());
+}
+
+} // namespace
+
 void FileBrowser::askPage(int offset)
 {
     if (m_bridge == nullptr) {
@@ -331,7 +349,10 @@ void FileBrowser::askPage(int offset)
     for (const QVariant &entry : m_sort) {
         const QVariantMap key = entry.toMap();
         QVariantMap asked;
-        asked.insert(QStringLiteral("column"), key.value(QStringLiteral("column")));
+        // The protocol names the columns as the enum does — `Artist`, `Bpm`, `Key` — and the list names
+        // them as the settings do — `artist`, `bpm`, `key`. Sending the settings' spelling made the wire
+        // refuse the question, so a sorted page was never asked for and the list only ever moved locally.
+        asked.insert(QStringLiteral("column"), wireColumn(key.value(QStringLiteral("column")).toString()));
         asked.insert(QStringLiteral("ascending"), key.value(QStringLiteral("ascending")));
         order.append(asked);
     }
