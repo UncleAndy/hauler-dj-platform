@@ -138,6 +138,10 @@ private:
     void takePage();
     /// Ask the index for the rows at `offset`: one door for the first page and for the next ones.
     void askPage(int offset);
+    /// One unfiltered page for the genre boxes alone: the census a restored filter needs.
+    void askCensus();
+    /// The rows the index answered with, in the shape the list and the columns read.
+    QVariantList rowsOf(const QVariantList &rows) const;
 
     QString m_folder;
     QVariantList m_entries;
@@ -155,9 +159,12 @@ private:
     int m_pageTotal = 0;
     /// True when the list is fed by the index: then scrolling asks for the next page.
     bool m_paged = false;
-    /// The rows as they came with no genre chosen: the genus list is counted from these, so ticking one
-    /// genre does not make the others vanish.
+    /// The rows as they came with no genre chosen: the genre list is counted from these, so ticking one
+    /// genre does not make the others vanish. Restored filters need this on the first run too, which is
+    /// why one census question is asked when a narrowed page arrives first.
     QVariantList m_genreSource;
+    /// The census question has been asked: it is a question of the session, not of every page.
+    bool m_censusAsked = false;
     /// The offset of the question in flight: the answer does not carry it, the question does.
     int m_askedOffset = 0;
     /// The question in flight, as one string: the same question asked again while the answer is on its

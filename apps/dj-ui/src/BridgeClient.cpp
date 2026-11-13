@@ -209,6 +209,8 @@ void FileBrowser::openCollection(const QStringList &roots)
     m_pageTotal = 0;
     m_pageAnsweredFor = 0;
     m_askedSignature.clear();
+    m_genreSource.clear();
+    m_censusAsked = false;
     // The interface does not walk the disks: the walk is how the database is prepared, not how it is
     // read. An empty answer here is an empty collection, and it is shown as such.
     if (!sameRoots) {
@@ -221,6 +223,44 @@ void FileBrowser::openCollection(const QStringList &roots)
     if (m_bridge != nullptr && m_bridge->isConnected()) {
         askPage(0);
     }
+}
+
+QVariantList FileBrowser::rowsOf(const QVariantList &rows) const
+{
+    QVariantList tracks;
+    for (const QVariant &entry : rows) {
+        const QVariantMap row = entry.toMap();
+        const QString path = row.value(QStringLiteral("path")).toString();
+        const double frames = row.value(QStringLiteral("duration_frames")).toDouble();
+        const double rate = row.value(QStringLiteral("sample_rate")).toDouble();
+        QVariantMap made{{QStringLiteral("name"), QFileInfo(path).completeBaseName()},
+                         {QStringLiteral("path"), path},
+                         {QStringLiteral("dir"), false},
+                         {QStringLiteral("artist"), row.value(QStringLiteral("artist"))},
+                         {QStringLiteral("album"), row.value(QStringLiteral("album"))},
+                         {QStringLiteral("title"), row.value(QStringLiteral("title"))},
+                         {QStringLiteral("fingerprint"), row.value(QStringLiteral("fingerprint"))}};
+        const double bpm = row.value(QStringLiteral("bpm")).toDouble();
+        if (bpm > 0.0) {
+            made.insert(QStringLiteral("bpm"), bpm);
+        }
+        const QString musicalKey = row.value(QStringLiteral("musical_key")).toString();
+        if (!musicalKey.isEmpty()) {
+            made.insert(QStringLiteral("key"), musicalKey);
+        }
+        made.insert(QStringLiteral("duration_ms"),
+                    rate > 0.0 && frames > 0.0
+                        ? static_cast<qint64>(frames * 1000.0 / rate + 0.5)
+                        : 0);
+        QStringList genres;
+        const QString names = row.value(QStringLiteral("genre")).toString();
+        for (const QString &genre : names.split(QStringLiteral(", "), Qt::SkipEmptyParts)) {
+            genres.append(genre.trimmed());
+        }
+        made.insert(QStringLiteral("genres"), genres);
+        tracks.append(made);
+    }
+    return tracks;
 }
 
 void FileBrowser::setPaged(bool paged)
@@ -274,6 +314,30 @@ void FileBrowser::askPage(int offset)
     m_bridge->queryCollection(query);
 }
 
+void FileBrowser::askCensus()
+{
+    if (m_bridge == nullptr) {
+        return;
+    }
+    QVariantMap query;
+    // -1 marks the census: its answer feeds the genre boxes and nothing else.
+    query.insert(QStringLiteral("id"), -1);
+    QVariantList order;
+    for (const QVariant &entry : m_sort) {
+        const QVariantMap key = entry.toMap();
+        QVariantMap asked;
+        asked.insert(QStringLiteral("column"), key.value(QStringLiteral("column")));
+        asked.insert(QStringLiteral("ascending"), key.value(QStringLiteral("ascending")));
+        order.append(asked);
+    }
+    query.insert(QStringLiteral("order"), order);
+    query.insert(QStringLiteral("genres"), QStringList());
+    query.insert(QStringLiteral("roots"), m_roots);
+    query.insert(QStringLiteral("offset"), 0);
+    query.insert(QStringLiteral("limit"), 2000);
+    m_bridge->queryCollection(query);
+}
+
 void FileBrowser::loadMore()
 {
     if (!m_paged || m_bridge == nullptr || m_pageOffset <= 0 || m_pageOffset >= m_pageTotal) {
@@ -289,6 +353,16 @@ void FileBrowser::takePage()
     }
     const QVariantMap answer = m_bridge->collectionPage();
     const int id = answer.value(QStringLiteral("id")).toInt();
+    if (id == -1) {
+        // The census: the boxes are counted from a page taken with no genre chosen, so a restored
+        // filter does not leave one box on screen and hide the rest.
+        const QVariantList census = answer.value(QStringLiteral("rows")).toList();
+        if (!census.isEmpty()) {
+            m_genreSource = rowsOf(census);
+            emit genresChanged();
+        }
+        return;
+    }
     if (id != m_pageQuery || id == m_pageAnsweredFor) {
         return;
     }
@@ -345,6 +419,10 @@ void FileBrowser::takePage()
         if (m_genres.isEmpty()) {
             // No genre chosen: this is the whole collection, and the boxes are counted from it.
             m_genreSource = tracks;
+        } else if (m_genreSource.isEmpty() && !m_censusAsked) {
+            // A filter was restored: ask one unfiltered page for the count alone.
+            m_censusAsked = true;
+            askCensus();
         }
         m_all = tracks;
         m_pageOffset = tracks.size();
