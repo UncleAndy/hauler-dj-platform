@@ -217,10 +217,22 @@ void FileBrowser::openCollection(const QStringList &roots)
         setPaged(false);
         m_all.clear();
         m_total = 0;
-        applyFilter();
-        emit changed();
     }
+    // The section changes even when the roots do not: without this, coming back from Files leaves the
+    // shell on the old section, which is exactly what the DJ saw.
+    applyFilter();
+    emit changed();
     if (m_bridge != nullptr && m_bridge->isConnected()) {
+        // A line per opening: with two rounds of "nothing changed" it is worth knowing whether the shell
+        // asked with a filter at all.
+        std::fprintf(stderr, "dj-ui: collection opened, %d roots, %d genres chosen\n",
+                     static_cast<int>(m_roots.size()), static_cast<int>(m_genres.size()));
+        // A filter restored from the layout would narrow the first page, and the boxes would be counted
+        // from it: the census goes first, so all genres are on screen from the start.
+        if (!m_genres.isEmpty() && !m_censusAsked) {
+            m_censusAsked = true;
+            askCensus();
+        }
         askPage(0);
     }
 }
@@ -359,6 +371,8 @@ void FileBrowser::takePage()
         const QVariantList census = answer.value(QStringLiteral("rows")).toList();
         if (!census.isEmpty()) {
             m_genreSource = rowsOf(census);
+            std::fprintf(stderr, "dj-ui: genre census -> %d rows\n",
+                         static_cast<int>(m_genreSource.size()));
             emit genresChanged();
         }
         return;
