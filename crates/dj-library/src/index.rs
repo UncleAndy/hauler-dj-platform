@@ -752,8 +752,6 @@ fn read_record(record: &Path) -> Option<(TrackRow, Vec<GenreName>)> {
     Some((row_of(&meta, &track), genres))
 }
 
-/// Every record under these roots. `_duplicates/` is not a collection, and a record directory holds
-/// records rather than more tracks.
 /// Every audio file under these roots, without opening one.
 ///
 /// The rescan needs the files themselves, not the records: a track that arrived without a `.djmeta`
