@@ -752,6 +752,12 @@ fn run(argv: &[String]) -> Result<(), String> {
                             deck,
                             grid: Box::new(grid.clone()),
                         });
+                        // A grid written because a person asked for it is pinned against the next
+                        // measurement; the file now says locked, so the deck says it as well.
+                        let _ = published_to.send(Published::AnalysisLock {
+                            deck,
+                            enabled: true,
+                        });
                         let _ = prepared.send(GraphLoad::SetGrid {
                             deck,
                             grid: Box::new(grid),
@@ -835,6 +841,12 @@ fn run(argv: &[String]) -> Result<(), String> {
                 let _ = published_to.send(Published::Grid {
                     deck,
                     grid: Box::new(edited.clone()),
+                });
+                // An edit is a decision about the track: the record is written locked, and a button that
+                // still reads "unlocked" would be the one place the truth is missing.
+                let _ = published_to.send(Published::AnalysisLock {
+                    deck,
+                    enabled: true,
                 });
                 let _ = prepared.send(GraphLoad::SetGrid {
                     deck,
