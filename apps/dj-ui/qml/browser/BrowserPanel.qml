@@ -1199,40 +1199,48 @@ Pane {
                 }
             }
 
-            // The search lives in the section that needs it: a field that is always there is a field
-            // that means nothing in a folder.
-            TextField {
-                objectName: "collectionSearch"
+            // The filter button and the search share one row. The rows of the header are the space the
+            // list does not get, and a row holding one button is the most expensive row there is.
+            RowLayout {
+                objectName: "collectionFilterRow"
                 visible: browser.section === "collection"
                 Layout.fillWidth: true
-                font.pixelSize: browser.listFont
-                selectByMouse: true
-                placeholderText: qsTr("search artist or title")
-                text: Browser.filter
-                onTextChanged: {
-                    // The filter is the browser's state, not the field's: writing it back from here
-                    // would make the field a second source of truth for what the list shows.
-                    if (text !== Browser.filter) {
-                        Browser.setFilter(text);
+                Layout.preferredHeight: browser.headerButtonHeight
+                spacing: 6
+
+                // The genre filter is a question, not a row of chips: the collection may carry fifty
+                // genres, and fifty boxes in the header push the list off the screen. One button says
+                // whether a filter is on; the choosing happens in a dialog that scrolls.
+                Button {
+                    objectName: "genreFilter"
+                    text: Browser.genreFilter.length > 0
+                          ? qsTr("Genre filter… (%1)").arg(Browser.genreFilter.length)
+                          : qsTr("Genre filter…")
+                    font.pixelSize: browser.headerButtonFont
+                    implicitHeight: browser.headerButtonHeight
+                    // A button that opens an empty dialog teaches nothing: it waits for the census.
+                    enabled: Browser.genres.length > 0
+                    onClicked: genreFilterDialog.open()
+                }
+
+                // The search lives in the section that needs it: a field that is always there is a field
+                // that means nothing in a folder.
+                TextField {
+                    objectName: "collectionSearch"
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: browser.headerButtonHeight
+                    font.pixelSize: browser.listFont
+                    selectByMouse: true
+                    placeholderText: qsTr("search artist or title")
+                    text: Browser.filter
+                    onTextChanged: {
+                        // The filter is the browser's state, not the field's: writing it back from here
+                        // would make the field a second source of truth for what the list shows.
+                        if (text !== Browser.filter) {
+                            Browser.setFilter(text);
+                        }
                     }
                 }
-            }
-
-            // The genre filter is a question, not a row of chips: the collection may carry fifty
-            // genres, and fifty boxes in the header push the list off the screen. One button says
-            // whether a filter is on; the choosing happens in a dialog that scrolls.
-            Button {
-                objectName: "genreFilter"
-                visible: browser.section === "collection"
-                text: Browser.genreFilter.length > 0
-                      ? qsTr("Genre filter… (%1)").arg(Browser.genreFilter.length)
-                      : qsTr("Genre filter…")
-                font.pixelSize: browser.headerButtonFont
-                implicitHeight: browser.headerButtonHeight
-                Layout.alignment: Qt.AlignLeft
-                // A button that opens an empty dialog teaches nothing: it waits for the census.
-                enabled: Browser.genres.length > 0
-                onClicked: genreFilterDialog.open()
             }
 
             // The collection's columns, named: a row of numbers with no header is a puzzle. The file

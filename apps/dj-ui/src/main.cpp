@@ -5848,8 +5848,27 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     // handler needs the frame to grab what the press named.
     auto *drag = byName(window->contentItem(), QStringLiteral("collectionHeaderDrag"));
     auto *header = byName(window->contentItem(), QStringLiteral("collectionHeader"));
+    // A dialog that is still leaving keeps its modal overlay over the header: the press lands on the
+    // overlay, the strip never takes hold, and the check reports a dead splitter on a working panel. The
+    // import windows are the ones this check has just used, so their going is what the hand waits for.
+    for (int tick = 0; tick < 200; ++tick) {
+        bool onScreen = false;
+        for (const char *name : {"importCount", "importParallel", "importProgressText", "importProgressBar",
+                                 "duplicateSkip"}) {
+            QQuickItem *item = findItem(window->contentItem(), QString::fromLatin1(name));
+            if (item != nullptr && item->isVisible()) {
+                onScreen = true;
+            }
+        }
+        if (!onScreen) {
+            break;
+        }
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        QThread::msleep(20);
+    }
     bool grabbed = false;
-    for (int attempt = 0; attempt < 4 && !grabbed; ++attempt) {
+    double dragged = artistWidth;
+    for (int attempt = 0; attempt < 5; ++attempt) {
         if (header != nullptr) {
             QVariant where;
             if (QMetaObject::invokeMethod(header, "boundaryX", Q_RETURN_ARG(QVariant, where),
@@ -5858,9 +5877,16 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
                 pulled = edge + QPointF(40.0, 0.0);
             }
         }
-        for (const auto &step : {std::make_pair(QEvent::MouseButtonPress, edge),
-                                 std::make_pair(QEvent::MouseMove, pulled),
-                                 std::make_pair(QEvent::MouseButtonRelease, pulled)}) {
+        // A hand crosses the drag threshold in steps, and the handler asks for that: one jump from the
+        // press to forty pixels away was swallowed whole in half the runs, and the check then reported a
+        // working panel as a dead splitter.
+        std::vector<std::pair<QEvent::Type, QPointF>> steps;
+        steps.emplace_back(QEvent::MouseButtonPress, edge);
+        for (int move = 1; move <= 4; ++move) {
+            steps.emplace_back(QEvent::MouseMove, edge + QPointF(10.0 * move, 0.0));
+        }
+        steps.emplace_back(QEvent::MouseButtonRelease, pulled);
+        for (const auto &step : steps) {
             const Qt::MouseButtons buttons =
                 step.first == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton;
             QMouseEvent event(step.first, step.second, window->mapToGlobal(step.second.toPoint()),
@@ -5870,15 +5896,23 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
             if (step.first == QEvent::MouseButtonPress && drag != nullptr) {
                 grabbed = drag->property("resizeIndex").toInt() >= 0;
             }
-            QThread::msleep(40);
+            QThread::msleep(20);
+        }
+        QCoreApplication::processEvents();
+        // The width is the fact: the gesture either moved the column or it did not, and only the second
+        // answer is worth another try.
+        dragged = layout.collectionColumns().at(0).toMap().value(QStringLiteral("width")).toDouble();
+        if (dragged > artistWidth + 0.01) {
+            break;
         }
     }
     QCoreApplication::processEvents();
-    const double dragged = layout.collectionColumns().at(0).toMap().value(QStringLiteral("width")).toDouble();
     std::fprintf(stdout, "dj-ui: the edge dragged the artist column from %.2f to %.2f\n",
                  artistWidth, dragged);
     if (dragged <= artistWidth + 0.01) {
-        std::fprintf(stderr, "dj-ui: the mouse did not move the column edge\n");
+        std::fprintf(stderr,
+                     "dj-ui: the mouse did not move the column edge (the strip %s the splitter)\n",
+                     grabbed ? "took hold of" : "never took hold of");
         return 1;
     }
     layout.setCollectionColumnWidth(QStringLiteral("artist"), artistWidth + 0.05);
@@ -6537,18 +6571,48 @@ static int runGenreCheck(QQmlApplicationEngine &engine, FileBrowser &browser, La
     for (int tick = 0; tick < 150 && browser.genreList().isEmpty(); ++tick) {
         pump(20);
     }
-    // Offscreen the header button is a child of a row the layout left at zero size, and a click on a
-    // child of nothing reaches nothing. Give it the size the layout would give it on screen.
-    if (QQuickItem *button = findItem(window->contentItem(), QStringLiteral("genreFilter"))) {
-        if (button->width() <= 0.0 || button->height() <= 0.0) {
-            button->setWidth(120.0);
-            button->setHeight(22.0);
-            pump(30);
-        }
-    } else {
-        std::fprintf(stderr, "dj-ui: there is no genre filter button in the header\n");
+    // Offscreen the header rows are left at zero size by the layout, and a click on a child of nothing
+    // reaches nothing. Give the row the size the layout would give it on screen, then measure the row.
+    QQuickItem *filterRow = findItem(window->contentItem(), QStringLiteral("collectionFilterRow"));
+    if (filterRow != nullptr && (filterRow->width() <= 0.0 || filterRow->height() <= 0.0)) {
+        filterRow->setWidth(700.0);
+        filterRow->setHeight(24.0);
+        pump(60);
+    }
+    QQuickItem *button = findItem(window->contentItem(), QStringLiteral("genreFilter"));
+    QQuickItem *search = findItem(window->contentItem(), QStringLiteral("collectionSearch"));
+    if (button == nullptr || search == nullptr) {
+        std::fprintf(stderr, "dj-ui: the header has no genre filter button or no search field\n");
         return 1;
     }
+    if (button->width() <= 0.0 || button->height() <= 0.0) {
+        button->setWidth(120.0);
+        button->setHeight(22.0);
+        pump(30);
+    }
+
+    // One row, the button on the left: the row it used to hold is the list's space now, and a button
+    // stacked above the field would be the same row spent twice.
+    const QRectF buttonRect(button->mapToScene(QPointF(0, 0)), button->size());
+    const QRectF searchRect(search->mapToScene(QPointF(0, 0)), search->size());
+    if (buttonRect.right() > searchRect.left() + 1.0) {
+        std::fprintf(stderr,
+                     "dj-ui: the filter button is not left of the search "
+                     "(button %.0f..%.0f, search from %.0f)\n",
+                     buttonRect.left(), buttonRect.right(), searchRect.left());
+        return 1;
+    }
+    const double centreGap =
+        std::abs(buttonRect.center().y() - searchRect.center().y());
+    if (centreGap > 4.0) {
+        std::fprintf(stderr, "dj-ui: the filter button is on another line (centres %.1f px apart)\n",
+                     centreGap);
+        return 1;
+    }
+    std::fprintf(stdout,
+                 "dj-ui: the filter button stands %.0f px left of the search, on the same line "
+                 "(centres %.1f px apart)\n",
+                 searchRect.left() - buttonRect.right(), centreGap);
 
     // What a person sees is the dialog's content, so that is what the check reads: the Popup object is
     // not a child of any item, and its `visible` is not reachable through the item tree.
@@ -6556,12 +6620,24 @@ static int runGenreCheck(QQmlApplicationEngine &engine, FileBrowser &browser, La
         return findItem(window->contentItem(), QStringLiteral("genreFilterList"));
     };
     const auto openFilter = [&]() -> bool {
+        // A dialog that is still fading out keeps its modal overlay over the button: asking again before
+        // it has gone means asking the window that is leaving.
+        for (int tick = 0; tick < 100; ++tick) {
+            QQuickItem *left = filterList();
+            if (left == nullptr || !left->isVisible()) {
+                break;
+            }
+            pump(20);
+        }
         if (!click(QStringLiteral("genreFilter"))) {
             return false;
         }
-        for (int tick = 0; tick < 60; ++tick) {
+        for (int tick = 0; tick < 120; ++tick) {
             QQuickItem *list = filterList();
-            if (list != nullptr && list->width() > 0.0 && list->isVisible()) {
+            // Rows, not just an open window: the census is republished after every filter, and an empty
+            // list is a dialog nobody can tick a box in.
+            if (list != nullptr && list->width() > 0.0 && list->isVisible()
+                && list->property("count").toInt() > 0) {
                 // A dialog is laid out over its opening frames: a click aimed at a row that is still
                 // moving lands on the panel behind it.
                 pump(120);
@@ -6577,13 +6653,14 @@ static int runGenreCheck(QQmlApplicationEngine &engine, FileBrowser &browser, La
     const auto tick = [&](const QString &genre, bool wanted) -> bool {
         const QString box = QStringLiteral("genreBox_") + genre;
         const QString row = QStringLiteral("genreRow_") + genre;
-        for (int attempt = 0; attempt < 2; ++attempt) {
+        for (int attempt = 0; attempt < 3; ++attempt) {
             QQuickItem *item = findItem(window->contentItem(), box);
             if (item != nullptr && item->property("checked").toBool() == wanted) {
                 return true;
             }
             if (!click(row)) {
-                return false;
+                pump(100);
+                continue;
             }
             for (int tickTick = 0; tickTick < 40; ++tickTick) {
                 item = findItem(window->contentItem(), box);
@@ -6593,6 +6670,16 @@ static int runGenreCheck(QQmlApplicationEngine &engine, FileBrowser &browser, La
                 pump(20);
             }
         }
+        QQuickItem *stateList = filterList();
+        std::fprintf(stderr,
+                     "dj-ui: list while failing: %s visible %d %.0fx%.0f count %d content %.0f at %.0f\n",
+                     stateList != nullptr ? "found" : "missing",
+                     stateList != nullptr && stateList->isVisible() ? 1 : 0,
+                     stateList != nullptr ? stateList->width() : -1.0,
+                     stateList != nullptr ? stateList->height() : -1.0,
+                     stateList != nullptr ? stateList->property("count").toInt() : -1,
+                     stateList != nullptr ? stateList->property("contentHeight").toDouble() : -1.0,
+                     stateList != nullptr ? stateList->property("contentY").toDouble() : -1.0);
         QQuickItem *rowItem = findItem(window->contentItem(), row);
         std::fprintf(stderr,
                      "dj-ui: the %s box stays at %d (row %s %.0fx%.0f at %.0f,%.0f, visible %d)\n",
@@ -6610,8 +6697,20 @@ static int runGenreCheck(QQmlApplicationEngine &engine, FileBrowser &browser, La
         return false;
     };
 
-    const auto closeFilter = [&](const QString &button) -> bool {
-        return click(button);
+    // Closing is an animation, not an instant: the next open must not see the window that is leaving.
+    const auto closeFilter = [&](const QString &name) -> bool {
+        if (!click(name)) {
+            return false;
+        }
+        for (int tick = 0; tick < 100; ++tick) {
+            QQuickItem *list = filterList();
+            if (list == nullptr || !list->isVisible()) {
+                return true;
+            }
+            pump(20);
+        }
+        std::fprintf(stderr, "dj-ui: the dialog stayed on the screen after %s\n", qPrintable(name));
+        return false;
     };
 
     // The census: a genre with how many tracks carry it. A list of bare names makes the DJ guess which

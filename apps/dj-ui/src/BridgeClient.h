@@ -146,6 +146,9 @@ private:
     void askCensus();
     /// The rows the index answered with, in the shape the list and the columns read.
     QVariantList rowsOf(const QVariantList &rows) const;
+    /// The boxes counted from the rows in hand, for the moments before the index answers: names, first
+    /// spelling wins, counting ignores case.
+    QVariantList censusFromRows() const;
 
     QString m_folder;
     QVariantList m_entries;
@@ -166,6 +169,9 @@ private:
     /// The genres as the index answered them, with how many tracks carry each: the boxes come from the
     /// `genres` table, never from counting the rows of a page.
     QVariantList m_genreList;
+    /// The census counted from the rows in hand, taken while no filter is in force. Counting the rows the
+    /// filter kept would hide every genre the DJ did not pick, and a box that disappears cannot be unticked.
+    QVariantList m_genreFallback;
     /// The census question has been asked: it is a question of the session, not of every page.
     bool m_censusAsked = false;
     /// An empty first page has been asked about once already: the index may be building.

@@ -234,6 +234,7 @@ void FileBrowser::openCollection(const QStringList &roots)
     m_pageAnsweredFor = 0;
     m_askedSignature.clear();
     m_genreList.clear();
+    m_genreFallback.clear();
     m_censusAsked = false;
     m_retriedEmpty = false;
     // The interface does not walk the disks: the walk is how the database is prepared, not how it is
@@ -550,6 +551,11 @@ void FileBrowser::takePage()
         m_pageOffset += tracks.size();
         m_pageTotal = total;
     }
+    // The census taken from rows in hand is only good while nothing is filtered: the rows in hand are the
+    // rows the filter kept, and a genre missing from it is a box the DJ cannot untick.
+    if (m_genres.isEmpty() && m_genreList.isEmpty()) {
+        m_genreFallback = censusFromRows();
+    }
     applyFilter();
     if (!at.isEmpty() && rowOf(at) >= 0) {
         setCursor(at);
@@ -557,6 +563,13 @@ void FileBrowser::takePage()
     // The boxes are republished only when they say something new: a page answer usually says nothing about the
     // genre list, and rebuilding it on every answer destroys the delegates under the DJ's finger.
     publishGenres();
+    // The census question is asked once, and it can be answered before the index has a single row (it
+    // answers zero). A page that came back with rows is the proof the index is alive: ask again, once per
+    // page, until it answers with genres.
+    if (m_genreList.isEmpty() && m_censusAsked) {
+        m_censusAsked = false;
+        askCensus();
+    }
     if (offset == 0 && tracks.isEmpty() && !m_retriedEmpty && !m_roots.isEmpty()) {
         // The index can be empty on the first question because it is being built from the folders at that very
         // moment. One retry turns "an empty collection" into "a collection that took a moment" — and a DJ who
@@ -752,7 +765,13 @@ QVariantList FileBrowser::genreList() const
         // The index answered with name and count: no counting here.
         return m_genreList;
     }
-    // Before the index answers — or where there is no index — the boxes are counted from the rows in hand.
+    // Before the index answers — or where there is no index — the boxes come from the count taken while
+    // nothing was filtered. Counting the rows in hand now would count the rows the filter kept.
+    return m_genreFallback;
+}
+
+QVariantList FileBrowser::censusFromRows() const
+{
     // First spelling wins, counting ignores case: `House` and `house` are one box with two tracks.
     QMap<QString, QString> spelling;
     QMap<QString, int> counts;
