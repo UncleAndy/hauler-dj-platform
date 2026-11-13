@@ -6339,6 +6339,25 @@ static int runLockCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Bri
         }
     };
     const auto openMenu = [&]() -> QQuickItem * {
+        // A dialog that is still leaving keeps its modal overlay over the list: a right click under it
+        // reaches the overlay, and the menu that never opened reads as a dead menu entry. The import and
+        // the analysis windows are the ones this check has just used, so their going is what the hand
+        // waits for.
+        for (int tick = 0; tick < 250; ++tick) {
+            bool onScreen = false;
+            for (const char *name : {"analyzeProgressText", "analyzeProgressBar", "analyzeDialogText",
+                                     "importProgressText", "importCount"}) {
+                QQuickItem *item = findItem(window->contentItem(), QString::fromLatin1(name));
+                if (item != nullptr && item->isVisible()) {
+                    onScreen = true;
+                }
+            }
+            if (!onScreen) {
+                break;
+            }
+            QThread::msleep(20);
+            QCoreApplication::processEvents();
+        }
         // A menu left open from the last look is not this look: Escape first, always.
         QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
         QCoreApplication::sendEvent(window, &escape);
@@ -6369,6 +6388,100 @@ static int runLockCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Bri
         return 1;
     }
     std::fprintf(stdout, "dj-ui: the collection's Analyze... stands down for a locked track\n");
+
+    // A selection of many where one is locked: the analysis goes to the free tracks only. The witness is
+    // the files on disk — a measurement writes the track's metadata — so the free track's record must
+    // move and the locked track's must not. The engine refuses a locked track anyway; this proves the
+    // panel never asks it.
+    const auto revisionOf = [](const QString &trackPath) -> int {
+        const QFileInfo info(trackPath);
+        const QString record = info.absolutePath() + QStringLiteral("/.djmeta/") + info.fileName()
+            + QStringLiteral(".json");
+        QFile file(record);
+        if (!file.open(QIODevice::ReadOnly)) {
+            return -1;
+        }
+        return QJsonDocument::fromJson(file.readAll())
+            .object()
+            .value(QStringLiteral("revision"))
+            .toInt(-1);
+    };
+    const QString freeSource = QStringLiteral("/tmp/dj-lock-free.wav");
+    QFile::remove(freeSource);
+    if (!writeClickTrack(freeSource, 128.0, 120.0)) {
+        std::fprintf(stderr, "dj-ui: cannot write the free track for the mixed selection\n");
+        return 1;
+    }
+    bridge.importPaths({freeSource}, collectionRoot, false);
+    // The import state counts one batch, not the collection: the second import says "1 of 1" again. What
+    // says the track landed is the collection, so the rows are what this waits for.
+    for (int tick = 0; tick < 100; ++tick) {
+        QCoreApplication::processEvents();
+        QThread::msleep(20);
+    }
+    browser.openCollection({collectionRoot});
+    QString lockedPath;
+    QString freePath;
+    const auto bothRows = [&]() {
+        lockedPath.clear();
+        freePath.clear();
+        for (const QVariant &entry : browser.entries()) {
+            const QVariantMap candidate = entry.toMap();
+            const QString path = candidate.value(QStringLiteral("path")).toString();
+            if (candidate.value(QStringLiteral("analysis_lock")).toBool()) {
+                lockedPath = path;
+            } else if (!path.isEmpty()) {
+                freePath = path;
+            }
+        }
+        return !lockedPath.isEmpty() && !freePath.isEmpty();
+    };
+    if (!waitFor(bothRows, 60000)) {
+        std::fprintf(stderr, "dj-ui: the collection did not offer a locked and a free track (%d rows)\n",
+                     int(browser.entries().size()));
+        return 1;
+    }
+    const int lockedBefore = revisionOf(lockedPath);
+    const int freeBefore = revisionOf(freePath);
+    if (lockedBefore < 0 || freeBefore < 0) {
+        std::fprintf(stderr, "dj-ui: no records to compare (locked %d, free %d)\n", lockedBefore,
+                     freeBefore);
+        return 1;
+    }
+
+    QVariantList both;
+    both.append(lockedPath);
+    both.append(freePath);
+    panel->setProperty("selection", both);
+    QCoreApplication::processEvents();
+    QVariant analysed(false);
+    QMetaObject::invokeMethod(panel, "analyzeSelection", Q_RETURN_ARG(QVariant, analysed));
+    const QString said = panel->property("lastAction").toString();
+    if (!analysed.toBool() || said != QStringLiteral("analysing 1, 1 locked")) {
+        std::fprintf(stderr, "dj-ui: the mixed selection says \"%s\" (returned %d)\n", qPrintable(said),
+                     analysed.toBool() ? 1 : 0);
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: a mixed selection says \"%s\"\n", qPrintable(said));
+
+    // The measurement takes seconds: what says it happened is the free track's revision moving.
+    if (!waitFor([&]() { return revisionOf(freePath) > freeBefore; }, 120000)) {
+        std::fprintf(stderr, "dj-ui: the free track was never measured (revision %d)\n",
+                     revisionOf(freePath));
+        return 1;
+    }
+    const int lockedAfter = revisionOf(lockedPath);
+    if (lockedAfter != lockedBefore) {
+        std::fprintf(stderr,
+                     "dj-ui: the locked track was measured anyway (revision %d -> %d)\n", lockedBefore,
+                     lockedAfter);
+        return 1;
+    }
+    std::fprintf(stdout,
+                 "dj-ui: the free track was measured (revision %d -> %d), the locked one was not (%d)\n",
+                 freeBefore, revisionOf(freePath), lockedAfter);
+    panel->setProperty("selection", QVariantList{});
+    QCoreApplication::processEvents();
     std::fprintf(stdout, "dj-ui: the lock reached the collection at once\n");
     // The second press goes in as the signal the suite presses buttons with: what is under test here is
     // that the collection follows the switch, not the mouse plumbing of a lit toggle.
