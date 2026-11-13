@@ -387,6 +387,30 @@ void FileBrowser::takeGenres()
     std::fprintf(stderr, "dj-ui: the index knows %d genres\n", static_cast<int>(boxes.size()));
     m_genreList = boxes;
     publishGenres();
+    // A genre restored from the layout may not be in this collection any more, or may now have no tracks:
+    // keeping it filters the list to nothing, and the DJ sees an empty collection with a box ticked and no
+    // idea why. The boxes are the truth, so a choice they do not offer is dropped and the list is asked
+    // again without it.
+    if (!m_genres.isEmpty()) {
+        QStringList kept;
+        for (const QString &chosen : std::as_const(m_genres)) {
+            for (const QVariant &entry : std::as_const(boxes)) {
+                const QVariantMap box = entry.toMap();
+                if (box.value(QStringLiteral("name")).toString().compare(chosen, Qt::CaseInsensitive) == 0
+                    && box.value(QStringLiteral("count")).toInt() > 0) {
+                    kept.append(chosen);
+                    break;
+                }
+            }
+        }
+        if (kept != m_genres) {
+            std::fprintf(stderr, "dj-ui: dropped genre filters the collection no longer offers\n");
+            m_genres = kept;
+            emit genresChanged();
+            applyFilter();
+            askPage(0);
+        }
+    }
 }
 
 void FileBrowser::publishGenres()

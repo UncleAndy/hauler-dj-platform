@@ -1517,7 +1517,25 @@ fn serve_client(
                                         ),
                                     }
                                     if let Ok(index) = dj_library::Index::reader_default() {
-                                        page = index.page(&asked).unwrap_or(page);
+                                        match index.page(&asked) {
+                                            Ok(fresh) => page = fresh,
+                                            // A page that cannot be read is not an empty collection: the
+                                            // error has to be said out loud, or the list blames the folders.
+                                            Err(error) => {
+                                                eprintln!(
+                                                    "dj-engine: the page could not be read: {error}"
+                                                )
+                                            }
+                                        }
+                                        if page.total == 0 {
+                                            // Still nothing for these folders after a fill: the rows are in
+                                            // the index and the question cannot see them, so the two are put
+                                            // side by side — asked folders first, stored paths after.
+                                            eprintln!("dj-engine: asked {folders:?}");
+                                            if let Ok(paths) = index.sample_paths(3) {
+                                                eprintln!("dj-engine: stored {paths:?}");
+                                            }
+                                        }
                                     }
                                 }
                             }

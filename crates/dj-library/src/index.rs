@@ -399,6 +399,18 @@ impl Index {
         Ok(rows)
     }
 
+    /// A few paths as the index stores them.
+    ///
+    /// For the case where the folders were walked and the rows were written, and the page for those very
+    /// folders is still empty: what is stored and what was asked have to be compared, not guessed.
+    pub fn sample_paths(&self, limit: usize) -> Result<Vec<String>, IndexError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT path FROM tracks ORDER BY path LIMIT ?1")?;
+        let rows = statement.query_map([limit as i64], |row| row.get::<_, String>(0))?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
     /// The genres carried under these roots, with how many tracks carry each.
     ///
     /// Empty roots is the whole index. This is what the genre boxes ask: the answer comes from the
