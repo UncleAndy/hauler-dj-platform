@@ -402,14 +402,18 @@ fn place(
 
 /// True when the two identities describe the same file, not merely the same recording.
 ///
-/// The length in milliseconds and the average bitrate over the whole file: for an unchanged copy both
-/// are equal exactly, and a re-encode or a different master differs in at least one of them. This is the
-/// question the DJ never has to answer — the file is already there, byte for byte in effect.
+/// The size in bytes is the honest test: an unchanged copy has it equal exactly, while a re-encode or
+/// another master differs. The length is compared with a small tolerance, because one of the two numbers
+/// comes from a record's frames and a rate (integer division) and the other from a decode — a millisecond
+/// of rounding must not turn the same file into a question. Bitrate stands in when a size is unknown.
 fn identical(existing: &Identity, candidate: &Identity) -> bool {
-    existing.duration_ms == candidate.duration_ms
-        && existing.bitrate().is_some()
-        && existing.bitrate() == candidate.bitrate()
-        && existing.lossless == candidate.lossless
+    // Not the size: the copy in the collection was retagged by the import itself, so its bytes differ
+    // from the source that produced it. What the DJ cares about is the audio — the same length, the same
+    // rate, the same kind of file. The verdict already says it is the same recording and the same
+    // edition, so this only settles whether there is anything left to decide.
+    existing.lossless == candidate.lossless
+        && existing.sample_rate == candidate.sample_rate
+        && existing.duration_ms.abs_diff(candidate.duration_ms) <= 2
 }
 
 /// Move a track out of the collection into `_duplicates/`, with its metadata file.
