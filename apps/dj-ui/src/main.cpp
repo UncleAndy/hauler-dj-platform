@@ -10096,8 +10096,9 @@ int main(int argc, char *argv[])
             return 1;
         }
 
-        // Every edit is a decision about the file: it is written beside the music and locked against
-        // the next automatic measurement.
+        // Every edit is a decision about the file: it is written beside the music. The lock is the DJ's
+        // switch and an edit does not touch it — the saved grid is what keeps the next automatic pass
+        // away, and a flag set here would grey the editor after the first edit.
         const QString sidecar =
             QFileInfo(fixture).absolutePath() + QStringLiteral("/.djmeta/") +
             QFileInfo(fixture).fileName() + QStringLiteral(".json");
@@ -10112,7 +10113,7 @@ int main(int argc, char *argv[])
                 [&]() {
                     const QJsonObject grid = stored().value(QStringLiteral("beatgrid")).toObject();
                     return std::abs(grid.value(QStringLiteral("bpm")).toDouble() - 128.0) < 0.05 &&
-                           stored().value(QStringLiteral("analysis_lock")).toBool();
+                           !stored().value(QStringLiteral("analysis_lock")).toBool();
                 },
                 5000)) {
             std::fprintf(stderr, "dj-ui: the edit never reached %s\n", qPrintable(sidecar));
