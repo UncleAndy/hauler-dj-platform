@@ -58,6 +58,8 @@ fn deck_with_tone_at(id: DeckId, source_rate: u32) -> Deck {
             first_beat_frame: None,
             grid: None,
             key: None,
+
+            analysis_lock: false,
         }),
     );
     deck.set_blocking(false);
@@ -1098,6 +1100,8 @@ fn prepared_with(
             grid: None,
             source_rate: 48_000,
             path: Some("/tmp/dj-engine-cue-test.wav".to_string()),
+
+            analysis_lock: false,
         },
         path: Some(std::path::PathBuf::from("/tmp/dj-engine-cue-test.wav")),
         // Built by hand from a tone: it never went through the cache.

@@ -133,13 +133,16 @@ Pane {
     // The row number sits in its own gutter to the left of the columns. It is a position, not data: it cannot
     // be dragged away, sorted or hidden, and every column shares what is left of the width after it.
     readonly property real numberWidth: Math.round(browser.listFont * 2.4)
+    // The lock column sits beside the number: a locked grid is a fact about the track, and the DJ reads it
+    // where he reads the position. Empty for a track nobody locked, so the list stays quiet.
+    readonly property real lockWidth: Math.round(browser.listFont * 1.6)
     function columnWidth(index, total) {
-        return columnShare(index) * (total - numberWidth);
+        return columnShare(index) * (total - numberWidth - lockWidth);
     }
     function columnX(index, total) {
-        let x = numberWidth;
+        let x = numberWidth + lockWidth;
         for (let i = 0; i < index && i < columns.length; ++i) {
-            x += columns[i].width * (total - numberWidth);
+            x += columns[i].width * (total - numberWidth - lockWidth);
         }
         return x;
     }
@@ -1210,6 +1213,16 @@ Pane {
                 }
 
                 Label {
+                    objectName: "collectionHeaderLock"
+                    x: browser.numberWidth
+                    width: browser.lockWidth
+                    text: "\uD83D\uDD12"
+                    horizontalAlignment: Text.AlignHCenter
+                    color: UiSettings.themeTextDim
+                    font.pixelSize: Math.max(9, browser.listFont - 2)
+                }
+
+                Label {
                     objectName: "collectionHeaderCell_0"
                     x: browser.columnX(0, header.width) + 6
                     width: Math.max(0, browser.columnWidth(0, header.width) - 12)
@@ -1489,6 +1502,16 @@ Pane {
                             font.pixelSize: browser.listFont
                             color: UiSettings.themeTextDim
                             elide: Text.ElideRight
+                        }
+                        Label {
+                            objectName: "collectionCell_lock_" + row.index
+                            x: browser.numberWidth
+                            width: browser.lockWidth
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: row.modelData.analysis_lock ? "\uD83D\uDD12" : ""
+                            horizontalAlignment: Text.AlignHCenter
+                            font.pixelSize: browser.listFont
+                            color: UiSettings.themeTextDim
                         }
                         Label {
                             objectName: "collectionCell_artist_" + row.index

@@ -441,6 +441,9 @@ fn run(argv: &[String]) -> Result<(), String> {
     // Requests to edit a grid. The grid in force lives with the deck; the publisher hands a copy to
     // this map on every change, and the edit worker is the only one who reads it.
     let (grid_edits, grid_edits_rx) = std::sync::mpsc::channel::<GridEditRequest>();
+    // A locked grid is a decision the DJ made about the track: the handler refuses an edit before it is
+    // sent and the worker refuses one that slipped in, so the file cannot be rewritten behind his back.
+    let locks: Arc<Mutex<Vec<bool>>> = Arc::new(Mutex::new(vec![false; dj_domain::DeckId::COUNT]));
     let grids: Arc<Mutex<Vec<Option<dj_domain::BeatGrid>>>> =
         Arc::new(Mutex::new(vec![None; dj_domain::DeckId::COUNT]));
     // The source rate of each deck's file: the grid is expressed in it, and a shift past the start
@@ -528,6 +531,12 @@ fn run(argv: &[String]) -> Result<(), String> {
                                 && let Some(slot) = held.get_mut(deck.index())
                             {
                                 *slot = rate;
+                            }
+                        }
+                        Published::AnalysisLock { deck, enabled } => {
+                            if let Some(slot) = statics.iter_mut().find(|entry| entry.deck == deck)
+                            {
+                                slot.analysis_lock = enabled;
                             }
                         }
                         Published::Grid { deck, grid } => {
@@ -637,6 +646,8 @@ fn run(argv: &[String]) -> Result<(), String> {
             loads: load_requests.clone(),
             analyses: analysis_requests.clone(),
             grids: grid_edits.clone(),
+            locks: Arc::clone(&locks),
+            published: deck_updates.clone(),
         };
         let stop_handle = Arc::clone(&stop);
         std::thread::spawn(move || {
@@ -893,6 +904,7 @@ fn run(argv: &[String]) -> Result<(), String> {
                         auto_gain: 1.0,
                         auto_gain_db: None,
                         analyzing: false,
+                        analysis_lock: false,
                         grid: None,
                         source_rate: 0,
                         path: Some(request.path.clone()),
@@ -997,6 +1009,7 @@ fn run(argv: &[String]) -> Result<(), String> {
                                 auto_gain: 1.0,
                                 auto_gain_db: None,
                                 analyzing: false,
+                                analysis_lock: false,
                                 grid: None,
                                 source_rate: 0,
                                 path: None,
@@ -1339,6 +1352,14 @@ struct DeckFlags {
 }
 
 /// The background work a client connection may ask for: a decode, or a second measurement.
+/// Whether this deck's grid is locked.
+fn locked(locks: &Arc<Mutex<Vec<bool>>>, deck: dj_domain::DeckId) -> bool {
+    locks
+        .lock()
+        .map(|held| held.get(deck.index()).copied().unwrap_or(false))
+        .unwrap_or(false)
+}
+
 #[derive(Clone)]
 struct Workers {
     /// The publisher's cells: the import worker publishes its progress through them.
@@ -1355,6 +1376,10 @@ struct Workers {
     analyses: Sender<AnalysisRequest>,
     /// Edits the grid of what a deck plays (DJP-SYNC-003).
     grids: Sender<GridEditRequest>,
+    /// Which decks hold a locked grid: the command handler reads it, the grid worker keeps it current.
+    locks: Arc<Mutex<Vec<bool>>>,
+    /// The channel the decks publish on: a lock written here reaches the snapshot through it.
+    published: Sender<dj_engine::Published>,
 }
 
 /// Files to measure off the deck: a batch, and whether to spread it over threads.
@@ -1779,7 +1804,67 @@ fn serve_client(
                         }
                         continue;
                     }
+                    dj_engine::Routed::SetAnalysisLock {
+                        deck,
+                        path,
+                        enabled,
+                    } => {
+                        // The record beside the track and its mirror first, then the collection: the flag
+                        // travels with the file, and the list draws it in its own cell.
+                        let store = dj_library::Store::with_default_mirror();
+                        let written = dj_engine::meta::set_analysis_lock(
+                            &store,
+                            volume(),
+                            root(),
+                            std::path::Path::new(&path),
+                            enabled,
+                        );
+                        let ack = match written {
+                            Ok(_) => {
+                                if let (Ok(loaded), Ok(mut index)) = (
+                                    store.load(volume(), root(), std::path::Path::new(&path)),
+                                    dj_library::Index::open_default(),
+                                ) {
+                                    let _ = index.upsert(&dj_engine::meta::row_of(
+                                        &loaded.meta,
+                                        std::path::Path::new(&path),
+                                    ));
+                                }
+                                let _ = work
+                                    .published
+                                    .send(dj_engine::Published::AnalysisLock { deck, enabled });
+                                if let Ok(mut held) = work.locks.lock()
+                                    && let Some(slot) = held.get_mut(deck.index())
+                                {
+                                    *slot = enabled;
+                                }
+                                dj_domain::Ack::accepted(command.id)
+                            }
+                            Err(error) => {
+                                eprintln!("dj-engine: the lock was not written: {error}");
+                                dj_domain::Ack::rejected(
+                                    command.id,
+                                    dj_domain::RejectReason::InvalidValue,
+                                )
+                            }
+                        };
+                        if alerts.send(ServerMessage::Ack(ack)).is_err() {
+                            return;
+                        }
+                        continue;
+                    }
                     dj_engine::Routed::EditGrid { deck, path, edit } => {
+                        if locked(&work.locks, deck) {
+                            // A locked grid is the DJ's decision: the edit is refused, not undone later.
+                            let ack = dj_domain::Ack::rejected(
+                                command.id,
+                                dj_domain::RejectReason::InvalidValue,
+                            );
+                            if alerts.send(ServerMessage::Ack(ack)).is_err() {
+                                return;
+                            }
+                            continue;
+                        }
                         // Like a measurement, answered at once and carried out where the file can be
                         // written: an edit is a decision about the track, and the deck shows it when the
                         // worker has written and published it.
@@ -1837,6 +1922,16 @@ fn serve_client(
                         continue;
                     }
                     dj_engine::Routed::Analyze { deck, path } => {
+                        if locked(&work.locks, deck) {
+                            let ack = dj_domain::Ack::rejected(
+                                command.id,
+                                dj_domain::RejectReason::InvalidValue,
+                            );
+                            if alerts.send(ServerMessage::Ack(ack)).is_err() {
+                                return;
+                            }
+                            continue;
+                        }
                         // Answered at once, not when the answer is ready: the measurement takes as long
                         // as a decode, and the state publishes the new grid when it lands.
                         let ack = match work.analyses.send(AnalysisRequest { deck, path }) {

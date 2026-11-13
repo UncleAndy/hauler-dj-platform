@@ -62,6 +62,10 @@ Pane {
     readonly property var track: panel.deck.track !== undefined ? panel.deck.track : null
     /// Whether there is a grid to edit at all.
     readonly property bool gridReady: panel.track !== null && panel.track.grid !== undefined
+    /// The DJ locked this track's grid: no measurement and no edit may move it.
+    readonly property bool analysisLock: panel.deck ? panel.deck.analysis_lock === true : false
+    /// Grid edits are open only while there is a grid to edit and nobody has locked it.
+    readonly property bool gridEditable: panel.gridReady && !panel.analysisLock
                                       && panel.track.grid !== null
                                       && panel.track.grid.segments !== undefined
                                       && panel.track.grid.segments.length > 0
@@ -1134,6 +1138,19 @@ Pane {
             // Reverse walks the material backwards from the playhead. It lights like the other modes,
             // and it refuses on a track that is still streaming: the engine says so instead of stalling.
             Button {
+                objectName: "gridLock_" + panel.deckId
+                text: "\uD83D\uDD12"
+                checkable: true
+                checked: panel.analysisLock
+                enabled: panel.track !== null
+                font.pixelSize: 12
+                Layout.preferredHeight: 18
+                focusPolicy: Qt.NoFocus
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Lock the grid: no measurement and no edit may move it")
+                onClicked: Bridge.setAnalysisLock(panel.deckId, checked)
+            }
+            Button {
                 objectName: "reverse_" + panel.deckId
                 text: qsTr("Rev")
                 font.pixelSize: 11
@@ -1166,7 +1183,7 @@ Pane {
             // compared one at a time.
             Button {
                 objectName: "metronome_" + panel.deckId
-                enabled: panel.gridReady
+                enabled: panel.gridEditable
                 text: qsTr("♪")
                 font.pixelSize: 9
                 Layout.preferredWidth: 24
@@ -1180,7 +1197,7 @@ Pane {
             }
             Button {
                 objectName: "gridBeatLeft_" + panel.deckId
-                enabled: panel.gridReady
+                enabled: panel.gridEditable
                 text: qsTr("⇤")
                 font.pixelSize: 9
                 Layout.preferredWidth: 22
@@ -1194,7 +1211,7 @@ Pane {
             // what the ear actually hears.
             Button {
                 objectName: "gridLeft_" + panel.deckId
-                enabled: panel.gridReady
+                enabled: panel.gridEditable
                 text: qsTr("◀")
                 font.pixelSize: 9
                 Layout.preferredWidth: 22
@@ -1254,7 +1271,7 @@ Pane {
             }
             Button {
                 objectName: "gridRight_" + panel.deckId
-                enabled: panel.gridReady
+                enabled: panel.gridEditable
                 text: qsTr("▶")
                 font.pixelSize: 9
                 Layout.preferredWidth: 22
@@ -1266,7 +1283,7 @@ Pane {
             }
             Button {
                 objectName: "gridBeatRight_" + panel.deckId
-                enabled: panel.gridReady
+                enabled: panel.gridEditable
                 text: qsTr("⇥")
                 font.pixelSize: 9
                 Layout.preferredWidth: 22
@@ -1278,7 +1295,7 @@ Pane {
             }
             Button {
                 objectName: "gridHalf_" + panel.deckId
-                enabled: panel.gridReady
+                enabled: panel.gridEditable
                 text: qsTr("½")
                 font.pixelSize: 9
                 Layout.preferredHeight: 18
@@ -1289,7 +1306,7 @@ Pane {
             }
             Button {
                 objectName: "gridDouble_" + panel.deckId
-                enabled: panel.gridReady
+                enabled: panel.gridEditable
                 text: qsTr("×2")
                 font.pixelSize: 9
                 Layout.preferredHeight: 18

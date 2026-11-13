@@ -171,6 +171,7 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
             load: DeckLoad::Ready,
             playing: true,
             analyzing: false,
+            analysis_lock: false,
             // The click on the grid: off in this record, so the document says nothing about it, and the
             // format stays the one an older client reads.
             metronome: false,
@@ -191,6 +192,7 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
                 first_beat_frame: None,
                 grid: None,
                 key: Some("8A".to_string()),
+                analysis_lock: false,
             }),
             loop_region: None,
             loop_mode: false,
@@ -358,6 +360,7 @@ fn a_measured_grid_travels_with_the_track() {
         first_beat_frame: Some(4_800),
         grid: dj_domain::BeatGrid::single(128.0, 4_800),
         key: None,
+        analysis_lock: false,
     };
     let json = serde_json::to_string(&measured).unwrap_or_default();
     assert!(

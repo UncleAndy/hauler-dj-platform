@@ -266,6 +266,7 @@ fn run(argv: &[String]) -> Result<String, Error> {
                     first_beat_frame: None,
                     grid: None,
                     key: None,
+                    analysis_lock: false,
                 }),
             );
             // The audio callback must never wait for the prefetcher.

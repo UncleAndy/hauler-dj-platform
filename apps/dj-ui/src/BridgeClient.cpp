@@ -496,6 +496,9 @@ void FileBrowser::takePage()
             genres.append(genre.trimmed());
         }
         made.insert(QStringLiteral("genres"), genres);
+        // The list draws a lock beside the number when this track's grid is locked.
+        made.insert(QStringLiteral("analysis_lock"),
+                    row.value(QStringLiteral("analysis_lock")).toBool());
         tracks.append(made);
     }
     // Replacing or appending, the DJ's place stays: a cursor that jumps to the top on every batch is a
@@ -1342,6 +1345,19 @@ int BridgeClient::analyzeTempo(const QString &deck)
     options.insert(QStringLiteral("path"), path);
     QJsonObject command;
     command.insert(QStringLiteral("AnalyzeTempo"), options);
+    return sendCommand(deck, command);
+}
+
+int BridgeClient::setAnalysisLock(const QString &deck, bool enabled)
+{
+    // The engine writes the flag beside the file and into the collection; it knows which file each deck
+    // holds, so a client that reconnected sends the deck and the path it remembers.
+    QJsonObject payload;
+    payload.insert(QStringLiteral("deck"), deck);
+    payload.insert(QStringLiteral("path"), m_deckPaths.value(deck));
+    payload.insert(QStringLiteral("enabled"), enabled);
+    QJsonObject command;
+    command.insert(QStringLiteral("SetAnalysisLock"), payload);
     return sendCommand(deck, command);
 }
 

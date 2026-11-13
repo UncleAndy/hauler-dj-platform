@@ -661,6 +661,8 @@ fn a_snapshot_carries_everything_a_display_needs() {
         first_beat_frame: None,
         grid: None,
         key: Some("8A".to_string()),
+
+        analysis_lock: false,
     };
     deck.attach(Box::new(RampSource::new(44_100)), Some(track));
     deck.seek(10_000);

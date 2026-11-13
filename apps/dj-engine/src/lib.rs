@@ -463,6 +463,8 @@ pub struct DeckStatic {
     pub auto_gain_db: Option<f32>,
     /// True while the tempo of this deck's file is being measured again (B02).
     pub analyzing: bool,
+    /// True when the DJ locked this track's grid: no measurement and no edit may move it.
+    pub analysis_lock: bool,
     /// The beat grid in source frames, one segment per tempo (DJP-SYNC-003).
     pub grid: Option<BeatGrid>,
     /// Sample rate of the source material: the timebase the grid is expressed in.
@@ -493,6 +495,7 @@ impl DeckStatic {
             auto_gain: snapshot.auto_gain,
             auto_gain_db: snapshot.auto_gain_db,
             analyzing: snapshot.analyzing,
+            analysis_lock: snapshot.analysis_lock,
             grid: snapshot.track.as_ref().and_then(|track| track.grid.clone()),
             source_rate: snapshot.source_rate,
             // The snapshot says nothing about the file it came from: only a load knows that.
@@ -1340,6 +1343,7 @@ impl StateCells {
                     .map(|total| (frame as f32 / total as f32).clamp(0.0, 1.0)),
                 track: if attached { fixed.track.clone() } else { None },
                 analyzing: fixed.analyzing,
+                analysis_lock: fixed.analysis_lock,
                 waveform: if attached {
                     fixed.waveform.clone()
                 } else {
@@ -1686,6 +1690,13 @@ pub enum Published {
         /// The grid the measurement produced.
         grid: Box<BeatGrid>,
     },
+    /// The DJ locked or unlocked this deck's grid.
+    AnalysisLock {
+        /// Deck whose track was locked.
+        deck: DeckId,
+        /// True when the grid is now locked.
+        enabled: bool,
+    },
     /// A measurement started or finished (B02): the deck says so while it runs.
     Analyzing {
         /// Deck being measured.
@@ -1789,6 +1800,15 @@ pub enum Routed {
     },
     /// Stop the running batch between files.
     AnalyzeStop,
+    /// Lock or unlock this deck's grid: a decision the DJ makes, written into the file.
+    SetAnalysisLock {
+        /// Target deck.
+        deck: DeckId,
+        /// The file the deck holds.
+        path: String,
+        /// True to lock the grid, false to unlock it.
+        enabled: bool,
+    },
     /// Handed to the worker that edits grids: it owns the file write and the publication.
     EditGrid {
         /// Target deck.
@@ -1846,6 +1866,7 @@ pub fn collection_row(row: &dj_library::TrackRow) -> dj_domain::CollectionRow {
         rating: row.rating,
         duration_frames: row.duration_frames,
         sample_rate: row.sample_rate,
+        analysis_lock: row.analysis_lock,
     }
 }
 
@@ -1897,6 +1918,15 @@ pub fn route(command: &ScheduledCommand) -> Routed {
             deck: *deck,
             path: path.clone(),
             edit: *edit,
+        },
+        DjCommand::SetAnalysisLock {
+            deck,
+            path,
+            enabled,
+        } => Routed::SetAnalysisLock {
+            deck: *deck,
+            path: path.clone(),
+            enabled: *enabled,
         },
         _ => Routed::Render,
     }
@@ -1994,6 +2024,7 @@ pub fn prepare_track_with_key(
         first_beat_frame: None,
         grid: None,
         key: None,
+        analysis_lock: false,
     };
     let mut static_info = DeckStatic {
         deck: DeckId::A, // replaced by the caller, which knows the deck
@@ -2004,7 +2035,8 @@ pub fn prepare_track_with_key(
         auto_gain: 1.0, // the loader fills it in below: this function knows samples, not levels
         auto_gain_db: None,
         analyzing: false,
-        grid: None, // filled in below, once the tempo is measured
+        analysis_lock: false, // the stored decision arrives with the metadata
+        grid: None,           // filled in below, once the tempo is measured
         source_rate: info.sample_rate,
         path: Some(path.display().to_string()),
     };

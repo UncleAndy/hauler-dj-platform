@@ -386,6 +386,18 @@ pub enum DjCommand {
         /// The file the deck holds, as the client spelled it when it loaded it.
         path: String,
     },
+    /// Lock or unlock the beat grid of the track in this deck (DJP-SYNC-003).
+    ///
+    /// A locked grid is the DJ's decision made permanent: no measurement replaces it and no edit moves it.
+    /// The flag lives in the track's metadata and in the collection, so it travels with the file.
+    SetAnalysisLock {
+        /// Target deck.
+        deck: DeckId,
+        /// The file the deck holds, as the client spelled it when it loaded it.
+        path: String,
+        /// True to lock the grid, false to unlock it.
+        enabled: bool,
+    },
     /// Edit the beat grid of the track in this deck (DJP-SYNC-003).
     ///
     /// The DJ is the one who decides where the beat is: the measurement is a first answer, and every
@@ -691,6 +703,7 @@ impl DjCommand {
             | DjCommand::Load { .. }
             | DjCommand::AnalyzeTempo { .. }
             | DjCommand::EditGrid { .. }
+            | DjCommand::SetAnalysisLock { .. }
             | DjCommand::Import { .. }
             | DjCommand::Rescan { .. }
             | DjCommand::ImportCancel
@@ -940,6 +953,11 @@ pub struct TrackMeta {
     pub grid: Option<BeatGrid>,
     /// Musical key, once analysis exists.
     pub key: Option<String>,
+    /// The DJ locked this track's beat grid: no measurement and no grid edit may touch it.
+    ///
+    /// Defaulted and omitted when off, so a client that knows nothing of the lock reads the same document.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub analysis_lock: bool,
 }
 
 /// Peak levels for meters, linear 0.0 … 1.0.
@@ -1012,6 +1030,9 @@ pub struct DeckSnapshot {
     pub position_ratio: Option<f32>,
     /// Track metadata for the display; `None` when nothing is loaded.
     pub track: Option<TrackMeta>,
+    /// True when the DJ locked this track's beat grid: the editor and the measurement both stand down.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub analysis_lock: bool,
     /// Active loop region, if any.
     pub loop_region: Option<FrameRange>,
     /// Stored hotcues; slot order is stable across snapshots.
@@ -1349,6 +1370,9 @@ pub struct CollectionRow {
     /// Sample rate that gives those frames their meaning.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sample_rate: Option<u32>,
+    /// True when the DJ locked this track's beat grid.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub analysis_lock: bool,
 }
 
 /// The answer to a query: the rows of the page, and how many the filter found in all.

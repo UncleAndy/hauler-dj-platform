@@ -87,6 +87,8 @@ fn marked_deck() -> Deck {
             first_beat_frame: Some(grid.first_beat_frame()),
             grid: Some(grid),
             key: None,
+
+            analysis_lock: false,
         }),
     );
     deck.set_blocking(false);
@@ -169,6 +171,8 @@ fn published(cells: &StateCells) -> dj_domain::Snapshot {
         grid: None,
         source_rate: RATE,
         path: None,
+
+        analysis_lock: false,
     }];
     cells.read(&statics, RATE, 1, 1)
 }

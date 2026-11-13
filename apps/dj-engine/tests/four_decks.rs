@@ -46,6 +46,8 @@ fn loaded(id: DeckId) -> Deck {
             first_beat_frame: Some(0),
             grid: Some(grid),
             key: None,
+
+            analysis_lock: false,
         }),
     );
     deck.set_blocking(false);

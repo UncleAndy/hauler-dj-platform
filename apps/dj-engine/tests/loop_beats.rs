@@ -121,6 +121,7 @@ fn published(cells: &StateCells) -> dj_domain::Snapshot {
         auto_gain: 1.0,
         auto_gain_db: None,
         analyzing: false,
+        analysis_lock: false,
         grid: None,
         source_rate: RATE,
         path: None,

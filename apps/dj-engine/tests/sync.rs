@@ -58,6 +58,8 @@ fn grid_track(
         first_beat_frame: Some(first_beat),
         grid: Some(grid),
         key: None,
+
+        analysis_lock: false,
     };
     (Box::new(Tone { seeks }), meta)
 }

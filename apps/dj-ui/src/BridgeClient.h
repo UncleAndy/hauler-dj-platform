@@ -283,6 +283,8 @@ public:
     /// Read the same grid twice as fast, or half as fast: the half/double of a mis-read tempo.
     Q_INVOKABLE int doubleGrid(const QString &deck);
     Q_INVOKABLE int halveGrid(const QString &deck);
+    /// Lock or unlock the grid of the track this deck holds: a decision written into the file.
+    Q_INVOKABLE int setAnalysisLock(const QString &deck, bool enabled);
     Q_INVOKABLE int seek(const QString &deck, qulonglong frame);
     Q_INVOKABLE int setLoop(const QString &deck, bool enabled, qulonglong start, qulonglong end);
     /// A loop of `beats` beats on the deck's grid (DJP-DECK-005).

@@ -243,6 +243,7 @@ pub fn render(scenario: &MixScenario, cache: Option<&mut PcmCache>) -> Result<Mi
             first_beat_frame: None,
             grid: None,
             key: None,
+            analysis_lock: false,
         };
 
         let mut deck = Deck::new(spec.id);

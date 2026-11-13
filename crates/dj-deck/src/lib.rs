@@ -273,6 +273,8 @@ pub struct Deck {
     /// True while the deck's file is being measured again (B02): the screen says so, and the button
     /// that asked stays quiet until the answer arrives.
     analyzing: bool,
+    /// The DJ locked this track's beat grid: the editor and the measurement both stand down.
+    analysis_lock: bool,
     position: u64,
     gain: f32,
     /// Correction from the file's own loudness, applied with the trim but never written into it: the
@@ -435,6 +437,7 @@ impl Deck {
             load: DeckLoad::Empty,
             playing: false,
             analyzing: false,
+            analysis_lock: false,
             position: 0,
             gain: 1.0,
             auto_gain: 1.0,
@@ -2325,6 +2328,11 @@ impl Deck {
         self.analyzing = analyzing;
     }
 
+    /// Lock or unlock the grid of the track this deck holds.
+    pub fn set_analysis_lock(&mut self, enabled: bool) {
+        self.analysis_lock = enabled;
+    }
+
     /// Replace the beat grid the deck publishes for its track (B02, DJP-SYNC-003).
     ///
     /// Called at a block boundary when the DJ asks for the tempo again: the measurement is what the
@@ -2396,6 +2404,7 @@ impl Deck {
             load: self.load.clone(),
             playing: self.playing,
             analyzing: self.analyzing,
+            analysis_lock: self.analysis_lock,
             reverse: self.reverse,
             cached: self.reads_from_memory(),
             cached_bytes: self.memory_bytes().unwrap_or(0),

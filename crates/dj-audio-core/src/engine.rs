@@ -251,6 +251,7 @@ impl Engine {
             | DjCommand::Load { .. }
             | DjCommand::AnalyzeTempo { .. }
             | DjCommand::EditGrid { .. }
+            | DjCommand::SetAnalysisLock { .. }
             | DjCommand::Metronome { .. }
             | DjCommand::Eject { .. } => {
                 Some(Ack::rejected(command_id, RejectReason::NotSupported))
@@ -303,6 +304,7 @@ impl Engine {
                 load: dj_domain::DeckLoad::Ready,
                 playing: self.playing,
                 analyzing: false,
+                analysis_lock: false,
                 // A generated tone is not a file, so it has nothing to play backwards.
                 reverse: false,
                 // The A01 renderer has no cache and no file: everything it plays is generated.

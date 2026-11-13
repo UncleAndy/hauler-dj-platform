@@ -231,6 +231,43 @@ pub fn write_beatgrid(
         .map_err(|error| error.to_string())
 }
 
+/// Raise or lower the analysis lock of one track, in both copies of its metadata.
+///
+/// A locked grid is a decision: the measurement must not replace it and the editor must not move it. The flag
+/// travels with the file, so it is written where the rest of the decision lives — the record beside the track
+/// and the mirror of it.
+pub fn set_analysis_lock(
+    store: &Store,
+    volume: &str,
+    root: &Path,
+    path: &Path,
+    enabled: bool,
+) -> Result<bool, String> {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or_default();
+    let (mut meta, existed) = match store.load(volume, root, path) {
+        Ok(loaded) => (loaded.meta, true),
+        Err(_) => {
+            let print = fingerprint::of_path(path)
+                .map_err(|error| format!("{}: {error}", path.display()))?;
+            (TrackMeta::new(print, now_ms), false)
+        }
+    };
+    if existed && meta.analysis_lock == enabled {
+        return Ok(false);
+    }
+    meta.analysis_lock = enabled;
+    if existed {
+        meta.bump(now_ms);
+    }
+    store
+        .save(volume, root, path, &meta)
+        .map(|_| true)
+        .map_err(|error| error.to_string())
+}
+
 /// Measure a file's tempo and key and keep them beside it (DJP-MEDIA-004).
 ///
 /// Both measurements are full decodes, so this never runs on a client thread: the import worker calls
