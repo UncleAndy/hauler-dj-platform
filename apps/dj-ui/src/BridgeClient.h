@@ -136,6 +136,8 @@ private:
     void setPaged(bool paged);
     /// Take the engine's page if the snapshot carries the answer this list is waiting for.
     void takePage();
+    /// Tell the panel about the boxes, once per actual change.
+    void publishGenres();
     /// Read the genre answer out of the snapshot and refresh the boxes.
     void takeGenres();
     /// Ask the index for the rows at `offset`: one door for the first page and for the next ones.
@@ -166,6 +168,10 @@ private:
     QVariantList m_genreList;
     /// The census question has been asked: it is a question of the session, not of every page.
     bool m_censusAsked = false;
+    /// An empty first page has been asked about once already: the index may be building.
+    bool m_retriedEmpty = false;
+    /// The boxes as the panel last saw them: an unchanged list is not republished, so the delegates stay put.
+    QVariantList m_publishedGenres;
     /// The offset of the question in flight: the answer does not carry it, the question does.
     int m_askedOffset = 0;
     /// The question in flight, as one string: the same question asked again while the answer is on its

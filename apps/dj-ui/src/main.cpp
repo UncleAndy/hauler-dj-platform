@@ -5831,7 +5831,18 @@ static int runGenreCheck(QQmlApplicationEngine &engine, FileBrowser &browser, La
         for (const QString &genre : row.second) {
             genres.append(genre);
         }
+        // A record the index accepts: the collection is read from the database, and the database is made
+        // from these files. A record with tags alone is refused as a foreign schema, and the check then
+        // measures an empty list it created itself.
         const QJsonObject meta{
+            {QStringLiteral("schema"), QStringLiteral("djp-track-v1")},
+            {QStringLiteral("revision"), 1},
+            {QStringLiteral("updated_at_ms"), 0},
+            {QStringLiteral("fingerprint"),
+             QJsonObject{
+                 {QStringLiteral("size"), static_cast<double>(QFileInfo(target).size())},
+                 {QStringLiteral("head"), QString::number(qHash(row.first), 16)},
+                 {QStringLiteral("tail"), QString::number(qHash(row.second.join(',')), 16)}}},
             {QStringLiteral("tags"),
              QJsonObject{
                  {QStringLiteral("artist"), row.first.section(QStringLiteral(" - "), 0, 0)},
@@ -5891,7 +5902,14 @@ static int runGenreCheck(QQmlApplicationEngine &engine, FileBrowser &browser, La
     // The chip is a widget of the panel: a check that calls `setGenreFilter` directly would pass with
     // no chips on the screen at all.
     const auto click = [&](const QString &name) -> bool {
-        QQuickItem *item = findItem(window->contentItem(), name);
+        QQuickItem *item = nullptr;
+        // A delegate one frame away from being born cannot be clicked: waiting for it is what a hand does.
+        for (int tick = 0; tick < 50 && item == nullptr; ++tick) {
+            item = findItem(window->contentItem(), name);
+            if (item == nullptr) {
+                pump(20);
+            }
+        }
         if (item == nullptr) {
             return false;
         }
@@ -5913,6 +5931,26 @@ static int runGenreCheck(QQmlApplicationEngine &engine, FileBrowser &browser, La
                      qPrintable(visibleRows().join(QStringLiteral(", "))));
         return 1;
     }
+    // Clearing the chips brings the whole list back: the filter is a question for the index, and the last
+    // untick has to ask it again. A list that keeps the rows of a filter the DJ cleared is the bug this
+    // checks for.
+    browser.setGenreFilter({QStringLiteral("Techno")});
+    for (int tick = 0; tick < 100 && visibleRows().size() != 1; ++tick) {
+        pump(20);
+    }
+    const int narrowed = static_cast<int>(visibleRows().size());
+    browser.setGenreFilter({});
+    for (int tick = 0; tick < 100 && visibleRows().size() != 3; ++tick) {
+        pump(20);
+    }
+    const int restored = static_cast<int>(visibleRows().size());
+    std::printf("dj-ui: chips Techno -> %d rows, cleared -> %d rows\n", narrowed, restored);
+    if (narrowed != 1 || restored != 3) {
+        std::fprintf(stderr, "dj-ui: clearing the chips left %d rows (Techno alone narrowed to %d)\n",
+                     restored, narrowed);
+        return 1;
+    }
+
     if (chips() != QStringList{QStringLiteral("Ambient 1"), QStringLiteral("House 2"),
                                QStringLiteral("Techno 1")}) {
         std::fprintf(stderr, "dj-ui: the chips do not say what the records say: %s\n",
@@ -11726,6 +11764,9 @@ int main(int argc, char *argv[])
     }
 
     if (parser.isSet(genreCheckOption)) {
+        // The chips are answered by the index: this check without an engine measured a list nobody asked
+        // about, and reported the emptiness as a genre bug.
+        bridge->connectToEngine(parser.value(connectOption));
         return runGenreCheck(engine, browser, layout, parser.value(importFixtureOption),
                              parser.values(collectionRootOption).value(0));
     }

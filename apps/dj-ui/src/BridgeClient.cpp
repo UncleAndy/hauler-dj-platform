@@ -231,6 +231,7 @@ void FileBrowser::openCollection(const QStringList &roots)
     m_askedSignature.clear();
     m_genreList.clear();
     m_censusAsked = false;
+    m_retriedEmpty = false;
     // The interface does not walk the disks: the walk is how the database is prepared, not how it is
     // read. An empty answer here is an empty collection, and it is shown as such.
     if (!sameRoots) {
@@ -385,6 +386,16 @@ void FileBrowser::takeGenres()
     }
     std::fprintf(stderr, "dj-ui: the index knows %d genres\n", static_cast<int>(boxes.size()));
     m_genreList = boxes;
+    publishGenres();
+}
+
+void FileBrowser::publishGenres()
+{
+    const QVariantList boxes = genreList();
+    if (boxes == m_publishedGenres) {
+        return;
+    }
+    m_publishedGenres = boxes;
     emit genresChanged();
 }
 
@@ -473,7 +484,16 @@ void FileBrowser::takePage()
     if (!at.isEmpty() && rowOf(at) >= 0) {
         setCursor(at);
     }
-    emit genresChanged();
+    // The boxes are republished only when they say something new: a page answer usually says nothing about the
+    // genre list, and rebuilding it on every answer destroys the delegates under the DJ's finger.
+    publishGenres();
+    if (offset == 0 && tracks.isEmpty() && !m_retriedEmpty && !m_roots.isEmpty()) {
+        // The index can be empty on the first question because it is being built from the folders at that very
+        // moment. One retry turns "an empty collection" into "a collection that took a moment" — and a DJ who
+        // opens the section sees rows instead of an empty table.
+        m_retriedEmpty = true;
+        QTimer::singleShot(400, this, [this]() { askPage(0); });
+    }
 }
 
 bool FileBrowser::entryIsFile(const QString &path) const
