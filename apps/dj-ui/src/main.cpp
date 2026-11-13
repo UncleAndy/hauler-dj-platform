@@ -5118,6 +5118,29 @@ static int runCollectionPageCheck(QQmlApplicationEngine &engine, FileBrowser &br
     }
     std::fprintf(stdout, "dj-ui: the index and the walk agree on every row\n");
 
+    // A genre filter must narrow the list, not empty it: the answer is already narrowed by the index and
+    // must be shown as it came. This is the bug the DJ reported — a saved genre left an empty collection.
+    if (!pageRows.isEmpty()) {
+        const QString names = pageRows.first().toMap().value(QStringLiteral("genre")).toString();
+        const QString wanted = names.split(QStringLiteral(", ")).value(0).trimmed();
+        if (!wanted.isEmpty()) {
+            browser.setGenreFilter({wanted});
+            QElapsedTimer filtered;
+            filtered.start();
+            while (browser.entries().isEmpty() && filtered.elapsed() < 5000) {
+                QCoreApplication::processEvents();
+                QThread::msleep(20);
+            }
+            std::fprintf(stdout, "dj-ui: the genre filter '%s' leaves %d rows\n", qPrintable(wanted),
+                         static_cast<int>(browser.entries().size()));
+            if (browser.entries().isEmpty()) {
+                std::fprintf(stderr, "dj-ui: a genre the index knows left an empty list\n");
+                return 1;
+            }
+            browser.setGenreFilter({});
+        }
+    }
+
     // Can the engine still take a load after answering a collection query? That is what broke when the
     // page was wired into the list: the query opened the index — schema and migrations, a write — on the
     // same loop that acks deck commands. The number below is the answer, not an opinion.

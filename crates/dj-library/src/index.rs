@@ -739,7 +739,7 @@ fn read_record(record: &Path) -> Option<(TrackRow, Vec<GenreName>)> {
     let name = record.file_stem()?;
     let dir = record.parent()?.parent()?;
     let track = dir.join(name);
-    let genres = meta
+    let genres: Vec<GenreName> = meta
         .tags
         .as_ref()
         .map(|tags| {

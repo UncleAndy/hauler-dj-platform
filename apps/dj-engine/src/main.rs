@@ -1560,6 +1560,7 @@ fn serve_client(
                             let folders: Vec<std::path::PathBuf> =
                                 roots.iter().map(std::path::PathBuf::from).collect();
                             let files = dj_library::index::audio_files_under(&folders);
+                            let mut index = dj_library::Index::open_default().ok();
                             let mut state = dj_domain::ImportState {
                                 total: files.len(),
                                 done: 0,
@@ -1574,6 +1575,17 @@ fn serve_client(
                             for file in &files {
                                 state.current = Some(file.display().to_string());
                                 worker_cells.set_import(Some(state.clone()));
+                                // The tags are read again from the file — names and genres — because that is
+                                // what "rescan" means: a record whose tags are stale makes the genre boxes
+                                // and the columns lie.
+                                let _ = dj_engine::meta::write_names(
+                                    &worker_store,
+                                    volume(),
+                                    self::root(),
+                                    file,
+                                    true,
+                                    index.as_mut(),
+                                );
                                 // `force = false`: a record that already has a grid and a key is not
                                 // measured again — only what is missing is measured.
                                 if dj_engine::meta::analyze_file(
@@ -1592,7 +1604,7 @@ fn serve_client(
                             }
                             // The records are the source: the index is rebuilt from them, so the genre
                             // counts and the list both follow what the files say now.
-                            if let Ok(mut index) = dj_library::Index::open_default() {
+                            if let Some(mut index) = index {
                                 let _ = index.rebuild_from(&folders);
                             }
                             state.running = false;
