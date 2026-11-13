@@ -921,8 +921,10 @@ Pane {
                     anchors.centerIn: parent
                     text: panel.loopPending ? qsTr("Loop …") : qsTr("Loop")
                     font.pixelSize: 11
-                    color: panel.loopPending || panel.loop != null ? UiSettings.themeTextOnAccent
-                                                                  : UiSettings.themeText
+                    // The text follows the face: a loop that is only remembered has edges on the strip,
+                    // not a lit button, and text meant for the accent reads as a smudge on the raised one.
+                    color: panel.loopPending || active ? UiSettings.themeTextOnAccent
+                                                       : UiSettings.themeText
                 }
 
                 MouseArea {
