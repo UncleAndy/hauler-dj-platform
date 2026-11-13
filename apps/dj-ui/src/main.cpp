@@ -5808,6 +5808,14 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     // is, and a second arithmetic in the check is a second answer that can be five pixels off.
     if (QQuickItem *header = byName(window->contentItem(), QStringLiteral("collectionHeader"));
         header != nullptr) {
+        // The header has no size until it has been laid out, and a boundary measured in a header of no
+        // width is the left edge: the press lands on the wrong column and the splitter never moves.
+        QElapsedTimer laid;
+        laid.start();
+        while ((header->width() <= 0.0 || header->height() <= 0.0) && laid.elapsed() < 3000) {
+            QCoreApplication::processEvents();
+            QThread::msleep(20);
+        }
         QVariant where;
         if (QMetaObject::invokeMethod(header, "boundaryX", Q_RETURN_ARG(QVariant, where),
                                       Q_ARG(QVariant, QVariant(0)))) {
