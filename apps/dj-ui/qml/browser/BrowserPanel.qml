@@ -342,9 +342,18 @@ Pane {
         return -1;
     }
     function columnIndexAt(x, total) {
-        let edge = 0;
+        // The columns start after the row number and the lock, and share what is left of the header. Summing
+        // their shares from the header's left edge counts the gutter twice: the answer comes out one column
+        // to the right, and a click on BPM asks the index for Key.
+        const gutter = numberWidth + lockWidth;
+        const usable = total - gutter;
+        if (usable <= 0 || x < gutter) {
+            // The number and the lock are not columns: a press there is neither a sort nor a move.
+            return -1;
+        }
+        let edge = gutter;
         for (let i = 0; i < columns.length; ++i) {
-            edge += columns[i].width * total;
+            edge += columns[i].width * usable;
             if (x < edge) {
                 return i;
             }
@@ -371,7 +380,9 @@ Pane {
         case "album": return entry.album !== undefined ? entry.album : "";
         case "title": return entry.title !== undefined ? entry.title : "";
         case "time": return browser.clock(entry.duration_ms);
-        case "bpm": return entry.bpm !== undefined ? Math.round(entry.bpm) : "";
+        // A hundredth, always: the index keeps the tempo to two places, and a column of whole numbers
+        // is a column of rounded guesses — 128,00 and 128,004 must not read the same.
+        case "bpm": return entry.bpm !== undefined && entry.bpm > 0 ? Number(entry.bpm).toFixed(2) : "";
         case "key": return entry.key !== undefined ? entry.key : "";
         }
         return "";

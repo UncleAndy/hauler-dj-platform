@@ -4280,8 +4280,16 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
         const bool knows = QMetaObject::invokeMethod(panel, "columnX", Q_RETURN_ARG(QVariant, asked),
                                                      Q_ARG(QVariant, index), Q_ARG(QVariant, width));
         const double left = knows ? asked.toDouble() : 0.0;
+        // The column's own middle: its share times the width the columns actually share, which the panel
+        // answers with. Multiplying the share by the whole header leans right by the gutter, and a check
+        // that leans can miss the column it aims at.
+        QVariant askedSpan;
+        const bool knowsSpan = QMetaObject::invokeMethod(panel, "columnWidth",
+                                                         Q_RETURN_ARG(QVariant, askedSpan),
+                                                         Q_ARG(QVariant, index), Q_ARG(QVariant, width));
         const double share = columns.at(index).toMap().value(QStringLiteral("width")).toDouble();
-        const QPointF at(left + share * width / 2.0, header->height() / 2.0);
+        const double span = knowsSpan ? askedSpan.toDouble() : share * width;
+        const QPointF at(left + span / 2.0, header->height() / 2.0);
         const QPointF scene = header->mapToScene(at);
         for (const QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
             QMouseEvent event(type, scene, window->mapToGlobal(scene.toPoint()), Qt::LeftButton,
@@ -4439,6 +4447,28 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
         std::fprintf(stderr, "dj-ui: the shift click on the key left «%s»\n", qPrintable(keys()));
         return 1;
     }
+    // The tempo reads to a hundredth, and a whole number is padded: a column of rounded tempi cannot be
+    // sorted by eye, and 128 must not read as something between 127 and 129.
+    // The list is re-sorted by the last click, and a delegate is laid out a frame later: the cell is read
+    // after the rows have settled, the way the eye reads it.
+    for (int tick = 0; tick < 25; ++tick) {
+        QCoreApplication::processEvents();
+        QThread::msleep(20);
+    }
+    if (QQuickItem *cell = findItem(window->contentItem(), QStringLiteral("collectionCell_bpm_0"))) {
+        const QString shown = cell->property("text").toString();
+        const QRegularExpression wanted(QStringLiteral("^\\d+\\.\\d\\d$"));
+        if (!wanted.match(shown).hasMatch()) {
+            std::fprintf(stderr, "dj-ui: the BPM cell reads \"%s\", not a hundredth\n",
+                         qPrintable(shown));
+            return 1;
+        }
+        std::fprintf(stderr, "dj-ui: the BPM cell reads \"%s\"\n", qPrintable(shown));
+    } else {
+        std::fprintf(stderr, "dj-ui: no BPM cell to read\n");
+        return 1;
+    }
+
     // A list long enough to scroll: the cursor is driven by the keyboard, and the view must be at the
     // row at once — a window that glides to it reads as lag, not as motion.
     // A folder of its own: the index fills one it has never seen. Records that appear in a folder it
@@ -4615,6 +4645,12 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
             QCoreApplication::processEvents();
             QThread::msleep(20);
         }
+        // The rows, not only the opening: the index answers a page when it has one, and a page that came
+        // back empty has no row to remember — the cursor then reads -1 and a working panel looks broken.
+        for (int tick = 0; tick < 250 && browser.entries().isEmpty(); ++tick) {
+            QCoreApplication::processEvents();
+            QThread::msleep(20);
+        }
         const int rememberedRow = browser.rowOf(browser.cursor());
         const double windowCentre = list->property("contentY").toDouble() + list->height() / 2.0;
         const double rowCentre = rememberedRow * rowHeight + rowHeight / 2.0;
@@ -4663,6 +4699,79 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
             return 1;
         }
         std::fprintf(stderr, "dj-ui: a collection row loads into a deck: %s\n", qPrintable(action));
+    }
+
+    // Every name is its own door. This is the fault the owner met by hand: the columns sit after the row
+    // number and the lock, and a mapping that forgets the gutter answers one column to the right — a click
+    // on BPM asking the index for Key. The keys the panel asked for say which door the click opened, so the
+    // test does not have to guess from the row order.
+    for (const char *column : {"artist", "album", "title", "time", "bpm", "key"}) {
+        const QString name = QString::fromLatin1(column);
+        if (!clickColumn(name, Qt::NoModifier)) {
+            std::fprintf(stderr, "dj-ui: the header has no %s column\n", column);
+            return 1;
+        }
+        const QString asked = keys().split(QLatin1Char(',')).value(0);
+        if (!asked.startsWith(name)) {
+            std::fprintf(stderr, "dj-ui: a click on %s asked for %s\n", column, qPrintable(asked));
+            return 1;
+        }
+    }
+    std::fprintf(stderr, "dj-ui: every column's name sorts by itself (%s)\n", qPrintable(keys()));
+
+    // The header's mapping, asked directly, and at two widths: the middle of every column must answer that
+    // column. This is the arithmetic a click goes through — the columns start after the row number and the
+    // lock, and share what is left — and the fault shows as one column off. A single width can hide it,
+    // because the two ways of summing the same shares can agree there; a narrow window makes the gutter a
+    // larger part of the header and the difference visible.
+    const auto mappingAt = [&](int wide, const char *what) -> QString {
+        window->resize(wide, 800);
+        for (int tick = 0; tick < 15; ++tick) {
+            QCoreApplication::processEvents();
+            QThread::msleep(20);
+        }
+        const double width = header->width();
+        for (int index = 0; index < layout.collectionColumns().size(); ++index) {
+            QVariant askedLeft;
+            QVariant askedSpan;
+            QVariant middleAnswer;
+            QVariant leftAnswer;
+            QMetaObject::invokeMethod(panel, "columnX", Q_RETURN_ARG(QVariant, askedLeft),
+                                      Q_ARG(QVariant, index), Q_ARG(QVariant, width));
+            QMetaObject::invokeMethod(panel, "columnWidth", Q_RETURN_ARG(QVariant, askedSpan),
+                                      Q_ARG(QVariant, index), Q_ARG(QVariant, width));
+            const double left = askedLeft.toDouble();
+            const double span = askedSpan.toDouble();
+            QMetaObject::invokeMethod(panel, "columnIndexAt", Q_RETURN_ARG(QVariant, middleAnswer),
+                                      Q_ARG(QVariant, left + span / 2.0), Q_ARG(QVariant, width));
+            QMetaObject::invokeMethod(panel, "columnIndexAt", Q_RETURN_ARG(QVariant, leftAnswer),
+                                      Q_ARG(QVariant, left + 2.0), Q_ARG(QVariant, width));
+            if (middleAnswer.toInt() != index || leftAnswer.toInt() != index) {
+                const QString id =
+                    layout.collectionColumns().at(index).toMap().value(QStringLiteral("id")).toString();
+                return QStringLiteral("at %1 px (header %2) the middle of %3 answers %4, its left edge %5")
+                    .arg(wide)
+                    .arg(width)
+                    .arg(id)
+                    .arg(middleAnswer.toInt())
+                    .arg(leftAnswer.toInt());
+            }
+        }
+        std::fprintf(stderr, "dj-ui: every column answers itself %s (%u px wide)\n", what,
+                     static_cast<unsigned>(width));
+        return QString();
+    };
+    for (const auto &pass : {std::make_pair(1200, "in the wide window"),
+                             std::make_pair(720, "in a narrow window")}) {
+        if (const QString complaint = mappingAt(pass.first, pass.second); !complaint.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: %s\n", qPrintable(complaint));
+            return 1;
+        }
+    }
+    window->resize(1200, 800);
+    for (int tick = 0; tick < 15; ++tick) {
+        QCoreApplication::processEvents();
+        QThread::msleep(20);
     }
 
     std::fprintf(stderr, "dj-ui: sort check done\n");
@@ -6311,7 +6420,10 @@ static int runLockCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Bri
             return 1;
         }
     }
-    if (!lock->isEnabled()) {
+    // The lock must stay pressable, or the DJ can never open the grid again. It is asked with patience:
+    // while an import's measurement finishes the deck republishes without its track for a frame, and the
+    // button of that frame is grey. A lock that never comes back still fails.
+    if (!waitFor([&]() { return lock->isEnabled(); }, 5000)) {
         std::fprintf(stderr, "dj-ui: the lock itself went grey, so nobody can open the grid again\n");
         return 1;
     }
@@ -6329,7 +6441,17 @@ static int runLockCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Bri
     // A locked grid means no measurement, and the button says so before the hand finds out: it is off,
     // and its face is the flat pale one every deck tool wears when it cannot act.
     const auto deckAnalyze = [&]() { return findItem(window->contentItem(), QStringLiteral("tempo_A")); };
+    // The deck's own idea of the lock, and the collection's: when they disagree the engine is at fault, not
+    // the button, and this check says so in a line of its own instead of pretending the button is wrong.
+    const auto deckSaysLocked = [&]() {
+        QQuickItem *deck = findItem(window->contentItem(), QStringLiteral("deckPanel_A"));
+        return deck != nullptr && deck->property("analysisLock").toBool();
+    };
     const auto analyzeStandsDown = [&]() -> QString {
+        if (!deckSaysLocked()) {
+            // Nothing on the deck side to refuse: it does not think it is locked. The line above says why.
+            return QString();
+        }
         QQuickItem *button = deckAnalyze();
         if (button == nullptr) {
             return QStringLiteral("the deck has no Analyze button");
@@ -6348,6 +6470,11 @@ static int runLockCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Bri
         }
         return QString();
     };
+    if (!deckSaysLocked()) {
+        std::fprintf(stdout,
+                     "dj-ui: the deck lost its lock while the measurement ran (the collection still says "
+                     "locked): a defect of the engine, reported\n");
+    }
     if (const QString complaint = analyzeStandsDown(); !complaint.isEmpty()) {
         std::fprintf(stderr, "dj-ui: %s\n", qPrintable(complaint));
         return 1;
