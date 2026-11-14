@@ -70,6 +70,26 @@ pub struct PlayRecord {
     pub seconds: f64,
 }
 
+/// One playlist, as the index keeps it (DJP-MEDIA-004).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlaylistRow {
+    pub id: i64,
+    pub name: String,
+    /// The folder it sits in, as a path like `Warm up/Disco`; empty is the root.
+    pub folder: String,
+    pub position: i64,
+    /// Older revisions lose to newer ones when the file mirror and the database disagree.
+    pub revision: i64,
+    pub updated_at_ms: i64,
+}
+
+/// One row of a playlist: the track and where its file is.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlaylistTrackRow {
+    pub fingerprint: String,
+    pub path: String,
+}
+
 /// What the index can fail at.
 #[derive(Debug)]
 pub enum IndexError {
@@ -146,9 +166,29 @@ CREATE TABLE IF NOT EXISTS plays (
     started_at_ms INTEGER NOT NULL,
     seconds       REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS playlist_folders (
+    path     TEXT PRIMARY KEY,
+    position INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS playlists (
+    id            INTEGER PRIMARY KEY,
+    name          TEXT NOT NULL,
+    folder        TEXT NOT NULL DEFAULT '',
+    position      INTEGER NOT NULL DEFAULT 0,
+    revision      INTEGER NOT NULL DEFAULT 1,
+    updated_at_ms INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS playlist_tracks (
+    id          INTEGER PRIMARY KEY,
+    playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+    position    INTEGER NOT NULL,
+    fingerprint TEXT NOT NULL,
+    path        TEXT NOT NULL DEFAULT ''
+);
 CREATE INDEX IF NOT EXISTS track_genres_genre ON track_genres(genre_id, fingerprint);
 CREATE INDEX IF NOT EXISTS plays_recent        ON plays(started_at_ms DESC, fingerprint);
-PRAGMA user_version = 4;
+CREATE INDEX IF NOT EXISTS playlist_tracks_of  ON playlist_tracks(playlist_id, position);
+PRAGMA user_version = 5;
 ";
 
 /// The database file. One writer, opened off the audio path.
@@ -409,6 +449,234 @@ impl Index {
             })
         })?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// The folders the playlists are organised into, as paths, in the order the DJ set.
+    pub fn playlist_folders(&self) -> Result<Vec<String>, IndexError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT path FROM playlist_folders ORDER BY position, path")?;
+        let rows = statement.query_map([], |raw| raw.get::<_, String>(0))?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Make a folder. An empty folder is a real thing: it is where the next playlist goes.
+    pub fn playlist_folder_create(&mut self, path: &str) -> Result<(), IndexError> {
+        let path = path.trim_matches('/');
+        if path.is_empty() {
+            return Ok(());
+        }
+        let position: i64 = self.connection.query_row(
+            "SELECT COALESCE(MAX(position), -1) + 1 FROM playlist_folders",
+            [],
+            |row| row.get(0),
+        )?;
+        self.connection.execute(
+            "INSERT OR IGNORE INTO playlist_folders (path, position) VALUES (?1, ?2)",
+            rusqlite::params![path, position],
+        )?;
+        Ok(())
+    }
+
+    /// Rename a folder and everything under it: a folder is a path, and its playlists carry it.
+    pub fn playlist_folder_rename(&mut self, from: &str, to: &str) -> Result<(), IndexError> {
+        let from = from.trim_matches('/');
+        let to = to.trim_matches('/');
+        if from.is_empty() || to.is_empty() || from == to {
+            return Ok(());
+        }
+        let transaction = self.connection.transaction()?;
+        let under = format!("{from}/%");
+        transaction.execute(
+            // The folder itself and everything under it: `LIKE` alone would rename the children and
+            // leave the parent behind.
+            "UPDATE playlist_folders SET path = ?2 || SUBSTR(path, ?3) WHERE path = ?1 OR path LIKE ?4",
+            rusqlite::params![from, to, from.len() + 1, under],
+        )?;
+        transaction.execute(
+            "UPDATE playlists SET folder = ?2 || SUBSTR(folder, ?3), revision = revision + 1 \
+             WHERE folder = ?1 OR folder LIKE ?4",
+            rusqlite::params![from, to, from.len() + 1, under],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Delete a folder. Its playlists are not thrown away with it: they move to the root, which is what
+    /// a DJ means by "delete this folder" — the folder is the arrangement, not the records.
+    pub fn playlist_folder_delete(&mut self, path: &str) -> Result<(), IndexError> {
+        let path = path.trim_matches('/');
+        if path.is_empty() {
+            return Ok(());
+        }
+        let transaction = self.connection.transaction()?;
+        transaction.execute(
+            "DELETE FROM playlist_folders WHERE path = ?1 OR path LIKE ?2",
+            rusqlite::params![path, format!("{path}/%")],
+        )?;
+        transaction.execute(
+            "UPDATE playlists SET folder = '', revision = revision + 1 \
+             WHERE folder = ?1 OR folder LIKE ?2",
+            rusqlite::params![path, format!("{path}/%")],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Every playlist, in the order of its folder and then of the DJ.
+    pub fn playlists(&self) -> Result<Vec<PlaylistRow>, IndexError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, name, folder, position, revision, updated_at_ms FROM playlists \
+             ORDER BY folder, position, id",
+        )?;
+        let rows = statement.query_map([], |raw| {
+            Ok(PlaylistRow {
+                id: raw.get(0)?,
+                name: raw.get(1)?,
+                folder: raw.get(2)?,
+                position: raw.get(3)?,
+                revision: raw.get(4)?,
+                updated_at_ms: raw.get(5)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// The rows of one playlist, in order.
+    pub fn playlist_tracks(&self, playlist: i64) -> Result<Vec<PlaylistTrackRow>, IndexError> {
+        let mut statement = self.connection.prepare(
+            "SELECT fingerprint, path FROM playlist_tracks WHERE playlist_id = ?1 \
+             ORDER BY position, id",
+        )?;
+        let rows = statement.query_map([playlist], |raw| {
+            Ok(PlaylistTrackRow {
+                fingerprint: raw.get(0)?,
+                path: raw.get(1)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Make a playlist and answer with its id.
+    pub fn playlist_create(
+        &mut self,
+        name: &str,
+        folder: &str,
+        now_ms: i64,
+    ) -> Result<i64, IndexError> {
+        let folder = folder.trim_matches('/');
+        let position: i64 = self.connection.query_row(
+            "SELECT COALESCE(MAX(position), -1) + 1 FROM playlists WHERE folder = ?1",
+            [folder],
+            |row| row.get(0),
+        )?;
+        self.connection.execute(
+            "INSERT INTO playlists (name, folder, position, revision, updated_at_ms) \
+             VALUES (?1, ?2, ?3, 1, ?4)",
+            rusqlite::params![name, folder, position, now_ms],
+        )?;
+        Ok(self.connection.last_insert_rowid())
+    }
+
+    /// Rename a playlist. The name is what the DJ reads; the file mirror follows it.
+    pub fn playlist_rename(
+        &mut self,
+        playlist: i64,
+        name: &str,
+        now_ms: i64,
+    ) -> Result<(), IndexError> {
+        self.connection.execute(
+            "UPDATE playlists SET name = ?2, revision = revision + 1, updated_at_ms = ?3 WHERE id = ?1",
+            rusqlite::params![playlist, name, now_ms],
+        )?;
+        Ok(())
+    }
+
+    /// Delete a playlist and its rows.
+    pub fn playlist_delete(&mut self, playlist: i64) -> Result<(), IndexError> {
+        self.connection
+            .execute("DELETE FROM playlists WHERE id = ?1", [playlist])?;
+        Ok(())
+    }
+
+    /// Move a playlist to the end of another folder.
+    pub fn playlist_move(
+        &mut self,
+        playlist: i64,
+        folder: &str,
+        now_ms: i64,
+    ) -> Result<(), IndexError> {
+        let folder = folder.trim_matches('/');
+        let position: i64 = self.connection.query_row(
+            "SELECT COALESCE(MAX(position), -1) + 1 FROM playlists WHERE folder = ?1",
+            [folder],
+            |row| row.get(0),
+        )?;
+        self.connection.execute(
+            "UPDATE playlists SET folder = ?2, position = ?3, revision = revision + 1, \
+             updated_at_ms = ?4 WHERE id = ?1",
+            rusqlite::params![playlist, folder, position, now_ms],
+        )?;
+        Ok(())
+    }
+
+    /// The whole list of a playlist in one transaction: adding, removing and reordering all end in the
+    /// same shape, and the shape is what is written.
+    pub fn playlist_set_tracks(
+        &mut self,
+        playlist: i64,
+        tracks: &[PlaylistTrackRow],
+        now_ms: i64,
+    ) -> Result<(), IndexError> {
+        let transaction = self.connection.transaction()?;
+        transaction.execute(
+            "DELETE FROM playlist_tracks WHERE playlist_id = ?1",
+            [playlist],
+        )?;
+        for (position, track) in tracks.iter().enumerate() {
+            transaction.execute(
+                "INSERT INTO playlist_tracks (playlist_id, position, fingerprint, path) \
+                 VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![playlist, position as i64, track.fingerprint, track.path],
+            )?;
+        }
+        transaction.execute(
+            "UPDATE playlists SET revision = revision + 1, updated_at_ms = ?2 WHERE id = ?1",
+            rusqlite::params![playlist, now_ms],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Drop the repeats of a track from a playlist, keeping the first of each and the order of the rest.
+    /// A duplicate is the same fingerprint — the same sound, even from another path — and the answer says
+    /// how many rows went, so the DJ is told what the tool did instead of guessing.
+    pub fn playlist_remove_duplicates(
+        &mut self,
+        playlist: i64,
+        now_ms: i64,
+    ) -> Result<usize, IndexError> {
+        let tracks = self.playlist_tracks(playlist)?;
+        let mut seen: Vec<String> = Vec::new();
+        let mut kept: Vec<PlaylistTrackRow> = Vec::new();
+        for track in tracks {
+            if seen.iter().any(|key| key == &track.fingerprint) {
+                continue;
+            }
+            seen.push(track.fingerprint.clone());
+            kept.push(track);
+        }
+        let removed = seen.len();
+        let total: usize = self.connection.query_row(
+            "SELECT COUNT(*) FROM playlist_tracks WHERE playlist_id = ?1",
+            [playlist],
+            |row| row.get::<_, i64>(0),
+        )? as usize;
+        let removed = total.saturating_sub(removed);
+        if removed > 0 {
+            self.playlist_set_tracks(playlist, &kept, now_ms)?;
+        }
+        Ok(removed)
     }
 
     /// Replace the genres of one track.
@@ -1105,7 +1373,7 @@ mod tests {
             .connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version");
-        assert_eq!(version, 4, "the schema must move to version 4");
+        assert_eq!(version, 5, "the schema must move to version 5");
         assert!(
             index
                 .columns()
@@ -1141,9 +1409,12 @@ mod tests {
             .connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version");
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
         assert!(table_exists(&index, "track_genres"));
         assert!(table_exists(&index, "plays"));
+        assert!(table_exists(&index, "playlists"));
+        assert!(table_exists(&index, "playlist_tracks"));
+        assert!(table_exists(&index, "playlist_folders"));
         std::fs::remove_dir_all(&dir).ok();
     }
 }
