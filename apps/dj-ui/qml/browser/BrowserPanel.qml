@@ -1311,8 +1311,101 @@ Pane {
                 model: sectionTop
                 delegate: sectionRow
             }
+            // The playlists are the children of the Playlists entry (owner's decision, 15.11.2026): `All`,
+            // the folders and the playlists they hold are one tree in the rail, and the right side of the
+            // panel is only ever the tracks of the playlist the DJ opened. The tree takes the rail's free
+            // height, so Files stays where it is.
+            ListView {
+                id: playlistTreeList
+                objectName: "playlistTree"
+                visible: Browser.inPlaylists
+                Layout.fillWidth: true
+                Layout.fillHeight: visible
+                clip: true
+                model: Browser.playlistTree
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                currentIndex: -1
+
+                delegate: Rectangle {
+                    id: treeRow
+                    required property var modelData
+                    required property int index
+                    width: playlistTreeList.width
+                    height: browser.rowHeight
+                    readonly property int depth: treeRow.modelData.depth === undefined
+                                                  ? 0 : treeRow.modelData.depth
+                    readonly property bool chosen: Browser.playlistId === treeRow.modelData.id
+                                                   && treeRow.modelData.kind === "playlist"
+                    readonly property bool place: treeRow.modelData.kind !== "playlist"
+                                                  && Browser.playlistId === 0
+                                                  && browser.playlistPlace === treeRow.modelData.kind
+                                                  && browser.playlistPlaceName === treeRow.modelData.folder
+                    color: treeRow.chosen || treeRow.place
+                           ? UiSettings.themeAccent
+                           : (treeRow.index % 2 === 0 ? UiSettings.themePanel
+                                                      : UiSettings.themeBackground)
+                    radius: 2
+
+                    Label {
+                        objectName: "playlistTreeRow_" + treeRow.index
+                        // One step in for a playlist inside a folder: the indent is what says the
+                        // playlist belongs to the folder above it.
+                        x: 6 + treeRow.depth * 14
+                        width: parent.width - 10 - treeRow.depth * 14
+                        anchors.verticalCenter: parent.verticalCenter
+                        elide: Text.ElideRight
+                        font: browser.listFace
+                        color: treeRow.chosen || treeRow.place ? UiSettings.themeBackground
+                                                               : UiSettings.themeText
+                        text: treeRow.modelData.kind === "folder"
+                              ? "\uD83D\uDCC1 " + treeRow.modelData.name
+                              : (treeRow.modelData.kind === "all"
+                                 ? treeRow.modelData.name
+                                 : treeRow.modelData.name
+                                   + (treeRow.modelData.tracks > 0
+                                      ? "  (" + treeRow.modelData.tracks + ")" : ""))
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        acceptedButtons: Qt.LeftButton | Qt.RightButton
+                        onClicked: function (mouse) {
+                            if (mouse.button === Qt.RightButton) {
+                                playlistMenu.row = treeRow.modelData;
+                                playlistMenu.popup();
+                                return;
+                            }
+                            browser.openTreeRow(treeRow.modelData);
+                        }
+                    }
+
+                    // A playlist is dragged onto a folder to move it: the folder becomes its place.
+                    Drag.active: treeRow.modelData.kind === "playlist" && treeDrag.active
+                    Drag.source: treeRow
+                    Drag.hotSpot.x: width / 2
+                    Drag.hotSpot.y: height / 2
+                    DragHandler {
+                        id: treeDrag
+                        target: null
+                        enabled: treeRow.modelData.kind === "playlist"
+                    }
+                    DropArea {
+                        anchors.fill: parent
+                        enabled: treeRow.modelData.kind === "folder"
+                        onDropped: function (drop) {
+                            if (drop.source && drop.source.modelData
+                                && drop.source.modelData.kind === "playlist") {
+                                Browser.playlistMove(drop.source.modelData.id,
+                                                     treeRow.modelData.folder);
+                            }
+                        }
+                    }
+                }
+            }
             Item {
                 Layout.fillHeight: true
+                visible: !Browser.inPlaylists
             }
             ListModel {
                 id: sectionBottom
@@ -1709,104 +1802,6 @@ Pane {
                     width: 2
                     height: parent.height
                     color: UiSettings.themeAccent
-                }
-            }
-
-            // The playlist tree (DJP-MEDIA-004): `All` first with every playlist flat under it, then the
-            // folders, each with its own. A folder is a place to drop a playlist on; a playlist opens the
-            // tracks on the right. The tree stands only in the playlists section.
-            Rectangle {
-                id: playlistTree
-                objectName: "playlistTree"
-                Layout.fillHeight: true
-                Layout.preferredWidth: Math.round(browser.listFont * 14)
-                visible: Browser.inPlaylists
-                color: UiSettings.themePanel
-                clip: true
-
-                ListView {
-                    id: treeList
-                    objectName: "playlistTreeList"
-                    anchors.fill: parent
-                    anchors.margins: 2
-                    clip: true
-                    model: Browser.playlistTree
-                    boundsBehavior: Flickable.StopAtBounds
-                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-                    currentIndex: -1
-
-                    delegate: Rectangle {
-                        id: treeRow
-                        required property var modelData
-                        required property int index
-                        width: treeList.width
-                        height: browser.rowHeight
-                        readonly property int depth: treeRow.modelData.depth === undefined
-                                                      ? 0 : treeRow.modelData.depth
-                        readonly property bool chosen: Browser.playlistId === treeRow.modelData.id
-                                                       && treeRow.modelData.kind === "playlist"
-                        readonly property bool place: treeRow.modelData.kind !== "playlist"
-                                                      && Browser.playlistId === 0
-                                                      && browser.playlistPlace === treeRow.modelData.kind
-                                                      && browser.playlistPlaceName === treeRow.modelData.folder
-                        color: treeRow.chosen || treeRow.place
-                               ? UiSettings.themeAccent
-                               : (treeRow.index % 2 === 0 ? UiSettings.themePanel
-                                                          : UiSettings.themeBackground)
-
-                        Label {
-                            objectName: "playlistTreeRow_" + treeRow.index
-                            x: 6 + treeRow.depth * 14
-                            width: parent.width - 10 - treeRow.depth * 14
-                            anchors.verticalCenter: parent.verticalCenter
-                            elide: Text.ElideRight
-                            font: browser.listFace
-                            color: treeRow.chosen || treeRow.place ? UiSettings.themeBackground
-                                                                   : UiSettings.themeText
-                            text: treeRow.modelData.kind === "folder"
-                                  ? "\uD83D\uDCC1 " + treeRow.modelData.name
-                                  : (treeRow.modelData.kind === "all"
-                                     ? treeRow.modelData.name
-                                     : treeRow.modelData.name
-                                       + (treeRow.modelData.tracks > 0
-                                          ? "  (" + treeRow.modelData.tracks + ")" : ""))
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            acceptedButtons: Qt.LeftButton | Qt.RightButton
-                            onClicked: function (mouse) {
-                                if (mouse.button === Qt.RightButton) {
-                                    playlistMenu.row = treeRow.modelData;
-                                    playlistMenu.popup();
-                                    return;
-                                }
-                                browser.openTreeRow(treeRow.modelData);
-                            }
-                        }
-
-                        // A playlist is dragged onto a folder to move it: the folder becomes its place.
-                        Drag.active: treeRow.modelData.kind === "playlist" && treeDrag.active
-                        Drag.source: treeRow
-                        Drag.hotSpot.x: width / 2
-                        Drag.hotSpot.y: height / 2
-                        DragHandler {
-                            id: treeDrag
-                            target: null
-                            enabled: treeRow.modelData.kind === "playlist"
-                        }
-                        DropArea {
-                            anchors.fill: parent
-                            enabled: treeRow.modelData.kind === "folder"
-                            onDropped: function (drop) {
-                                if (drop.source && drop.source.modelData
-                                    && drop.source.modelData.kind === "playlist") {
-                                    Browser.playlistMove(drop.source.modelData.id,
-                                                         treeRow.modelData.folder);
-                                }
-                            }
-                        }
-                    }
                 }
             }
 
