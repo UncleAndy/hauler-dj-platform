@@ -287,6 +287,7 @@ impl Engine {
             revision: self.revision,
             plays: Vec::new(),
             recent_window_ms: 0,
+            frame_hz: 0,
             epoch: self.epoch,
             audio_clock_samples: self.clock,
             sample_rate: self.sample_rate,

@@ -8534,6 +8534,25 @@ int main(int argc, char *argv[])
             return 2;
         }
     }
+    // The shell's own number from the settings file: the engine reads the file (it owns `dj-config`) and
+    // publishes the frame rate, and the shell follows it once, unless `--fps` was given. A shell that read
+    // TOML itself would be a second reader of one truth.
+    if (!parser.isSet(frameRateOption) && bridge) {
+        auto followed = std::make_shared<bool>(false);
+        QObject::connect(bridge.get(), &BridgeClient::snapshotChanged, bridge.get(),
+                         [&settings, followed, client = bridge.get()]() {
+                             if (*followed) {
+                                 return;
+                             }
+                             const int hz = client->snapshot()
+                                                .value(QStringLiteral("frame_hz"))
+                                                .toInt();
+                             if (hz >= 5 && settings.setFrameHz(hz)) {
+                                 *followed = true;
+                                 std::fprintf(stdout, "dj-ui: the frame rate is %d, from settings\n", hz);
+                             }
+                         });
+    }
     if (parser.isSet(frameRateOption)) {
         bool ok = false;
         const int hz = parser.value(frameRateOption).toInt(&ok);

@@ -384,6 +384,7 @@ pub fn snapshot(
     Snapshot {
         plays: Vec::new(),
         recent_window_ms: 0,
+        frame_hz: 0,
         import: None,
         analysis: None,
         collection: None,
@@ -1460,6 +1461,7 @@ impl StateCells {
         Snapshot {
             plays: Vec::new(),
             recent_window_ms: 0,
+            frame_hz: 0,
             // The page is not an atomic cell: it is written and read on the engine's own thread, under
             // the mutex that guards the import for the same reason.
             collection: self

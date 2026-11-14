@@ -1004,6 +1004,11 @@ fn is_false(value: &bool) -> bool {
 }
 
 /// Whether a count of events is zero: a deck that has never clicked says nothing about clicks.
+/// The same for the frame rate, which is a `u32` on the wire.
+fn is_zero_frame_hz(value: &u32) -> bool {
+    *value == 0
+}
+
 fn is_zero_count(value: &u64) -> bool {
     *value == 0
 }
@@ -1446,6 +1451,10 @@ pub struct Snapshot {
     /// and a DJ reading it, are both about. Zero means the build had no opinion.
     #[serde(default, skip_serializing_if = "is_zero_count")]
     pub recent_window_ms: u64,
+    /// How often the screen is meant to be redrawn, from the settings: the shell takes its own frame rate
+    /// from here, because the settings file is the engine's to read (it owns `dj-config`).
+    #[serde(default, skip_serializing_if = "is_zero_frame_hz")]
+    pub frame_hz: u32,
     /// Crossfader position at the moment of publication.
     pub crossfader: f32,
     /// Crossfader law in force at the moment of publication.

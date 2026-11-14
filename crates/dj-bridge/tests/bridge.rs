@@ -33,6 +33,7 @@ fn empty_snapshot(revision: u64) -> Snapshot {
     Snapshot {
         plays: Vec::new(),
         recent_window_ms: 0,
+        frame_hz: 0,
         import: None,
         analysis: None,
         collection: None,
@@ -272,6 +273,7 @@ fn a_split_connection_writes_while_its_reader_is_blocked() {
         revision: 4,
         plays: Vec::new(),
         recent_window_ms: 0,
+        frame_hz: 0,
         epoch: 2,
         audio_clock_samples: 512,
         sample_rate: 48_000,

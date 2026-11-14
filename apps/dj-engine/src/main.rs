@@ -213,9 +213,21 @@ fn run(argv: &[String]) -> Result<(), String> {
     let mut seconds: Option<f64> = None;
     let mut autoplay = false;
     let mut request_stop = false;
-    // Settings first, so the flags default to them rather than to numbers scattered in the code.
-    let defaults = dj_config::Config::default();
+    // Settings first, so the flags default to them rather than to numbers scattered in the code. The file
+    // is found in a pre-pass, because every default below depends on it: a flag still wins over the file,
+    // and a file that cannot be read is named rather than quietly ignored (docs/operations/settings.md).
+    let named_settings = argv
+        .iter()
+        .position(|arg| arg == "--config")
+        .and_then(|at| argv.get(at + 1))
+        .map(PathBuf::from);
+    let (defaults, settings_used) = dj_config::Config::load_or_default(named_settings.as_deref())
+        .map_err(|error| format!("settings: {error}"))?;
+    if let Some(path) = settings_used.as_ref() {
+        eprintln!("dj-engine: settings from {}", path.display());
+    }
     let mut state_hz = defaults.display.state_hz;
+    let frame_hz = defaults.display.frame_hz;
     // A play shorter than this is not listening, and both numbers live in `crates/dj-config` so the
     // owner can move them without a build (DJP-MEDIA-004).
     let mut history_min_seconds = defaults.library.history_min_seconds;
@@ -290,6 +302,11 @@ fn run(argv: &[String]) -> Result<(), String> {
                     return Err("--played-recently-hours must be 1..=168 hours".to_string());
                 }
                 played_recently_hours = parsed;
+                index += 2;
+            }
+            "--config" => {
+                // Read in the pre-pass above: the defaults of every other flag came from it.
+                let _ = value(1)?;
                 index += 2;
             }
             "--history-min-seconds" => {
@@ -682,6 +699,7 @@ fn run(argv: &[String]) -> Result<(), String> {
                     snapshot.plays = held.recent();
                 }
                 snapshot.recent_window_ms = recent_window_ms;
+                snapshot.frame_hz = frame_hz;
                 let message = ServerMessage::Snapshot(Box::new(snapshot));
 
                 if let Ok(mut list) = subscribers.lock() {

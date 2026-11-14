@@ -446,7 +446,15 @@ case "${1:-}" in
     history_file="$run_dir/history.wav"
     cp crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav "$history_file"
     history_socket="$run_dir/engine-history.sock"
-    "$engine_bin" --null-sink --socket "$history_socket" --block 256 --history-min-seconds 2 &
+    history_settings="$run_dir/history-settings.toml"
+    cat > "$history_settings" <<TOML
+[library]
+history_min_seconds = 2
+played_recently_hours = 1
+TOML
+    # The engine reads the settings file here rather than taking two flags: the check is also the witness
+    # that the file is in force at all (a flag still wins over it; this run gives none).
+    "$engine_bin" --null-sink --socket "$history_socket" --block 256 --config "$history_settings" &
     history_pid=$!
     for _ in $(seq 1 100); do
       [ -S "$history_socket" ] && break

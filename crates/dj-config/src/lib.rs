@@ -10,7 +10,7 @@
 //!
 //! Owner: architect (settings surface lands in A08/A10).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -329,11 +329,41 @@ impl Config {
         Ok(config)
     }
 
-    /// Read settings from a file.
+    /// Where the settings live unless a flag says otherwise: `$XDG_CONFIG_HOME/hauler-dj/config.toml`,
+    /// or the same under the home folder when the variable is unset.
+    pub fn default_path() -> Option<PathBuf> {
+        let base = std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
+        Some(base.join("hauler-dj").join("config.toml"))
+    }
+
+    /// The settings in force for a run: the file the caller named, else the standard one if it is there,
+    /// else the defaults. The answer carries the path the numbers came from, because a run that cannot say
+    /// where its thresholds came from is a run nobody can argue with.
+    ///
+    /// A file that is there but cannot be read is an error, not a quiet fallback: an unknown key or a typo
+    /// must not look like an applied setting, and a run judged by numbers nobody chose is worse than a run
+    /// that refuses to start. A *named* file that is not there is an error too; the standard path being
+    /// absent is simply a machine that never wrote one.
+    pub fn load_or_default(named: Option<&Path>) -> Result<(Self, Option<PathBuf>), ConfigError> {
+        match named {
+            Some(path) => Ok((Self::load(path)?, Some(path.to_path_buf()))),
+            None => match Self::default_path() {
+                Some(path) if path.exists() => Ok((Self::load(&path)?, Some(path))),
+                _ => Ok((Self::default(), None)),
+            },
+        }
+    }
+
+    /// Read settings from a file. The path is in every message this can produce: a run that refuses to
+    /// start has to say *which* file it refused, or the DJ is left guessing between three of them.
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
         let text = std::fs::read_to_string(path)
             .map_err(|err| ConfigError::Io(format!("{}: {err}", path.display())))?;
         Self::from_toml(&text)
+            .map_err(|err| ConfigError::Parse(format!("{}: {err}", path.display())))
     }
 
     /// Serialise back to TOML, which is what `--write-config` produces.
@@ -566,6 +596,42 @@ mod tests {
 
         let states = Config::from_toml("[display]\nstate_hz = 500\n");
         assert!(matches!(states, Err(ConfigError::Invalid(_))));
+    }
+
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn a_named_file_that_is_not_there_is_an_error() {
+        let missing = std::env::temp_dir().join("dj-config-there-is-no-such-file.toml");
+        std::fs::remove_file(&missing).ok();
+        assert!(Config::load_or_default(Some(&missing)).is_err());
+    }
+
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn the_file_replaces_the_defaults_and_says_where_they_came_from() {
+        let path = std::env::temp_dir().join(format!("dj-config-{}.toml", std::process::id()));
+        std::fs::write(
+            &path,
+            "[library]\nhistory_min_seconds = 7\nplayed_recently_hours = 2\n[audio]\nblock_frames = 512\n",
+        )
+        .expect("write");
+        let (config, used) = Config::load_or_default(Some(&path)).expect("load");
+        assert_eq!(config.library.history_min_seconds, 7);
+        assert_eq!(config.library.played_recently_hours, 2);
+        assert_eq!(config.audio.block_frames, 512);
+        assert_eq!(used.as_deref(), Some(path.as_path()));
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn a_broken_file_is_refused_with_its_name() {
+        let path =
+            std::env::temp_dir().join(format!("dj-config-broken-{}.toml", std::process::id()));
+        std::fs::write(&path, "[library]\nhistory_min_seconds = \"soon\"\n").expect("write");
+        let error = Config::load_or_default(Some(&path)).expect_err("a typo is an error");
+        assert!(error.to_string().contains("dj-config-broken"), "{error}");
+        std::fs::remove_file(&path).ok();
     }
 
     #[test]
