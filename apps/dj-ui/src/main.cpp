@@ -3700,6 +3700,128 @@ static int runGridLines(QQmlApplicationEngine &engine,
     return 0;
 }
 
+// The rows under the wave, measured by the check that loads a track with a grid. The wave is the only
+// child of the deck with fillHeight, so every row takes its height from the wave: folding a row has to
+// give that height back, and the two groups of the folding strip have to sit on the panel's edges.
+// The window is given a size first: in a headless run it is 0x0, and every measurement is then about
+// an arrangement nobody has.
+static int measureDeckRows(QQuickWindow *window, const QString &deck)
+{
+    // A roomy window, always: at a small one the wave is already at its floor, a folded row changes
+    // nothing, and the measurement would be about the floor rather than about the arrangement.
+    window->resize(1600, 1000);
+    window->show();
+    QElapsedTimer settling;
+    settling.start();
+    while (settling.elapsed() < 800) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        QThread::msleep(10);
+    }
+    const auto rectOf = [&](const QString &name) {
+        QQuickItem *item = findItem(window->contentItem(), name);
+        if (item == nullptr || !item->isVisible()) {
+            return QRectF();
+        }
+        return item->mapRectToScene(QRectF(0, 0, item->width(), item->height()));
+    };
+    // The layout child, not the strip drawn inside it: what has to give the height back is the item the
+    // column lays out (`deckDetail_`), and an inner canvas can have a height of its own.
+    const auto waveHeight = [&]() { return rectOf(QStringLiteral("deckDetail_") + deck).height(); };
+    const QRectF panel = rectOf(QStringLiteral("deckPanel_") + deck);
+    const QRectF wave = rectOf(QStringLiteral("deckDetail_") + deck);
+    const QRectF transport = rectOf(QStringLiteral("transport_") + deck);
+    const QRectF grid = rectOf(QStringLiteral("gridedit_") + deck);
+    if (panel.isEmpty() || wave.isEmpty() || transport.isEmpty()) {
+        std::fprintf(stderr, "dj-ui: the deck %s has no panel, no wave or no transport row\n",
+                     qPrintable(deck));
+        return 1;
+    }
+    // The strip folds, and what it costs is the wave's room: the measurement opens it, folds it and
+    // requires the wave to take the row's height back. Whatever state it is found in, it ends the same
+    // way it was found, so the check does not decide for the next one.
+    const bool startedOpen = !rectOf(QStringLiteral("jumpGroup_") + deck).isEmpty();
+    auto *toggle = findItem(window->contentItem(), QStringLiteral("loopJumpToggle_") + deck);
+    if (toggle == nullptr) {
+        std::fprintf(stderr, "dj-ui: the deck %s has no button for the folding strip\n",
+                     qPrintable(deck));
+        return 1;
+    }
+    const auto pressToggle = [&]() {
+        QMetaObject::invokeMethod(toggle, "clicked");
+        // The layout re-polishes on the next frame: a row that has just been shown still carries the
+        // position it had while it was hidden, and reading the geometry before that pass measures nothing.
+        QElapsedTimer settling;
+        settling.start();
+        while (settling.elapsed() < 700) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QThread::msleep(10);
+        }
+    };
+    if (!startedOpen) {
+        pressToggle();
+    }
+    const QRectF stripRow = rectOf(QStringLiteral("loopsize_") + deck);
+    const QRectF stripLabel = rectOf(QStringLiteral("stripLabel_") + deck);
+    const QRectF jumps = rectOf(QStringLiteral("jumpGroup_") + deck);
+    if (stripRow.isEmpty() || stripLabel.isEmpty() || jumps.isEmpty()) {
+        std::fprintf(stderr, "dj-ui: the strip of the deck %s did not open\n", qPrintable(deck));
+        return 1;
+    }
+    const double openWave = waveHeight();
+    std::fprintf(stdout,
+                 "dj-ui: the strip open: a row of %.0f px, a wave of %.0f px, the loop sizes start %.0f px "
+                 "from the row's left edge and the beatjumps end %.0f px from its right one\n",
+                 stripRow.height(), openWave, stripLabel.left() - stripRow.left(),
+                 stripRow.right() - jumps.right());
+    if (stripLabel.left() - stripRow.left() > 8.0) {
+        std::fprintf(stderr, "dj-ui: the loop sizes start %.0f px from the row's left edge\n",
+                     stripLabel.left() - stripRow.left());
+        return 1;
+    }
+    if (stripRow.right() - jumps.right() > 8.0) {
+        std::fprintf(stderr, "dj-ui: the beatjumps end %.0f px from the row's right edge\n",
+                     stripRow.right() - jumps.right());
+        return 1;
+    }
+    pressToggle();
+    if (!rectOf(QStringLiteral("jumpGroup_") + deck).isEmpty()) {
+        std::fprintf(stderr, "dj-ui: the strip did not fold\n");
+        return 1;
+    }
+    const double shutWave = waveHeight();
+    const double given = shutWave - openWave;
+    std::fprintf(stdout,
+                 "dj-ui: the strip folded: the wave went from %.0f to %.0f px, %.0f px for a row of "
+                 "%.0f px\n",
+                 openWave, shutWave, given, stripRow.height());
+    if (given < stripRow.height() - 2.0 || given > stripRow.height() + 12.0) {
+        std::fprintf(stderr, "dj-ui: the wave gave %.0f px for a row of %.0f px\n", given,
+                     stripRow.height());
+        return 1;
+    }
+    const auto where = [&](const QString &name) {
+        const QRectF r = rectOf(name);
+        return r.isEmpty() ? QStringLiteral("no")
+                           : QStringLiteral("%1..%2")
+                                 .arg(r.top() - panel.top(), 0, 'f', 0)
+                                 .arg(r.bottom() - panel.top(), 0, 'f', 0);
+    };
+    std::fprintf(stdout,
+                 "dj-ui: in panel coordinates (%.0f px tall): wave %s, transport %s, grid %s, strip %s\n",
+                 panel.height(), qPrintable(where(QStringLiteral("deckDetail_") + deck)),
+                 qPrintable(where(QStringLiteral("transport_") + deck)),
+                 qPrintable(where(QStringLiteral("gridedit_") + deck)),
+                 qPrintable(where(QStringLiteral("loopsize_") + deck)));
+    // Back to the state it was found in: the strip was open when the check reached this point, it is
+    // open again, and the next check sees what this one saw.
+    if (startedOpen) {
+        pressToggle();
+    }
+    std::fprintf(stdout, "dj-ui: the strip is %s again, as the check found it, the wave has %.0f px\n",
+                 startedOpen ? "open" : "folded", waveHeight());
+    return 0;
+}
+
 // layoutCheckOption: one check of the shell, out of main.
 //
 // Split out of main: a function of ten thousand lines loses its debug information, and GCC
@@ -9687,6 +9809,16 @@ int main(int argc, char *argv[])
             return 1;
         }
         const auto snappedBeats = static_cast<qint64>(std::llround(beats));
+        // The sizes and the switches live in the strip that folds, so the DJ opens it first: the check
+        // does the same thing (owner's decision, 14.11).
+        if (!click(QStringLiteral("loopJumpToggle_A"))) {
+            return 1;
+        }
+        // The layout needs a frame before the strip's own buttons can be hit.
+        for (int tick = 0; tick < 40; ++tick) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QThread::msleep(10);
+        }
         // The switches are the DJ's: turned off, the very same pair must land where the hand was and not
         // on the grid. A switch that only looks lit is worse than none.
         auto *snapSwitch = findItem(window->contentItem(), QStringLiteral("snap_A"));
@@ -11301,6 +11433,11 @@ int main(int argc, char *argv[])
                                                        .toVariant()
                                                        .toLongLong()),
                      stored().value(QStringLiteral("revision")).toInt());
+        // The rows under the wave are part of what this check promises: the strip folds, and folding it
+        // gives the wave its height back.
+        if (const int rows = measureDeckRows(window, QStringLiteral("A")); rows != 0) {
+            return rows;
+        }
         return 0;
     }
 

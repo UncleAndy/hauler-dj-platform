@@ -415,6 +415,9 @@ Pane {
     }
 
     /// Snap: a loop point lands on the nearest line of the grid instead of on the frame the hand was on.
+    /// The strip of loop sizes and beatjumps is folded to begin with: it costs a row, and a row costs
+    /// the wave. The button in the transport row decides (owner's decision, 14.11).
+    property bool stripOpen: false
     property bool snap: true
     /// Quantize: the loop's end is a whole number of beats after its start.
     property bool quantize: true
@@ -847,6 +850,7 @@ Pane {
 
         // Transport, at the bottom where the hand already is.
         RowLayout {
+            objectName: "transport_" + panel.deckId
             Layout.fillWidth: true
             spacing: 4
 
@@ -949,6 +953,21 @@ Pane {
                     }
                 }
             }
+            // One button for the strip that holds the loop sizes and the beatjumps: folded there is no
+            // row at all and the wave keeps its height; unfolded the strip takes that height and gives
+            // it back when it folds. The words stay put, the sign carries the state.
+            ToggleButton {
+                objectName: "loopJumpToggle_" + panel.deckId
+                text: qsTr("Loop/Jump") + (panel.stripOpen ? " ▾" : " ▸")
+                font.pixelSize: 10
+                enabled: panel.gridReady
+                opacity: panel.gridReady ? 1.0 : 0.45
+                focusPolicy: Qt.NoFocus
+                lit: panel.stripOpen
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Show the loop sizes and the beatjumps of this deck")
+                onClicked: panel.stripOpen = !panel.stripOpen
+            }
             // Slip wears the same colour as Loop when it is on: a mode has to look like a mode.
             ToggleButton {
                 objectName: "slip_" + panel.deckId
@@ -999,7 +1018,6 @@ Pane {
                               : qsTr("Analyse this track again: measure its tempo and rebuild the grid")
                 onClicked: tempoConfirm.open()
             }
-            Item { Layout.fillWidth: true }
             Label {
                 objectName: "status_" + panel.deckId
                 text: panel.statusText()
@@ -1009,6 +1027,18 @@ Pane {
                 elide: Text.ElideRight
                 Layout.maximumWidth: 140
             }
+            // The pads of this deck, in the row where the hand already is: the wave keeps the height a
+            // separate row used to take, and the lock of the grid row stands to their right.
+            RowLayout {
+                objectName: "cuepads_" + panel.deckId
+                Layout.fillWidth: true
+                spacing: 3
+
+                Repeater {
+                    model: 8
+                    delegate: padDelegate
+                }
+            }
         }
 
         // A loop of the music rather than of the hand: the sizes make a loop of whole beats and the arrows
@@ -1016,9 +1046,11 @@ Pane {
         RowLayout {
             objectName: "loopsize_" + panel.deckId
             Layout.fillWidth: true
-            visible: panel.gridReady
+            // Folded there is no row at all; a track without a grid has no sizes to offer either.
+            visible: panel.gridReady && panel.stripOpen
             spacing: 3
             Label {
+                objectName: "stripLabel_" + panel.deckId
                 text: qsTr("Loop")
                 font.pixelSize: 10
                 color: UiSettings.themeTextDim
@@ -1110,50 +1142,40 @@ Pane {
                     onClicked: panel.quantize = !panel.quantize
                 }
             }
+            // The beatjumps of the same strip, at the right edge: a jump is measured in beats, so it
+            // belongs on the grid the loop sizes do. Twelve lengths do not fit one line at every panel
+            // width, so this group wraps instead of squeezing the buttons into unreadable slivers.
+            Flow {
+                objectName: "jumpGroup_" + panel.deckId
+                Layout.preferredWidth: implicitWidth
+                Layout.preferredHeight: implicitHeight
+                spacing: 3
+
+                Repeater {
+                    model: [-64, -32, -16, -8, -4, -1, 1, 4, 8, 16, 32, 64]
+                    Button {
+                        required property int modelData
+                        objectName: "jump_" + panel.deckId + "_" + (modelData > 0 ? "p" : "m")
+                                    + Math.abs(modelData)
+                        text: (modelData > 0 ? "+" : "−") + Math.abs(modelData)
+                        font.pixelSize: 10
+                        width: 30
+                        height: 20
+                        enabled: panel.live
+                        focusPolicy: Qt.NoFocus
+                        ToolTip.visible: hovered
+                        ToolTip.text: panel.quantize
+                                      ? qsTr("%1 beat(s), on the grid").arg(Math.abs(modelData))
+                                      : qsTr("%1 beat(s), by time").arg(Math.abs(modelData))
+                        onClicked: Bridge.beatJump(panel.deckId, modelData, panel.quantize)
+                    }
+                }
+            }
         }
 
         // The grid editor: the measurement is a first answer, and this is where the DJ corrects it. Each
         // press is one edit, written into the track's metadata at once and locked against the next
         // automatic measurement (DJP-SYNC-003).
-        // Jumping and the platter (DJP-DECK-006), and slip beside them (DJP-DECK-007). A jump is
-        // measured in beats, so it lives on the same grid the loop sizes do: without a grid there is
-        // nothing to measure, and the row is not there. Twelve lengths do not fit one line on a deck
-        // panel, so the row wraps instead of squeezing the buttons into unreadable slivers.
-        Flow {
-            objectName: "jumproll_" + panel.deckId
-            Layout.fillWidth: true
-            Layout.preferredHeight: implicitHeight
-            visible: panel.gridReady
-            spacing: 3
-
-            Label {
-                text: qsTr("Jump")
-                width: 32
-                height: 20
-                verticalAlignment: Text.AlignVCenter
-                font.pixelSize: 10
-                color: UiSettings.themeTextDim
-            }
-            Repeater {
-                model: [-64, -32, -16, -8, -4, -1, 1, 4, 8, 16, 32, 64]
-                Button {
-                    required property int modelData
-                    objectName: "jump_" + panel.deckId + "_" + (modelData > 0 ? "p" : "m")
-                                + Math.abs(modelData)
-                    text: (modelData > 0 ? "+" : "−") + Math.abs(modelData)
-                    font.pixelSize: 10
-                    width: 30
-                    height: 20
-                    enabled: panel.live
-                    focusPolicy: Qt.NoFocus
-                    ToolTip.visible: hovered
-                    ToolTip.text: panel.quantize
-                                  ? qsTr("%1 beat(s), on the grid").arg(Math.abs(modelData))
-                                  : qsTr("%1 beat(s), by time").arg(Math.abs(modelData))
-                    onClicked: Bridge.beatJump(panel.deckId, modelData, panel.quantize)
-                }
-            }
-        }
 
         RowLayout {
             objectName: "gridedit_" + panel.deckId
@@ -1383,17 +1405,6 @@ Pane {
             }
         }
 
-        // The pads, right under the transport where the hand already is.
-        RowLayout {
-            objectName: "cuepads_" + panel.deckId
-            Layout.fillWidth: true
-            spacing: 3
-
-            Repeater {
-                model: 8
-                delegate: padDelegate
-            }
-        }
     }
 
     // A small window over the deck while its tempo is measured again: a decode of a five-minute file
