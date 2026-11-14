@@ -1965,25 +1965,6 @@ Pane {
                 }
             }
 
-            // The plate between two rows: where the carried track will land. It is drawn over the list, in
-            // the panel's own coordinates, because the panel is not a layout and a child of one would be
-            // placed by it.
-            Rectangle {
-                id: insertLine
-                objectName: "playlistInsertLine"
-                parent: browser
-                visible: browser.playlistDragRow >= 0 && browser.playlistInsertAt >= 0
-                z: 50
-                height: 2
-                width: list.width
-                color: UiSettings.themeAccent
-                readonly property real boundary: browser.playlistInsertAt * browser.rowHeight
-                                                  - list.contentY
-                x: list.mapToItem(browser, 0, 0).x
-                y: list.mapToItem(browser, 0, 0).y
-                   + Math.max(0, Math.min(list.height - height, boundary))
-            }
-
             ListView {
                 id: list
                 objectName: "browserList"
@@ -2048,6 +2029,22 @@ Pane {
                         browser.loadInto(browser.deckIds[deck]);
                         event.accepted = true;
                     }
+                }
+
+                // The plate between two rows: where the carried track will land. It is declared inside
+                // the view, so it scrolls with the rows and is clipped by the list: an overlay of the
+                // panel had to be kept in step with the list's place by hand, and a child of the layout
+                // was placed by the layout — the line ran across the rail as well.
+                Rectangle {
+                    objectName: "playlistInsertLine"
+                    visible: browser.playlistDragRow >= 0 && browser.playlistInsertAt >= 0
+                    z: 100
+                    x: 0
+                    width: list.width
+                    height: 2
+                    color: UiSettings.themeAccent
+                    // Content coordinates: the rows stand at `originY + place * rowHeight`.
+                    y: list.originY + browser.playlistInsertAt * browser.rowHeight
                 }
 
                 delegate: Rectangle {
