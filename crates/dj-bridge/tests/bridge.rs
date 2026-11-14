@@ -31,6 +31,7 @@ fn play_command(id: u64) -> ScheduledCommand {
 
 fn empty_snapshot(revision: u64) -> Snapshot {
     Snapshot {
+        plays: Vec::new(),
         import: None,
         analysis: None,
         collection: None,
@@ -268,6 +269,7 @@ fn a_split_connection_writes_while_its_reader_is_blocked() {
         cache_budget_bytes: 0,
         protocol: dj_domain::STATE_PROTOCOL.to_string(),
         revision: 4,
+        plays: Vec::new(),
         epoch: 2,
         audio_clock_samples: 512,
         sample_rate: 48_000,

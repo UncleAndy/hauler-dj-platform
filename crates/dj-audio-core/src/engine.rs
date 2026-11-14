@@ -285,6 +285,7 @@ impl Engine {
             // The A01 renderer has no cache: nothing is allowed and nothing is spent.
             cache_budget_bytes: 0,
             revision: self.revision,
+            plays: Vec::new(),
             epoch: self.epoch,
             audio_clock_samples: self.clock,
             sample_rate: self.sample_rate,

@@ -434,6 +434,24 @@ case "${1:-}" in
     cp crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav "$jump_file"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --transport-extras-check --load "$jump_file"
+    # The journal of plays needs its own engine: the rule is counted in the engine's audio clock, and a
+    # deck that slips under the load of the whole suite (the null sink on a busy machine reports the deck
+    # as not playing for a moment) ends an interval and opens another, so a play can be split into pieces
+    # shorter than the threshold. Its own engine, its own threshold: below it, above it, and two short
+    # listens with a pause between them (DJP-MEDIA-004).
+    history_file="$run_dir/history.wav"
+    cp crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav "$history_file"
+    history_socket="$run_dir/engine-history.sock"
+    "$engine_bin" --null-sink --socket "$history_socket" --block 256 --history-min-seconds 2 &
+    history_pid=$!
+    for _ in $(seq 1 100); do
+      [ -S "$history_socket" ] && break
+      sleep 0.05
+    done
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$history_socket" \
+        --history-check --load "$history_file"
+    kill "$history_pid" 2>/dev/null || true
+    wait "$history_pid" 2>/dev/null || true
     # Sync, end to end: the buttons reach the engine, the state comes back, and the phase meter stands
     # where the engine says the beats are (DJP-SYNC-001/002). Two decks, two copies of the same music.
     sync_a="$run_dir/sync-a.wav"

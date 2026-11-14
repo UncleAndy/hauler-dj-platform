@@ -155,6 +155,7 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
         genres: Vec::new(),
         protocol: STATE_PROTOCOL.to_string(),
         revision: 3,
+        plays: Vec::new(),
         epoch: 1,
         audio_clock_samples: 4_800,
         sample_rate: 48_000,

@@ -24,7 +24,7 @@ pub mod store;
 pub mod tags;
 
 pub use import::{ImportError, Imported, Outcome, import, import_checked};
-pub use index::{Index, IndexError, TrackRow};
+pub use index::{Index, IndexError, PlayRecord, TrackRow};
 pub use meta::{Anchor, BeatGrid, Cue, Fingerprint, Loop, SCHEMA, TrackMeta};
 pub use queue::{Progress, Report, Run, threads_for};
 pub use sidecar::MetaError;

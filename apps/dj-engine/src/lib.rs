@@ -21,8 +21,10 @@ use dj_domain::{
 use dj_mixer::{ChannelSettings, CrossAssign, CrossfaderCurve, Mixer};
 use dj_sync::{DeckClock, Phase, PitchLimits, RateTrim, Reading, SyncMode, plan as plan_sync};
 
+pub mod history;
 pub mod meta;
 pub mod metronome;
+pub mod plays;
 
 /// What a pad carries besides its frame: a name and a colour, each optional.
 type CuePad = (Option<String>, Option<String>);
@@ -380,6 +382,7 @@ pub fn snapshot(
     let mut published_decks: Vec<DeckSnapshot> = decks.iter().map(Deck::snapshot).collect();
     fill_phase_errors(&mut published_decks, beats_per_bar(decks));
     Snapshot {
+        plays: Vec::new(),
         import: None,
         analysis: None,
         collection: None,
@@ -1454,6 +1457,7 @@ impl StateCells {
             }
         }
         Snapshot {
+            plays: Vec::new(),
             // The page is not an atomic cell: it is written and read on the engine's own thread, under
             // the mutex that guards the import for the same reason.
             collection: self

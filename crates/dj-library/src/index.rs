@@ -51,6 +51,25 @@ pub struct TrackRow {
     pub analysis_lock: bool,
 }
 
+/// One finished play, as the index keeps it (DJP-MEDIA-004).
+///
+/// The library has its own type rather than the protocol's, the same way `TrackRow` is its own: the
+/// wire says what a client needs, the index says what it stores, and the engine is the one that knows
+/// both.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlayRecord {
+    /// Content fingerprint of the track.
+    pub fingerprint: String,
+    /// Where the file was when it was played.
+    pub path: String,
+    /// Which deck played it (A = 0).
+    pub deck: u8,
+    /// When the interval started, milliseconds since the epoch.
+    pub started_at_ms: u64,
+    /// How long the deck played, in seconds.
+    pub seconds: f64,
+}
+
 /// What the index can fail at.
 #[derive(Debug)]
 pub enum IndexError {
@@ -119,8 +138,17 @@ CREATE TABLE IF NOT EXISTS track_genres (
     PRIMARY KEY (fingerprint, genre_id)
 );
 CREATE INDEX IF NOT EXISTS genres_key         ON genres(key);
+CREATE TABLE IF NOT EXISTS plays (
+    id            INTEGER PRIMARY KEY,
+    fingerprint   TEXT NOT NULL,
+    path          TEXT NOT NULL DEFAULT '',
+    deck          INTEGER NOT NULL DEFAULT 0,
+    started_at_ms INTEGER NOT NULL,
+    seconds       REAL NOT NULL
+);
 CREATE INDEX IF NOT EXISTS track_genres_genre ON track_genres(genre_id, fingerprint);
-PRAGMA user_version = 3;
+CREATE INDEX IF NOT EXISTS plays_recent        ON plays(started_at_ms DESC, fingerprint);
+PRAGMA user_version = 4;
 ";
 
 /// The database file. One writer, opened off the audio path.
@@ -335,6 +363,52 @@ impl Index {
         }
         transaction.commit()?;
         Ok(())
+    }
+
+    /// Record one finished play (DJP-MEDIA-004).
+    ///
+    /// Two writes in one transaction: the journal keeps the play itself, and the track row keeps the
+    /// summary the collection sorts by — how many times, and when last. A track the index does not
+    /// know (played from the files section) keeps its journal row and gets no summary: the summary
+    /// belongs to a row, and there is no row.
+    pub fn record_play(&mut self, play: &PlayRecord) -> Result<(), IndexError> {
+        let transaction = self.connection.transaction()?;
+        transaction.execute(
+            "INSERT INTO plays (fingerprint, path, deck, started_at_ms, seconds) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                play.fingerprint,
+                play.path,
+                i64::from(play.deck),
+                play.started_at_ms as i64,
+                play.seconds
+            ],
+        )?;
+        transaction.execute(
+            "UPDATE tracks SET play_count = play_count + 1, last_played_ms = ?2 \
+             WHERE fingerprint = ?1",
+            rusqlite::params![play.fingerprint, play.started_at_ms as i64],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// The journal, newest first.
+    pub fn plays(&self, limit: usize) -> Result<Vec<PlayRecord>, IndexError> {
+        let mut statement = self.connection.prepare(
+            "SELECT fingerprint, path, deck, started_at_ms, seconds FROM plays \
+             ORDER BY id DESC LIMIT ?1",
+        )?;
+        let rows = statement.query_map([limit as i64], |raw| {
+            Ok(PlayRecord {
+                fingerprint: raw.get(0)?,
+                path: raw.get(1)?,
+                deck: raw.get::<_, i64>(2)?.clamp(0, 255) as u8,
+                started_at_ms: raw.get::<_, i64>(3)?.max(0) as u64,
+                seconds: raw.get(4)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
     /// Replace the genres of one track.
@@ -1031,7 +1105,7 @@ mod tests {
             .connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version");
-        assert_eq!(version, 3, "the schema must move to version 3");
+        assert_eq!(version, 4, "the schema must move to version 4");
         assert!(
             index
                 .columns()
@@ -1067,8 +1141,9 @@ mod tests {
             .connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version");
-        assert_eq!(version, 3);
+        assert_eq!(version, 4);
         assert!(table_exists(&index, "track_genres"));
+        assert!(table_exists(&index, "plays"));
         std::fs::remove_dir_all(&dir).ok();
     }
 }

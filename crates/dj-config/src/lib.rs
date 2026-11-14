@@ -37,6 +37,8 @@ pub struct Config {
     pub display: DisplaySettings,
     /// Level matching of the files a deck opens.
     pub analysis: AnalysisSettings,
+    /// Collection and the history of plays.
+    pub library: LibrarySettings,
 }
 
 impl Default for Config {
@@ -50,6 +52,30 @@ impl Default for Config {
             realtime: RealtimeSettings::default(),
             display: DisplaySettings::default(),
             analysis: AnalysisSettings::default(),
+            library: LibrarySettings::default(),
+        }
+    }
+}
+
+/// Collection and history settings (DJP-MEDIA-004).
+///
+/// A play is only recorded when the deck played long enough to count as listening, and a track stays
+/// "played recently" for as long as the DJ says. Both are the owner's numbers, so both live here
+/// instead of in the code.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct LibrarySettings {
+    /// Shortest play that counts as listening, in seconds.
+    pub history_min_seconds: u32,
+    /// How long a played track stays "recently played", in hours.
+    pub played_recently_hours: u32,
+}
+
+impl Default for LibrarySettings {
+    fn default() -> Self {
+        Self {
+            history_min_seconds: 30,
+            played_recently_hours: 4,
         }
     }
 }
@@ -366,6 +392,18 @@ impl Config {
             return Err(ConfigError::Invalid(format!(
                 "pcm_cache.max_size_gb {} is outside 0..=10000",
                 self.pcm_cache.max_size_gb
+            )));
+        }
+        if !(1..=3600).contains(&self.library.history_min_seconds) {
+            return Err(ConfigError::Invalid(format!(
+                "library.history_min_seconds {} is outside 1..=3600",
+                self.library.history_min_seconds
+            )));
+        }
+        if !(1..=168).contains(&self.library.played_recently_hours) {
+            return Err(ConfigError::Invalid(format!(
+                "library.played_recently_hours {} is outside 1..=168",
+                self.library.played_recently_hours
             )));
         }
         if !(1..=120).contains(&self.display.state_hz) {

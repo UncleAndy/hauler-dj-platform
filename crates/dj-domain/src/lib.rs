@@ -1395,6 +1395,25 @@ pub struct GenreCount {
     pub count: usize,
 }
 
+/// One finished play of a deck: what was played, where, and how long it actually sounded.
+///
+/// The unit is a continuous interval of playing: a pause, a stop or an unload ends it, while loops,
+/// jumps and tempo changes do not. The engine writes these off the audio path (DJP-MEDIA-004).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlayRow {
+    /// Content fingerprint of the track, the same key the index and the metadata files use.
+    pub fingerprint: String,
+    /// Where the file was when it was played.
+    #[serde(default)]
+    pub path: String,
+    /// Which deck played it (A = 0).
+    pub deck: u8,
+    /// When the interval started, milliseconds since the epoch.
+    pub started_at_ms: u64,
+    /// How long the deck played, in seconds.
+    pub seconds: f64,
+}
+
 /// Read-only state published to the UI and controllers (DJP-ARCH-004).
 ///
 /// `revision` grows monotonically and `epoch` changes when the engine restarts, so a
@@ -1411,6 +1430,12 @@ pub struct Snapshot {
     pub audio_clock_samples: u64,
     /// Device sample rate the clock is counted at.
     pub sample_rate: u32,
+    /// The plays this engine has finished, oldest first.
+    ///
+    /// Defaulted and skipped when empty, so a client from a build without the journal still reads a
+    /// snapshot, and a wire without history stays byte-identical to what it was.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plays: Vec<PlayRow>,
     /// Crossfader position at the moment of publication.
     pub crossfader: f32,
     /// Crossfader law in force at the moment of publication.

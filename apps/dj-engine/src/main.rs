@@ -216,6 +216,9 @@ fn run(argv: &[String]) -> Result<(), String> {
     // Settings first, so the flags default to them rather than to numbers scattered in the code.
     let defaults = dj_config::Config::default();
     let mut state_hz = defaults.display.state_hz;
+    // A play shorter than this is not listening, and both numbers live in `crates/dj-config` so the
+    // owner can move them without a build (DJP-MEDIA-004).
+    let mut history_min_seconds = defaults.library.history_min_seconds;
     // Every law is a choice, not a constant: the default is the DJ one, and a person can ask for any.
     let mut crossfader_curve = dj_mixer::CrossfaderCurve::default();
     // How much of the measured level correction a deck applies. Nine tenths is the default because a
@@ -275,6 +278,16 @@ fn run(argv: &[String]) -> Result<(), String> {
                     return Err("--state-hz must be 1..=120 snapshots a second".to_string());
                 }
                 state_hz = parsed;
+                index += 2;
+            }
+            "--history-min-seconds" => {
+                let parsed: u32 = value(1)?
+                    .parse()
+                    .map_err(|_| "--history-min-seconds expects a number")?;
+                if !(1..=3600).contains(&parsed) {
+                    return Err("--history-min-seconds must be 1..=3600 seconds".to_string());
+                }
+                history_min_seconds = parsed;
                 index += 2;
             }
             "--auto-gain-share" => {
@@ -463,6 +476,12 @@ fn run(argv: &[String]) -> Result<(), String> {
     // before the shutdown still reaches the disk (A13).
     // Kept alive until this function returns: dropping the writer closes the queue and waits for
     // the last edit, so an edit answered just before the shutdown still reaches the disk (A13).
+    // The journal of plays: a finished interval goes to its own thread, the way a metadata edit does,
+    // because the audio callback may not touch a database (DJP-MEDIA-004).
+    let (_play_writer, play_records) = dj_engine::plays::PlayWriter::spawn();
+    let journal = Arc::new(Mutex::new(dj_engine::history::History::new(
+        history_min_seconds,
+    )));
     let (_meta_writer, meta_edits) = dj_engine::meta::MetaWriter::spawn(
         store.clone(),
         volume().to_string(),
@@ -506,11 +525,30 @@ fn run(argv: &[String]) -> Result<(), String> {
         // The state rate is a parameter (display.state_hz): twenty snapshots a second is the
         // default, and raising it trades IPC for less projection between snapshots.
         let publish_every = Duration::from_micros(1_000_000 / u64::from(state_hz));
+        let journal = Arc::clone(&journal);
+        let play_records = play_records.clone();
+        let stop = Arc::clone(&stop);
         std::thread::spawn(move || {
             let mut revision: u64 = 0;
             let mut statics = statics;
+            // Asked for a key only when an interval opens: one fingerprint per play, not one per snapshot.
+            let print_of = |path: &str| {
+                dj_library::fingerprint::of_path(std::path::Path::new(path))
+                    .ok()
+                    .map(|print| print.key())
+            };
             loop {
                 std::thread::sleep(publish_every);
+                if stop.load(Ordering::Relaxed) {
+                    // The way out: close what is still open and hand it over before leaving, or the play
+                    // the DJ is listening to right now is the one nobody records.
+                    if let Ok(mut held) = journal.lock() {
+                        for record in held.close_all(0, rate) {
+                            let _ = play_records.send(dj_engine::plays::record_of(&record));
+                        }
+                    }
+                    break;
+                }
                 // A load changes what the deck is; only this thread reads the description, so the
                 // audio path never sees a lock.
                 while let Ok(update) = deck_updates_rx.try_recv() {
@@ -594,7 +632,7 @@ fn run(argv: &[String]) -> Result<(), String> {
                 }
                 revision += 1;
                 published.fetch_add(1, Ordering::Relaxed);
-                let snapshot = cells.read(&statics, rate, epoch, revision);
+                let mut snapshot = cells.read(&statics, rate, epoch, revision);
                 for deck in &snapshot.decks {
                     if let Some(flag) = playing.get(deck.deck.index()) {
                         flag.store(deck.playing, Ordering::Relaxed);
@@ -606,6 +644,29 @@ fn run(argv: &[String]) -> Result<(), String> {
                     {
                         flag.store(false, Ordering::Relaxed);
                     }
+                }
+                // The journal follows every deck at the state rate: what a deck is doing now decides
+                // what the interval that just ended was worth (DJP-MEDIA-004).
+                if let Ok(mut held) = journal.lock() {
+                    for deck in &snapshot.decks {
+                        let path = paths
+                            .lock()
+                            .ok()
+                            .and_then(|slots| slots.get(deck.deck.index()).cloned())
+                            .flatten();
+                        held.observe(
+                            deck.deck.index(),
+                            deck.playing,
+                            path.as_deref(),
+                            snapshot.audio_clock_samples,
+                            snapshot.sample_rate,
+                            &print_of,
+                        );
+                    }
+                    for record in held.take_finished() {
+                        let _ = play_records.send(dj_engine::plays::record_of(&record));
+                    }
+                    snapshot.plays = held.recent();
                 }
                 let message = ServerMessage::Snapshot(Box::new(snapshot));
 
@@ -1107,7 +1168,7 @@ fn run(argv: &[String]) -> Result<(), String> {
         published: Arc::clone(&published),
     };
 
-    match (device, device_channels) {
+    let outcome = match (device, device_channels) {
         (Some(requested), Some(channels)) => {
             let outcome = run_device(graph, &requested, channels, &options, &stop);
             remove_socket(&socket);
@@ -1122,7 +1183,11 @@ fn run(argv: &[String]) -> Result<(), String> {
             remove_socket(&socket);
             Ok(())
         }
-    }
+    };
+    // The publisher closes the open play when it sees the stop flag; give it a couple of ticks to hand
+    // that play to the writer, whose own exit waits for its queue.
+    std::thread::sleep(Duration::from_millis(200));
+    outcome
 }
 
 /// Ask for SIGINT and SIGTERM to set the stop flag instead of killing the process outright.
