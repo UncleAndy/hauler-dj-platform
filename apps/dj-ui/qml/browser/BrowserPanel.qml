@@ -325,9 +325,9 @@ Pane {
         for (let index = 0; index < keys.length; ++index) {
             if (keys[index].column === id) {
                 if (index === 0) {
-                    return keys[index].ascending ? " ▲" : " ▼";
+                    return keys[index].ascending ? " ▼" : " ▲";
                 }
-                return keys[index].ascending ? " △" : " ▽";
+                return keys[index].ascending ? " ▽" : " △";
             }
         }
         return "";
@@ -362,10 +362,10 @@ Pane {
     }
     function columnTitle(id) {
         switch (id) {
-        case "artist": return qsTr("Исполнитель");
-        case "album": return qsTr("Альбом");
-        case "title": return qsTr("Название");
-        case "time": return qsTr("Время");
+        case "artist": return qsTr("Artist");
+        case "album": return qsTr("Album");
+        case "title": return qsTr("Title");
+        case "time": return qsTr("Time");
         case "bpm": return "BPM";
         case "key": return "Key";
         }
@@ -1143,6 +1143,7 @@ Pane {
             spacing: 4
 
             RowLayout {
+                objectName: "browserHeaderRow"
                 Layout.fillWidth: true
                 spacing: 6
                 Label {
@@ -1189,6 +1190,15 @@ Pane {
                           : qsTr("%1 tracks").arg(Browser.total)
                     color: UiSettings.themeTextDim
                     font.pixelSize: browser.headerFont
+                }
+                // The controls that belong to the whole browser — the type size and the deck buttons —
+                // sit at the right edge, apart from the count that talks about the collection. In a
+                // folder the path fills the row and does the separating; in the collection there is no
+                // path, so this spacer does the separating.
+                Item {
+                    objectName: "headerSpacer"
+                    Layout.fillWidth: true
+                    visible: browser.section === "collection"
                 }
                 // The text size, changed where it is read: a browser whose font cannot be changed is
                 // a browser for one pair of eyes.
@@ -1321,9 +1331,9 @@ Pane {
                     objectName: "collectionHeaderNumber"
                     x: 0
                     width: browser.numberWidth - 6
-                    text: "№"
+                    text: "#"
                     horizontalAlignment: Text.AlignRight
-                    color: UiSettings.themeTextDim
+                    color: UiSettings.themeHeaderText
                     font: browser.listFace
                     elide: Text.ElideRight
                 }
@@ -1334,7 +1344,7 @@ Pane {
                     width: browser.lockWidth
                     text: "\uD83D\uDD12"
                     horizontalAlignment: Text.AlignHCenter
-                    color: UiSettings.themeTextDim
+                    color: UiSettings.themeHeaderText
                     font.pixelSize: Math.max(9, browser.listFont - 2)
                 }
 
@@ -1347,7 +1357,7 @@ Pane {
                           + browser.sortMark(browser.columnId(0))
                     horizontalAlignment: browser.columnAlign(browser.columnId(0))
                     color: browser.sortMark(browser.columnId(0)) === ""
-                           ? UiSettings.themeTextDim : UiSettings.themeAccent
+                           ? UiSettings.themeHeaderText : UiSettings.themeAccent
                     font: browser.listFace
                     elide: Text.ElideRight
                 }
@@ -1360,7 +1370,7 @@ Pane {
                           + browser.sortMark(browser.columnId(1))
                     horizontalAlignment: browser.columnAlign(browser.columnId(1))
                     color: browser.sortMark(browser.columnId(1)) === ""
-                           ? UiSettings.themeTextDim : UiSettings.themeAccent
+                           ? UiSettings.themeHeaderText : UiSettings.themeAccent
                     font: browser.listFace
                     elide: Text.ElideRight
                 }
@@ -1373,7 +1383,7 @@ Pane {
                           + browser.sortMark(browser.columnId(2))
                     horizontalAlignment: browser.columnAlign(browser.columnId(2))
                     color: browser.sortMark(browser.columnId(2)) === ""
-                           ? UiSettings.themeTextDim : UiSettings.themeAccent
+                           ? UiSettings.themeHeaderText : UiSettings.themeAccent
                     font: browser.listFace
                     elide: Text.ElideRight
                 }
@@ -1386,7 +1396,7 @@ Pane {
                           + browser.sortMark(browser.columnId(3))
                     horizontalAlignment: browser.columnAlign(browser.columnId(3))
                     color: browser.sortMark(browser.columnId(3)) === ""
-                           ? UiSettings.themeTextDim : UiSettings.themeAccent
+                           ? UiSettings.themeHeaderText : UiSettings.themeAccent
                     font: browser.listFace
                     elide: Text.ElideRight
                 }
@@ -1399,7 +1409,7 @@ Pane {
                           + browser.sortMark(browser.columnId(4))
                     horizontalAlignment: browser.columnAlign(browser.columnId(4))
                     color: browser.sortMark(browser.columnId(4)) === ""
-                           ? UiSettings.themeTextDim : UiSettings.themeAccent
+                           ? UiSettings.themeHeaderText : UiSettings.themeAccent
                     font: browser.listFace
                     elide: Text.ElideRight
                 }
@@ -1412,7 +1422,7 @@ Pane {
                           + browser.sortMark(browser.columnId(5))
                     horizontalAlignment: browser.columnAlign(browser.columnId(5))
                     color: browser.sortMark(browser.columnId(5)) === ""
-                           ? UiSettings.themeTextDim : UiSettings.themeAccent
+                           ? UiSettings.themeHeaderText : UiSettings.themeAccent
                     font: browser.listFace
                     elide: Text.ElideRight
                 }
@@ -1470,6 +1480,9 @@ Pane {
                     // column's name sorts by it — the strip already owns the width and the move.
                     property real pressX: -1
                     property int pressIndex: -1
+                    // Where a press landed in the number column: that header is not a column, so it
+                    // neither sorts nor moves — it is the way out, and the release has to know.
+                    property real pressGutterX: -1
                     // The cursor says what the strip does: a splitter under the pointer is the only
                     // way a DJ learns that the edge is draggable at all.
                     property int hoverBoundary: -1
@@ -1478,6 +1491,7 @@ Pane {
                                  ? Qt.SizeHorCursor
                                  : (dragIndex >= 0 ? Qt.ClosedHandCursor : Qt.ArrowCursor)
                     onPressed: function (mouse) {
+                        pressGutterX = mouse.x < browser.numberWidth ? mouse.x : -1;
                         const edge = header.boundaryAt(mouse.x);
                         if (edge >= 0) {
                             resizeIndex = edge;
@@ -1503,7 +1517,11 @@ Pane {
                         }
                     }
                     onReleased: function (mouse) {
-                        if (resizeIndex < 0 && pressIndex >= 0 && dropIndex === pressIndex
+                        if (resizeIndex < 0 && pressGutterX >= 0
+                            && Math.abs(mouse.x - pressGutterX) <= 4) {
+                            // A click on the number column: no key decides the order any more.
+                            Browser.clearCollectionSort();
+                        } else if (resizeIndex < 0 && pressIndex >= 0 && dropIndex === pressIndex
                             && Math.abs(mouse.x - pressX) <= 4) {
                             // A click on the name: sort by this column, or by it second with Shift.
                             Browser.sortCollection(browser.columnId(pressIndex),
@@ -1516,6 +1534,7 @@ Pane {
                         dropIndex = -1;
                         pressIndex = -1;
                         pressX = -1;
+                        pressGutterX = -1;
                     }
                 }
 

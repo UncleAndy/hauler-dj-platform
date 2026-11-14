@@ -1023,6 +1023,27 @@ void FileBrowser::sortCollection(const QString &column, bool shift)
     applySort();
 }
 
+void FileBrowser::clearCollectionSort()
+{
+    if (m_sort.isEmpty()) {
+        return;
+    }
+    // Nothing decides the order any more. The keys go, the header loses its mark, and the list is built
+    // again in the order its own source gives: the index when there is one, the walk when there is not.
+    // Emptying the keys alone would leave the rows in the order of a sort that no longer exists — a list
+    // sorted by a column with no arrow over it.
+    m_sort.clear();
+    emit sortChanged();
+    if (m_paged) {
+        askPage(0);
+        return;
+    }
+    collect(m_roots);
+    // The view reads the filtered list, and collect() fills the unfiltered one: without this line the
+    // rows keep the order the sort left them in, and the reset is invisible.
+    applyFilter();
+}
+
 void FileBrowser::applySort()
 {
     if (m_sort.isEmpty()) {

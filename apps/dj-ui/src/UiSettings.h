@@ -26,6 +26,9 @@ class UiSettings : public QObject
     // Text on the accent: near-black, because the accent is bright.
     Q_PROPERTY(QString themeTextOnAccent READ themeTextOnAccent CONSTANT)
     Q_PROPERTY(QString themeTextDim READ themeTextDim CONSTANT)
+    // The collection's column headers. The accent's own family, dimmed: a header has to read as a
+    // header, and the column that decides the sort keeps the accent itself, so the two do not fight.
+    Q_PROPERTY(QString themeHeaderText READ themeHeaderText CONSTANT)
     // The system's own fixed-pitch family, resolved at run time. The browser and the collection are
     // tables of numbers and names, and a proportional face makes the columns wobble — but which font a
     // desktop calls monospace is the desktop's business, and naming one here would bundle a font and its
@@ -88,6 +91,7 @@ public:
     QString themeTextOnAccent() const { return QStringLiteral("#0b0b0b"); }
     QString themeText() const { return QStringLiteral("#c8c8c8"); }
     QString themeTextDim() const { return QStringLiteral("#8a8a8a"); }
+    QString themeHeaderText() const { return QStringLiteral("#7ea6dd"); }
 
     QString monoFamily() const
     {

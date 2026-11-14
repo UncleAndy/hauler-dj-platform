@@ -4338,6 +4338,10 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
         return true;
     };
 
+    // The order the list carries before any click: the order its own source gives it. Every line below
+    // turns a sort on, so this is the only place it can be read — and it is what a click on the number
+    // column has to give back.
+    const QStringList sourceOrder = order();
     if (!clickColumn(QStringLiteral("artist"), Qt::NoModifier)) {
         std::fprintf(stderr, "dj-ui: the header has no artist column\n");
         return 1;
@@ -4467,6 +4471,64 @@ static int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Lay
     } else {
         std::fprintf(stderr, "dj-ui: no BPM cell to read\n");
         return 1;
+    }
+
+    // The number column's header: a click there drops every key at once. Two keys are in force here (the
+    // tempo and the tone), so the case says "all of them" and not "the last one" — and the order has to
+    // come back to the one the list had before the first click, not merely to something unsorted.
+    {
+        const double numberWidth = panel->property("numberWidth").toDouble();
+        if (numberWidth <= 1.0) {
+            std::fprintf(stderr, "dj-ui: the number column is %.1f px wide, nothing to click\n",
+                         numberWidth);
+            return 1;
+        }
+        const QPointF at(numberWidth / 2.0, header->height() / 2.0);
+        const QPointF scene = header->mapToScene(at);
+        for (const QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+            QMouseEvent event(type, scene, window->mapToGlobal(scene.toPoint()), Qt::LeftButton,
+                              Qt::LeftButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(window, &event);
+        }
+        // The index is asked again with no order at all, and its answer carries the rows: give it the
+        // frames a hand would take before reading the list.
+        QElapsedTimer asked;
+        asked.start();
+        while (asked.elapsed() < 500) {
+            QCoreApplication::processEvents();
+            QThread::msleep(10);
+        }
+        if (!keys().isEmpty()) {
+            std::fprintf(stderr, "dj-ui: the click on the number column left the keys at «%s»\n",
+                         qPrintable(keys()));
+            return 1;
+        }
+        if (!require(QStringLiteral("click the number column"), sourceOrder)) {
+            return 1;
+        }
+        // And the marks go with the keys: an arrow over a list that no column decides is the picture of a
+        // sort that is not there.
+        const QString marks = QStringLiteral("▲▼△▽");
+        QStringList stillMarked;
+        for (int index = 0; index < 6; ++index) {
+            auto *cell = findItem(window->contentItem(),
+                                  QStringLiteral("collectionHeaderCell_%1").arg(index));
+            if (cell == nullptr) {
+                continue;
+            }
+            const QString text = cell->property("text").toString();
+            for (const QChar &glyph : text) {
+                if (marks.contains(glyph)) {
+                    stillMarked.append(text.trimmed());
+                }
+            }
+        }
+        if (!stillMarked.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: headers still carry a sort mark after the reset: %s\n",
+                         qPrintable(stillMarked.join(QStringLiteral(" | "))));
+            return 1;
+        }
+        std::fprintf(stderr, "dj-ui: the number column reset the sort, and no header keeps a mark\n");
     }
 
     // A list long enough to scroll: the cursor is driven by the keyboard, and the view must be at the
@@ -5219,6 +5281,48 @@ static int runAnalyzeCheck(QQmlApplicationEngine &engine, FileBrowser &browser, 
 // The same collection, two sources: the walk over `.djmeta` and the page out of the index. The question
 // is not which one the list uses today — it is whether the index gives the same rows at all. Compared by
 // path, field by field, and the first differences are printed.
+// The collection's header, as two numbers: how far the browser's own controls (the type size and the
+// deck buttons) stand from the count that talks about the collection, and how far from the right edge
+// they stand. "Moved to the right and away from the text" is a claim about pixels, so it is measured:
+// an impression of a screenshot is not evidence, and a control that drifts back left costs a release.
+static int measureCollectionHeader(QQuickItem *panel)
+{
+    QQuickItem *headerRow = findItem(panel, QStringLiteral("browserHeaderRow"));
+    QQuickItem *countLabel = findItem(panel, QStringLiteral("collectionCount"));
+    QQuickItem *minusButton = findItem(panel, QStringLiteral("fontMinus"));
+    QQuickItem *lastDeckButton = findItem(panel, QStringLiteral("deckButton_D"));
+    if (headerRow == nullptr || countLabel == nullptr || minusButton == nullptr
+        || lastDeckButton == nullptr) {
+        std::fprintf(stderr, "dj-ui: the collection header has no row, count or buttons to measure\n");
+        return 1;
+    }
+    QCoreApplication::processEvents();
+    const auto sceneRect = [](QQuickItem *item) {
+        return item->mapRectToScene(QRectF(0, 0, item->width(), item->height()));
+    };
+    const QRectF rowRect = sceneRect(headerRow);
+    const QRectF countRect = sceneRect(countLabel);
+    const QRectF minusRect = sceneRect(minusButton);
+    const QRectF deckRect = sceneRect(lastDeckButton);
+    const double gap = minusRect.left() - countRect.right();
+    const double slack = rowRect.right() - deckRect.right();
+    std::fprintf(stdout,
+                 "dj-ui: the collection header: controls %.0f px right of the count, %.1f px from the "
+                 "right edge\n",
+                 gap, slack);
+    if (gap < 8.0) {
+        std::fprintf(stderr, "dj-ui: the type and deck buttons crowd the collection count (%.0f px)\n",
+                     gap);
+        return 1;
+    }
+    if (slack < -0.5 || slack > 2.0) {
+        std::fprintf(stderr, "dj-ui: the browser's controls are not at the right edge (%.1f px)\n",
+                     slack);
+        return 1;
+    }
+    return 0;
+}
+
 static int runCollectionPageCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
                                   BridgeClient &bridge, const QString &fixture,
                                   const QString &collectionRoot)
@@ -5538,6 +5642,12 @@ static int runCollectionPageCheck(QQmlApplicationEngine &engine, FileBrowser &br
             return 1;
         }
     }
+
+    // The header the DJ reads the collection by: the count beside the title, the browser's own controls
+    // at the far right. Measured by the same code the import check runs.
+    if (const int verdict = measureCollectionHeader(panel); verdict != 0) {
+        return verdict;
+    }
     return 0;
 }
 
@@ -5808,6 +5918,10 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         std::fprintf(stderr, "dj-ui: the collection section lists %d rows, wanted 1\n",
                      static_cast<int>(rows.size()));
         return 1;
+    }
+    // The header while the collection is open with rows in it — the same measurement the page check runs.
+    if (const int verdict = measureCollectionHeader(panel); verdict != 0) {
+        return verdict;
     }
     const QVariantMap row = rows.at(0).toMap();
     const QString artist = row.value(QStringLiteral("artist")).toString();

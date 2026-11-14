@@ -80,6 +80,10 @@ public:
     /// Sort the collection by `column`. A plain click makes it the only key and turns it around on a
     /// second click; `shift` adds it as the next key, so two columns can decide together.
     Q_INVOKABLE void sortCollection(const QString &column, bool shift);
+    /// Drop every sort key: the collection goes back to the order its source gives it — the index when
+    /// there is one, the walk of the disks when there is not. It is the way out of a sort set by
+    /// accident, and the only way to a list that no column decides.
+    Q_INVOKABLE void clearCollectionSort();
     int total() const { return m_total; }
 
     // Show `path`, or the default music folder when it is empty.
