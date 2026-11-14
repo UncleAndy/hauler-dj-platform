@@ -379,6 +379,7 @@ Pane {
         case "time": return qsTr("Time");
         case "bpm": return "BPM";
         case "key": return "Key";
+        case "recent": return qsTr("Played");
         }
         return "";
     }
@@ -395,8 +396,27 @@ Pane {
         // is a column of rounded guesses — 128,00 and 128,004 must not read the same.
         case "bpm": return entry.bpm !== undefined && entry.bpm > 0 ? Number(entry.bpm).toFixed(2) : "";
         case "key": return entry.key !== undefined ? entry.key : "";
+        case "recent": return browser.playedRecently(entry) ? "\u2713" : "";
         }
         return "";
+    }
+
+    /// True when the track was played inside the window the engine publishes: the fact is the engine's
+    /// (it writes when a play happened), the window is a setting it sends with every snapshot, and the
+    /// comparison is the client's. Zero means the build had no opinion, and then nothing is marked.
+    function playedRecently(entry) {
+        if (entry === undefined || entry.last_played_ms === undefined || entry.last_played_ms === null) {
+            return false;
+        }
+        // Both numbers are coerced: the row arrives as JSON, and a comparison against a string would be
+        // a comparison against nothing.
+        const played = Number(entry.last_played_ms);
+        const window = Bridge.snapshot !== undefined && Bridge.snapshot.recent_window_ms !== undefined
+                       ? Number(Bridge.snapshot.recent_window_ms) : 0;
+        if (!(played > 0) || !(window > 0)) {
+            return false;
+        }
+        return Date.now() - played < window;
     }
 
     /// A length in milliseconds as a DJ reads it: `3:21`. Empty when nothing measured it.
@@ -1359,83 +1379,23 @@ Pane {
                     font.pixelSize: Math.max(9, browser.listFont - 2)
                 }
 
-                Label {
-                    objectName: "collectionHeaderCell_0"
-                    x: browser.columnX(0, header.width) + 6
-                    width: Math.max(0, browser.columnWidth(0, header.width) - 12)
-                    visible: browser.columnId(0) !== ""
-                    text: browser.columnTitle(browser.columnId(0))
-                          + browser.sortMark(browser.columnId(0))
-                    horizontalAlignment: browser.columnAlign(browser.columnId(0))
-                    color: browser.sortMark(browser.columnId(0)) === ""
-                           ? UiSettings.themeHeaderText : UiSettings.themeAccent
-                    font: browser.listFace
-                    elide: Text.ElideRight
-                }
-                Label {
-                    objectName: "collectionHeaderCell_1"
-                    x: browser.columnX(1, header.width) + 6
-                    width: Math.max(0, browser.columnWidth(1, header.width) - 12)
-                    visible: browser.columnId(1) !== ""
-                    text: browser.columnTitle(browser.columnId(1))
-                          + browser.sortMark(browser.columnId(1))
-                    horizontalAlignment: browser.columnAlign(browser.columnId(1))
-                    color: browser.sortMark(browser.columnId(1)) === ""
-                           ? UiSettings.themeHeaderText : UiSettings.themeAccent
-                    font: browser.listFace
-                    elide: Text.ElideRight
-                }
-                Label {
-                    objectName: "collectionHeaderCell_2"
-                    x: browser.columnX(2, header.width) + 6
-                    width: Math.max(0, browser.columnWidth(2, header.width) - 12)
-                    visible: browser.columnId(2) !== ""
-                    text: browser.columnTitle(browser.columnId(2))
-                          + browser.sortMark(browser.columnId(2))
-                    horizontalAlignment: browser.columnAlign(browser.columnId(2))
-                    color: browser.sortMark(browser.columnId(2)) === ""
-                           ? UiSettings.themeHeaderText : UiSettings.themeAccent
-                    font: browser.listFace
-                    elide: Text.ElideRight
-                }
-                Label {
-                    objectName: "collectionHeaderCell_3"
-                    x: browser.columnX(3, header.width) + 6
-                    width: Math.max(0, browser.columnWidth(3, header.width) - 12)
-                    visible: browser.columnId(3) !== ""
-                    text: browser.columnTitle(browser.columnId(3))
-                          + browser.sortMark(browser.columnId(3))
-                    horizontalAlignment: browser.columnAlign(browser.columnId(3))
-                    color: browser.sortMark(browser.columnId(3)) === ""
-                           ? UiSettings.themeHeaderText : UiSettings.themeAccent
-                    font: browser.listFace
-                    elide: Text.ElideRight
-                }
-                Label {
-                    objectName: "collectionHeaderCell_4"
-                    x: browser.columnX(4, header.width) + 6
-                    width: Math.max(0, browser.columnWidth(4, header.width) - 12)
-                    visible: browser.columnId(4) !== ""
-                    text: browser.columnTitle(browser.columnId(4))
-                          + browser.sortMark(browser.columnId(4))
-                    horizontalAlignment: browser.columnAlign(browser.columnId(4))
-                    color: browser.sortMark(browser.columnId(4)) === ""
-                           ? UiSettings.themeHeaderText : UiSettings.themeAccent
-                    font: browser.listFace
-                    elide: Text.ElideRight
-                }
-                Label {
-                    objectName: "collectionHeaderCell_5"
-                    x: browser.columnX(5, header.width) + 6
-                    width: Math.max(0, browser.columnWidth(5, header.width) - 12)
-                    visible: browser.columnId(5) !== ""
-                    text: browser.columnTitle(browser.columnId(5))
-                          + browser.sortMark(browser.columnId(5))
-                    horizontalAlignment: browser.columnAlign(browser.columnId(5))
-                    color: browser.sortMark(browser.columnId(5)) === ""
-                           ? UiSettings.themeHeaderText : UiSettings.themeAccent
-                    font: browser.listFace
-                    elide: Text.ElideRight
+                // One cell per column, made from the settings rather than written out by hand: the
+                // order is the DJ's, and a column added to the table needs no new markup (DJP-MEDIA-004).
+                Repeater {
+                    model: browser.columns.length
+                    delegate: Label {
+                        objectName: "collectionHeaderCell_" + index
+                        x: browser.columnX(index, header.width) + 6
+                        width: Math.max(0, browser.columnWidth(index, header.width) - 12)
+                        visible: browser.columnId(index) !== ""
+                        text: browser.columnTitle(browser.columnId(index))
+                              + browser.sortMark(browser.columnId(index))
+                        horizontalAlignment: browser.columnAlign(browser.columnId(index))
+                        color: browser.sortMark(browser.columnId(index)) === ""
+                               ? UiSettings.themeHeaderText : UiSettings.themeAccent
+                        font: browser.listFace
+                        elide: Text.ElideRight
+                    }
                 }
 
                 // The edges are drawn: a column that can be resized has to show where its edge is,
@@ -1720,6 +1680,19 @@ Pane {
                             horizontalAlignment: Text.AlignRight
                             font: browser.listFace
                             color: browser.rowTextColour(row.chosen, row.current, UiSettings.themeTextDim)
+                        }
+                        Label {
+                            objectName: "collectionCell_recent_" + row.index
+                            readonly property int column: browser.columnIndexOf("recent")
+                            x: column >= 0 ? browser.columnX(column, row.width) : 0
+                            width: column >= 0 ? browser.columnWidth(column, row.width) : 0
+                            visible: column >= 0
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: browser.columnText(row.modelData, "recent")
+                            horizontalAlignment: Text.AlignHCenter
+                            font: browser.listFace
+                            color: browser.rowTextColour(row.chosen, row.current,
+                                                         UiSettings.themeTextDim)
                         }
                         Label {
                             objectName: "collectionCell_key_" + row.index

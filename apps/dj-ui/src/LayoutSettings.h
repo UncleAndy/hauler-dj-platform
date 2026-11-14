@@ -141,6 +141,7 @@ private:
         {QStringLiteral("artist"), 0.22}, {QStringLiteral("album"), 0.20},
         {QStringLiteral("title"), 0.30},  {QStringLiteral("time"), 0.08},
         {QStringLiteral("bpm"), 0.07},    {QStringLiteral("key"), 0.05},
+        {QStringLiteral("recent"), 0.05},
     };
     double m_waveformSpan = 0.0;
     // The deck's modes, on by default as the deck switches and the mixer's were.

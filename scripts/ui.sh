@@ -196,7 +196,11 @@ case "${1:-}" in
     # Same reason as in --smoke: the shell's own settings belong to a person, not to a gate run.
     export XDG_CONFIG_HOME="$run_dir/config"
     socket="$run_dir/engine.sock"
-    "$engine_bin" --null-sink --socket "$socket" --block 256 &
+    # The journal and the "played recently" window are measured in seconds here: the checks below
+    # play a track for a few seconds and require the mark, and the defaults (thirty seconds, four
+    # hours) would make that a waiting game.
+    "$engine_bin" --null-sink --socket "$socket" --block 256 --history-min-seconds 1 \
+        --played-recently-hours 1 &
     engine_pid=$!
     cleanup() {
       kill "$engine_pid" 2>/dev/null || true

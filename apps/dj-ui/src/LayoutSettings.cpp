@@ -261,6 +261,7 @@ struct ColumnDefault {
 constexpr ColumnDefault kColumnDefaults[] = {
     {"artist", 0.22}, {"album", 0.20}, {"title", 0.30},
     {"time", 0.08},   {"bpm", 0.07},   {"key", 0.05},
+    {"recent", 0.05},
 };
 } // namespace
 

@@ -278,6 +278,12 @@ QVariantList FileBrowser::rowsOf(const QVariantList &rows) const
                          {QStringLiteral("album"), row.value(QStringLiteral("album"))},
                          {QStringLiteral("title"), row.value(QStringLiteral("title"))},
                          {QStringLiteral("fingerprint"), row.value(QStringLiteral("fingerprint"))}};
+        // When the track was last played, when the index knows: the column that marks a track as "played
+        // recently" is decided on the row, against the window the engine publishes (DJP-MEDIA-004).
+        const QVariant played = row.value(QStringLiteral("last_played_ms"));
+        if (!played.isNull()) {
+            made.insert(QStringLiteral("last_played_ms"), played);
+        }
         const double bpm = row.value(QStringLiteral("bpm")).toDouble();
         if (bpm > 0.0) {
             made.insert(QStringLiteral("bpm"), bpm);
@@ -508,6 +514,12 @@ void FileBrowser::takePage()
                          {QStringLiteral("album"), row.value(QStringLiteral("album"))},
                          {QStringLiteral("title"), row.value(QStringLiteral("title"))},
                          {QStringLiteral("fingerprint"), row.value(QStringLiteral("fingerprint"))}};
+        // When the track was last played, when the index knows: the column that marks a track as "played
+        // recently" is decided on the row, against the window the engine publishes (DJP-MEDIA-004).
+        const QVariant played = row.value(QStringLiteral("last_played_ms"));
+        if (!played.isNull()) {
+            made.insert(QStringLiteral("last_played_ms"), played);
+        }
         // The tempo and the key the index holds: the table reads `bpm` and `key`, and a page that
         // carried only names would show empty cells for tracks the deck plays with both known.
         const double bpm = row.value(QStringLiteral("bpm")).toDouble();

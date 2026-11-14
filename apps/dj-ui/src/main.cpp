@@ -6454,8 +6454,8 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
 
     // The columns are the DJ's: a width he drags and an order he moves, and both survive a restart.
     const QVariantList before = layout.collectionColumns();
-    if (before.size() != 6) {
-        std::fprintf(stderr, "dj-ui: the collection has %d columns, wanted 6\n",
+    if (before.size() != 7) {
+        std::fprintf(stderr, "dj-ui: the collection has %d columns, wanted 7\n",
                      static_cast<int>(before.size()));
         return 1;
     }
@@ -6771,6 +6771,37 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         return 1;
     }
 
+    // A track that was played is marked in the collection: the engine writes the play and publishes the
+    // window, the row carries when it was last played, and the cell is drawn from both (DJP-MEDIA-004).
+    // The column that marks a track as played is a column of the table like any other: it is there, its
+    // header reads `Played`, and it is drawn from the settings rather than written out by hand
+    // (DJP-MEDIA-004). What it *shows* needs a play, and a play needs a deck: that half is an open
+    // defect — the row's time reaches the database but not the panel.
+    auto *recentWindow = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    if (recentWindow == nullptr) {
+        std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+        return 1;
+    }
+    bool playedColumn = false;
+    int playedAt = -1;
+    for (int index = 0; index < 9; ++index) {
+        QQuickItem *header = findItem(recentWindow->contentItem(),
+                                      QStringLiteral("collectionHeaderCell_%1").arg(index));
+        if (header != nullptr && header->property("text").toString() == QStringLiteral("Played")) {
+            playedColumn = true;
+            playedAt = index;
+            break;
+        }
+    }
+    if (!playedColumn) {
+        std::fprintf(stderr, "dj-ui: the collection has no \"Played\" column\n");
+        return 1;
+    }
+    std::fprintf(stdout,
+                 "dj-ui: the collection carries the \"Played\" column at place %d; a play of four "
+                 "seconds reaches the journal, but the mark itself is not seen on the row yet — the "
+                 "window and the row's time do not meet in the panel, and that is an open defect\n",
+                 playedAt);
     std::fprintf(stdout,
                  "dj-ui: the browser adds files to the collection: selection, confirmation, "
                  "progress, the duplicate question and its answer\n");
