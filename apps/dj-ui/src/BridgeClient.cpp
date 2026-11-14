@@ -469,6 +469,59 @@ void FileBrowser::loadMore()
     askPage(m_pageOffset);
 }
 
+namespace {
+
+/// A row of a collection page as the list draws it.
+///
+/// One shape for the collection and for a playlist (DJP-MEDIA-004): the table that draws the first
+/// draws the second, with the same cells, the same tempo and the same key — a second delegate would be
+/// a second list to keep in step.
+QVariantMap rowFromPage(const QVariantMap &row)
+{
+    const QString path = row.value(QStringLiteral("path")).toString();
+    const double frames = row.value(QStringLiteral("duration_frames")).toDouble();
+    const double rate = row.value(QStringLiteral("sample_rate")).toDouble();
+    QVariantMap made{{QStringLiteral("name"), QFileInfo(path).completeBaseName()},
+                     {QStringLiteral("path"), path},
+                     {QStringLiteral("dir"), false},
+                     {QStringLiteral("artist"), row.value(QStringLiteral("artist"))},
+                     {QStringLiteral("album"), row.value(QStringLiteral("album"))},
+                     {QStringLiteral("title"), row.value(QStringLiteral("title"))},
+                     {QStringLiteral("fingerprint"), row.value(QStringLiteral("fingerprint"))}};
+    // When the track was last played, when the index knows: the column that marks a track as "played
+    // recently" is decided on the row, against the window the engine publishes (DJP-MEDIA-004).
+    const QVariant played = row.value(QStringLiteral("last_played_ms"));
+    if (!played.isNull()) {
+        made.insert(QStringLiteral("last_played_ms"), played);
+    }
+    // The tempo and the key the index holds: the table reads `bpm` and `key`, and a page that carried
+    // only names would show empty cells for tracks the deck plays with both known.
+    const double bpm = row.value(QStringLiteral("bpm")).toDouble();
+    if (bpm > 0.0) {
+        made.insert(QStringLiteral("bpm"), bpm);
+    }
+    const QString musicalKey = row.value(QStringLiteral("musical_key")).toString();
+    if (!musicalKey.isEmpty()) {
+        made.insert(QStringLiteral("key"), musicalKey);
+    }
+    made.insert(QStringLiteral("duration_ms"),
+                rate > 0.0 && frames > 0.0
+                    ? static_cast<qint64>(frames * 1000.0 / rate + 0.5)
+                    : 0);
+    QStringList genres;
+    const QString names = row.value(QStringLiteral("genre")).toString();
+    for (const QString &genre : names.split(QStringLiteral(", "), Qt::SkipEmptyParts)) {
+        genres.append(genre.trimmed());
+    }
+    made.insert(QStringLiteral("genres"), genres);
+    // The list draws a lock beside the number when this track's grid is locked.
+    made.insert(QStringLiteral("analysis_lock"),
+                row.value(QStringLiteral("analysis_lock")).toBool());
+    return made;
+}
+
+} // namespace
+
 void FileBrowser::takePage()
 {
     if (m_bridge == nullptr || m_mode != QLatin1String("collection")) {
@@ -503,47 +556,7 @@ void FileBrowser::takePage()
     }
     QVariantList tracks;
     for (const QVariant &entry : rows) {
-        const QVariantMap row = entry.toMap();
-        const QString path = row.value(QStringLiteral("path")).toString();
-        const double frames = row.value(QStringLiteral("duration_frames")).toDouble();
-        const double rate = row.value(QStringLiteral("sample_rate")).toDouble();
-        QVariantMap made{{QStringLiteral("name"), QFileInfo(path).completeBaseName()},
-                         {QStringLiteral("path"), path},
-                         {QStringLiteral("dir"), false},
-                         {QStringLiteral("artist"), row.value(QStringLiteral("artist"))},
-                         {QStringLiteral("album"), row.value(QStringLiteral("album"))},
-                         {QStringLiteral("title"), row.value(QStringLiteral("title"))},
-                         {QStringLiteral("fingerprint"), row.value(QStringLiteral("fingerprint"))}};
-        // When the track was last played, when the index knows: the column that marks a track as "played
-        // recently" is decided on the row, against the window the engine publishes (DJP-MEDIA-004).
-        const QVariant played = row.value(QStringLiteral("last_played_ms"));
-        if (!played.isNull()) {
-            made.insert(QStringLiteral("last_played_ms"), played);
-        }
-        // The tempo and the key the index holds: the table reads `bpm` and `key`, and a page that
-        // carried only names would show empty cells for tracks the deck plays with both known.
-        const double bpm = row.value(QStringLiteral("bpm")).toDouble();
-        if (bpm > 0.0) {
-            made.insert(QStringLiteral("bpm"), bpm);
-        }
-        const QString musicalKey = row.value(QStringLiteral("musical_key")).toString();
-        if (!musicalKey.isEmpty()) {
-            made.insert(QStringLiteral("key"), musicalKey);
-        }
-        made.insert(QStringLiteral("duration_ms"),
-                    rate > 0.0 && frames > 0.0
-                        ? static_cast<qint64>(frames * 1000.0 / rate + 0.5)
-                        : 0);
-        QStringList genres;
-        const QString names = row.value(QStringLiteral("genre")).toString();
-        for (const QString &genre : names.split(QStringLiteral(", "), Qt::SkipEmptyParts)) {
-            genres.append(genre.trimmed());
-        }
-        made.insert(QStringLiteral("genres"), genres);
-        // The list draws a lock beside the number when this track's grid is locked.
-        made.insert(QStringLiteral("analysis_lock"),
-                    row.value(QStringLiteral("analysis_lock")).toBool());
-        tracks.append(made);
+        tracks.append(rowFromPage(entry.toMap()));
     }
     // Replacing or appending, the DJ's place stays: a cursor that jumps to the top on every batch is a
     // cursor he has to find again by hand.
@@ -602,6 +615,7 @@ void FileBrowser::attachBridge(BridgeClient *bridge)
     if (bridge != nullptr) {
         connect(bridge, &BridgeClient::snapshotChanged, this, &FileBrowser::takePage);
         connect(bridge, &BridgeClient::snapshotChanged, this, &FileBrowser::takeGenres);
+        connect(bridge, &BridgeClient::snapshotChanged, this, &FileBrowser::takePlaylists);
         // The section can be chosen before the handshake finishes — the shell opens on Files, but a DJ who
         // clicks Collection at once would get a list that never asked anything and never fills. When the
         // engine comes up, the open collection asks again.
@@ -614,6 +628,294 @@ void FileBrowser::attachBridge(BridgeClient *bridge)
             }
         });
     }
+}
+
+void FileBrowser::takePlaylists()
+{
+    if (m_bridge == nullptr) {
+        return;
+    }
+    // The tree, as the owner asked for it: `All` first, with every playlist flat under it, then the
+    // folders, each with its own playlists. A playlist inside a folder is therefore reachable twice — by
+    // the flat view and by its folder — and both open the same playlist.
+    const QVariantMap tree = m_bridge->playlistTree();
+    const QVariantList folders = tree.value(QStringLiteral("folders")).toList();
+    const QVariantList playlists = tree.value(QStringLiteral("playlists")).toList();
+    QVariantList flat;
+    auto leaf = [](const QVariantMap &playlist, int depth) {
+        QVariantMap row = playlist;
+        row.insert(QStringLiteral("kind"), QStringLiteral("playlist"));
+        row.insert(QStringLiteral("depth"), depth);
+        return row;
+    };
+    auto node = [](const QString &kind, const QString &name, const QString &folder, int depth) {
+        QVariantMap row;
+        row.insert(QStringLiteral("kind"), kind);
+        row.insert(QStringLiteral("name"), name);
+        row.insert(QStringLiteral("folder"), folder);
+        row.insert(QStringLiteral("id"), static_cast<qlonglong>(0));
+        row.insert(QStringLiteral("depth"), depth);
+        row.insert(QStringLiteral("tracks"), 0);
+        return row;
+    };
+    flat.append(node(QStringLiteral("all"), QStringLiteral("All"), QString(), 0));
+    for (const QVariant &item : playlists) {
+        flat.append(leaf(item.toMap(), 1));
+    }
+    for (const QVariant &folder : folders) {
+        const QString path = folder.toString();
+        flat.append(node(QStringLiteral("folder"), path.section(QLatin1Char('/'), -1), path, 0));
+        for (const QVariant &item : playlists) {
+            const QVariantMap found = item.toMap();
+            if (found.value(QStringLiteral("folder")).toString() == path) {
+                flat.append(leaf(found, 1));
+            }
+        }
+    }
+    if (flat != m_playlistTree) {
+        m_playlistTree = flat;
+        emit playlistsChanged();
+        // A playlist that was renamed or emptied says the old thing until it is asked again.
+        if (m_mode == QLatin1String("playlists") && m_playlistId != 0) {
+            askPlaylistPage();
+        }
+    }
+
+    const QVariantMap page = m_bridge->playlistPage();
+    if (page.isEmpty() || page.value(QStringLiteral("id")).toULongLong() != m_playlistQuestion) {
+        return;
+    }
+    QVariantList tracks;
+    for (const QVariant &entry : page.value(QStringLiteral("rows")).toList()) {
+        tracks.append(rowFromPage(entry.toMap()));
+    }
+    const int total = page.value(QStringLiteral("total")).toInt();
+    if (tracks != m_playlistRows || total != m_playlistTotal) {
+        m_playlistRows = tracks;
+        m_playlistTotal = total;
+        emit playlistPageChanged();
+    }
+}
+
+void FileBrowser::askPlaylistPage()
+{
+    if (m_bridge == nullptr) {
+        return;
+    }
+    ++m_playlistQuestion;
+    QVariantMap query;
+    query.insert(QStringLiteral("id"), static_cast<qulonglong>(m_playlistQuestion));
+    query.insert(QStringLiteral("playlist"), static_cast<qlonglong>(m_playlistId));
+    if (!m_filter.trimmed().isEmpty()) {
+        query.insert(QStringLiteral("search"), m_filter.trimmed());
+    }
+    // One wide page: a set is a few dozen rows, and a list that pages under the DJ's hands mid-set is
+    // worse than a long one.
+    query.insert(QStringLiteral("limit"), 5000);
+    m_bridge->queryPlaylist(query);
+}
+
+void FileBrowser::showPlaylists()
+{
+    m_mode = QStringLiteral("playlists");
+    emit changed();
+    if (m_playlistName.isEmpty()) {
+        m_playlistName = QStringLiteral("All");
+    }
+    askPlaylistPage();
+}
+
+void FileBrowser::openPlaylist(qint64 id, const QString &name)
+{
+    if (m_playlistId == id && m_playlistName == name) {
+        return;
+    }
+    m_playlistId = id;
+    m_playlistName = name;
+    m_playlistRows.clear();
+    m_playlistTotal = 0;
+    emit playlistPageChanged();
+    emit playlistChanged();
+    // `All` and a folder are places in the tree, not playlists: the right side is for tracks, and there
+    // are none until the DJ picks a playlist.
+    if (id != 0) {
+        askPlaylistPage();
+    }
+}
+
+void FileBrowser::refreshPlaylist()
+{
+    if (m_playlistId != 0) {
+        askPlaylistPage();
+    }
+}
+
+void FileBrowser::playlistCreate(const QString &name, const QString &folder)
+{
+    if (m_bridge == nullptr) {
+        return;
+    }
+    QVariantMap create;
+    create.insert(QStringLiteral("name"), name);
+    create.insert(QStringLiteral("folder"), folder);
+    QVariantMap op;
+    op.insert(QStringLiteral("Create"), create);
+    m_bridge->editPlaylists(op);
+}
+
+void FileBrowser::playlistRename(qint64 id, const QString &name)
+{
+    if (m_bridge == nullptr) {
+        return;
+    }
+    QVariantMap rename;
+    rename.insert(QStringLiteral("playlist"), static_cast<qlonglong>(id));
+    rename.insert(QStringLiteral("name"), name);
+    QVariantMap op;
+    op.insert(QStringLiteral("Rename"), rename);
+    m_bridge->editPlaylists(op);
+    if (m_playlistId == id) {
+        m_playlistName = name;
+        emit playlistChanged();
+    }
+}
+
+void FileBrowser::playlistDelete(qint64 id)
+{
+    if (m_bridge == nullptr) {
+        return;
+    }
+    QVariantMap remove;
+    remove.insert(QStringLiteral("playlist"), static_cast<qlonglong>(id));
+    QVariantMap op;
+    op.insert(QStringLiteral("Delete"), remove);
+    m_bridge->editPlaylists(op);
+    if (m_playlistId == id) {
+        openPlaylist(0, QStringLiteral("All"));
+    }
+}
+
+void FileBrowser::playlistMove(qint64 id, const QString &folder)
+{
+    if (m_bridge == nullptr) {
+        return;
+    }
+    QVariantMap move;
+    move.insert(QStringLiteral("playlist"), static_cast<qlonglong>(id));
+    move.insert(QStringLiteral("folder"), folder);
+    QVariantMap op;
+    op.insert(QStringLiteral("Move"), move);
+    m_bridge->editPlaylists(op);
+}
+
+QVariantList FileBrowser::trackRows(const QStringList &paths) const
+{
+    QVariantList rows;
+    for (const QString &path : paths) {
+        for (const QVariant &entry : m_all) {
+            const QVariantMap row = entry.toMap();
+            if (row.value(QStringLiteral("path")).toString() != path) {
+                continue;
+            }
+            const QString fingerprint = row.value(QStringLiteral("fingerprint")).toString();
+            if (fingerprint.isEmpty()) {
+                continue;
+            }
+            rows.append(QVariantMap{{QStringLiteral("fingerprint"), fingerprint},
+                                    {QStringLiteral("path"), path}});
+            break;
+        }
+    }
+    return rows;
+}
+
+void FileBrowser::playlistAddTracks(const QVariantList &tracks)
+{
+    if (m_bridge == nullptr || m_playlistId == 0) {
+        return;
+    }
+    QVariantMap add;
+    add.insert(QStringLiteral("playlist"), static_cast<qlonglong>(m_playlistId));
+    add.insert(QStringLiteral("tracks"), tracks);
+    QVariantMap op;
+    op.insert(QStringLiteral("AddTracks"), add);
+    m_bridge->editPlaylists(op);
+}
+
+void FileBrowser::playlistRemoveRows(const QVariantList &positions)
+{
+    if (m_bridge == nullptr || m_playlistId == 0 || positions.isEmpty()) {
+        return;
+    }
+    QVariantMap drop;
+    drop.insert(QStringLiteral("playlist"), static_cast<qlonglong>(m_playlistId));
+    drop.insert(QStringLiteral("positions"), positions);
+    QVariantMap op;
+    op.insert(QStringLiteral("RemoveRows"), drop);
+    m_bridge->editPlaylists(op);
+}
+
+void FileBrowser::playlistReorder(int from, int to)
+{
+    if (m_bridge == nullptr || m_playlistId == 0 || from < 0 || to < 0 || from == to) {
+        return;
+    }
+    QVariantMap reorder;
+    reorder.insert(QStringLiteral("playlist"), static_cast<qlonglong>(m_playlistId));
+    reorder.insert(QStringLiteral("from"), from);
+    reorder.insert(QStringLiteral("to"), to);
+    QVariantMap op;
+    op.insert(QStringLiteral("Reorder"), reorder);
+    m_bridge->editPlaylists(op);
+}
+
+void FileBrowser::playlistRemoveDuplicates()
+{
+    if (m_bridge == nullptr || m_playlistId == 0) {
+        return;
+    }
+    QVariantMap dups;
+    dups.insert(QStringLiteral("playlist"), static_cast<qlonglong>(m_playlistId));
+    QVariantMap op;
+    op.insert(QStringLiteral("RemoveDuplicates"), dups);
+    m_bridge->editPlaylists(op);
+}
+
+void FileBrowser::playlistFolderCreate(const QString &path)
+{
+    if (m_bridge == nullptr || path.trimmed().isEmpty()) {
+        return;
+    }
+    QVariantMap folder;
+    folder.insert(QStringLiteral("path"), path.trimmed());
+    QVariantMap op;
+    op.insert(QStringLiteral("FolderCreate"), folder);
+    m_bridge->editPlaylists(op);
+}
+
+void FileBrowser::playlistFolderRename(const QString &from, const QString &to)
+{
+    if (m_bridge == nullptr || from.trimmed().isEmpty() || to.trimmed().isEmpty()) {
+        return;
+    }
+    QVariantMap folder;
+    folder.insert(QStringLiteral("from"), from.trimmed());
+    folder.insert(QStringLiteral("to"), to.trimmed());
+    QVariantMap op;
+    op.insert(QStringLiteral("FolderRename"), folder);
+    m_bridge->editPlaylists(op);
+}
+
+void FileBrowser::playlistFolderDelete(const QString &path)
+{
+    if (m_bridge == nullptr || path.trimmed().isEmpty()) {
+        return;
+    }
+    QVariantMap folder;
+    folder.insert(QStringLiteral("path"), path.trimmed());
+    QVariantMap op;
+    op.insert(QStringLiteral("FolderDelete"), folder);
+    m_bridge->editPlaylists(op);
 }
 
 void FileBrowser::showFiles()
@@ -748,6 +1050,11 @@ void FileBrowser::setFilter(const QString &text)
     if (m_paged) {
         askPage(0);
     }
+    // A playlist is narrowed in the index too: the search never grows the list it came from, and a
+    // playlist the DJ filtered is not the whole playlist.
+    if (m_mode == QLatin1String("playlists") && m_playlistId != 0) {
+        askPlaylistPage();
+    }
 }
 
 int BridgeClient::queryCollection(const QVariantMap &query)
@@ -760,6 +1067,42 @@ int BridgeClient::queryCollection(const QVariantMap &query)
     QJsonObject command;
     command.insert(QStringLiteral("QueryCollection"), body);
     return sendCommand(QString(), command);
+}
+
+int BridgeClient::queryPlaylist(const QVariantMap &query)
+{
+    QJsonObject body;
+    body.insert(QStringLiteral("query"), QJsonObject::fromVariantMap(query));
+    QJsonObject command;
+    command.insert(QStringLiteral("QueryPlaylist"), body);
+    return sendCommand(QString(), command);
+}
+
+int BridgeClient::editPlaylists(const QVariantMap &op)
+{
+    QJsonObject body;
+    body.insert(QStringLiteral("op"), QJsonObject::fromVariantMap(op));
+    QJsonObject command;
+    command.insert(QStringLiteral("Playlists"), body);
+    return sendCommand(QString(), command);
+}
+
+QVariantMap BridgeClient::playlistTree() const
+{
+    const QVariant value = m_snapshot.value(QStringLiteral("playlists"));
+    if (!value.isValid() || value.isNull()) {
+        return QVariantMap();
+    }
+    return value.toMap();
+}
+
+QVariantMap BridgeClient::playlistPage() const
+{
+    const QVariant value = m_snapshot.value(QStringLiteral("playlist_page"));
+    if (!value.isValid() || value.isNull()) {
+        return QVariantMap();
+    }
+    return value.toMap();
 }
 
 QVariantMap BridgeClient::collectionPage() const

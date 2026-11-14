@@ -28,11 +28,82 @@ Pane {
     property int pendingTicks: 0
     // Which section the list is showing. The browser object holds the mode; this is its name, so the
     // rail can light the row the list belongs to instead of guessing.
-    readonly property string section: Browser.mode === "collection" ? "collection" : "files"
+    readonly property string section: Browser.mode === "playlists" ? "playlists"
+                                      : (Browser.mode === "collection" ? "collection" : "files")
+
+    // Where the playlist tree stands: `all`, or a folder, or the playlist the DJ opened. `All` and a
+    // folder are places, not playlists — the right side of the panel is for tracks (owner's decision,
+    // 14.11.2026) — and the place is remembered so the tree can light it.
+    property string playlistPlace: "all"
+    property string playlistPlaceName: ""
+    // The name a dialog is asking for, and what it will do with it when the DJ says yes.
+    property string askedName: ""
+    property string askedWhat: ""
 
     // The rows the DJ picked: a list of paths, so a folder and a file can travel to the collection
     // together. Ctrl toggles one, Shift takes the run between the anchor and the click.
     property var selection: []
+
+    // A click in the tree: `All` and a folder are places to stand in, a playlist opens its tracks.
+    function openTreeRow(row) {
+        browser.selection = [];
+        if (row.kind === "playlist") {
+            browser.playlistPlace = "";
+            browser.playlistPlaceName = "";
+            Browser.openPlaylist(row.id, row.name);
+            browser.lastAction = "playlist " + row.name;
+            return true;
+        }
+        browser.playlistPlace = row.kind;
+        browser.playlistPlaceName = row.kind === "folder" ? row.folder : "";
+        Browser.openPlaylist(0, row.kind === "all" ? "All" : row.name);
+        browser.lastAction = row.kind + " " + row.name;
+        return true;
+    }
+
+    // The places a chosen row sits in the open playlist: a playlist may hold a track twice, so the place
+    // is what is removed, not the track.
+    function playlistPositions() {
+        const positions = [];
+        const rows = Browser.playlistRows;
+        for (let index = 0; index < rows.length; ++index) {
+            if (browser.isChosen(rows[index].path)) {
+                positions.push(index);
+            }
+        }
+        return positions;
+    }
+
+    // Ask for a name before doing the thing: a playlist made by accident is a playlist the DJ has to find
+    // and delete, and a name he cannot see is a name he cannot check.
+    function askName(what, current) {
+        browser.askedWhat = what;
+        browser.askedName = current;
+        askNameField.text = current;
+        askNameDialog.open();
+    }
+
+    function applyAskedName() {
+        const name = askNameField.text.trim();
+        if (name.length > 0) {
+            const folder = browser.playlistPlace === "folder" ? browser.playlistPlaceName : "";
+            if (browser.askedWhat === "new-playlist") {
+                Browser.playlistCreate(name, folder);
+                browser.lastAction = "playlist " + name + " created";
+            } else if (browser.askedWhat === "new-folder") {
+                Browser.playlistFolderCreate(folder.length > 0 ? folder + "/" + name : name);
+                browser.lastAction = "folder " + name + " created";
+            } else if (browser.askedWhat === "rename-playlist") {
+                Browser.playlistRename(playlistMenu.row === null ? 0 : playlistMenu.row.id, name);
+                browser.lastAction = "playlist renamed to " + name;
+            } else if (browser.askedWhat === "rename-folder") {
+                Browser.playlistFolderRename(browser.playlistPlaceName,
+                                             browser.playlistPlaceName + "/" + name);
+                browser.lastAction = "folder renamed to " + name;
+            }
+        }
+        askNameDialog.close();
+    }
     /// The face of the two lists: the system's fixed-pitch font at the size the browser is set to. The
     /// panel never names a family — asking the desktop for "the monospaced one" is the whole point.
     readonly property font listFace: Qt.font({
@@ -561,6 +632,11 @@ Pane {
             browser.lastAction = "collection " + Browser.folder;
             return true;
         }
+        if (key === "playlists") {
+            Browser.showPlaylists();
+            browser.lastAction = "playlists: " + Browser.playlistName;
+            return true;
+        }
         if (key === "files") {
             Browser.showFiles();
             browser.lastAction = "files " + Browser.folder;
@@ -601,6 +677,99 @@ Pane {
         return true;
     }
 
+    // What a playlist row offers: the edits of a playlist, and of the tracks inside it.
+    Menu {
+        id: playlistMenu
+        objectName: "playlistMenu"
+        property var row: null
+        property bool onPlaylist: row !== null && row.kind === "playlist"
+        property bool onFolder: row !== null && row.kind === "folder"
+        MenuItem {
+            objectName: "playlistNew"
+            text: qsTr("New playlist…")
+            onTriggered: browser.askName("new-playlist", "")
+        }
+        MenuItem {
+            objectName: "playlistNewFolder"
+            text: qsTr("New folder…")
+            onTriggered: browser.askName("new-folder", "")
+        }
+        MenuItem {
+            objectName: "playlistRename"
+            text: qsTr("Rename…")
+            enabled: playlistMenu.onPlaylist
+            onTriggered: browser.askName("rename-playlist", playlistMenu.row.name)
+        }
+        MenuItem {
+            objectName: "playlistDelete"
+            text: qsTr("Delete")
+            enabled: playlistMenu.onPlaylist
+            onTriggered: Browser.playlistDelete(playlistMenu.row.id)
+        }
+        MenuItem {
+            objectName: "playlistDeleteFolder"
+            text: qsTr("Delete folder")
+            // A folder goes; its playlists do not — they come back to the root, where nothing is lost.
+            enabled: playlistMenu.onFolder && playlistMenu.row.folder.length > 0
+            onTriggered: Browser.playlistFolderDelete(playlistMenu.row.folder)
+        }
+        MenuSeparator {}
+        MenuItem {
+            objectName: "playlistRemoveRows"
+            text: qsTr("Remove from playlist")
+            enabled: browser.playlistPositions().length > 0
+            onTriggered: Browser.playlistRemoveRows(browser.playlistPositions())
+        }
+        MenuItem {
+            objectName: "playlistRemoveDups"
+            text: qsTr("Remove dups")
+            // The owner asked for it by name: the repeats of a track go, the first of each stays.
+            enabled: Browser.playlistId !== 0
+            onTriggered: Browser.playlistRemoveDuplicates()
+        }
+        MenuItem {
+            objectName: "playlistMoveRoot"
+            text: qsTr("Move to the root")
+            enabled: playlistMenu.onPlaylist && playlistMenu.row.folder.length > 0
+            onTriggered: Browser.playlistMove(playlistMenu.row.id, "")
+        }
+    }
+
+    // The name dialog: one field, and the Enter key does what the button does.
+    Dialog {
+        id: askNameDialog
+        objectName: "askNameDialog"
+        modal: true
+        anchors.centerIn: parent
+        standardButtons: Dialog.NoButton
+        title: browser.askedWhat === "new-playlist" ? qsTr("New playlist")
+               : (browser.askedWhat === "new-folder" ? qsTr("New folder")
+                  : (browser.askedWhat === "rename-playlist" ? qsTr("Rename playlist")
+                     : qsTr("Rename folder")))
+        contentItem: ColumnLayout {
+            spacing: 8
+            TextField {
+                id: askNameField
+                objectName: "askNameField"
+                Layout.preferredWidth: 260
+                onAccepted: browser.applyAskedName()
+            }
+            RowLayout {
+                spacing: 8
+                Button {
+                    objectName: "askNameOk"
+                    text: qsTr("OK")
+                    onClicked: browser.applyAskedName()
+                }
+                Button {
+                    objectName: "askNameCancel"
+                    text: qsTr("Cancel")
+                    onClicked: askNameDialog.close()
+                }
+            }
+        }
+    }
+
     // The context menu: what a DJ does with the rows he picked. One entry today; the place is here
     // so the next one (analyse, reveal, remove) has somewhere to go.
     Menu {
@@ -613,6 +782,29 @@ Pane {
             // menu the DJ has to guess at. It acts in the file list, with something chosen.
             enabled: browser.section !== "collection" && browser.selection.length > 0
             onClicked: browser.askImport()
+        }
+        Menu {
+            id: addToPlaylistMenu
+            objectName: "addToPlaylistMenu"
+            title: qsTr("Add to playlist")
+            enabled: browser.selection.length > 0
+                     && (browser.section === "collection" || browser.section === "files")
+            // Built when it opens: a playlist made a minute ago must be in it, and the tree is the only
+            // list of playlists the panel has (DJP-MEDIA-004).
+            Instantiator {
+                model: Browser.playlistTree
+                delegate: MenuItem {
+                    required property var modelData
+                    visible: modelData.kind === "playlist"
+                    objectName: "addToPlaylist_" + modelData.id
+                    text: qsTr("Add %1 selected to %2")
+                          .arg(browser.selection.length).arg(modelData.name)
+                    onTriggered: Browser.playlistAddTracks(
+                                     Browser.trackRows(browser.selection))
+                }
+                onObjectAdded: (index, object) => addToPlaylistMenu.insertItem(index, object)
+                onObjectRemoved: (index, object) => addToPlaylistMenu.removeItem(object)
+            }
         }
         MenuEntry {
             objectName: "rescanCollection"
@@ -1112,7 +1304,7 @@ Pane {
                 ListElement {
                     key: "playlists"
                     title: "Playlists"
-                    ready: false
+                    ready: true
                 }
             }
             Repeater {
@@ -1520,13 +1712,113 @@ Pane {
                 }
             }
 
+            // The playlist tree (DJP-MEDIA-004): `All` first with every playlist flat under it, then the
+            // folders, each with its own. A folder is a place to drop a playlist on; a playlist opens the
+            // tracks on the right. The tree stands only in the playlists section.
+            Rectangle {
+                id: playlistTree
+                objectName: "playlistTree"
+                Layout.fillHeight: true
+                Layout.preferredWidth: Math.round(browser.listFont * 14)
+                visible: Browser.inPlaylists
+                color: UiSettings.themePanel
+                clip: true
+
+                ListView {
+                    id: treeList
+                    objectName: "playlistTreeList"
+                    anchors.fill: parent
+                    anchors.margins: 2
+                    clip: true
+                    model: Browser.playlistTree
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                    currentIndex: -1
+
+                    delegate: Rectangle {
+                        id: treeRow
+                        required property var modelData
+                        required property int index
+                        width: treeList.width
+                        height: browser.rowHeight
+                        readonly property int depth: treeRow.modelData.depth === undefined
+                                                      ? 0 : treeRow.modelData.depth
+                        readonly property bool chosen: Browser.playlistId === treeRow.modelData.id
+                                                       && treeRow.modelData.kind === "playlist"
+                        readonly property bool place: treeRow.modelData.kind !== "playlist"
+                                                      && Browser.playlistId === 0
+                                                      && browser.playlistPlace === treeRow.modelData.kind
+                                                      && browser.playlistPlaceName === treeRow.modelData.folder
+                        color: treeRow.chosen || treeRow.place
+                               ? UiSettings.themeAccent
+                               : (treeRow.index % 2 === 0 ? UiSettings.themePanel
+                                                          : UiSettings.themeBackground)
+
+                        Label {
+                            objectName: "playlistTreeRow_" + treeRow.index
+                            x: 6 + treeRow.depth * 14
+                            width: parent.width - 10 - treeRow.depth * 14
+                            anchors.verticalCenter: parent.verticalCenter
+                            elide: Text.ElideRight
+                            font: browser.listFace
+                            color: treeRow.chosen || treeRow.place ? UiSettings.themeBackground
+                                                                   : UiSettings.themeText
+                            text: treeRow.modelData.kind === "folder"
+                                  ? "\uD83D\uDCC1 " + treeRow.modelData.name
+                                  : (treeRow.modelData.kind === "all"
+                                     ? treeRow.modelData.name
+                                     : treeRow.modelData.name
+                                       + (treeRow.modelData.tracks > 0
+                                          ? "  (" + treeRow.modelData.tracks + ")" : ""))
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            acceptedButtons: Qt.LeftButton | Qt.RightButton
+                            onClicked: function (mouse) {
+                                if (mouse.button === Qt.RightButton) {
+                                    playlistMenu.row = treeRow.modelData;
+                                    playlistMenu.popup();
+                                    return;
+                                }
+                                browser.openTreeRow(treeRow.modelData);
+                            }
+                        }
+
+                        // A playlist is dragged onto a folder to move it: the folder becomes its place.
+                        Drag.active: treeRow.modelData.kind === "playlist" && treeDrag.active
+                        Drag.source: treeRow
+                        Drag.hotSpot.x: width / 2
+                        Drag.hotSpot.y: height / 2
+                        DragHandler {
+                            id: treeDrag
+                            target: null
+                            enabled: treeRow.modelData.kind === "playlist"
+                        }
+                        DropArea {
+                            anchors.fill: parent
+                            enabled: treeRow.modelData.kind === "folder"
+                            onDropped: function (drop) {
+                                if (drop.source && drop.source.modelData
+                                    && drop.source.modelData.kind === "playlist") {
+                                    Browser.playlistMove(drop.source.modelData.id,
+                                                         treeRow.modelData.folder);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             ListView {
                 id: list
                 objectName: "browserList"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 clip: true
-                model: Browser.entries
+                // In the playlists section the list on the right is one playlist's tracks, in the DJ's
+                // order; in the others it is the collection or the folder he walked to.
+                model: Browser.inPlaylists ? Browser.playlistRows : Browser.entries
                 boundsBehavior: Flickable.StopAtBounds
                 // The list stays one continuous thing: when its end comes into view, the next batch of
                 // the index is asked for and appended — no pages, no seams.
@@ -1591,12 +1883,37 @@ Pane {
                                                      : (row.index % 2 === 0 ? UiSettings.themePanel
                                                                             : UiSettings.themeBackground))
 
+                    // In a playlist a row is dragged to another place in the same list: the order of a
+                    // playlist is the DJ's, and a drag is how he changes it (DJP-MEDIA-004). In the
+                    // collection the same press does nothing — that list is the index's order, not his.
+                    Drag.active: Browser.inPlaylists && rowDrag.active
+                    Drag.source: row
+                    Drag.hotSpot.x: width / 2
+                    Drag.hotSpot.y: height / 2
+                    DragHandler {
+                        id: rowDrag
+                        target: null
+                        enabled: Browser.inPlaylists
+                    }
+                    DropArea {
+                        id: rowDrop
+                        anchors.fill: parent
+                        enabled: Browser.inPlaylists && !rowDrag.active
+                        onDropped: function (drop) {
+                            if (drop.source && drop.source.index !== undefined
+                                && drop.source.index !== row.index) {
+                                Browser.playlistReorder(drop.source.index, row.index);
+                            }
+                        }
+                    }
+
                     // A collection row is about the track, not about the file: artist, album, title,
                     // how long it plays, its tempo and its key. The file name says none of that.
                     Item {
                         objectName: "collectionRow_" + row.index
                         anchors.fill: parent
-                        visible: browser.section === "collection" && !row.isFolder
+                        visible: (browser.section === "collection" || Browser.inPlaylists)
+                                 && !row.isFolder
 
                         Label {
                             objectName: "collectionCell_number_" + row.index
@@ -1738,7 +2055,14 @@ Pane {
                                 if (!row.chosen) {
                                     browser.choose(row.index, Qt.NoModifier);
                                 }
-                                fileMenu.popup();
+                                // A right click in a playlist is about the playlist: the menu that offers
+                                // Remove dups and Rename is the one that belongs there.
+                                if (Browser.inPlaylists) {
+                                    playlistMenu.row = {kind: "playlist"};
+                                    playlistMenu.popup();
+                                } else {
+                                    fileMenu.popup();
+                                }
                                 return;
                             }
                             browser.choose(row.index, mouse.modifiers);

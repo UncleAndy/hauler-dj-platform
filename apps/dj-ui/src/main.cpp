@@ -6818,6 +6818,282 @@ static int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
 /// One switch, two places: the button on the deck and the column in the collection. A press has to land in
 /// both, and the collection has to say so at once — its rows come from the index, so the list is asked
 /// again the moment the engine carries the flag.
+// The playlists, from the DJ's side (DJP-MEDIA-004): a playlist is made, tracks are added, a row is
+// dragged, the repeats go, the name changes, the playlist moves out of its folder and is deleted — and
+// each step is checked twice: in the tree the panel draws, and in the mirror file on disk. The database is
+// what a session works from; the file is what survives it, and a check that saw only one of them would
+// miss the half that fails.
+static int runPlaylistCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient &bridge,
+                            const QString &fixture, const QString &secondFixture,
+                            const QString &collectionRoot)
+{
+    if (fixture.isEmpty() || !QFile::exists(fixture) || secondFixture.isEmpty()
+        || !QFile::exists(secondFixture) || collectionRoot.isEmpty()) {
+        std::fprintf(stderr,
+                     "dj-ui: --playlist-check needs --import-fixture, a second fixture and "
+                     "--collection-root\n");
+        return 1;
+    }
+    QDir root(collectionRoot);
+    if (!root.mkpath(QStringLiteral("."))) {
+        std::fprintf(stderr, "dj-ui: cannot make %s\n", qPrintable(collectionRoot));
+        return 1;
+    }
+    const QString first = root.filePath(QStringLiteral("Alpha - One.wav"));
+    const QString second = root.filePath(QStringLiteral("Beta - Two.flac"));
+    QFile::remove(first);
+    QFile::remove(second);
+    if (!QFile::copy(fixture, first) || !QFile::copy(secondFixture, second)) {
+        std::fprintf(stderr, "dj-ui: cannot place the two tracks\n");
+        return 1;
+    }
+
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().value(0));
+    if (window == nullptr) {
+        std::fprintf(stderr, "dj-ui: no shell window\n");
+        return 1;
+    }
+    auto *panel = findItem(window->contentItem(), QStringLiteral("browserPanel"));
+    if (panel == nullptr) {
+        std::fprintf(stderr, "dj-ui: the shell has no browser\n");
+        return 1;
+    }
+    const auto waitFor = [](const std::function<bool()> &ready, int budget) {
+        QElapsedTimer clock;
+        clock.start();
+        while (clock.elapsed() < budget) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            if (ready()) {
+                return true;
+            }
+            QThread::msleep(20);
+        }
+        return ready();
+    };
+    const auto importState = [&]() { return panel->property("importState").toMap(); };
+    const auto tree = [&]() { return browser.playlistTree(); };
+    const auto rows = [&]() { return browser.playlistRows(); };
+    const auto findPlaylist = [&](const QString &name) -> QVariantMap {
+        for (const QVariant &entry : tree()) {
+            const QVariantMap row = entry.toMap();
+            if (row.value(QStringLiteral("kind")).toString() == QStringLiteral("playlist")
+                && row.value(QStringLiteral("name")).toString() == name) {
+                return row;
+            }
+        }
+        return QVariantMap{};
+    };
+    const auto fingerprints = [&]() {
+        QStringList found;
+        for (const QVariant &entry : rows()) {
+            found.append(entry.toMap().value(QStringLiteral("fingerprint")).toString());
+        }
+        return found;
+    };
+    const auto playlistPath = [&](const QString &folder, const QString &name) {
+        QString data = qEnvironmentVariable("XDG_DATA_HOME");
+        if (data.isEmpty()) {
+            data = QDir::homePath() + QStringLiteral("/.local/share");
+        }
+        QDir mirror(data + QStringLiteral("/hauler-dj/playlists"));
+        return folder.isEmpty() ? mirror.filePath(name + QStringLiteral(".djplaylist.json"))
+                                : mirror.filePath(folder + QLatin1Char('/') + name
+                                                  + QStringLiteral(".djplaylist.json"));
+    };
+    int failures = 0;
+    const auto require = [&](bool held, const QString &what) {
+        if (!held) {
+            std::fprintf(stderr, "dj-ui: %s\n", qPrintable(what));
+            failures += 1;
+        }
+        return held;
+    };
+
+    // The tracks have to be in the index before a playlist can hold them: a playlist names a track by
+    // its fingerprint, and a fingerprint the collection never saw is a row nobody can play.
+    bridge.importPaths({first, second}, collectionRoot, false);
+    const bool imported = waitFor(
+        [&]() {
+            const QVariantMap state = importState();
+            return state.value(QStringLiteral("total")).toInt() >= 2
+                   && state.value(QStringLiteral("running")).toBool() == false;
+        },
+        30000);
+    if (!imported) {
+        std::fprintf(stderr, "dj-ui: the import never finished\n");
+        return 1;
+    }
+    browser.openCollection({collectionRoot});
+    if (!waitFor([&]() { return browser.entries().size() >= 2; }, 15000)) {
+        std::fprintf(stderr, "dj-ui: the collection did not list the two tracks\n");
+        return 1;
+    }
+    QString alpha;
+    QString beta;
+    QString alphaPrint;
+    QString betaPrint;
+    for (const QVariant &entry : browser.entries()) {
+        const QVariantMap row = entry.toMap();
+        const QString path = row.value(QStringLiteral("path")).toString();
+        if (path.endsWith(QStringLiteral("Alpha - One.wav"))) {
+            alpha = path;
+            alphaPrint = row.value(QStringLiteral("fingerprint")).toString();
+        } else if (path.endsWith(QStringLiteral("Beta - Two.flac"))) {
+            beta = path;
+            betaPrint = row.value(QStringLiteral("fingerprint")).toString();
+        }
+    }
+    if (alpha.isEmpty() || beta.isEmpty() || alphaPrint.isEmpty() || betaPrint.isEmpty()) {
+        std::fprintf(stderr, "dj-ui: the collection is missing one of the two tracks\n");
+        return 1;
+    }
+
+    // Before the section is chosen, the tree is not on the screen at all: a column of playlists in the
+    // collection's way would be a list the DJ has to work around.
+    auto *playlistTree = findItem(window->contentItem(), QStringLiteral("playlistTree"));
+    if (playlistTree == nullptr) {
+        std::fprintf(stderr, "dj-ui: the browser has no playlist tree\n");
+        return 1;
+    }
+    require(playlistTree->isVisible() == false, QStringLiteral("the tree stands in the collection"));
+
+    browser.showPlaylists();
+    if (!waitFor([&]() { return playlistTree->isVisible(); }, 5000)) {
+        std::fprintf(stderr, "dj-ui: the tree did not appear in the playlists section\n");
+        return 1;
+    }
+    if (!require(tree().size() >= 1
+                     && tree().first().toMap().value(QStringLiteral("kind")).toString()
+                            == QStringLiteral("all"),
+                 QStringLiteral("the tree does not start with All"))) {
+        return 1;
+    }
+
+    // One playlist, in a folder: the folder becomes a place of its own in the tree.
+    browser.playlistCreate(QStringLiteral("Warm up"), QStringLiteral("Sets"));
+    const bool made = waitFor([&]() { return !findPlaylist(QStringLiteral("Warm up")).isEmpty(); },
+                              10000);
+    if (!require(made, QStringLiteral("the playlist never appeared in the tree"))) {
+        return 1;
+    }
+    const QVariantMap warmUp = findPlaylist(QStringLiteral("Warm up"));
+    const qlonglong id = warmUp.value(QStringLiteral("id")).toLongLong();
+    require(playlistPath(QStringLiteral("Sets"), QStringLiteral("Warm up")).isEmpty() == false
+                && QFile::exists(playlistPath(QStringLiteral("Sets"), QStringLiteral("Warm up"))),
+            QStringLiteral("the playlist has no file in the mirror"));
+    bool folderRow = false;
+    for (const QVariant &entry : tree()) {
+        const QVariantMap row = entry.toMap();
+        if (row.value(QStringLiteral("kind")).toString() == QStringLiteral("folder")
+            && row.value(QStringLiteral("folder")).toString() == QStringLiteral("Sets")) {
+            folderRow = true;
+        }
+    }
+    require(folderRow, QStringLiteral("the folder did not become a row of the tree"));
+
+    // The tree is drawn by the panel, not only held in the object: the rows stand where the settings say
+    // (the list's row height) and a playlist inside a folder is indented by one step.
+    auto *firstTreeRow = findItem(window->contentItem(), QStringLiteral("playlistTreeRow_0"));
+    const int rowHeight = panel->property("rowHeight").toInt();
+    if (!waitFor([&]() { return firstTreeRow != nullptr && firstTreeRow->isVisible(); }, 5000)) {
+        std::fprintf(stderr, "dj-ui: the tree drew no rows\n");
+        return 1;
+    }
+    QQuickItem *indented = nullptr;
+    for (int index = 0; index < tree().size(); ++index) {
+        const QVariantMap row = tree().at(index).toMap();
+        if (row.value(QStringLiteral("depth")).toInt() == 1) {
+            indented = findItem(window->contentItem(),
+                                QStringLiteral("playlistTreeRow_%1").arg(index));
+            break;
+        }
+    }
+    if (indented == nullptr) {
+        std::fprintf(stderr, "dj-ui: the tree has no indented row\n");
+        return 1;
+    }
+    const double top = firstTreeRow->mapToScene(QPointF(0, 0)).y();
+    const double beneath = indented->mapToScene(QPointF(0, 0)).y();
+    const double inset = indented->property("x").toDouble();
+    require(std::abs(inset - 20.0) <= 0.5,
+            QStringLiteral("the indented row does not stand 20 px in (it stands %1)")
+                .arg(inset, 0, 'f', 1));
+    std::printf("dj-ui: the tree drew %d rows %.0f px tall, the first at y=%.0f and an indented one "
+                "%.1f px in\n",
+                static_cast<int>(tree().size()), top < 0 ? 0.0 : static_cast<double>(rowHeight), top,
+                inset);
+
+    // Tracks into the playlist: the panel adds them by fingerprint and path, and the list on the right
+    // becomes the playlist's own order.
+    browser.openPlaylist(id, QStringLiteral("Warm up"));
+    browser.playlistAddTracks(browser.trackRows({alpha, alpha, beta}));
+    const bool filled = waitFor([&]() { return fingerprints().size() == 3; }, 10000);
+    if (!require(filled, QStringLiteral("the playlist did not take three rows"))) {
+        return 1;
+    }
+    require(fingerprints().at(0) == alphaPrint && fingerprints().at(2) == betaPrint,
+            QStringLiteral("the playlist rows are not in the order they were added"));
+
+    // A duplicate is allowed (owner's decision), and Remove dups takes the repeats of a track, keeping the
+    // first of each.
+    browser.playlistRemoveDuplicates();
+    const bool fewer = waitFor(
+        [&]() { return fingerprints().size() == 2 && fingerprints().at(0) == alphaPrint
+                       && fingerprints().at(1) == betaPrint; },
+        10000);
+    require(fewer, QStringLiteral("Remove dups did not leave the first of each track"));
+
+    // A drag inside the playlist changes the order and nothing else.
+    browser.playlistReorder(1, 0);
+    const bool moved = waitFor(
+        [&]() { return fingerprints().size() == 2 && fingerprints().at(0) == betaPrint
+                       && fingerprints().at(1) == alphaPrint; },
+        10000);
+    require(moved, QStringLiteral("the drag did not move the row"));
+
+    // The search narrows the playlist in the index, and clearing it brings the rows back.
+    browser.setFilter(QStringLiteral("Alpha"));
+    require(waitFor([&]() { return fingerprints().size() == 1; }, 10000),
+            QStringLiteral("the search did not narrow the playlist"));
+    browser.setFilter(QString());
+    require(waitFor([&]() { return fingerprints().size() == 2; }, 10000),
+            QStringLiteral("clearing the search did not bring the rows back"));
+
+    // Rename: the tree and the mirror file follow the new name, and the old file is gone.
+    browser.playlistRename(id, QStringLiteral("Warm up two"));
+    const bool renamed =
+        waitFor([&]() { return !findPlaylist(QStringLiteral("Warm up two")).isEmpty(); }, 10000);
+    require(renamed, QStringLiteral("the rename did not reach the tree"));
+    require(QFile::exists(playlistPath(QStringLiteral("Sets"), QStringLiteral("Warm up two"))),
+            QStringLiteral("the renamed playlist has no file"));
+    require(!QFile::exists(playlistPath(QStringLiteral("Sets"), QStringLiteral("Warm up"))),
+            QStringLiteral("the old file of the playlist stayed behind"));
+
+    // Out of the folder: the file moves to the root of the mirror.
+    browser.playlistMove(id, QString());
+    const bool atRoot = waitFor(
+        [&]() {
+            return QFile::exists(playlistPath(QString(), QStringLiteral("Warm up two")));
+        },
+        10000);
+    require(atRoot, QStringLiteral("the playlist did not land at the root of the mirror"));
+
+    // And gone: the row leaves the tree and the file leaves the disk.
+    browser.playlistDelete(id);
+    const bool deleted = waitFor(
+        [&]() { return findPlaylist(QStringLiteral("Warm up two")).isEmpty(); }, 10000);
+    require(deleted, QStringLiteral("the playlist stayed in the tree after Delete"));
+    require(!QFile::exists(playlistPath(QString(), QStringLiteral("Warm up two"))),
+            QStringLiteral("the file of the deleted playlist stayed behind"));
+
+    if (failures > 0) {
+        return 1;
+    }
+    std::printf("dj-ui: the playlists hold from the panel to the mirror — made in a folder, three rows "
+                "added, dups removed, a row dragged, renamed, moved to the root and deleted\n");
+    return 0;
+}
+
 static int runLockCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient &bridge,
                         const QString &fixture, const QString &collectionRoot)
 {
@@ -8167,6 +8443,11 @@ int main(int argc, char *argv[])
                        "with a tap of Cue, set the point by holding the same button, scrub the "
                        "overview with the hand, and require the clock to show the time left rather "
                        "than the length."));
+    const QCommandLineOption playlistCheckOption(
+        QStringLiteral("playlist-check"),
+        QStringLiteral("With --connect, --import-fixture, a second fixture and --collection-root: make "
+                       "a playlist in a folder, add tracks, remove the dups, drag a row, rename, move "
+                       "and delete it, requiring the tree, the rows and the mirror file to agree."));
     const QCommandLineOption historyCheckOption(
         QStringLiteral("history-check"),
         QStringLiteral("With --connect and --load: play the deck below and above the engine's "
@@ -8352,6 +8633,7 @@ int main(int argc, char *argv[])
     parser.addOption(loopOption);
     parser.addOption(busyCheckOption);
     parser.addOption(historyCheckOption);
+    parser.addOption(playlistCheckOption);
     parser.addOption(refusalCheckOption);
     parser.addOption(spaceCheckOption);
     parser.addOption(wheelCheckOption);
@@ -13812,6 +14094,21 @@ int main(int argc, char *argv[])
         bridge->connectToEngine(parser.value(connectOption));
         return runLockCheck(engine, browser, *bridge, parser.value(importFixtureOption),
                             parser.values(collectionRootOption).value(0));
+    }
+
+    if (parser.isSet(playlistCheckOption)) {
+        // The playlists are the engine's index and the shell's panel at once: a check without an engine
+        // would test half of the chain and call it whole.
+        if (!parser.isSet(connectOption)) {
+            std::fprintf(stderr, "dj-ui: --playlist-check needs --connect\n");
+            return 1;
+        }
+        bridge->connectToEngine(parser.value(connectOption));
+        return runPlaylistCheck(
+            engine, browser, *bridge, parser.value(importFixtureOption),
+            parser.value(loadSecondOption).isEmpty() ? parser.value(importFixtureOption)
+                                                     : parser.value(loadSecondOption),
+            parser.values(collectionRootOption).value(0));
     }
 
     if (parser.isSet(sortCheckOption)) {

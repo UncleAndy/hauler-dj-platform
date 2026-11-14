@@ -24,6 +24,7 @@ use dj_sync::{DeckClock, Phase, PitchLimits, RateTrim, Reading, SyncMode, plan a
 pub mod history;
 pub mod meta;
 pub mod metronome;
+pub mod playlists;
 pub mod plays;
 
 /// What a pad carries besides its frame: a name and a colour, each optional.
@@ -382,6 +383,8 @@ pub fn snapshot(
     let mut published_decks: Vec<DeckSnapshot> = decks.iter().map(Deck::snapshot).collect();
     fill_phase_errors(&mut published_decks, beats_per_bar(decks));
     Snapshot {
+        playlists: None,
+        playlist_page: None,
         plays: Vec::new(),
         recent_window_ms: 0,
         frame_hz: 0,
@@ -969,6 +972,11 @@ pub struct StateCells {
     analysis: std::sync::Mutex<Option<dj_domain::AnalyzeState>>,
     /// The last collection page the browser asked for: the engine writes it, the panel reads it.
     collection: std::sync::Mutex<Option<dj_domain::CollectionPage>>,
+    /// The folders and playlists the DJ has (DJP-MEDIA-004): the tree the panel draws.
+    playlists: std::sync::Mutex<Option<dj_domain::PlaylistTree>>,
+    /// The last playlist page asked for, in its own cell: two questions in flight must not overwrite each
+    /// other's answers.
+    playlist_page: std::sync::Mutex<Option<dj_domain::CollectionPage>>,
     /// The genres of the collection, with their counts: the answer to the genre question.
     genres: std::sync::Mutex<Vec<dj_domain::GenreCount>>,
 }
@@ -1188,6 +1196,8 @@ impl StateCells {
             import: std::sync::Mutex::new(None),
             analysis: std::sync::Mutex::new(None),
             collection: std::sync::Mutex::new(None),
+            playlists: std::sync::Mutex::new(None),
+            playlist_page: std::sync::Mutex::new(None),
             genres: std::sync::Mutex::new(Vec::new()),
         }
     }
@@ -1206,6 +1216,20 @@ impl StateCells {
     /// Put a collection page where the snapshot publishes it.
     pub fn set_collection(&self, page: dj_domain::CollectionPage) {
         if let Ok(mut slot) = self.collection.lock() {
+            *slot = Some(page);
+        }
+    }
+
+    /// Publish the playlist tree: names and folders, small enough for every snapshot.
+    pub fn set_playlists(&self, tree: dj_domain::PlaylistTree) {
+        if let Ok(mut slot) = self.playlists.lock() {
+            *slot = Some(tree);
+        }
+    }
+
+    /// Publish a page of one playlist, in its own cell.
+    pub fn set_playlist_page(&self, page: dj_domain::CollectionPage) {
+        if let Ok(mut slot) = self.playlist_page.lock() {
             *slot = Some(page);
         }
     }
@@ -1466,6 +1490,16 @@ impl StateCells {
             // the mutex that guards the import for the same reason.
             collection: self
                 .collection
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .clone(),
+            playlists: self
+                .playlists
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .clone(),
+            playlist_page: self
+                .playlist_page
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
                 .clone(),
@@ -1818,6 +1852,20 @@ pub enum Routed {
         /// What to show.
         query: dj_domain::CollectionQuery,
     },
+    /// An edit of the playlists (DJP-MEDIA-004): the index and the mirror, written together.
+    Playlists {
+        /// The command being answered.
+        command_id: u64,
+        /// What to do.
+        op: dj_domain::PlaylistOp,
+    },
+    /// Read a page of one playlist (DJP-MEDIA-004).
+    PlaylistQuery {
+        /// The command being answered.
+        command_id: u64,
+        /// Which playlist, and what of it.
+        query: dj_domain::PlaylistQuery,
+    },
     /// Read the collection again from the files: the walk lives here, not in the browser.
     Rescan {
         /// The command being answered.
@@ -1935,6 +1983,14 @@ pub fn route(command: &ScheduledCommand) -> Routed {
         },
         DjCommand::AnalyzeCancel => Routed::AnalyzeStop,
         DjCommand::QueryCollection { query } => Routed::Query {
+            command_id: command.id,
+            query: query.clone(),
+        },
+        DjCommand::Playlists { op } => Routed::Playlists {
+            command_id: command.id,
+            op: op.clone(),
+        },
+        DjCommand::QueryPlaylist { query } => Routed::PlaylistQuery {
             command_id: command.id,
             query: query.clone(),
         },

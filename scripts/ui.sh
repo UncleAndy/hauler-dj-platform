@@ -318,6 +318,16 @@ case "${1:-}" in
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --collection-root "$run_dir/lock-collection" --lock-check \
         --import-fixture "$analyze_track" --layout-file "$run_dir/lock-layout.json"
+    # The playlists (DJP-MEDIA-004): made in a folder, filled with three rows, the dups taken out, a row
+    # dragged, the name changed, the playlist carried to the root and deleted — the tree, the rows on the
+    # right and the file in the mirror are all read back at every step. Two different tracks, because a
+    # playlist names a track by its fingerprint and two copies of one file are one fingerprint.
+    playlist_second="$run_dir/playlist-second.flac"
+    cp crates/dj-codec/tests/fixtures/audio/silence-then-tone-2s-44100.flac "$playlist_second"
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
+        --collection-root "$run_dir/playlist-collection" --playlist-check \
+        --import-fixture "$analyze_track" --load-b "$playlist_second" \
+        --layout-file "$run_dir/playlist-layout.json"
     # The end of a track: the deck stands still on the last frame and takes the next one.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --end-check --load "$analyze_track"

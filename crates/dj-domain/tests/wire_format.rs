@@ -149,6 +149,8 @@ fn acks_report_applied_sample_and_rejection_reason() {
 #[test]
 fn a_snapshot_is_self_describing_enough_to_be_refused() {
     let snapshot = Snapshot {
+        playlists: None,
+        playlist_page: None,
         import: None,
         analysis: None,
         collection: None,

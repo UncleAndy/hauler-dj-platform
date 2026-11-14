@@ -81,6 +81,8 @@ pub struct PlaylistRow {
     /// Older revisions lose to newer ones when the file mirror and the database disagree.
     pub revision: i64,
     pub updated_at_ms: i64,
+    /// How many rows it holds: the tree shows the count, and a count is cheaper than the rows.
+    pub tracks: usize,
 }
 
 /// One row of a playlist: the track and where its file is.
@@ -523,11 +525,26 @@ impl Index {
         Ok(())
     }
 
+    /// Keep the revision a file brought with it: when a file that is ahead wins the argument, the index
+    /// carries the file's revision on, so the next comparison is between equals (DJP-MEDIA-004).
+    pub fn playlist_set_revision(
+        &mut self,
+        playlist: i64,
+        revision: i64,
+    ) -> Result<(), IndexError> {
+        self.connection.execute(
+            "UPDATE playlists SET revision = ?2 WHERE id = ?1",
+            rusqlite::params![playlist, revision],
+        )?;
+        Ok(())
+    }
+
     /// Every playlist, in the order of its folder and then of the DJ.
     pub fn playlists(&self) -> Result<Vec<PlaylistRow>, IndexError> {
         let mut statement = self.connection.prepare(
-            "SELECT id, name, folder, position, revision, updated_at_ms FROM playlists \
-             ORDER BY folder, position, id",
+            "SELECT p.id, p.name, p.folder, p.position, p.revision, p.updated_at_ms, \
+                    (SELECT COUNT(*) FROM playlist_tracks t WHERE t.playlist_id = p.id) \
+             FROM playlists p ORDER BY p.folder, p.position, p.id",
         )?;
         let rows = statement.query_map([], |raw| {
             Ok(PlaylistRow {
@@ -537,9 +554,60 @@ impl Index {
                 position: raw.get(3)?,
                 revision: raw.get(4)?,
                 updated_at_ms: raw.get(5)?,
+                tracks: raw.get::<_, i64>(6)?.max(0) as usize,
             })
         })?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// The rows of a playlist as a page of the collection's shape: the names, the tempo and the key come
+    /// from the track row, so the table that draws the collection draws a playlist with the same cells.
+    ///
+    /// The playlist's own order is the order — no sorting, no filters (owner's decision, 14.11.2026).
+    pub fn playlist_page(&self, playlist: i64, query: &PageQuery) -> Result<Page, IndexError> {
+        let mut count = String::from(
+            "SELECT COUNT(*) FROM playlist_tracks t LEFT JOIN tracks r ON r.fingerprint = t.fingerprint \
+             WHERE t.playlist_id = ?1",
+        );
+        // The join is a LEFT one on purpose: a row whose file has gone is still a row of the playlist, and
+        // the DJ must see it to know what he lost. Its empty path is how the panel marks it.
+        let mut sql = String::from(
+            "SELECT COALESCE(r.fingerprint, t.fingerprint), COALESCE(t.path, ''), \
+                    COALESCE(r.artist, ''), COALESCE(r.title, ''), COALESCE(r.album, ''), \
+                    COALESCE(r.genre, ''), COALESCE(r.year, 0), COALESCE(r.bpm, 0), \
+                    COALESCE(r.musical_key, ''), COALESCE(r.rating, 0), COALESCE(r.duration_frames, 0), \
+                    COALESCE(r.sample_rate, 0), COALESCE(r.gain, 0), COALESCE(r.play_count, 0), \
+                    COALESCE(r.last_played_ms, 0), COALESCE(r.analysis_lock, 0) \
+             FROM playlist_tracks t LEFT JOIN tracks r ON r.fingerprint = t.fingerprint \
+             WHERE t.playlist_id = ?1",
+        );
+        let mut args: Vec<Value> = vec![Value::Integer(playlist)];
+        if let Some(search) = query
+            .search
+            .as_ref()
+            .filter(|needle| !needle.trim().is_empty())
+        {
+            let needle = format!("%{}%", search.to_lowercase());
+            let clause = " AND (LOWER(COALESCE(r.artist, '')) LIKE ?2 OR LOWER(COALESCE(r.album, '')) LIKE ?2 \
+                           OR LOWER(COALESCE(r.title, '')) LIKE ?2 OR LOWER(COALESCE(t.path, '')) LIKE ?2)";
+            count.push_str(clause);
+            sql.push_str(clause);
+            args.push(Value::Text(needle));
+        }
+        sql.push_str(" ORDER BY t.position, t.id");
+        // A page of zero is not a page of nothing: it is a caller that did not choose a width.
+        let limit = if query.limit == 0 { 100 } else { query.limit };
+        sql.push_str(&format!(" LIMIT {limit} OFFSET {}", query.offset));
+        let total: i64 =
+            self.connection
+                .query_row(&count, params_from_iter(args.iter()), |row| row.get(0))?;
+        let mut statement = self.connection.prepare(&sql)?;
+        let rows = statement.query_map(params_from_iter(args.iter()), Self::row)?;
+        let rows: Vec<TrackRow> = rows.collect::<Result<Vec<_>, _>>()?;
+        Ok(Page {
+            rows,
+            total: total.max(0) as usize,
+        })
     }
 
     /// The rows of one playlist, in order.

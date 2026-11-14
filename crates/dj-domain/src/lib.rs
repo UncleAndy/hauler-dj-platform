@@ -675,6 +675,19 @@ pub enum DjCommand {
         /// What to show: the order, the genres, the search and the page.
         query: CollectionQuery,
     },
+    /// Ask for a page of one playlist (DJP-MEDIA-004).
+    ///
+    /// Not a deck command, like the collection's page: it never reaches the audio path, and the answer
+    /// arrives in the snapshot's `playlist_page`, carrying the `id` of this question.
+    QueryPlaylist {
+        /// Which playlist, and what of it.
+        query: PlaylistQuery,
+    },
+    /// An edit of the playlists (DJP-MEDIA-004): one command, the shapes of the edits inside.
+    Playlists {
+        /// The edit: which playlist, and what to do with it.
+        op: PlaylistOp,
+    },
 }
 
 impl DjCommand {
@@ -712,6 +725,8 @@ impl DjCommand {
             | DjCommand::AnalyzeCancel
             | DjCommand::ImportAnswer { .. }
             | DjCommand::QueryCollection { .. }
+            | DjCommand::QueryPlaylist { .. }
+            | DjCommand::Playlists { .. }
             | DjCommand::Eject { .. } => true,
             DjCommand::SetTempoRatio { .. }
             | DjCommand::Nudge { .. }
@@ -1386,6 +1401,145 @@ pub struct CollectionRow {
     pub last_played_ms: Option<u64>,
 }
 
+/// One playlist, as the tree shows it: enough to draw the list without asking about every row.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlaylistStub {
+    /// The playlist's row in the index; the id the edits name it by.
+    pub id: i64,
+    /// The name the DJ gave it, as he typed it.
+    pub name: String,
+    /// The folder it sits in, as a path like `Sets/Deep`; empty is the root.
+    #[serde(default)]
+    pub folder: String,
+    /// Older revisions lose to newer ones when the file mirror and the database disagree.
+    #[serde(default = "one_revision")]
+    pub revision: i64,
+    /// How many rows it holds.
+    #[serde(default)]
+    pub tracks: usize,
+}
+
+/// The folders and the playlists the DJ has, in his order (DJP-MEDIA-004).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct PlaylistTree {
+    /// Folder paths, in the order the DJ set.
+    #[serde(default)]
+    pub folders: Vec<String>,
+    /// Every playlist: folder by folder, then the DJ's order inside each.
+    #[serde(default)]
+    pub playlists: Vec<PlaylistStub>,
+}
+
+fn one_revision() -> i64 {
+    1
+}
+
+/// A track going into a playlist: the fingerprint is the identity, the path is how it plays.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlaylistAdd {
+    /// The track's identity: the same bytes on another machine are the same row of a playlist.
+    pub fingerprint: String,
+    /// Where the file is now, so a row can be drawn before the index has seen the track.
+    #[serde(default)]
+    pub path: String,
+}
+
+/// One edit of the playlists. One command on the wire, many shapes of edit: a playlist app answers
+/// gestures, not a protocol vocabulary.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum PlaylistOp {
+    /// Make a playlist in a folder, at the end.
+    Create {
+        /// The name the DJ typed.
+        name: String,
+        /// The folder it goes in; empty is the root.
+        folder: String,
+    },
+    /// Give a playlist another name.
+    Rename {
+        /// Which playlist.
+        playlist: i64,
+        /// The new name.
+        name: String,
+    },
+    /// Throw a playlist away, file and all.
+    Delete {
+        /// Which playlist.
+        playlist: i64,
+    },
+    /// Move a playlist to the end of another folder.
+    Move {
+        /// Which playlist.
+        playlist: i64,
+        /// The folder it moves to; empty is the root.
+        folder: String,
+    },
+    /// Append tracks, in the order given.
+    AddTracks {
+        /// Which playlist.
+        playlist: i64,
+        /// The tracks, in the order they are to stand.
+        tracks: Vec<PlaylistAdd>,
+    },
+    /// Drop rows by their place, counting from zero.
+    RemoveRows {
+        /// Which playlist.
+        playlist: i64,
+        /// The places to drop, counting from zero.
+        positions: Vec<usize>,
+    },
+    /// Move the row at `from` to the place `to`.
+    Reorder {
+        /// Which playlist.
+        playlist: i64,
+        /// The row to move.
+        from: usize,
+        /// The place it arrives at, counted after the removal.
+        to: usize,
+    },
+    /// Drop the repeats of a track, keeping the first of each.
+    RemoveDuplicates {
+        /// Which playlist.
+        playlist: i64,
+    },
+    /// Make a folder, as a path like `Sets/Deep`.
+    FolderCreate {
+        /// The path of the folder.
+        path: String,
+    },
+    /// Rename a folder and everything under it.
+    FolderRename {
+        /// The path it has.
+        from: String,
+        /// The path it takes.
+        to: String,
+    },
+    /// Delete a folder: its playlists move to the root, they are not thrown away with it.
+    FolderDelete {
+        /// The path of the folder that goes.
+        path: String,
+    },
+}
+
+/// What to show of one playlist: its rows in the DJ's order (no sorting and no filters: the order of a
+/// playlist *is* the DJ's, and the owner asked for no filters here).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct PlaylistQuery {
+    /// The caller's marker, returned with the answer: an answer to somebody else's question is not an answer.
+    pub id: u64,
+    /// Which playlist's rows are asked for.
+    pub playlist: i64,
+    /// What the DJ typed: matched against artist, album and title.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search: Option<String>,
+    /// How many rows to skip, for a list that is read a page at a time.
+    #[serde(default)]
+    pub offset: usize,
+    /// How many rows to answer with; zero means a page of the default width.
+    #[serde(default)]
+    pub limit: usize,
+}
+
 /// The answer to a query: the rows of the page, and how many the filter found in all.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CollectionPage {
@@ -1491,6 +1645,14 @@ pub struct Snapshot {
     /// The last collection page the engine was asked for: the browser reads it from here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collection: Option<CollectionPage>,
+    /// The folders and playlists the DJ has (DJP-MEDIA-004). Small enough to travel with every snapshot:
+    /// a tree is names, not rows, and the rows are asked for by `QueryPlaylist`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub playlists: Option<PlaylistTree>,
+    /// The answer to the last `QueryPlaylist` (DJP-MEDIA-004), in its own cell: two questions in flight
+    /// must not overwrite each other's answers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub playlist_page: Option<CollectionPage>,
     /// The genres the collection carries, with how many tracks carry each.
     ///
     /// A separate answer on purpose: the page and the count are different questions, and one slot for

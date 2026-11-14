@@ -116,8 +116,60 @@ public:
     /// True when `path` is a file rather than a folder: a batch of one file needs no confirmation.
     Q_INVOKABLE bool entryIsFile(const QString &path) const;
 
+    // --- Playlists (DJP-MEDIA-004) ---
+    //
+    // The tree is a flat list of rows for the panel to draw, `All` first and a folder above what it holds:
+    // `{kind: "all"|"folder"|"playlist", name, folder, id, depth, tracks, count}`.
+    Q_PROPERTY(QVariantList playlistTree READ playlistTree NOTIFY playlistsChanged)
+    /// The rows of the open playlist, in the shape the collection's table already draws.
+    Q_PROPERTY(QVariantList playlistRows READ playlistRows NOTIFY playlistPageChanged)
+    Q_PROPERTY(int playlistTotal READ playlistTotal NOTIFY playlistPageChanged)
+    /// Which playlist is open, and its name: the panel's header says it, the commands use it.
+    Q_PROPERTY(qint64 playlistId READ playlistId NOTIFY playlistChanged)
+    Q_PROPERTY(QString playlistName READ playlistName NOTIFY playlistChanged)
+    /// True while the list on the right is a playlist rather than the collection.
+    Q_PROPERTY(bool inPlaylists READ inPlaylists NOTIFY changed)
+
+public:
+    QVariantList playlistTree() const { return m_playlistTree; }
+    QVariantList playlistRows() const { return m_playlistRows; }
+    int playlistTotal() const { return m_playlistTotal; }
+    qint64 playlistId() const { return m_playlistId; }
+    QString playlistName() const { return m_playlistName; }
+    bool inPlaylists() const { return m_mode == QLatin1String("playlists"); }
+    /// Move the list to the playlists: the tree is drawn, and the playlist the DJ had open comes back.
+    Q_INVOKABLE void showPlaylists();
+    /// Open one playlist: `0` is `All`, which shows every track the playlists hold, in one flat list.
+    Q_INVOKABLE void openPlaylist(qint64 id, const QString &name);
+    /// Ask for the open playlist again, keeping the search.
+    Q_INVOKABLE void refreshPlaylist();
+    Q_INVOKABLE void playlistCreate(const QString &name, const QString &folder);
+    Q_INVOKABLE void playlistRename(qint64 id, const QString &name);
+    Q_INVOKABLE void playlistDelete(qint64 id);
+    Q_INVOKABLE void playlistMove(qint64 id, const QString &folder);
+    /// The rows of the tracks at these paths, as `{fingerprint, path}`: what a playlist needs, since the
+    /// fingerprint is a track's identity and the path is only where it sits today.
+    Q_INVOKABLE QVariantList trackRows(const QStringList &paths) const;
+    /// Add these tracks to the open playlist: each row is `{fingerprint, path}`.
+    Q_INVOKABLE void playlistAddTracks(const QVariantList &tracks);
+    /// Drop these rows of the open playlist, by their place in it.
+    Q_INVOKABLE void playlistRemoveRows(const QVariantList &positions);
+    /// Move a row of the open playlist: a drag, and only the order changes.
+    Q_INVOKABLE void playlistReorder(int from, int to);
+    /// Drop the repeats of a track from the open playlist, keeping the first of each.
+    Q_INVOKABLE void playlistRemoveDuplicates();
+    Q_INVOKABLE void playlistFolderCreate(const QString &path);
+    Q_INVOKABLE void playlistFolderRename(const QString &from, const QString &to);
+    Q_INVOKABLE void playlistFolderDelete(const QString &path);
+
 signals:
     void changed();
+    /// The folders or the playlists moved: the panel redraws the tree.
+    void playlistsChanged();
+    /// The open playlist has new rows.
+    void playlistPageChanged();
+    /// Another playlist was opened.
+    void playlistChanged();
     /// The chips have new counts, or the filter itself moved: the panel redraws them.
     void genresChanged();
     /// The DJ picked other chips. Kept apart from `genresChanged` on purpose: a reload also moves the
@@ -132,7 +184,20 @@ signals:
     void sortChanged();
 
 private:
+    /// Read the tree and the open playlist's page out of the snapshot the engine published.
+    void takePlaylists();
+    /// Ask for the open playlist's rows, with the search the DJ typed.
+    void askPlaylistPage();
     void load(const QString &path);
+
+    QVariantList m_playlistTree;
+    QVariantList m_playlistRows;
+    int m_playlistTotal = 0;
+    qint64 m_playlistId = 0;
+    QString m_playlistName;
+    /// The marker of the question this panel last asked: an answer carrying another one belongs to another
+    /// question, and is not the rows of this playlist.
+    quint64 m_playlistQuestion = 0;
     void collect(const QStringList &roots);
     void applyFilter();
     void applySort();
@@ -247,6 +312,16 @@ public:
     /// protocol, not the words of the list. The answer comes back in the snapshot's `collection`, and
     /// the caller recognises its own by the `id` it put here.
     Q_INVOKABLE int queryCollection(const QVariantMap &query);
+    /// Ask for a page of one playlist (DJP-MEDIA-004). The question carries its own marker, so an answer to
+    /// an earlier question is never taken for this one.
+    Q_INVOKABLE int queryPlaylist(const QVariantMap &query);
+    /// One edit of the playlists (DJP-MEDIA-004): the op travels as the protocol spells it — `{"Create":
+    /// {...}}`, `{"AddTracks": {...}}` and so on.
+    Q_INVOKABLE int editPlaylists(const QVariantMap &op);
+    /// The folders and playlists the engine last published, as it wrote them.
+    QVariantMap playlistTree() const;
+    /// The last playlist page the engine published.
+    QVariantMap playlistPage() const;
     /// The last collection page the engine published, or an empty map when it published none.
     QVariantMap collectionPage() const;
 

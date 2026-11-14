@@ -472,6 +472,24 @@ fn run(argv: &[String]) -> Result<(), String> {
 
     // The render thread writes scalars here; nothing in the audio path allocates or locks.
     let cells = Arc::new(StateCells::new());
+    // The playlists come back before anything else: the index says what this session has, the mirror says
+    // what survived it, and the tree is published once so the panel opens on it (DJP-MEDIA-004).
+    if let Some(mirror) = dj_engine::playlists::default_mirror() {
+        let outcome = dj_library::Index::open_default()
+            .map_err(|error| error.to_string())
+            .and_then(|mut index| dj_engine::playlists::startup_pass(&mut index, &mirror));
+        match outcome {
+            Ok(tree) => {
+                eprintln!(
+                    "dj-engine: playlists ready: {} folders, {} playlists",
+                    tree.folders.len(),
+                    tree.playlists.len()
+                );
+                cells.set_playlists(tree);
+            }
+            Err(message) => eprintln!("dj-engine: playlists: {message}"),
+        }
+    }
     let statics = decks
         .iter()
         .map(|deck| DeckStatic::from_snapshot(&deck.snapshot()))
@@ -1579,6 +1597,79 @@ fn serve_client(
                             return;
                         }
                         continue;
+                    }
+                    dj_engine::Routed::Playlists { command_id, op } => {
+                        // The playlists live in the index and their mirror on disk: both are written here,
+                        // off the audio path, and the tree this answers with is published so the panel
+                        // redraws (DJP-MEDIA-004).
+                        let playlist_cells = Arc::clone(&cells);
+                        let playlist_alerts = alerts.clone();
+                        std::thread::spawn(move || {
+                            let outcome = dj_engine::playlists::default_mirror()
+                                .ok_or_else(|| "no data folder for the playlist mirror".to_string())
+                                .and_then(|mirror| {
+                                    dj_library::Index::open_default()
+                                        .map_err(|error| error.to_string())
+                                        .and_then(|mut index| {
+                                            let now = std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .map(|elapsed| elapsed.as_millis() as i64)
+                                                .unwrap_or(0);
+                                            dj_engine::playlists::apply(
+                                                &mut index, &mirror, &op, now,
+                                            )
+                                        })
+                                });
+                            let ack = match outcome {
+                                Ok(tree) => {
+                                    eprintln!(
+                                        "dj-engine: playlists now hold {} folders, {} playlists",
+                                        tree.folders.len(),
+                                        tree.playlists.len()
+                                    );
+                                    playlist_cells.set_playlists(tree);
+                                    dj_domain::Ack::applied(command_id, 0)
+                                }
+                                Err(message) => {
+                                    eprintln!("dj-engine: playlists: {message}");
+                                    dj_domain::Ack::rejected(
+                                        command_id,
+                                        dj_domain::RejectReason::InvalidValue,
+                                    )
+                                }
+                            };
+                            let _ = playlist_alerts.send(ServerMessage::Ack(ack));
+                        });
+                    }
+                    dj_engine::Routed::PlaylistQuery { command_id, query } => {
+                        let playlist_cells = Arc::clone(&cells);
+                        let playlist_alerts = alerts.clone();
+                        std::thread::spawn(move || {
+                            // A reader, not a writer: the list of a playlist must not queue behind an import.
+                            let outcome = dj_library::Index::reader_default()
+                                .map_err(|error| error.to_string())
+                                .and_then(|index| {
+                                    dj_engine::playlists::page(&index, query.playlist, &query)
+                                });
+                            let ack = match outcome {
+                                Ok(page) => {
+                                    eprintln!(
+                                        "dj-engine: playlist {} answered with {} rows",
+                                        query.playlist, page.total
+                                    );
+                                    playlist_cells.set_playlist_page(page);
+                                    dj_domain::Ack::applied(command_id, 0)
+                                }
+                                Err(message) => {
+                                    eprintln!("dj-engine: playlists: {message}");
+                                    dj_domain::Ack::rejected(
+                                        command_id,
+                                        dj_domain::RejectReason::InvalidValue,
+                                    )
+                                }
+                            };
+                            let _ = playlist_alerts.send(ServerMessage::Ack(ack));
+                        });
                     }
                     dj_engine::Routed::Query { command_id, query } => {
                         // The index lives on disk: opening it runs the schema and its migrations, which is

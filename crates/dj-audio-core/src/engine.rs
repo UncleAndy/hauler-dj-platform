@@ -180,6 +180,10 @@ impl Engine {
             DjCommand::QueryCollection { .. } => {
                 Some(Ack::rejected(command_id, RejectReason::NotSupported))
             }
+            // The playlists are the index's business too, not the audio path's.
+            DjCommand::QueryPlaylist { .. } | DjCommand::Playlists { .. } => {
+                Some(Ack::rejected(command_id, RejectReason::NotSupported))
+            }
             // The A01 renderer holds one tone and no beat: a deck to follow or to lead does not exist
             // here, and saying so is better than pretending the flag did something.
             // The library is not the audio engine's business: this renderer holds one tone and no
@@ -280,6 +284,8 @@ impl Engine {
             import: None,
             analysis: None,
             collection: None,
+            playlists: None,
+            playlist_page: None,
             genres: Vec::new(),
             protocol: STATE_PROTOCOL.to_string(),
             // The A01 renderer has no cache: nothing is allowed and nothing is spent.
