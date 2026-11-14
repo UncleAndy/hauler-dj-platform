@@ -17,6 +17,7 @@ pub mod import;
 pub mod index;
 pub mod layout;
 pub mod meta;
+pub mod playlist_file;
 pub mod quality;
 pub mod queue;
 pub mod sidecar;
