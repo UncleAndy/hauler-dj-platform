@@ -333,6 +333,17 @@ Pane {
         return "";
     }
 
+    /// The colour of a row's own text. A chosen row wears the accent as its face — the loudest thing in
+    /// the list — so its text is written dark on it; the playhead's white belongs to the row the cursor
+    /// stands on; every other row keeps the greys of the list. Reading only "is it chosen" was not
+    /// enough: a chosen row the cursor had left kept the grey of an ordinary row on a bright blue face,
+    /// and the DJ could not read the track a batch was about to take. Dark on the accent also tells a
+    /// chosen row apart from the cursor's own row, which is white on the dim blue.
+    function rowTextColour(chosen, current, ordinary) {
+        return chosen ? UiSettings.themeTextOnAccent
+                      : (current ? UiSettings.themePlayhead : ordinary);
+    }
+
     function columnIndexOf(id) {
         for (let i = 0; i < columns.length; ++i) {
             if (columns[i].id === id) {
@@ -1635,7 +1646,8 @@ Pane {
                             text: (row.index + 1)
                             horizontalAlignment: Text.AlignRight
                             font: browser.listFace
-                            color: UiSettings.themeTextDim
+                            color: browser.rowTextColour(row.chosen, row.current,
+                                                         UiSettings.themeTextDim)
                             elide: Text.ElideRight
                         }
                         Label {
@@ -1646,7 +1658,8 @@ Pane {
                             text: row.modelData.analysis_lock ? "\uD83D\uDD12" : ""
                             horizontalAlignment: Text.AlignHCenter
                             font: browser.listFace
-                            color: UiSettings.themeTextDim
+                            color: browser.rowTextColour(row.chosen, row.current,
+                                                         UiSettings.themeTextDim)
                         }
                         Label {
                             objectName: "collectionCell_artist_" + row.index
@@ -1658,7 +1671,7 @@ Pane {
                             text: browser.columnText(row.modelData, "artist")
                             elide: Text.ElideRight
                             font: browser.listFace
-                            color: row.current ? UiSettings.themePlayhead : UiSettings.themeText
+                            color: browser.rowTextColour(row.chosen, row.current, UiSettings.themeText)
                         }
                         Label {
                             objectName: "collectionCell_album_" + row.index
@@ -1670,7 +1683,7 @@ Pane {
                             text: browser.columnText(row.modelData, "album")
                             elide: Text.ElideRight
                             font: browser.listFace
-                            color: row.current ? UiSettings.themePlayhead : UiSettings.themeTextDim
+                            color: browser.rowTextColour(row.chosen, row.current, UiSettings.themeTextDim)
                         }
                         Label {
                             objectName: "collectionCell_title_" + row.index
@@ -1682,7 +1695,7 @@ Pane {
                             text: browser.columnText(row.modelData, "title")
                             elide: Text.ElideRight
                             font: browser.listFace
-                            color: row.current ? UiSettings.themePlayhead : UiSettings.themeText
+                            color: browser.rowTextColour(row.chosen, row.current, UiSettings.themeText)
                         }
                         Label {
                             objectName: "collectionCell_time_" + row.index
@@ -1694,7 +1707,7 @@ Pane {
                             text: browser.columnText(row.modelData, "time")
                             horizontalAlignment: Text.AlignRight
                             font: browser.listFace
-                            color: row.current ? UiSettings.themePlayhead : UiSettings.themeTextDim
+                            color: browser.rowTextColour(row.chosen, row.current, UiSettings.themeTextDim)
                         }
                         Label {
                             objectName: "collectionCell_bpm_" + row.index
@@ -1706,7 +1719,7 @@ Pane {
                             text: browser.columnText(row.modelData, "bpm")
                             horizontalAlignment: Text.AlignRight
                             font: browser.listFace
-                            color: row.current ? UiSettings.themePlayhead : UiSettings.themeTextDim
+                            color: browser.rowTextColour(row.chosen, row.current, UiSettings.themeTextDim)
                         }
                         Label {
                             objectName: "collectionCell_key_" + row.index
@@ -1718,7 +1731,7 @@ Pane {
                             text: browser.columnText(row.modelData, "key")
                             horizontalAlignment: Text.AlignRight
                             font: browser.listFace
-                            color: row.current ? UiSettings.themePlayhead : UiSettings.themeTextDim
+                            color: browser.rowTextColour(row.chosen, row.current, UiSettings.themeTextDim)
                         }
                     }
                     Label {
@@ -1734,11 +1747,10 @@ Pane {
                         // not a folder you can do anything else with.
                         objectName: "fileRow_" + row.index
                         text: row.isParent ? ".." : (row.isFolder ? "▸ " : "  ") + row.modelData.name
-                        color: row.isParent
-                               ? (row.current ? UiSettings.themePlayhead : UiSettings.themeTextDim)
-                               : (row.isFolder ? UiSettings.themeText
-                                               : (row.current ? UiSettings.themePlayhead
-                                                              : UiSettings.themeTextDim))
+                        color: browser.rowTextColour(
+                                   row.chosen, row.current,
+                                   row.isFolder && !row.isParent ? UiSettings.themeText
+                                                                 : UiSettings.themeTextDim)
                         font: browser.listFace
                         elide: Text.ElideRight
                     }
