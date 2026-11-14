@@ -7163,6 +7163,24 @@ static int runPlaylistCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     const double boundary = rowSecond->mapToScene(QPointF(0, 0)).y() + rowSecond->height();
     drag(QEvent::MouseButtonRelease, below);
     require(lineShown, QStringLiteral("no plate shows where the carried row will land"));
+    // The plate belongs to the list, not to the window: it must stand exactly over the list's rows and not
+    // run across the rail on the left (owner's report, 15.11.2026).
+    auto *listForLine = findItem(window->contentItem(), QStringLiteral("browserList"));
+    if (listForLine != nullptr) {
+        const QRectF lineRect = line->mapRectToScene(QRectF(0, 0, line->width(), line->height()));
+        const QRectF listRect = listForLine->mapRectToScene(
+            QRectF(0, 0, listForLine->width(), listForLine->height()));
+        require(std::abs(lineRect.left() - listRect.left()) <= 1.0
+                    && std::abs(lineRect.width() - listRect.width()) <= 1.0,
+                QStringLiteral("the plate covers %1 px of the window at %2, the list stands at %3 "
+                               "and is %4 px wide")
+                    .arg(lineRect.width())
+                    .arg(lineRect.left())
+                    .arg(listRect.left())
+                    .arg(listRect.width()));
+        std::printf("dj-ui: the plate stands over the list only: left %.0f vs %.0f, width %.0f vs %.0f\n",
+                    lineRect.left(), listRect.left(), lineRect.width(), listRect.width());
+    }
     require(std::abs(lineY - boundary) <= 2.0,
             QStringLiteral("the plate stands at %1 px, the boundary between the rows at %2 px")
                 .arg(lineY)
