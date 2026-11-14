@@ -3819,6 +3819,22 @@ static int measureDeckRows(QQuickWindow *window, const QString &deck)
     }
     std::fprintf(stdout, "dj-ui: the strip is %s again, as the check found it, the wave has %.0f px\n",
                  startedOpen ? "open" : "folded", waveHeight());
+    // The grid tools are centred on the deck: a row that is full width and a block of buttons pushed to
+    // the left edge leaves the middle of the panel empty (owner's decision).
+    const QRectF gridRow = rectOf(QStringLiteral("gridedit_") + deck);
+    const QRectF gridBlock = rectOf(QStringLiteral("gridBlock_") + deck);
+    if (gridRow.isEmpty() || gridBlock.isEmpty()) {
+        std::fprintf(stderr, "dj-ui: the deck %s has no grid row to centre\n", qPrintable(deck));
+        return 1;
+    }
+    const double off = std::abs(gridBlock.center().x() - gridRow.center().x());
+    std::fprintf(stdout,
+                 "dj-ui: the grid tools are %.0f px wide and stand %.0f px off the middle of their row\n",
+                 gridBlock.width(), off);
+    if (off > 2.0) {
+        std::fprintf(stderr, "dj-ui: the grid tools stand %.0f px off the middle of the deck\n", off);
+        return 1;
+    }
     return 0;
 }
 
@@ -6565,17 +6581,30 @@ static int runLockCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Bri
         std::fprintf(stderr, "dj-ui: the grid row has no Tap button\n");
         return 1;
     }
-    // The lock belongs to the grid tools: to the right of Tap, on the same line.
-    const QRectF lockRect = lock->mapRectToScene(QRectF(0, 0, lock->width(), lock->height()));
-    const QRectF tapRect = tap->mapRectToScene(QRectF(0, 0, tap->width(), tap->height()));
-    if (lockRect.left() < tapRect.right() ||
-        std::abs(lockRect.center().y() - tapRect.center().y()) > 6.0) {
-        std::fprintf(stderr, "dj-ui: the lock is not beside Tap (lock %.1f,%.1f, tap edge %.1f,%.1f)\n",
-                     lockRect.left(), lockRect.center().y(), tapRect.right(), tapRect.center().y());
+    // The lock stands in the first row, to the right of the pads: it is the one grid control that has to
+    // survive the folded panel, because from a locked deck it is the only way back (owner's decision). Tap
+    // is no longer its neighbour — the row it lives in is not even on the panel while the lock is on.
+    auto *lastPad = findItem(window->contentItem(), QStringLiteral("cuepad_A_7"));
+    auto *firstRow = findItem(window->contentItem(), QStringLiteral("transport_A"));
+    if (lastPad == nullptr || firstRow == nullptr) {
+        std::fprintf(stderr, "dj-ui: the deck has no first row or no last pad to place the lock by\n");
         return 1;
     }
-    std::fprintf(stdout, "dj-ui: the lock sits %.1f px right of Tap, on the same line\n",
-                 lockRect.left() - tapRect.right());
+    const QRectF lockRect = lock->mapRectToScene(QRectF(0, 0, lock->width(), lock->height()));
+    const QRectF padRect = lastPad->mapRectToScene(QRectF(0, 0, lastPad->width(), lastPad->height()));
+    const QRectF rowRect = firstRow->mapRectToScene(QRectF(0, 0, firstRow->width(), firstRow->height()));
+    if (lockRect.left() < padRect.right() ||
+        std::abs(lockRect.center().y() - padRect.center().y()) > 6.0 ||
+        rowRect.right() - lockRect.right() > 12.0) {
+        std::fprintf(stderr,
+                     "dj-ui: the lock is not the rightmost control of the first row (lock %.1f..%.1f, "
+                     "pads end %.1f, row ends %.1f)\n",
+                     lockRect.left(), lockRect.right(), padRect.right(), rowRect.right());
+        return 1;
+    }
+    std::fprintf(stdout,
+                 "dj-ui: the lock sits %.1f px right of the pads and %.1f px from the row's right edge\n",
+                 lockRect.left() - padRect.right(), rowRect.right() - lockRect.right());
 
     const auto click = [&](QQuickItem *item) {
         const QPointF centre = item->mapToScene(QPointF(item->width() / 2.0, item->height() / 2.0));
@@ -6628,19 +6657,19 @@ static int runLockCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Bri
         return 1;
     }
     std::fprintf(stdout, "dj-ui: a lit switch wears %s, the same as Snap\n", qPrintable(worn.name()));
-    // ... and it has to be seen, not only obeyed: the face of a tool goes flat and pale, which is what the
-    // owner asked for after a lock that refused clicks while looking live.
-    for (const char *name : {"gridLeft_A", "gridTap_A"}) {
-        auto *tool = findItem(window->contentItem(), QString::fromLatin1(name));
-        const QObject *face = tool != nullptr ? tool->property("background").value<QObject *>() : nullptr;
-        const double opacity = face != nullptr ? face->property("opacity").toDouble() : 1.0;
-        if (opacity > 0.5) {
-            std::fprintf(stderr, "dj-ui: %s still looks live with the grid locked (face %.2f)\n", name,
-                         opacity);
-            return 1;
-        }
+    // The row is not on the panel at all under the lock (owner's decision, 14.11): measuring that a tool
+    // LOOKS locked would be measuring a control that nobody can see. What the eye needs is that the lock
+    // itself stays, and that no dead button is left painted where the row used to be.
+    auto *gridRow = findItem(window->contentItem(), QStringLiteral("gridedit_A"));
+    if (gridRow == nullptr) {
+        std::fprintf(stderr, "dj-ui: the deck has no grid row to hide\n");
+        return 1;
     }
-    std::fprintf(stdout, "dj-ui: a locked tool looks locked, not only refuses the click\n");
+    if (gridRow->isVisible()) {
+        std::fprintf(stderr, "dj-ui: the grid row is still drawn with the grid locked\n");
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: with the grid locked the whole grid row is off the panel\n");
     // The lock takes every tool that can move the grid, not just the one the eye lands on: a run of
     // buttons that still answer is a lock that does not lock.
     for (const char *name : {"gridHere_A", "gridTempo_A", "gridTempoDown_A", "gridTempoUp_A",
@@ -6649,6 +6678,10 @@ static int runLockCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Bri
         auto *tool = findItem(window->contentItem(), QString::fromLatin1(name));
         if (tool == nullptr) {
             std::fprintf(stderr, "dj-ui: the grid row has no %s\n", name);
+            return 1;
+        }
+        if (tool->isVisible()) {
+            std::fprintf(stderr, "dj-ui: %s is still drawn with the grid locked\n", name);
             return 1;
         }
         if (tool->isEnabled()) {
@@ -6672,7 +6705,12 @@ static int runLockCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Bri
                      qPrintable(label));
         return 1;
     }
-    std::fprintf(stdout, "dj-ui: the measure button reads \"Analyze\"\n");
+    if (measure->isVisible()) {
+        std::fprintf(stderr, "dj-ui: the measure button is still drawn with the grid locked\n");
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: the measure button reads \"Analyze\" and is off the panel while "
+                         "the grid is locked\n");
 
     // A locked grid means no measurement, and the button says so before the hand finds out: it is off,
     // and its face is the flat pale one every deck tool wears when it cannot act.
@@ -6706,13 +6744,8 @@ static int runLockCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Bri
             return QStringLiteral("the deck's measure button reads \"")
                 + button->property("text").toString() + QStringLiteral("\"");
         }
-        if (button->isEnabled()) {
-            return QStringLiteral("Analyze still answers with the grid locked");
-        }
-        const QObject *buttonFace = button->property("background").value<QObject *>();
-        const double opacity = buttonFace != nullptr ? buttonFace->property("opacity").toDouble() : 1.0;
-        if (opacity > 0.5) {
-            return QStringLiteral("Analyze looks live with the grid locked (face %1)").arg(opacity);
+        if (button->isVisible()) {
+            return QStringLiteral("Analyze is still drawn on the deck with the grid locked");
         }
         return QString();
     };
@@ -6993,7 +7026,12 @@ static int runLockCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Bri
         return 1;
     }
     std::fprintf(stdout, "dj-ui: the lock left the collection with the second press\n");
-    // ... and both doors come back: a rule that only ever disables is a rule whose opposite is untested.
+    // ... and both doors come back: a rule that only ever hides is a rule whose opposite is untested.
+    if (!waitFor([&]() { return tap != nullptr && tap->isVisible() && tap->isEnabled(); }, 5000)) {
+        std::fprintf(stderr, "dj-ui: the grid row did not come back with the lock off\n");
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: the grid row is back on the panel with the lock off\n");
     if (!waitFor([&]() { QQuickItem *button = deckAnalyze(); return button != nullptr && button->isEnabled(); },
                  5000)) {
         std::fprintf(stderr, "dj-ui: Analyze stayed grey after the lock came off\n");

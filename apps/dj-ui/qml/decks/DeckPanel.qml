@@ -999,25 +999,6 @@ Pane {
                                    + "the cache can do it, one still reading from disk cannot")
                 onClicked: Bridge.setReverse(panel.deckId, panel.deck.reverse !== true)
             }
-            // The tempo the deck shows was measured once, at load. When the answer is wrong the DJ
-            // asks again — a full decode, so it is asked for, never done behind their back, and a
-            // confirmation stands between the click and the new grid (B02).
-            GridTool {
-                objectName: "tempo_" + panel.deckId
-                text: qsTr("Analyze")
-                font.pixelSize: 10
-                // A second question while the first is being answered would queue another decode of
-                // the same file for the same answer; a locked grid is the DJ's decision, and a
-                // measurement would rewrite it. The face goes with the state: a tool that only refuses
-                // clicks is a tool the hand keeps trying.
-                enabled: panel.live && !panel.analyzing && !panel.analysisLock
-                focusPolicy: Qt.NoFocus
-                ToolTip.visible: hovered
-                ToolTip.text: panel.analysisLock
-                              ? qsTr("The grid is locked: unlock it to measure this track again")
-                              : qsTr("Analyse this track again: measure its tempo and rebuild the grid")
-                onClicked: tempoConfirm.open()
-            }
             Label {
                 objectName: "status_" + panel.deckId
                 text: panel.statusText()
@@ -1037,6 +1018,24 @@ Pane {
                 Repeater {
                     model: 8
                     delegate: padDelegate
+                }
+            }
+            // The lock of the grid, in the first row and to the right of the pads: it is the one grid control
+            // that has to survive the folded panel, because from a locked deck it is the way back (owner's decision).
+            ToggleButton {
+                objectName: "gridLock_" + panel.deckId
+                text: "\uD83D\uDD12"
+                lit: panel.analysisLock
+                enabled: panel.track !== null
+                font.pixelSize: 11
+                Layout.preferredWidth: 24
+                Layout.preferredHeight: 18
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Lock the grid: no measurement and no edit may move it")
+                onClicked: {
+                    panel.lockWanted = !panel.analysisLock;
+                    panel.lockPending = true;
+                    Bridge.setAnalysisLock(panel.deckId, panel.lockWanted);
                 }
             }
         }
@@ -1180,230 +1179,239 @@ Pane {
         RowLayout {
             objectName: "gridedit_" + panel.deckId
             Layout.fillWidth: true
-            // Always there, and never hidden: a track whose tempo could not be measured is the one whose
-            // grid a person has to place, and a row that disappears takes the tools away exactly then.
-            // The buttons that read an existing grid are greyed instead (DJP-MEDIA-006).
-            visible: panel.track !== null
-            spacing: 3
+            // A track with no grid keeps the row: the tools that CREATE a grid live here (⌖, BPM…, Tap),
+            // and taking them away leaves nothing to measure with; the tools that only read a grid are
+            // greyed instead (DJP-MEDIA-006). Under the lock the row is gone entirely — there is nothing
+            // to edit, and thirteen dead buttons cost the wave a row (owner's decision, 14.11).
+            visible: panel.track !== null && !panel.analysisLock
+            Item { Layout.fillWidth: true }
+            // The tools of the grid, centred on the deck: the row is a full-width one, and a block of
+            // buttons pushed to the left edge leaves the middle of the panel empty (owner's decision).
+            RowLayout {
+                objectName: "gridBlock_" + panel.deckId
+                spacing: 3
 
-            // A beat a press, on the outside of the ten-millisecond arrows: the two mistakes a grid makes
-            // are "a few milliseconds late" and "started on the wrong beat", and they need different
-            // buttons.
-            // The click, first in the row: it is the tool the ear judges everything after it with, and a
-            // grid compared against itself proves nothing. Only this deck's grid clicks, so two decks are
-            // compared one at a time.
-            ToggleButton {
-                objectName: "metronome_" + panel.deckId
-                enabled: panel.gridEditable
-                text: qsTr("♪")
-                font.pixelSize: 9
-                Layout.preferredWidth: 24
-                Layout.preferredHeight: 18
-                focusPolicy: Qt.NoFocus
-                // Lit while it clicks: a reference the DJ cannot see is one they cannot trust.
-                lit: panel.metronome
-                ToolTip.visible: hovered
-                ToolTip.text: qsTr("Click on every beat of this deck's grid")
-                onClicked: Bridge.metronome(panel.deckId, !panel.metronome)
-            }
-            GridTool {
-                objectName: "gridBeatLeft_" + panel.deckId
-                enabled: panel.gridEditable
-                text: qsTr("⇤")
-                font.pixelSize: 9
-                Layout.preferredWidth: 22
-                Layout.preferredHeight: 18
-                focusPolicy: Qt.NoFocus
-                ToolTip.visible: hovered
-                ToolTip.text: qsTr("Move the grid one beat earlier")
-                onClicked: panel.shiftBeat(-1)
-            }
-            // Ten milliseconds a press: a grid a whole beat out is rare, and a few milliseconds is
-            // what the ear actually hears.
-            GridTool {
-                objectName: "gridLeft_" + panel.deckId
-                enabled: panel.gridEditable
-                text: qsTr("◀")
-                font.pixelSize: 9
-                Layout.preferredWidth: 22
-                Layout.preferredHeight: 18
-                focusPolicy: Qt.NoFocus
-                ToolTip.visible: hovered
-                ToolTip.text: qsTr("Move the grid 10 ms earlier")
-                onClicked: panel.shiftGrid(-1)
-            }
-            // Between the arrows: the grid is put where the play head is, by the head itself.
-            // The mark is drawn, not typed: the glyph for a target — ⌖, ⊕ — is set as a dot in most fonts
-            // and at nine pixels it reads as one. A ring and a cross at thirteen pixels read as a target.
-            GridTool {
-                id: gridHereButton
-                objectName: "gridHere_" + panel.deckId
-                text: ""
-                Layout.preferredWidth: 22
-                Layout.preferredHeight: 18
-                // No padding: the mark is the whole button, and the eighteen pixels of its height are
-                // what makes it a target rather than a dot.
-                padding: 0
-                topPadding: 0
-                bottomPadding: 0
-                leftPadding: 0
-                rightPadding: 0
-                focusPolicy: Qt.NoFocus
-                ToolTip.visible: hovered
-                enabled: panel.gridToolsLive
-                ToolTip.text: qsTr("Put a beat of the grid under the play head")
-                onClicked: panel.gridHere()
-                contentItem: Item {
-                    objectName: "gridHereIcon_" + panel.deckId
-                    implicitWidth: 10
-                    implicitHeight: 10
-                    Rectangle {
-                        objectName: "gridHereRing_" + panel.deckId
-                        anchors.centerIn: parent
-                        width: 9
-                        height: 9
-                        radius: width / 2
-                        color: "transparent"
-                        border.width: 1
-                        border.color: panel.gridToolsLive ? UiSettings.themeText
-                                                          : UiSettings.themeTextDim
-                    }
-                    Rectangle {
-                        anchors.centerIn: parent
-                        width: 11
-                        height: 1
-                        color: panel.gridToolsLive ? UiSettings.themeText : UiSettings.themeTextDim
-                    }
-                    Rectangle {
-                        anchors.centerIn: parent
-                        width: 1
-                        height: 11
-                        color: panel.gridToolsLive ? UiSettings.themeText : UiSettings.themeTextDim
+                // A beat a press, on the outside of the ten-millisecond arrows: the two mistakes a grid makes
+                // are "a few milliseconds late" and "started on the wrong beat", and they need different
+                // buttons.
+                // The click, first in the row: it is the tool the ear judges everything after it with, and a
+                // grid compared against itself proves nothing. Only this deck's grid clicks, so two decks are
+                // compared one at a time.
+                ToggleButton {
+                    objectName: "metronome_" + panel.deckId
+                    enabled: panel.gridEditable
+                    text: qsTr("♪")
+                    font.pixelSize: 9
+                    Layout.preferredWidth: 24
+                    Layout.preferredHeight: 18
+                    focusPolicy: Qt.NoFocus
+                    // Lit while it clicks: a reference the DJ cannot see is one they cannot trust.
+                    lit: panel.metronome
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Click on every beat of this deck's grid")
+                    onClicked: Bridge.metronome(panel.deckId, !panel.metronome)
+                }
+                GridTool {
+                    objectName: "gridBeatLeft_" + panel.deckId
+                    enabled: panel.gridEditable
+                    text: qsTr("⇤")
+                    font.pixelSize: 9
+                    Layout.preferredWidth: 22
+                    Layout.preferredHeight: 18
+                    focusPolicy: Qt.NoFocus
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Move the grid one beat earlier")
+                    onClicked: panel.shiftBeat(-1)
+                }
+                // Ten milliseconds a press: a grid a whole beat out is rare, and a few milliseconds is
+                // what the ear actually hears.
+                GridTool {
+                    objectName: "gridLeft_" + panel.deckId
+                    enabled: panel.gridEditable
+                    text: qsTr("◀")
+                    font.pixelSize: 9
+                    Layout.preferredWidth: 22
+                    Layout.preferredHeight: 18
+                    focusPolicy: Qt.NoFocus
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Move the grid 10 ms earlier")
+                    onClicked: panel.shiftGrid(-1)
+                }
+                // Between the arrows: the grid is put where the play head is, by the head itself.
+                // The mark is drawn, not typed: the glyph for a target — ⌖, ⊕ — is set as a dot in most fonts
+                // and at nine pixels it reads as one. A ring and a cross at thirteen pixels read as a target.
+                GridTool {
+                    id: gridHereButton
+                    objectName: "gridHere_" + panel.deckId
+                    text: ""
+                    Layout.preferredWidth: 22
+                    Layout.preferredHeight: 18
+                    // No padding: the mark is the whole button, and the eighteen pixels of its height are
+                    // what makes it a target rather than a dot.
+                    padding: 0
+                    topPadding: 0
+                    bottomPadding: 0
+                    leftPadding: 0
+                    rightPadding: 0
+                    focusPolicy: Qt.NoFocus
+                    ToolTip.visible: hovered
+                    enabled: panel.gridToolsLive
+                    ToolTip.text: qsTr("Put a beat of the grid under the play head")
+                    onClicked: panel.gridHere()
+                    contentItem: Item {
+                        objectName: "gridHereIcon_" + panel.deckId
+                        implicitWidth: 10
+                        implicitHeight: 10
+                        Rectangle {
+                            objectName: "gridHereRing_" + panel.deckId
+                            anchors.centerIn: parent
+                            width: 9
+                            height: 9
+                            radius: width / 2
+                            color: "transparent"
+                            border.width: 1
+                            border.color: panel.gridToolsLive ? UiSettings.themeText
+                                                              : UiSettings.themeTextDim
+                        }
+                        Rectangle {
+                            anchors.centerIn: parent
+                            width: 11
+                            height: 1
+                            color: panel.gridToolsLive ? UiSettings.themeText : UiSettings.themeTextDim
+                        }
+                        Rectangle {
+                            anchors.centerIn: parent
+                            width: 1
+                            height: 11
+                            color: panel.gridToolsLive ? UiSettings.themeText : UiSettings.themeTextDim
+                        }
                     }
                 }
-            }
-            GridTool {
-                objectName: "gridRight_" + panel.deckId
-                enabled: panel.gridEditable
-                text: qsTr("▶")
-                font.pixelSize: 9
-                Layout.preferredWidth: 22
-                Layout.preferredHeight: 18
-                focusPolicy: Qt.NoFocus
-                ToolTip.visible: hovered
-                ToolTip.text: qsTr("Move the grid 10 ms later")
-                onClicked: panel.shiftGrid(1)
-            }
-            GridTool {
-                objectName: "gridBeatRight_" + panel.deckId
-                enabled: panel.gridEditable
-                text: qsTr("⇥")
-                font.pixelSize: 9
-                Layout.preferredWidth: 22
-                Layout.preferredHeight: 18
-                focusPolicy: Qt.NoFocus
-                ToolTip.visible: hovered
-                ToolTip.text: qsTr("Move the grid one beat later")
-                onClicked: panel.shiftBeat(1)
-            }
-            GridTool {
-                objectName: "gridHalf_" + panel.deckId
-                enabled: panel.gridEditable
-                text: qsTr("½")
-                font.pixelSize: 9
-                Layout.preferredHeight: 18
-                focusPolicy: Qt.NoFocus
-                ToolTip.visible: hovered
-                ToolTip.text: qsTr("Read the grid half as fast")
-                onClicked: Bridge.halveGrid(panel.deckId)
-            }
-            GridTool {
-                objectName: "gridDouble_" + panel.deckId
-                enabled: panel.gridEditable
-                text: qsTr("×2")
-                font.pixelSize: 9
-                Layout.preferredHeight: 18
-                focusPolicy: Qt.NoFocus
-                ToolTip.visible: hovered
-                ToolTip.text: qsTr("Read the grid twice as fast")
-                onClicked: Bridge.doubleGrid(panel.deckId)
-            }
-            GridTool {
-                objectName: "gridTempo_" + panel.deckId
-                enabled: panel.gridToolsLive
-                text: qsTr("BPM…")
-                font.pixelSize: 9
-                Layout.preferredHeight: 18
-                focusPolicy: Qt.NoFocus
-                ToolTip.visible: hovered
-                ToolTip.text: qsTr("Type the tempo")
-                onClicked: tempoEdit.open()
-            }
-            // A tenth of a beat per minute either way: the number a DJ trims by ear against the other
-            // deck, where a whole beat is far too much and the arrows below are a different job (they
-            // move the grid, these move the tempo).
-            GridTool {
-                objectName: "gridTempoDown_" + panel.deckId
-                enabled: panel.gridToolsLive
-                text: qsTr("▼")
-                font.pixelSize: 9
-                Layout.preferredWidth: 18
-                Layout.preferredHeight: 18
-                focusPolicy: Qt.NoFocus
-                ToolTip.visible: hovered
-                ToolTip.text: qsTr("Tempo down by 0.1 BPM")
-                onClicked: panel.nudgeTempo(-0.1)
-            }
-            GridTool {
-                objectName: "gridTempoUp_" + panel.deckId
-                enabled: panel.gridToolsLive
-                text: qsTr("▲")
-                font.pixelSize: 9
-                Layout.preferredWidth: 18
-                Layout.preferredHeight: 18
-                focusPolicy: Qt.NoFocus
-                ToolTip.visible: hovered
-                ToolTip.text: qsTr("Tempo up by 0.1 BPM")
-                onClicked: panel.nudgeTempo(0.1)
-            }
-            GridTool {
-                objectName: "gridTap_" + panel.deckId
-                enabled: panel.gridToolsLive
-                text: qsTr("Tap")
-                font.pixelSize: 9
-                Layout.preferredHeight: 18
-                focusPolicy: Qt.NoFocus
-                ToolTip.visible: hovered
-                ToolTip.text: qsTr("Tap the tempo: the grid is put on your taps, from the fourth one")
-                onClicked: panel.tap()
-            }
-            // The lock lives beside the tools it guards: it stops the measurement and every edit of this
-            // grid, and it says so on the deck and in the collection at the same time.
-            ToggleButton {
-                objectName: "gridLock_" + panel.deckId
-                text: "\uD83D\uDD12"
-                lit: panel.analysisLock
-                enabled: panel.track !== null
-                font.pixelSize: 11
-                Layout.preferredWidth: 24
-                Layout.preferredHeight: 18
-                ToolTip.visible: hovered
-                ToolTip.text: qsTr("Lock the grid: no measurement and no edit may move it")
-                onClicked: {
-                    panel.lockWanted = !panel.analysisLock;
-                    panel.lockPending = true;
-                    Bridge.setAnalysisLock(panel.deckId, panel.lockWanted);
+                GridTool {
+                    objectName: "gridRight_" + panel.deckId
+                    enabled: panel.gridEditable
+                    text: qsTr("▶")
+                    font.pixelSize: 9
+                    Layout.preferredWidth: 22
+                    Layout.preferredHeight: 18
+                    focusPolicy: Qt.NoFocus
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Move the grid 10 ms later")
+                    onClicked: panel.shiftGrid(1)
+                }
+                GridTool {
+                    objectName: "gridBeatRight_" + panel.deckId
+                    enabled: panel.gridEditable
+                    text: qsTr("⇥")
+                    font.pixelSize: 9
+                    Layout.preferredWidth: 22
+                    Layout.preferredHeight: 18
+                    focusPolicy: Qt.NoFocus
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Move the grid one beat later")
+                    onClicked: panel.shiftBeat(1)
+                }
+                GridTool {
+                    objectName: "gridHalf_" + panel.deckId
+                    enabled: panel.gridEditable
+                    text: qsTr("½")
+                    font.pixelSize: 9
+                    Layout.preferredHeight: 18
+                    focusPolicy: Qt.NoFocus
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Read the grid half as fast")
+                    onClicked: Bridge.halveGrid(panel.deckId)
+                }
+                GridTool {
+                    objectName: "gridDouble_" + panel.deckId
+                    enabled: panel.gridEditable
+                    text: qsTr("×2")
+                    font.pixelSize: 9
+                    Layout.preferredHeight: 18
+                    focusPolicy: Qt.NoFocus
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Read the grid twice as fast")
+                    onClicked: Bridge.doubleGrid(panel.deckId)
+                }
+                GridTool {
+                    objectName: "gridTempo_" + panel.deckId
+                    enabled: panel.gridToolsLive
+                    text: qsTr("BPM…")
+                    font.pixelSize: 9
+                    Layout.preferredHeight: 18
+                    focusPolicy: Qt.NoFocus
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Type the tempo")
+                    onClicked: tempoEdit.open()
+                }
+                // A tenth of a beat per minute either way: the number a DJ trims by ear against the other
+                // deck, where a whole beat is far too much and the arrows below are a different job (they
+                // move the grid, these move the tempo).
+                GridTool {
+                    objectName: "gridTempoDown_" + panel.deckId
+                    enabled: panel.gridToolsLive
+                    text: qsTr("▼")
+                    font.pixelSize: 9
+                    Layout.preferredWidth: 18
+                    Layout.preferredHeight: 18
+                    focusPolicy: Qt.NoFocus
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Tempo down by 0.1 BPM")
+                    onClicked: panel.nudgeTempo(-0.1)
+                }
+                GridTool {
+                    objectName: "gridTempoUp_" + panel.deckId
+                    enabled: panel.gridToolsLive
+                    text: qsTr("▲")
+                    font.pixelSize: 9
+                    Layout.preferredWidth: 18
+                    Layout.preferredHeight: 18
+                    focusPolicy: Qt.NoFocus
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Tempo up by 0.1 BPM")
+                    onClicked: panel.nudgeTempo(0.1)
+                }
+                GridTool {
+                    objectName: "gridTap_" + panel.deckId
+                    enabled: panel.gridToolsLive
+                    text: qsTr("Tap")
+                    font.pixelSize: 9
+                    Layout.preferredHeight: 18
+                    focusPolicy: Qt.NoFocus
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Tap the tempo: the grid is put on your taps, from the fourth one")
+                    onClicked: panel.tap()
+                }
+                // The tempo the deck shows was measured once, at load. When the answer is wrong the DJ
+                // asks again — a full decode, so it is asked for, never done behind their back, and a
+                // confirmation stands between the click and the new grid (B02).
+                GridTool {
+                    objectName: "tempo_" + panel.deckId
+                    text: qsTr("Analyze")
+                    font.pixelSize: 10
+                    // A second question while the first is being answered would queue another decode of
+                    // the same file for the same answer; a locked grid is the DJ's decision, and a
+                    // measurement would rewrite it. The face goes with the state: a tool that only refuses
+                    // clicks is a tool the hand keeps trying.
+                    enabled: panel.live && !panel.analyzing && !panel.analysisLock
+                    focusPolicy: Qt.NoFocus
+                    ToolTip.visible: hovered
+                    ToolTip.text: panel.analysisLock
+                                  ? qsTr("The grid is locked: unlock it to measure this track again")
+                                  : qsTr("Analyse this track again: measure its tempo and rebuild the grid")
+                    onClicked: tempoConfirm.open()
+                }
+                Label {
+                    objectName: "tapHint_" + panel.deckId
+                    visible: panel.taps.length > 0
+                    text: qsTr("%1 tap(s)").arg(panel.taps.length)
+                    color: UiSettings.themeTextDim
+                    font.pixelSize: 9
                 }
             }
             Item { Layout.fillWidth: true }
-            Label {
-                objectName: "tapHint_" + panel.deckId
-                visible: panel.taps.length > 0
-                text: qsTr("%1 tap(s)").arg(panel.taps.length)
-                color: UiSettings.themeTextDim
-                font.pixelSize: 9
-            }
         }
+
 
     }
 
