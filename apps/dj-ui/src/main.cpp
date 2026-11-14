@@ -7563,8 +7563,7 @@ int main(int argc, char *argv[])
     const QCommandLineOption transportExtrasOption(
         QStringLiteral("transport-extras-check"),
         QStringLiteral("With --connect and --load: press a jump and require the play head on a beat of "
-                       "the grid, hold and release the nudge, and switch slip on and off "
-                       "(DJP-DECK-006/007)."));
+                       "the grid, and switch slip and reverse on and off (DJP-DECK-006/007)."));
     const QCommandLineOption gridHereOption(
         QStringLiteral("grid-here-check"),
         QStringLiteral("With --connect and --load: seek off the grid, press the button between the arrows, "
@@ -9887,16 +9886,6 @@ int main(int argc, char *argv[])
             QCoreApplication::processEvents();
             return true;
         };
-        const auto hold = [&](const QString &name, const char *signal) {
-            auto *item = findItem(window->contentItem(), name);
-            if (item == nullptr) {
-                std::fprintf(stderr, "dj-ui: no %s to hold\n", qPrintable(name));
-                return false;
-            }
-            QMetaObject::invokeMethod(item, signal);
-            QCoreApplication::processEvents();
-            return true;
-        };
 
         bridge->load(QStringLiteral("A"), fixture);
         const QString wantName = QFileInfo(fixture).fileName();
@@ -9952,26 +9941,6 @@ int main(int argc, char *argv[])
             return 1;
         }
         const qint64 jump = playHead() - start;
-        // The platter: held, the state says the deck is bent; released, it says the bend is gone.
-        if (!hold(QStringLiteral("nudgeOn_A"), "pressed")) {
-            return 1;
-        }
-        if (!waitFor(
-                [&]() { return deckA().value(QStringLiteral("nudge")).toDouble() > 0.9; }, 3000)) {
-            std::fprintf(stderr, "dj-ui: the nudge never reached the deck (nudge %.3f)\n",
-                         deckA().value(QStringLiteral("nudge")).toDouble());
-            return 1;
-        }
-        if (!hold(QStringLiteral("nudgeOn_A"), "released")) {
-            return 1;
-        }
-        if (!waitFor(
-                [&]() { return std::fabs(deckA().value(QStringLiteral("nudge")).toDouble()) < 1e-6; },
-                3000)) {
-            std::fprintf(stderr, "dj-ui: letting go left the deck bent (nudge %.3f)\n",
-                         deckA().value(QStringLiteral("nudge")).toDouble());
-            return 1;
-        }
         // Slip: on, the state carries a virtual head; off, it carries none.
         if (!press(QStringLiteral("slip_A"))) {
             return 1;
@@ -10128,7 +10097,7 @@ int main(int argc, char *argv[])
         }
         std::fprintf(stdout,
                      "dj-ui: a jump of one beat moved the play head %lld frames and landed on the "
-                     "grid, the nudge bent the deck and let go, slip drew its virtual head on both "
+                     "grid, slip drew its virtual head on both "
                      "strips (%.4f against the sound at %.4f), and reverse walked the head down to "
                      "%lld and forward again, and the deck was left paused for the next check\n",
                      jump, slipMark, heardMark, downhill);

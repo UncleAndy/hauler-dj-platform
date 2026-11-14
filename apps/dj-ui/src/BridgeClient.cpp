@@ -1556,16 +1556,6 @@ int BridgeClient::beatJump(const QString &deck, double beats, bool quantize)
     return sendCommand(deck, command);
 }
 
-int BridgeClient::nudge(const QString &deck, double amount)
-{
-    QJsonObject options;
-    options.insert(QStringLiteral("deck"), deck);
-    options.insert(QStringLiteral("amount"), amount);
-    QJsonObject command;
-    command.insert(QStringLiteral("Nudge"), options);
-    return sendCommand(deck, command);
-}
-
 int BridgeClient::setSlip(const QString &deck, bool enabled)
 {
     QJsonObject options;

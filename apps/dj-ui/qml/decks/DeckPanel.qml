@@ -1121,36 +1121,6 @@ Pane {
                     onClicked: Bridge.beatJump(panel.deckId, modelData, panel.quantize)
                 }
             }
-            // A hand on the platter: held, the rate bends; released, it comes back. Two buttons, because
-            // a wheel is not on every desk and a bend is the one correction every mix needs.
-            Button {
-                objectName: "nudgeBack_" + panel.deckId
-                text: qsTr("‹ nudge")
-                font.pixelSize: 10
-                width: 64
-                height: 20
-                enabled: panel.live
-                focusPolicy: Qt.NoFocus
-                ToolTip.visible: hovered
-                ToolTip.text: qsTr("Hold to bend the deck slower")
-                onPressed: Bridge.nudge(panel.deckId, -1.0)
-                onReleased: Bridge.nudge(panel.deckId, 0.0)
-                onCanceled: Bridge.nudge(panel.deckId, 0.0)
-            }
-            Button {
-                objectName: "nudgeOn_" + panel.deckId
-                text: qsTr("nudge ›")
-                font.pixelSize: 10
-                width: 64
-                height: 20
-                enabled: panel.live
-                focusPolicy: Qt.NoFocus
-                ToolTip.visible: hovered
-                ToolTip.text: qsTr("Hold to bend the deck faster")
-                onPressed: Bridge.nudge(panel.deckId, 1.0)
-                onReleased: Bridge.nudge(panel.deckId, 0.0)
-                onCanceled: Bridge.nudge(panel.deckId, 0.0)
-            }
             // Slip wears the same colour as Loop when it is on: a mode has to look like a mode.
             ToggleButton {
                 objectName: "slip_" + panel.deckId

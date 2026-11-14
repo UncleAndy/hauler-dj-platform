@@ -304,8 +304,6 @@ public:
     /// Beatjump: move the play head by `beats` beats of the deck's grid; with `quantize` it lands on a
     /// line of the grid instead of a plain step of time (DJP-DECK-006).
     Q_INVOKABLE int beatJump(const QString &deck, double beats, bool quantize);
-    /// Nudge: bend the deck's rate by `amount` of its nudge range, `-1 … 1`; zero lets go.
-    Q_INVOKABLE int nudge(const QString &deck, double amount);
     /// Slip: the sound may jump or repeat while the track under it keeps running (DJP-DECK-007).
     Q_INVOKABLE int setSlip(const QString &deck, bool enabled);
     Q_INVOKABLE int setReverse(const QString &deck, bool enabled);
