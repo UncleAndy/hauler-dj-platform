@@ -213,8 +213,12 @@ private:
     /// The marker of the question this panel last asked: an answer carrying another one belongs to another
     /// question, and is not the rows of this playlist.
     quint64 m_playlistQuestion = 0;
-    /// The nodes the DJ closed: `all`, or `folder:<path>`. Everything else stands open.
-    QStringList m_collapsed;
+    /// The tree the engine last published. Kept apart from the rows on the screen: a change in it may be
+    /// invisible (the playlist that changed sits in a closed folder) and still needs the page re-asked.
+    QVariantMap m_engineTree;
+    /// The nodes the DJ opened: `all`, or `folder:<path>`. Nothing is open until it is asked for — a tree
+    /// that opens every level at once is a list with arrows drawn on it (owner's decision, 15.11.2026).
+    QStringList m_expanded;
     void collect(const QStringList &roots);
     void applyFilter();
     void applySort();

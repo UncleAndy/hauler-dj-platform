@@ -1459,6 +1459,9 @@ Pane {
                                                   ? 0 : treeRow.modelData.depth
                     readonly property bool chosen: Browser.playlistId === treeRow.modelData.id
                                                    && treeRow.modelData.kind === "playlist"
+                    // `All` is neither a folder nor a playlist: it is the flat view of every playlist, and
+                    // it says so in its face — bold, in the header's colour, with a mark of its own.
+                    readonly property bool isAll: treeRow.modelData.kind === "all"
                     // The rail is a tree, not a table: rows carry no stripes and no second colour. Two
                     // things light a row — the playlist the DJ opened, and the folder a carried playlist
                     // would drop into (owner's decision, 15.11.2026).
@@ -1480,8 +1483,15 @@ Pane {
                         width: parent.width - 10 - treeRow.depth * 14
                         anchors.verticalCenter: parent.verticalCenter
                         elide: Text.ElideRight
-                        font: browser.listFace
-                        color: treeRow.chosen ? UiSettings.themeBackground : UiSettings.themeText
+                        // One value, not a group and a field: `font` assigned and then `font.bold` set is
+                        // the same property given twice, and QML refuses to load the scene.
+                        font: treeRow.isAll
+                              ? Qt.font({family: browser.listFace.family,
+                                         pixelSize: browser.listFace.pixelSize, bold: true})
+                              : browser.listFace
+                        color: treeRow.chosen ? UiSettings.themeBackground
+                                              : (treeRow.isAll ? UiSettings.themeHeaderText
+                                                               : UiSettings.themeText)
                         // A node that holds playlists wears a mark that says whether it is open: a tree
                         // with no mark is a list the DJ has to guess at.
                         text: {
@@ -1491,8 +1501,11 @@ Pane {
                                        + (node.tracks > 0 ? "  (" + node.tracks + ")" : "");
                             }
                             const mark = node.open === true ? "\u25BE " : "\u25B8 ";
-                            return mark + (node.kind === "folder" ? "\uD83D\uDCC1 " + node.name
-                                                                  : node.name);
+                            if (node.kind === "all") {
+                                // A list mark, not a folder: the flat view of every playlist.
+                                return mark + "\u2261 " + node.name;
+                            }
+                            return mark + "\uD83D\uDCC1 " + node.name;
                         }
                     }
 

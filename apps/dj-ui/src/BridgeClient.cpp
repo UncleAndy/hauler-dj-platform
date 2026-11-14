@@ -653,12 +653,11 @@ void FileBrowser::rebuildPlaylistTree()
     if (m_bridge == nullptr) {
         return;
     }
-    // The tree, as the owner asked for it: `All` first, with every playlist flat under it, then the
-    // folders, each with its own playlists. A playlist inside a folder is reachable twice — by the flat
-    // view and by its folder — and both open the same playlist. `All` and every folder open and close by
-    // a click, like any tree: a closed node keeps its row and hides what it holds (owner's decision,
-    // 15.11.2026).
-    const QVariantMap tree = m_bridge->playlistTree();
+    // The tree, as the owner asked for it: `All` first, then the top-level folders, then the playlists
+    // that sit in no folder. Nothing is unfolded on the way in — a node shows what it holds when the DJ
+    // clicks it, one level at a time (owner's decision, 15.11.2026). The tree comes from the engine's
+    // last answer, kept by `takePlaylists`, so a toggle needs no round trip.
+    const QVariantMap tree = m_engineTree;
     const QVariantList folders = tree.value(QStringLiteral("folders")).toList();
     const QVariantList playlists = tree.value(QStringLiteral("playlists")).toList();
     QVariantList flat;
@@ -669,54 +668,70 @@ void FileBrowser::rebuildPlaylistTree()
         row.insert(QStringLiteral("open"), false);
         return row;
     };
-    auto node = [](const QString &kind, const QString &name, const QString &folder, bool open) {
+    auto node = [](const QString &kind, const QString &name, const QString &folder, int depth,
+                   bool open) {
         QVariantMap row;
         row.insert(QStringLiteral("kind"), kind);
         row.insert(QStringLiteral("name"), name);
         row.insert(QStringLiteral("folder"), folder);
         row.insert(QStringLiteral("id"), static_cast<qlonglong>(0));
-        row.insert(QStringLiteral("depth"), 0);
+        row.insert(QStringLiteral("depth"), depth);
         row.insert(QStringLiteral("tracks"), 0);
         row.insert(QStringLiteral("open"), open);
         return row;
     };
-    const bool allOpen = !m_collapsed.contains(QStringLiteral("all"));
-    flat.append(node(QStringLiteral("all"), QStringLiteral("All"), QString(), allOpen));
+    const auto isOpen = [&](const QString &key) { return m_expanded.contains(key); };
+    const bool allOpen = isOpen(QStringLiteral("all"));
+    flat.append(node(QStringLiteral("all"), QStringLiteral("All"), QString(), 0, allOpen));
+    // `All` opens one level too: the flat view of every playlist, nothing deeper.
     if (allOpen) {
         for (const QVariant &item : playlists) {
             flat.append(leaf(item.toMap(), 1));
         }
     }
-    // A playlist that sits in no folder is a row of the root as well: `All` is the flat view of
-    // everything, and the root is where a playlist without a folder belongs. One does not replace the
-    // other (owner's report, 15.11.2026, and with `All` closed such a playlist had no row at all).
+
+    // The folders, a level at a time: a folder shows what it holds only when the DJ opens it, and a folder
+    // inside it waits for its own click — the tree never unfolds itself (owner's decision, 15.11.2026).
+    std::function<void(const QString &, int)> emitFolder = [&](const QString &path, int depth) {
+        const bool open = isOpen(QStringLiteral("folder:") + path);
+        flat.append(node(QStringLiteral("folder"), path.section(QLatin1Char('/'), -1), path, depth, open));
+        if (!open) {
+            return;
+        }
+        for (const QVariant &item : playlists) {
+            const QVariantMap found = item.toMap();
+            if (found.value(QStringLiteral("folder")).toString() == path) {
+                flat.append(leaf(found, depth + 1));
+            }
+        }
+        const QString prefix = path + QLatin1Char('/');
+        for (const QVariant &folder : folders) {
+            const QString child = folder.toString();
+            if (!child.startsWith(prefix) || child.mid(prefix.size()).contains(QLatin1Char('/'))) {
+                continue;
+            }
+            emitFolder(child, depth + 1);
+        }
+    };
+    for (const QVariant &folder : folders) {
+        const QString path = folder.toString();
+        if (path.isEmpty() || path.contains(QLatin1Char('/'))) {
+            continue;  // a folder with a parent is shown by that parent
+        }
+        emitFolder(path, 0);
+    }
+
+    // The playlists with no folder stand in the root, after the folders.
     for (const QVariant &item : playlists) {
         const QVariantMap found = item.toMap();
         if (found.value(QStringLiteral("folder")).toString().isEmpty()) {
             flat.append(leaf(found, 0));
         }
     }
-    for (const QVariant &folder : folders) {
-        const QString path = folder.toString();
-        const bool open = !m_collapsed.contains(QStringLiteral("folder:") + path);
-        flat.append(node(QStringLiteral("folder"), path.section(QLatin1Char('/'), -1), path, open));
-        if (!open) {
-            continue;
-        }
-        for (const QVariant &item : playlists) {
-            const QVariantMap found = item.toMap();
-            if (found.value(QStringLiteral("folder")).toString() == path) {
-                flat.append(leaf(found, 1));
-            }
-        }
-    }
+
     if (flat != m_playlistTree) {
         m_playlistTree = flat;
         emit playlistsChanged();
-        // A playlist that was renamed or emptied says the old thing until it is asked again.
-        if (m_mode == QLatin1String("playlists") && m_playlistId != 0) {
-            askPlaylistPage();
-        }
     }
 }
 
@@ -724,10 +739,10 @@ void FileBrowser::togglePlaylistNode(const QString &kind, const QString &folder)
 {
     const QString key = kind == QLatin1String("all") ? QStringLiteral("all")
                                                      : QStringLiteral("folder:") + folder;
-    if (m_collapsed.contains(key)) {
-        m_collapsed.removeAll(key);
+    if (m_expanded.contains(key)) {
+        m_expanded.removeAll(key);
     } else {
-        m_collapsed.append(key);
+        m_expanded.append(key);
     }
     rebuildPlaylistTree();
 }
@@ -737,7 +752,16 @@ void FileBrowser::takePlaylists()
     if (m_bridge == nullptr) {
         return;
     }
+    // The page belongs to the open playlist, and that playlist's row may be hidden in a closed folder: a
+    // change is judged by the engine's tree, not by the rows on the screen, or an edit to a closed playlist
+    // leaves the list showing the state before it (owner's report, 15.11.2026).
+    const QVariantMap engineTree = m_bridge->playlistTree();
+    const bool libraryMoved = engineTree != m_engineTree;
+    m_engineTree = engineTree;
     rebuildPlaylistTree();
+    if (libraryMoved && m_mode == QLatin1String("playlists") && m_playlistId != 0) {
+        askPlaylistPage();
+    }
 
     // The page of the playlist the DJ opened: its own cell, and its own marker — an answer to another
     // question is not this playlist's rows.
@@ -782,6 +806,8 @@ void FileBrowser::showPlaylists()
     if (m_playlistName.isEmpty()) {
         m_playlistName = QStringLiteral("All");
     }
+    m_engineTree = m_bridge != nullptr ? m_bridge->playlistTree() : QVariantMap();
+    rebuildPlaylistTree();
     askPlaylistPage();
 }
 

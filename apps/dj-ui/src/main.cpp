@@ -7021,32 +7021,52 @@ static int runPlaylistCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         return 1;
     }
 
-    // One playlist, in a folder: the folder becomes a place of its own in the tree.
+    // One playlist, in a folder. The tree opens one level at a time: `All` first, then the top-level
+    // folders, then the playlists that sit in no folder — the new playlist lives inside `Sets`, so it has no
+    // row until that folder is opened (owner's decision, 15.11.2026).
     browser.playlistCreate(QStringLiteral("Warm up"), QStringLiteral("Sets"));
-    const bool made = waitFor([&]() { return !findPlaylist(QStringLiteral("Warm up")).isEmpty(); },
-                              10000);
-    if (!require(made, QStringLiteral("the playlist never appeared in the tree"))) {
+    const auto rowsOfKind = [&](const QString &kind) {
+        int count = 0;
+        for (const QVariant &entry : tree()) {
+            if (entry.toMap().value(QStringLiteral("kind")).toString() == kind) {
+                count += 1;
+            }
+        }
+        return count;
+    };
+    const bool oneLevel = waitFor(
+        [&]() {
+            const QVariantList rows = tree();
+            return rows.size() == 2
+                   && rows.at(0).toMap().value(QStringLiteral("kind")).toString()
+                          == QStringLiteral("all")
+                   && rows.at(1).toMap().value(QStringLiteral("kind")).toString()
+                          == QStringLiteral("folder")
+                   && rows.at(1).toMap().value(QStringLiteral("folder")).toString()
+                          == QStringLiteral("Sets");
+        },
+        10000);
+    require(oneLevel, QStringLiteral("the tree did not open with one level: All and the folder"));
+    require(rowsOfKind(QStringLiteral("playlist")) == 0,
+            QStringLiteral("a playlist of a closed folder stands on the screen"));
+    std::printf("dj-ui: the tree opens one level: %d rows, nothing unfolded\n",
+                static_cast<int>(tree().size()));
+
+    // `All` opens one level of its own: every playlist flat, and nothing deeper.
+    browser.togglePlaylistNode(QStringLiteral("all"), QString());
+    const bool allOpened = waitFor([&]() { return rowsOfKind(QStringLiteral("playlist")) == 1; }, 5000);
+    require(allOpened, QStringLiteral("All did not open the flat list of playlists"));
+    const QVariantMap warmUp = findPlaylist(QStringLiteral("Warm up"));
+    if (!require(!warmUp.isEmpty(), QStringLiteral("the playlist never appeared in the tree"))) {
         return 1;
     }
-    const QVariantMap warmUp = findPlaylist(QStringLiteral("Warm up"));
     const qlonglong id = warmUp.value(QStringLiteral("id")).toLongLong();
-    require(playlistPath(QStringLiteral("Sets"), QStringLiteral("Warm up")).isEmpty() == false
-                && QFile::exists(playlistPath(QStringLiteral("Sets"), QStringLiteral("Warm up"))),
+    require(QFile::exists(playlistPath(QStringLiteral("Sets"), QStringLiteral("Warm up"))),
             QStringLiteral("the playlist has no file in the mirror"));
-    bool folderRow = false;
-    for (const QVariant &entry : tree()) {
-        const QVariantMap row = entry.toMap();
-        if (row.value(QStringLiteral("kind")).toString() == QStringLiteral("folder")
-            && row.value(QStringLiteral("folder")).toString() == QStringLiteral("Sets")) {
-            folderRow = true;
-        }
-    }
-    require(folderRow, QStringLiteral("the folder did not become a row of the tree"));
 
     // The collection's menu carries the playlists: a DJ with tracks chosen must find the playlist he made a
-    // minute ago by its name, not by a dialog he has to fill in first.
-    // A menu is a popup, not an item in the panel's own tree: it is found as a QObject, the way the
-    // import dialogs are.
+    // minute ago by its name, not by a dialog he has to fill in first. A menu is a popup, not an item in the
+    // panel's own tree: it is found as a QObject, the way the import dialogs are.
     auto *addMenu = panel->findChild<QObject *>(QStringLiteral("addToPlaylistMenu"));
     if (addMenu == nullptr) {
         std::fprintf(stderr, "dj-ui: the browser has no Add to playlist menu\n");
@@ -7056,8 +7076,6 @@ static int runPlaylistCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     const QString offered = QStringLiteral("addToPlaylist_%1").arg(id);
     const bool listed = waitFor([&]() { return panel->findChild<QObject *>(offered) != nullptr; },
                                 3000);
-    // Once, and under the name of its folder: the tree repeats a playlist under `All` and under its folder,
-    // and the menu must not.
     int copies = 0;
     for (QObject *child : panel->findChildren<QObject *>()) {
         if (child->objectName() == offered) {
@@ -7073,46 +7091,51 @@ static int runPlaylistCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     std::printf("dj-ui: the collection's menu offers the playlist once, under the folder \"Sets\"\n");
 
     // The tree is drawn by the panel, not only held in the object: the rows stand where the settings say
-    // (the list's row height) and a playlist inside a folder is indented by one step.
-    auto *firstTreeRow = findItem(window->contentItem(), QStringLiteral("playlistTreeRow_0"));
+    // (the list's row height), a playlist inside a node is indented by one step, and `All` says in its face
+    // that it is neither a folder nor a playlist.
+    auto *allRow = findItem(window->contentItem(), QStringLiteral("playlistTreeRow_0"));
     const int rowHeight = panel->property("rowHeight").toInt();
-    if (!waitFor([&]() { return firstTreeRow != nullptr && firstTreeRow->isVisible(); }, 5000)) {
+    if (!waitFor([&]() { return allRow != nullptr && allRow->isVisible(); }, 5000)) {
         std::fprintf(stderr, "dj-ui: the tree drew no rows\n");
         return 1;
     }
-    QQuickItem *indented = nullptr;
-    for (int index = 0; index < tree().size(); ++index) {
-        const QVariantMap row = tree().at(index).toMap();
-        if (row.value(QStringLiteral("depth")).toInt() == 1) {
-            indented = findItem(window->contentItem(),
-                                QStringLiteral("playlistTreeRow_%1").arg(index));
-            break;
-        }
-    }
-    if (indented == nullptr) {
-        std::fprintf(stderr, "dj-ui: the tree has no indented row\n");
+    auto *indented = findItem(window->contentItem(), QStringLiteral("playlistTreeRow_1"));
+    auto *folderRowItem = findItem(window->contentItem(), QStringLiteral("playlistTreeRow_2"));
+    if (indented == nullptr || folderRowItem == nullptr) {
+        std::fprintf(stderr, "dj-ui: the tree is missing the playlist or the folder row\n");
         return 1;
     }
-    const double top = firstTreeRow->mapToScene(QPointF(0, 0)).y();
+    // `≡` is the mark of the flat view; the folder wears the folder glyph instead.
+    const QString allText = allRow->property("text").toString();
+    const QString folderText = folderRowItem->property("text").toString();
+    const QString flatMark = QString::fromUtf8("\xE2\x89\xA1");
+    require(allText.contains(flatMark) && allText.contains(QStringLiteral("All")),
+            QStringLiteral("All carries no mark of its own: %1").arg(allText));
+    require(!folderText.contains(flatMark),
+            QStringLiteral("the folder wears the mark of All: %1").arg(folderText));
+    const double top = allRow->mapToScene(QPointF(0, 0)).y();
     const double inset = indented->property("x").toDouble();
     require(std::abs(inset - 20.0) <= 0.5,
             QStringLiteral("the indented row does not stand 20 px in (it stands %1)")
                 .arg(inset, 0, 'f', 1));
-    std::printf("dj-ui: the tree drew %d rows %.0f px tall, the first at y=%.0f and an indented one "
-                "%.1f px in\n",
-                static_cast<int>(tree().size()), top < 0 ? 0.0 : static_cast<double>(rowHeight), top,
-                inset);
+    std::printf("dj-ui: the tree drew %d rows %.0f px tall, All at y=%.0f marked \"%s\", an indented "
+                "row %.1f px in\n",
+                static_cast<int>(tree().size()), static_cast<double>(rowHeight), top,
+                qPrintable(allText), inset);
 
-    // A node opens and closes under the click: `All` hides the flat list, and a second click brings it
-    // back. The rows are the tree's, so their number is the measurement.
+    // A node closes under the click: `All` folds its flat list away again, and the tree is back to one
+    // level.
     const int openRows = static_cast<int>(tree().size());
     browser.togglePlaylistNode(QStringLiteral("all"), QString());
     const bool closed = waitFor([&]() { return static_cast<int>(tree().size()) == openRows - 1; },
                                 3000);
+    require(closed, QStringLiteral("the tree does not close All under a click"));
+    std::printf("dj-ui: the tree closes %d rows to %d\n", openRows, openRows - 1);
+    // Open `All` again for the rest of the check: the flat list is where every playlist has a row, whichever
+    // folder it sits in, and the steps below work on rows that are on the screen.
     browser.togglePlaylistNode(QStringLiteral("all"), QString());
-    const bool opened = waitFor([&]() { return static_cast<int>(tree().size()) == openRows; }, 3000);
-    require(closed && opened, QStringLiteral("the tree does not close and open under a click"));
-    std::printf("dj-ui: the tree closes %d rows to %d and opens them again\n", openRows, openRows - 1);
+    require(waitFor([&]() { return rowsOfKind(QStringLiteral("playlist")) >= 1; }, 5000),
+            QStringLiteral("All did not open again"));
 
     // Tracks into the playlist: the panel adds them by fingerprint and path, and the list on the right
     // becomes the playlist's own order.
@@ -7353,6 +7376,8 @@ static int runPlaylistCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     // The hand: a playlist is dragged from `Sets` onto the folder `Late`, and both the tree and the mirror
     // must show it there. Real mouse events, the way the keys and the knobs are driven — a drag tested by
     // calling the command would prove the command, not the gesture.
+    // The folder the playlist goes into, and the folder it comes from opened by the hand: a row inside a
+    // closed folder is not on the screen to be dragged.
     browser.playlistFolderCreate(QStringLiteral("Late"));
     int playlistAt = -1;
     int lateAt = -1;
