@@ -7039,6 +7039,17 @@ static int runPlaylistCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
                 static_cast<int>(tree().size()), top < 0 ? 0.0 : static_cast<double>(rowHeight), top,
                 inset);
 
+    // A node opens and closes under the click: `All` hides the flat list, and a second click brings it
+    // back. The rows are the tree's, so their number is the measurement.
+    const int openRows = static_cast<int>(tree().size());
+    browser.togglePlaylistNode(QStringLiteral("all"), QString());
+    const bool closed = waitFor([&]() { return static_cast<int>(tree().size()) == openRows - 1; },
+                                3000);
+    browser.togglePlaylistNode(QStringLiteral("all"), QString());
+    const bool opened = waitFor([&]() { return static_cast<int>(tree().size()) == openRows; }, 3000);
+    require(closed && opened, QStringLiteral("the tree does not close and open under a click"));
+    std::printf("dj-ui: the tree closes %d rows to %d and opens them again\n", openRows, openRows - 1);
+
     // Tracks into the playlist: the panel adds them by fingerprint and path, and the list on the right
     // becomes the playlist's own order.
     browser.openPlaylist(id, QStringLiteral("Warm up"));
@@ -7049,6 +7060,26 @@ static int runPlaylistCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     }
     require(fingerprints().at(0) == alphaPrint && fingerprints().at(2) == betaPrint,
             QStringLiteral("the playlist rows are not in the order they were added"));
+
+    // The playlist is drawn by the collection's table, not by a list of its own: the columns are named
+    // above the rows, and the cells stand in them.
+    auto *columnsHeader = findItem(window->contentItem(), QStringLiteral("collectionHeader"));
+    auto *firstCell = findItem(window->contentItem(), QStringLiteral("collectionCell_artist_0"));
+    require(columnsHeader != nullptr && columnsHeader->isVisible(),
+            QStringLiteral("a playlist has no named columns"));
+    require(firstCell != nullptr && firstCell->isVisible(),
+            QStringLiteral("a playlist row is not drawn by the table's cells"));
+    if (columnsHeader != nullptr && firstCell != nullptr) {
+        const QRectF headerRect =
+            columnsHeader->mapRectToScene(QRectF(0, 0, columnsHeader->width(), columnsHeader->height()));
+        const QRectF cellRect = firstCell->mapRectToScene(
+            QRectF(0, 0, firstCell->width(), firstCell->height()));
+        require(cellRect.top() >= headerRect.bottom() - 1.0,
+                QStringLiteral("the first cell stands over the columns' header"));
+        std::printf("dj-ui: the playlist is drawn by the collection's table: a header %.0f px tall, "
+                    "the first artist cell %.0f px below it\n",
+                    headerRect.height(), cellRect.top() - headerRect.bottom());
+    }
 
     // A duplicate is allowed (owner's decision), and Remove dups takes the repeats of a track, keeping the
     // first of each.

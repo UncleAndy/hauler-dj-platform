@@ -30,6 +30,10 @@ Pane {
     // rail can light the row the list belongs to instead of guessing.
     readonly property string section: Browser.mode === "playlists" ? "playlists"
                                       : (Browser.mode === "collection" ? "collection" : "files")
+    // The table is the collection's table, and a playlist is drawn by the same one: the same header, the
+    // same cells, the same widths. Everything that belongs to the table asks this, never the section's
+    // name, so a new place with tracks gets the table without a second set of conditions.
+    readonly property bool tabular: browser.section === "collection" || Browser.inPlaylists
 
     // Where the playlist tree stands: `all`, or a folder, or the playlist the DJ opened. `All` and a
     // folder are places, not playlists — the right side of the panel is for tracks (owner's decision,
@@ -1337,14 +1341,9 @@ Pane {
                                                   ? 0 : treeRow.modelData.depth
                     readonly property bool chosen: Browser.playlistId === treeRow.modelData.id
                                                    && treeRow.modelData.kind === "playlist"
-                    readonly property bool place: treeRow.modelData.kind !== "playlist"
-                                                  && Browser.playlistId === 0
-                                                  && browser.playlistPlace === treeRow.modelData.kind
-                                                  && browser.playlistPlaceName === treeRow.modelData.folder
-                    color: treeRow.chosen || treeRow.place
-                           ? UiSettings.themeAccent
-                           : (treeRow.index % 2 === 0 ? UiSettings.themePanel
-                                                      : UiSettings.themeBackground)
+                    // The rail is a tree, not a table: rows carry no stripes and no second colour. The
+                    // only colour is the playlist the DJ opened (owner's decision, 15.11.2026).
+                    color: treeRow.chosen ? UiSettings.themeAccent : "transparent"
                     radius: 2
 
                     Label {
@@ -1356,15 +1355,19 @@ Pane {
                         anchors.verticalCenter: parent.verticalCenter
                         elide: Text.ElideRight
                         font: browser.listFace
-                        color: treeRow.chosen || treeRow.place ? UiSettings.themeBackground
-                                                               : UiSettings.themeText
-                        text: treeRow.modelData.kind === "folder"
-                              ? "\uD83D\uDCC1 " + treeRow.modelData.name
-                              : (treeRow.modelData.kind === "all"
-                                 ? treeRow.modelData.name
-                                 : treeRow.modelData.name
-                                   + (treeRow.modelData.tracks > 0
-                                      ? "  (" + treeRow.modelData.tracks + ")" : ""))
+                        color: treeRow.chosen ? UiSettings.themeBackground : UiSettings.themeText
+                        // A node that holds playlists wears a mark that says whether it is open: a tree
+                        // with no mark is a list the DJ has to guess at.
+                        text: {
+                            const node = treeRow.modelData;
+                            if (node.kind === "playlist") {
+                                return node.name
+                                       + (node.tracks > 0 ? "  (" + node.tracks + ")" : "");
+                            }
+                            const mark = node.open === true ? "\u25BE " : "\u25B8 ";
+                            return mark + (node.kind === "folder" ? "\uD83D\uDCC1 " + node.name
+                                                                  : node.name);
+                        }
                     }
 
                     MouseArea {
@@ -1376,7 +1379,14 @@ Pane {
                                 playlistMenu.popup();
                                 return;
                             }
-                            browser.openTreeRow(treeRow.modelData);
+                            const node = treeRow.modelData;
+                            if (node.kind === "playlist") {
+                                browser.openTreeRow(node);
+                                return;
+                            }
+                            // `All` and a folder open and close under the click, as in any tree.
+                            Browser.togglePlaylistNode(node.kind,
+                                                       node.folder === undefined ? "" : node.folder);
                         }
                     }
 
@@ -1482,15 +1492,16 @@ Pane {
                 // about the others. What the DJ needs is how many tracks it holds.
                 Label {
                     objectName: "collectionTotal"
-                    visible: browser.section === "collection"
-                    text: qsTr("(%1)").arg(Browser.total)
+                    visible: browser.tabular
+                    text: qsTr("(%1)").arg(Browser.inPlaylists ? Browser.playlistTotal
+                                                              : Browser.total)
                     color: UiSettings.themeTextDim
                     font.pixelSize: browser.headerFont
                 }
                 Label {
                     objectName: "browserPath"
                     Layout.fillWidth: true
-                    visible: browser.section !== "collection"
+                    visible: browser.section === "files"
                     text: Browser.folder
                     elide: Text.ElideMiddle
                     color: UiSettings.themeTextDim
@@ -1500,10 +1511,15 @@ Pane {
                 // that hides everything must not look like an empty collection.
                 Label {
                     objectName: "collectionCount"
-                    visible: browser.section === "collection"
-                    text: Browser.filter.length > 0
-                          ? qsTr("%1 of %2").arg(Browser.entries.length).arg(Browser.total)
-                          : qsTr("%1 tracks").arg(Browser.total)
+                    visible: browser.tabular
+                    text: Browser.inPlaylists
+                          ? (Browser.filter.length > 0
+                             ? qsTr("%1 of %2").arg(Browser.playlistRows.length)
+                                                .arg(Browser.playlistTotal)
+                             : qsTr("%1 tracks").arg(Browser.playlistTotal))
+                          : (Browser.filter.length > 0
+                             ? qsTr("%1 of %2").arg(Browser.entries.length).arg(Browser.total)
+                             : qsTr("%1 tracks").arg(Browser.total))
                     color: UiSettings.themeTextDim
                     font.pixelSize: browser.headerFont
                 }
@@ -1514,7 +1530,7 @@ Pane {
                 Item {
                     objectName: "headerSpacer"
                     Layout.fillWidth: true
-                    visible: browser.section === "collection"
+                    visible: browser.tabular
                 }
                 // The text size, changed where it is read: a browser whose font cannot be changed is
                 // a browser for one pair of eyes.
@@ -1576,7 +1592,7 @@ Pane {
             // list does not get, and a row holding one button is the most expensive row there is.
             RowLayout {
                 objectName: "collectionFilterRow"
-                visible: browser.section === "collection"
+                visible: browser.tabular
                 Layout.fillWidth: true
                 Layout.preferredHeight: browser.headerButtonHeight
                 spacing: 6
@@ -1586,6 +1602,9 @@ Pane {
                 // whether a filter is on; the choosing happens in a dialog that scrolls.
                 Button {
                     objectName: "genreFilter"
+                    // Genres belong to the collection: a playlist is the DJ's own list and is narrowed by
+                    // the search alone (owner's decision: no filters in playlists).
+                    visible: browser.section === "collection"
                     text: Browser.genreFilter.length > 0
                           ? qsTr("Genre filter… (%1)").arg(Browser.genreFilter.length)
                           : qsTr("Genre filter…")
@@ -1621,7 +1640,7 @@ Pane {
             Item {
                 id: header
                 objectName: "collectionHeader"
-                visible: browser.section === "collection"
+                visible: browser.tabular
                 Layout.fillWidth: true
                 Layout.preferredHeight: Math.round(browser.rowHeight * 0.85)
 
@@ -1907,8 +1926,7 @@ Pane {
                     Item {
                         objectName: "collectionRow_" + row.index
                         anchors.fill: parent
-                        visible: (browser.section === "collection" || Browser.inPlaylists)
-                                 && !row.isFolder
+                        visible: browser.tabular && !row.isFolder
 
                         Label {
                             objectName: "collectionCell_number_" + row.index
@@ -2022,7 +2040,7 @@ Pane {
                     Label {
                         // The folder list keeps the names it has: a file is a file, and its name is
                         // how a DJ recognises it there.
-                        visible: browser.section !== "collection"
+                        visible: browser.section === "files"
                         anchors.left: parent.left
                         anchors.leftMargin: 6
                         anchors.right: parent.right

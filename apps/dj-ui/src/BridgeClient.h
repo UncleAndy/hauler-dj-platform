@@ -143,6 +143,9 @@ public:
     Q_INVOKABLE void openPlaylist(qint64 id, const QString &name);
     /// Ask for the open playlist again, keeping the search.
     Q_INVOKABLE void refreshPlaylist();
+    /// Open or close a node of the tree: `All` and a folder hold the playlists under them, and a tree
+    /// that cannot be closed is a list with arrows drawn on it (owner's decision, 15.11.2026).
+    Q_INVOKABLE void togglePlaylistNode(const QString &kind, const QString &folder);
     Q_INVOKABLE void playlistCreate(const QString &name, const QString &folder);
     Q_INVOKABLE void playlistRename(qint64 id, const QString &name);
     Q_INVOKABLE void playlistDelete(qint64 id);
@@ -186,6 +189,8 @@ signals:
 private:
     /// Read the tree and the open playlist's page out of the snapshot the engine published.
     void takePlaylists();
+    /// Rebuild the flat rows from the tree and the nodes the DJ closed.
+    void rebuildPlaylistTree();
     /// Ask for the open playlist's rows, with the search the DJ typed.
     void askPlaylistPage();
     void load(const QString &path);
@@ -198,6 +203,8 @@ private:
     /// The marker of the question this panel last asked: an answer carrying another one belongs to another
     /// question, and is not the rows of this playlist.
     quint64 m_playlistQuestion = 0;
+    /// The nodes the DJ closed: `all`, or `folder:<path>`. Everything else stands open.
+    QStringList m_collapsed;
     void collect(const QStringList &roots);
     void applyFilter();
     void applySort();

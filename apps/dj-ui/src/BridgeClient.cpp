@@ -630,14 +630,16 @@ void FileBrowser::attachBridge(BridgeClient *bridge)
     }
 }
 
-void FileBrowser::takePlaylists()
+void FileBrowser::rebuildPlaylistTree()
 {
     if (m_bridge == nullptr) {
         return;
     }
     // The tree, as the owner asked for it: `All` first, with every playlist flat under it, then the
-    // folders, each with its own playlists. A playlist inside a folder is therefore reachable twice — by
-    // the flat view and by its folder — and both open the same playlist.
+    // folders, each with its own playlists. A playlist inside a folder is reachable twice — by the flat
+    // view and by its folder — and both open the same playlist. `All` and every folder open and close by
+    // a click, like any tree: a closed node keeps its row and hides what it holds (owner's decision,
+    // 15.11.2026).
     const QVariantMap tree = m_bridge->playlistTree();
     const QVariantList folders = tree.value(QStringLiteral("folders")).toList();
     const QVariantList playlists = tree.value(QStringLiteral("playlists")).toList();
@@ -646,25 +648,34 @@ void FileBrowser::takePlaylists()
         QVariantMap row = playlist;
         row.insert(QStringLiteral("kind"), QStringLiteral("playlist"));
         row.insert(QStringLiteral("depth"), depth);
+        row.insert(QStringLiteral("open"), false);
         return row;
     };
-    auto node = [](const QString &kind, const QString &name, const QString &folder, int depth) {
+    auto node = [](const QString &kind, const QString &name, const QString &folder, bool open) {
         QVariantMap row;
         row.insert(QStringLiteral("kind"), kind);
         row.insert(QStringLiteral("name"), name);
         row.insert(QStringLiteral("folder"), folder);
         row.insert(QStringLiteral("id"), static_cast<qlonglong>(0));
-        row.insert(QStringLiteral("depth"), depth);
+        row.insert(QStringLiteral("depth"), 0);
         row.insert(QStringLiteral("tracks"), 0);
+        row.insert(QStringLiteral("open"), open);
         return row;
     };
-    flat.append(node(QStringLiteral("all"), QStringLiteral("All"), QString(), 0));
-    for (const QVariant &item : playlists) {
-        flat.append(leaf(item.toMap(), 1));
+    const bool allOpen = !m_collapsed.contains(QStringLiteral("all"));
+    flat.append(node(QStringLiteral("all"), QStringLiteral("All"), QString(), allOpen));
+    if (allOpen) {
+        for (const QVariant &item : playlists) {
+            flat.append(leaf(item.toMap(), 1));
+        }
     }
     for (const QVariant &folder : folders) {
         const QString path = folder.toString();
-        flat.append(node(QStringLiteral("folder"), path.section(QLatin1Char('/'), -1), path, 0));
+        const bool open = !m_collapsed.contains(QStringLiteral("folder:") + path);
+        flat.append(node(QStringLiteral("folder"), path.section(QLatin1Char('/'), -1), path, open));
+        if (!open) {
+            continue;
+        }
         for (const QVariant &item : playlists) {
             const QVariantMap found = item.toMap();
             if (found.value(QStringLiteral("folder")).toString() == path) {
@@ -680,7 +691,29 @@ void FileBrowser::takePlaylists()
             askPlaylistPage();
         }
     }
+}
 
+void FileBrowser::togglePlaylistNode(const QString &kind, const QString &folder)
+{
+    const QString key = kind == QLatin1String("all") ? QStringLiteral("all")
+                                                     : QStringLiteral("folder:") + folder;
+    if (m_collapsed.contains(key)) {
+        m_collapsed.removeAll(key);
+    } else {
+        m_collapsed.append(key);
+    }
+    rebuildPlaylistTree();
+}
+
+void FileBrowser::takePlaylists()
+{
+    if (m_bridge == nullptr) {
+        return;
+    }
+    rebuildPlaylistTree();
+
+    // The page of the playlist the DJ opened: its own cell, and its own marker — an answer to another
+    // question is not this playlist's rows.
     const QVariantMap page = m_bridge->playlistPage();
     if (page.isEmpty() || page.value(QStringLiteral("id")).toULongLong() != m_playlistQuestion) {
         return;
