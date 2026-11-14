@@ -6991,6 +6991,22 @@ static int runPlaylistCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     }
     require(folderRow, QStringLiteral("the folder did not become a row of the tree"));
 
+    // The collection's menu carries the playlists: a DJ with tracks chosen must find the playlist he made a
+    // minute ago by its name, not by a dialog he has to fill in first.
+    // A menu is a popup, not an item in the panel's own tree: it is found as a QObject, the way the
+    // import dialogs are.
+    auto *addMenu = panel->findChild<QObject *>(QStringLiteral("addToPlaylistMenu"));
+    if (addMenu == nullptr) {
+        std::fprintf(stderr, "dj-ui: the browser has no Add to playlist menu\n");
+        return 1;
+    }
+    QMetaObject::invokeMethod(addMenu, "popup");
+    const QString offered = QStringLiteral("addToPlaylist_%1").arg(id);
+    const bool listed = waitFor([&]() { return panel->findChild<QObject *>(offered) != nullptr; },
+                                3000);
+    QMetaObject::invokeMethod(addMenu, "close");
+    require(listed, QStringLiteral("the Add to playlist menu does not offer the new playlist"));
+
     // The tree is drawn by the panel, not only held in the object: the rows stand where the settings say
     // (the list's row height) and a playlist inside a folder is indented by one step.
     auto *firstTreeRow = findItem(window->contentItem(), QStringLiteral("playlistTreeRow_0"));
