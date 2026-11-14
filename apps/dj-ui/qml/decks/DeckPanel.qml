@@ -859,7 +859,9 @@ Pane {
 
             ToggleButton {
                 objectName: "play_" + panel.deckId
-                text: panel.playing ? qsTr("Pause") : qsTr("Play")
+                // One caption, whatever the transport is doing: the lit face says "this deck is running",
+                // and a word that swaps under the hand reads as a different button (owner's decision).
+                text: qsTr("Play")
                 font.pixelSize: 11
                 enabled: panel.live
                 // Buttons must not take keyboard focus: Space belongs to the browser, not to
@@ -886,7 +888,8 @@ Pane {
             // The scrub mode of this deck, where the hand already is: silent, or heard as a scratch.
             ToggleButton {
                 objectName: "scrubMode_" + panel.deckId
-                text: panel.scrubAudio ? qsTr("scrub ♪") : qsTr("scrub ␀")
+                // One caption here too: the lit face says the scrub is heard, and the word stays put.
+                text: qsTr("scrub")
                 font.pixelSize: 10
                 enabled: panel.live
                 focusPolicy: Qt.NoFocus
@@ -926,7 +929,9 @@ Pane {
                 Text {
                     id: loopLabel
                     anchors.centerIn: parent
-                    text: panel.loopPending ? qsTr("Loop …") : qsTr("Loop")
+                    // The caption stays put while the press is in flight: the face already lights for
+                    // a pending or an active loop, and dots that arrive under the hand widen the button.
+                    text: qsTr("Loop")
                     font.pixelSize: 11
                     // The text follows the face: a loop that is only remembered has edges on the strip,
                     // not a lit button, and text meant for the accent reads as a smudge on the raised one.
