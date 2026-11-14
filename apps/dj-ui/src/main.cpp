@@ -12036,6 +12036,11 @@ int main(int argc, char *argv[])
             // quantised to the publish step, and that step is exactly what this check is about.
             double headAtBase = slopeBefore * base + interceptBefore;
             double tapsMs[5] = {0, 0, 0, 0, 0};
+            // Where the button stands before the taps: the row of grid tools is centred, and anything that
+            // appears beside the button while a series is running moves it out from under the hand — the
+            // second tap lands somewhere else, and the DJ sees the click miss (owner's report, 15.11.2026).
+            const QPointF atBefore = tapButton->mapToScene(
+                QPointF(tapButton->width() / 2.0, tapButton->height() / 2.0));
             const QPointF at = tapButton->mapToScene(
                 QPointF(tapButton->width() / 2.0, tapButton->height() / 2.0));
             for (int index = 0; index < 5; ++index) {
@@ -12067,6 +12072,15 @@ int main(int argc, char *argv[])
             headLine(clock, slopeAfter, interceptAfter);
             const double endMs = clock.nsecsElapsed() / 1e6;
             const double headAtEnd = slopeAfter * endMs + interceptAfter;
+            const QPointF atAfter = tapButton->mapToScene(
+                QPointF(tapButton->width() / 2.0, tapButton->height() / 2.0));
+            if (std::abs(atAfter.x() - atBefore.x()) > 0.5
+                || std::abs(atAfter.y() - atBefore.y()) > 0.5) {
+                std::fprintf(stderr,
+                             "dj-ui: the Tap button moved under the hand: (%.1f, %.1f) -> (%.1f, %.1f)\n",
+                             atBefore.x(), atBefore.y(), atAfter.x(), atAfter.y());
+                return false;
+            }
             const double speed = endMs > base ? (headAtEnd - headAtBase) / (endMs - base) : 0.0;
             if (!(speed > 0.0)) {
                 std::fprintf(stderr, "dj-ui: the head gave no speed for the %s taps\n", name);

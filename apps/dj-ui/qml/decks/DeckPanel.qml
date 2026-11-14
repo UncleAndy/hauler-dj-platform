@@ -88,8 +88,6 @@ Pane {
     property double snapshotMs: 0
     /// The track the series belongs to: another track starts another series.
     property string tapPath: ""
-    /// What the taps say so far, shown beside the button: a series with no number is a guess.
-    property real tapBpm: 0
 
     /// Move the grid by ten milliseconds: one press is one step, and the ear is the judge.
     /// The tempo the buttons last asked for and the engine has not published yet.
@@ -174,7 +172,6 @@ Pane {
         const now = Date.now();
         if (panel.taps.length > 0 && now - panel.taps[panel.taps.length - 1].ms > 2000) {
             panel.taps = [];
-            panel.tapBpm = 0;
         }
         const frame = panel.frameAtTap(now);
         const taps = panel.taps.slice();
@@ -267,7 +264,6 @@ Pane {
             return false;
         }
         const bpm = panel.gridRate * 60 / fit.periodFrames;
-        panel.tapBpm = bpm;
         Bridge.setGridTempo(panel.deckId, bpm);
         // Then put a beat on the fitted first tap. `Here` moves the nearest beat of the grid the engine
         // holds; a shift computed from the snapshot's first beat would be computed against a grid the
@@ -650,7 +646,6 @@ Pane {
         if (held !== panel.tapPath) {
             panel.tapPath = held;
             panel.taps = [];
-            panel.tapBpm = 0;
         }
         // A lock press is confirmed by the engine, not by the button: the collection is asked again the
         // moment the deck carries the flag that was asked for, so the row wears the lock at once.
@@ -708,7 +703,11 @@ Pane {
                     // the measured number, and on a track that changes tempo it follows the play head
                     // instead of lying about the whole file (B02, DJP-SYNC-003). A grid nobody can see is
                     // a grid nobody trusts, and the deck is where the DJ looks while it is playing.
-                    visible: panel.localBpm > 0
+                    // The place is kept even when there is no number: the row of grid tools is centred, and
+                    // a label that comes and goes moves every button beside it — while a series of taps is
+                    // running the tempo it publishes is briefly nothing, and the Tap button walked 19 px
+                    // out from under the hand (owner's report, 15.11.2026).
+                    Layout.preferredWidth: 54
                     text: panel.localBpm > 0 ? panel.localBpm.toFixed(1) + " BPM" : ""
                     color: UiSettings.themeAccent
                     font.pixelSize: 10
@@ -718,8 +717,8 @@ Pane {
                     // The key sits beside the tempo because those are the two numbers a DJ reads to
                     // pick the next track. Nothing shows until something measured it, and a track
                     // with no key shows nothing rather than an empty slot (DJP-MEDIA-006).
-                    visible: panel.track !== null && panel.track.key !== undefined
-                             && panel.track.key !== null
+                    // Same rule as the tempo: the slot is always there, the text may be empty.
+                    Layout.preferredWidth: 26
                     text: panel.track !== null && panel.track.key !== undefined
                           && panel.track.key !== null ? panel.track.key : ""
                     color: UiSettings.themeText
@@ -1399,16 +1398,6 @@ Pane {
                     ToolTip.text: qsTr("Tap the tempo: the grid is put on your taps, from the fourth one")
                     onClicked: panel.tap()
                 }
-                // What the series says so far: a count the DJ cannot see is a count he taps blind.
-                Label {
-                    objectName: "tapState_" + panel.deckId
-                    Layout.preferredWidth: 44
-                    horizontalAlignment: Text.AlignHCenter
-                    visible: panel.taps.length > 0
-                    text: panel.taps.length + " · " + panel.tapBpm.toFixed(1)
-                    font.pixelSize: 9
-                    color: UiSettings.themeTextDim
-                }
                 // The tempo the deck shows was measured once, at load. When the answer is wrong the DJ
                 // asks again — a full decode, so it is asked for, never done behind their back, and a
                 // confirmation stands between the click and the new grid (B02).
@@ -1427,13 +1416,6 @@ Pane {
                                   ? qsTr("The grid is locked: unlock it to measure this track again")
                                   : qsTr("Analyse this track again: measure its tempo and rebuild the grid")
                     onClicked: tempoConfirm.open()
-                }
-                Label {
-                    objectName: "tapHint_" + panel.deckId
-                    visible: panel.taps.length > 0
-                    text: qsTr("%1 tap(s)").arg(panel.taps.length)
-                    color: UiSettings.themeTextDim
-                    font.pixelSize: 9
                 }
             }
             Item { Layout.fillWidth: true }
