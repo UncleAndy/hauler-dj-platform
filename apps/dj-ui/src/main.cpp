@@ -341,7 +341,9 @@ static int runHistoryCheck(BridgeClient &bridge, const QString &socketPath, cons
     QObject::connect(&bridge, &BridgeClient::snapshotChanged, &loop, [&]() {
         if (stopping) {
             stopTicks += 1;
-            if ((!deckPlaying() && stopTicks > 1) || stopTicks > 400) {
+            // The journal softens a blink (250 ms), so a play is written one look after the silence
+            // outlasts it: the check waits past that mark instead of reading the moment the deck stops.
+            if ((!deckPlaying() && stopTicks > 12) || stopTicks > 400) {
                 stopping = false;
                 auto then = afterStop;
                 afterStop = nullptr;

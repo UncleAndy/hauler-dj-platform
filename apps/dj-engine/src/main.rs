@@ -556,7 +556,7 @@ fn run(argv: &[String]) -> Result<(), String> {
                     // The way out: close what is still open and hand it over before leaving, or the play
                     // the DJ is listening to right now is the one nobody records.
                     if let Ok(mut held) = journal.lock() {
-                        for record in held.close_all(0, rate) {
+                        for record in held.close_all() {
                             let _ = play_records.send(dj_engine::plays::record_of(&record));
                         }
                     }

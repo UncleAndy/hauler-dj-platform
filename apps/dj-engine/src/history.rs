@@ -24,6 +24,16 @@ pub const RECENT_LIMIT: usize = 8;
 /// interval does not grow by more than this.
 const MAX_STEP_SECONDS: f64 = 3.0;
 
+/// How long a deck may report "not playing" and still count as playing on.
+///
+/// Under load a deck reports a stop for one publish and is playing again on the next: the publisher sees
+/// a playing deck as stopped for tens of milliseconds, sometimes a couple of hundred. That is not a pause
+/// anyone made, and treating it as one splits a play in two — and two halves of a long play can both fall
+/// under the threshold, so the play is lost entirely. The engine's own flag is what it is; the owner's
+/// decision (15.11.2026) is that the journal softens it: a drop shorter than this is not a stop, and the
+/// time of the drop itself is not listening time.
+const BLIP_GRACE_SECONDS: f64 = 0.25;
+
 /// A play that is still going.
 #[derive(Debug, Clone, PartialEq)]
 struct OpenPlay {
@@ -31,7 +41,13 @@ struct OpenPlay {
     path: String,
     started_at_ms: u64,
     played_frames: u64,
+    /// The clock at the last moment the deck was seen playing: the play ends here, not at the last look.
     last_clock: u64,
+    /// The deck was seen stopped since the last playing look, and the play is waiting to hear whether that
+    /// was a pause or a blink.
+    blipped: bool,
+    /// Frames a second of this deck: what turns its counted frames into seconds.
+    rate: f64,
 }
 
 /// The journal: one open interval per deck, the plays waiting for the writer, the last few for the wire.
@@ -76,12 +92,27 @@ impl History {
             (Some(open), Some(path)) => open.path != path,
             _ => false,
         };
-        if (!playing || another_track)
-            && let Some(open) = self.open[deck].take()
-        {
-            self.close(deck, open, clock, rate);
+        // Another track on the same deck ends the play here: a load without a stop is still two plays. The
+        // time up to this look belongs to the play that was going on — the deck was playing it.
+        if another_track && let Some(mut open) = self.open[deck].take() {
+            if !open.blipped {
+                open.played_frames += step(open.last_clock, clock, rate);
+                open.last_clock = clock;
+            }
+            self.close(deck, open);
         }
         if !playing {
+            // A deck seen stopped does not end the play at once: it is marked, and the play is closed only
+            // if the deck stays stopped longer than a blink. The time of a blink is not counted.
+            if let Some(open) = self.open[deck].as_mut() {
+                open.blipped = true;
+                if clock.saturating_sub(open.last_clock) > (BLIP_GRACE_SECONDS * rate) as u64 {
+                    let open = self.open[deck].take();
+                    if let Some(open) = open {
+                        self.close(deck, open);
+                    }
+                }
+            }
             return;
         }
         let Some(path) = path else {
@@ -97,21 +128,27 @@ impl History {
                 started_at_ms: now_ms(),
                 played_frames: 0,
                 last_clock: clock,
+                blipped: false,
+                rate,
             });
             return;
         }
         if let Some(open) = self.open[deck].as_mut() {
-            open.played_frames += step(open.last_clock, clock, rate);
+            // The step from the last *playing* look: a blink in between is not listening time, so the
+            // first look after it starts the clock again instead of adding the gap.
+            if !open.blipped {
+                open.played_frames += step(open.last_clock, clock, rate);
+            }
+            open.blipped = false;
             open.last_clock = clock;
         }
     }
 
     /// Close every open interval: the engine is leaving, and a play that was not closed is a play lost.
-    pub fn close_all(&mut self, clock: u64, sample_rate: u32) -> Vec<PlayRow> {
-        let rate = f64::from(sample_rate.max(1));
+    pub fn close_all(&mut self) -> Vec<PlayRow> {
         for deck in 0..self.open.len() {
             if let Some(open) = self.open[deck].take() {
-                self.close(deck, open, clock, rate);
+                self.close(deck, open);
             }
         }
         self.take_finished()
@@ -127,9 +164,9 @@ impl History {
         self.recent.clone()
     }
 
-    fn close(&mut self, deck: usize, open: OpenPlay, clock: u64, rate: f64) {
-        let frames = open.played_frames + step(open.last_clock, clock, rate);
-        let seconds = frames as f64 / rate;
+    fn close(&mut self, deck: usize, open: OpenPlay) {
+        // The play ends where the deck was last seen playing; the look that closed it adds nothing.
+        let seconds = open.played_frames as f64 / open.rate.max(1.0);
         if seconds + 1e-9 < self.min_seconds {
             return;
         }
@@ -195,7 +232,15 @@ mod tests {
         for second in 1..=40u64 {
             tick(&mut history, 0, true, Some("/a.wav"), second * RATE as u64);
         }
+        // The stop is a message: the play ends once the silence outlasts a blink, not on the first look.
         tick(&mut history, 0, false, Some("/a.wav"), 40 * RATE as u64);
+        tick(
+            &mut history,
+            0,
+            false,
+            Some("/a.wav"),
+            40 * RATE as u64 + 10 * RATE as u64 / 20,
+        );
         let plays = history.take_finished();
         assert_eq!(plays.len(), 1);
         assert!(
@@ -242,13 +287,73 @@ mod tests {
     #[test]
     fn another_track_on_the_same_deck_closes_the_first() {
         let mut history = History::new(1);
-        tick(&mut history, 0, true, Some("/a.wav"), 0);
-        tick(&mut history, 0, true, Some("/b.wav"), 5 * RATE as u64);
-        tick(&mut history, 0, false, Some("/b.wav"), 6 * RATE as u64);
+        // The state rate, so the play is measured the way the engine measures it: a look every fifty
+        // milliseconds, and a play ends at the last look that saw the deck playing.
+        let step = RATE as u64 / 20;
+        let mut clock = 0;
+        tick(&mut history, 0, true, Some("/a.wav"), clock);
+        for _ in 0..100 {
+            clock += step;
+            tick(&mut history, 0, true, Some("/a.wav"), clock);
+        }
+        tick(&mut history, 0, true, Some("/b.wav"), clock);
+        for _ in 0..20 {
+            clock += step;
+            tick(&mut history, 0, true, Some("/b.wav"), clock);
+        }
+        for _ in 0..20 {
+            clock += step;
+            tick(&mut history, 0, false, Some("/b.wav"), clock);
+        }
         let plays = history.take_finished();
         assert_eq!(plays.len(), 2, "a load without a stop is two plays");
         assert_eq!(plays[0].path, "/a.wav");
         assert_eq!(plays[1].path, "/b.wav");
+        assert!((plays[0].seconds - 5.0).abs() < 0.1, "{}", plays[0].seconds);
+        assert!((plays[1].seconds - 1.0).abs() < 0.1, "{}", plays[1].seconds);
+    }
+
+    #[test]
+    fn a_momentary_drop_does_not_break_the_play() {
+        let mut history = History::new(1);
+        let step = RATE as u64 / 20; // fifty milliseconds, the state rate
+        let mut clock = 0;
+        tick(&mut history, 0, true, Some("/a.wav"), clock);
+        while clock < 3 * RATE as u64 {
+            clock += step;
+            // One look in the middle says the deck stopped; the next says it plays on.
+            let playing = clock != 80 * step;
+            tick(&mut history, 0, playing, Some("/a.wav"), clock);
+        }
+        tick(&mut history, 0, false, Some("/a.wav"), clock + 100 * step);
+        let plays = history.take_finished();
+        assert_eq!(plays.len(), 1, "a blink is not two plays");
+        assert!(
+            (plays[0].seconds - 3.0).abs() < 0.1,
+            "the blink is not listening time: {}",
+            plays[0].seconds
+        );
+    }
+
+    /// A stop that lasts longer than a blink is a pause, however short it looks next to the track.
+    #[test]
+    fn a_stop_longer_than_a_blink_ends_the_interval() {
+        let mut history = History::new(1);
+        let step = RATE as u64 / 20;
+        let mut clock = 0;
+        tick(&mut history, 0, true, Some("/a.wav"), clock);
+        for _ in 0..40 {
+            clock += step;
+            tick(&mut history, 0, true, Some("/a.wav"), clock);
+        }
+        // Two seconds of silence: the play closed at the last playing look, and a new one begins.
+        for _ in 0..40 {
+            clock += step;
+            tick(&mut history, 0, false, Some("/a.wav"), clock);
+        }
+        let plays = history.take_finished();
+        assert_eq!(plays.len(), 1);
+        assert!((plays[0].seconds - 2.0).abs() < 0.1, "{}", plays[0].seconds);
     }
 
     #[test]
@@ -260,7 +365,7 @@ mod tests {
         for second in 1..=5u64 {
             tick(&mut history, 1, true, Some("/c.wav"), second * RATE as u64);
         }
-        let plays = history.close_all(5 * RATE as u64, RATE);
+        let plays = history.close_all();
         assert_eq!(plays.len(), 1);
         assert_eq!(plays[0].deck, 1);
         assert!((plays[0].seconds - 5.0).abs() < 1e-6);
