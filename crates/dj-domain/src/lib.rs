@@ -1373,6 +1373,12 @@ pub struct CollectionRow {
     /// True when the DJ locked this track's beat grid.
     #[serde(default, skip_serializing_if = "is_false")]
     pub analysis_lock: bool,
+    /// When the track was last played, milliseconds since the epoch.
+    ///
+    /// The column that marks a track as "played recently" is decided against the window the engine
+    /// publishes, so the row carries the fact and the client does the arithmetic (DJP-MEDIA-004).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_played_ms: Option<u64>,
 }
 
 /// The answer to a query: the rows of the page, and how many the filter found in all.
@@ -1436,6 +1442,10 @@ pub struct Snapshot {
     /// snapshot, and a wire without history stays byte-identical to what it was.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub plays: Vec<PlayRow>,
+    /// How long a track stays "played recently", in milliseconds: the window the collection column,
+    /// and a DJ reading it, are both about. Zero means the build had no opinion.
+    #[serde(default, skip_serializing_if = "is_zero_count")]
+    pub recent_window_ms: u64,
     /// Crossfader position at the moment of publication.
     pub crossfader: f32,
     /// Crossfader law in force at the moment of publication.

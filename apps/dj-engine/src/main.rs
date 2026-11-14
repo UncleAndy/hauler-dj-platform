@@ -219,6 +219,8 @@ fn run(argv: &[String]) -> Result<(), String> {
     // A play shorter than this is not listening, and both numbers live in `crates/dj-config` so the
     // owner can move them without a build (DJP-MEDIA-004).
     let mut history_min_seconds = defaults.library.history_min_seconds;
+    // How long a track stays "played recently": the collection column is drawn against this number.
+    let mut played_recently_hours = defaults.library.played_recently_hours;
     // Every law is a choice, not a constant: the default is the DJ one, and a person can ask for any.
     let mut crossfader_curve = dj_mixer::CrossfaderCurve::default();
     // How much of the measured level correction a deck applies. Nine tenths is the default because a
@@ -278,6 +280,16 @@ fn run(argv: &[String]) -> Result<(), String> {
                     return Err("--state-hz must be 1..=120 snapshots a second".to_string());
                 }
                 state_hz = parsed;
+                index += 2;
+            }
+            "--played-recently-hours" => {
+                let parsed: u32 = value(1)?
+                    .parse()
+                    .map_err(|_| "--played-recently-hours expects a number")?;
+                if !(1..=168).contains(&parsed) {
+                    return Err("--played-recently-hours must be 1..=168 hours".to_string());
+                }
+                played_recently_hours = parsed;
                 index += 2;
             }
             "--history-min-seconds" => {
@@ -528,6 +540,7 @@ fn run(argv: &[String]) -> Result<(), String> {
         let journal = Arc::clone(&journal);
         let play_records = play_records.clone();
         let stop = Arc::clone(&stop);
+        let recent_window_ms = u64::from(played_recently_hours) * 3_600_000;
         std::thread::spawn(move || {
             let mut revision: u64 = 0;
             let mut statics = statics;
@@ -668,6 +681,7 @@ fn run(argv: &[String]) -> Result<(), String> {
                     }
                     snapshot.plays = held.recent();
                 }
+                snapshot.recent_window_ms = recent_window_ms;
                 let message = ServerMessage::Snapshot(Box::new(snapshot));
 
                 if let Ok(mut list) = subscribers.lock() {

@@ -383,6 +383,7 @@ pub fn snapshot(
     fill_phase_errors(&mut published_decks, beats_per_bar(decks));
     Snapshot {
         plays: Vec::new(),
+        recent_window_ms: 0,
         import: None,
         analysis: None,
         collection: None,
@@ -1458,6 +1459,7 @@ impl StateCells {
         }
         Snapshot {
             plays: Vec::new(),
+            recent_window_ms: 0,
             // The page is not an atomic cell: it is written and read on the engine's own thread, under
             // the mutex that guards the import for the same reason.
             collection: self
@@ -1890,6 +1892,7 @@ pub fn collection_row(row: &dj_library::TrackRow) -> dj_domain::CollectionRow {
         duration_frames: row.duration_frames,
         sample_rate: row.sample_rate,
         analysis_lock: row.analysis_lock,
+        last_played_ms: row.last_played_ms,
     }
 }
 
