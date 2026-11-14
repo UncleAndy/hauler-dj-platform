@@ -504,6 +504,25 @@ impl DeckStatic {
     }
 }
 
+/// Apply a full publication of one deck to the publisher's slot, and answer the lock in force.
+///
+/// A full publication carries the lock as it stood when the file was prepared, and a load that was
+/// already running lands **after** the DJ's press: taken at face value it wiped the decision off the
+/// deck while the file and the collection kept it, so the deck "lost" its lock and the next press put
+/// the lock back instead of opening it. A publication of the **same track** may therefore only turn the
+/// lock on. Turning it off is the lock's own publication (`Published::AnalysisLock`) or a different
+/// track arriving — a file's lock is not another file's.
+pub fn apply_deck_publication(slot: &mut DeckStatic, incoming: DeckStatic) -> bool {
+    let same_track = slot.path.is_some() && slot.path == incoming.path;
+    let mut next = incoming;
+    if same_track && !next.analysis_lock {
+        next.analysis_lock = slot.analysis_lock;
+    }
+    let lock = next.analysis_lock;
+    *slot = next;
+    lock
+}
+
 /// Per-deck scalar state, published without a lock.
 struct DeckCells {
     playing: AtomicBool,

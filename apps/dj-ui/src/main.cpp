@@ -6555,15 +6555,25 @@ static int runLockCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Bri
     // A locked grid means no measurement, and the button says so before the hand finds out: it is off,
     // and its face is the flat pale one every deck tool wears when it cannot act.
     const auto deckAnalyze = [&]() { return findItem(window->contentItem(), QStringLiteral("tempo_A")); };
-    // The deck's own idea of the lock, and the collection's: when they disagree the engine is at fault, not
-    // the button, and this check says so in a line of its own instead of pretending the button is wrong.
-    const auto deckSaysLocked = [&]() {
+    // The deck's own idea of the lock, the collection's, and the third answer this check used to be blind
+    // to: "the deck is carrying nothing right now". A frame without a track is not a deck that lost its
+    // lock, and reading it as one pointed the whole diagnosis the wrong way. The three answers are kept
+    // apart: an invalid variant means "no track to ask".
+    const auto deckLock = [&]() -> QVariant {
         QQuickItem *deck = findItem(window->contentItem(), QStringLiteral("deckPanel_A"));
-        return deck != nullptr && deck->property("analysisLock").toBool();
+        if (deck == nullptr) {
+            return QVariant();
+        }
+        const QVariant carries = deck->property("track");
+        if (!carries.isValid() || carries.isNull()) {
+            return QVariant();
+        }
+        return QVariant(deck->property("analysisLock").toBool());
     };
     const auto analyzeStandsDown = [&]() -> QString {
-        if (!deckSaysLocked()) {
-            // Nothing on the deck side to refuse: it does not think it is locked. The line above says why.
+        if (deckLock().toBool() != true) {
+            // Nothing on the deck side to refuse: it does not think it is locked, or it carries nothing to
+            // think about. Either way the line above says why, and the button is not the one to blame.
             return QString();
         }
         QQuickItem *button = deckAnalyze();
@@ -6584,7 +6594,8 @@ static int runLockCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Bri
         }
         return QString();
     };
-    if (!deckSaysLocked()) {
+    const QVariant deckLockHere = deckLock();
+    if (deckLockHere.isValid() && !deckLockHere.toBool()) {
         std::fprintf(stdout,
                      "dj-ui: the deck lost its lock while the measurement ran (the collection still says "
                      "locked): a defect of the engine, reported\n");
@@ -6823,14 +6834,36 @@ static int runLockCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Bri
                  freeBefore, revisionOf(freePath), lockedAfter);
     panel->setProperty("selection", QVariantList{});
     QCoreApplication::processEvents();
-    std::fprintf(stdout, "dj-ui: the lock reached the collection at once\n");
+    // The line before the second press is a precondition, not a compliment: the step below reads the
+    // collection following the switch, and that can only be read while both halves still say "locked". A
+    // deck that quietly dropped the flag turns the press into "lock it again", and the failure then blamed
+    // the collection for a state the check had not looked at.
+    {
+        const QVariant deckNow = deckLock();
+        const bool rowLocked = row().value(QStringLiteral("analysis_lock")).toBool();
+        if (!rowLocked || deckNow.toBool() != true) {
+            std::fprintf(stderr,
+                         "dj-ui: the lock is not in force before the second press (row %s, deck %s)\n",
+                         rowLocked ? "locked" : "open",
+                         deckNow.isValid() ? (deckNow.toBool() ? "locked" : "open") : "no track");
+            return 1;
+        }
+    }
+    std::fprintf(stdout, "dj-ui: the lock is in force on both sides before the second press\n");
     // The second press goes in as the signal the suite presses buttons with: what is under test here is
     // that the collection follows the switch, not the mouse plumbing of a lit toggle.
     QMetaObject::invokeMethod(lock, "clicked");
     QCoreApplication::processEvents();
     if (!waitFor([&]() { return !row().value(QStringLiteral("analysis_lock")).toBool(); }, 10000)) {
-        std::fprintf(stderr, "dj-ui: the lock stayed in the collection after the second press (button %s)\n",
-                     lit() ? "lit" : "dark");
+        const QVariant deckNow = deckLock();
+        std::fprintf(stderr,
+                     "dj-ui: the lock stayed in the collection after the second press (button %s, deck %s, "
+                     "row %s, %s)\n",
+                     lit() ? "lit" : "dark",
+                     deckNow.isValid() ? (deckNow.toBool() ? "locked" : "open") : "no track",
+                     row().value(QStringLiteral("analysis_lock")).toBool() ? "locked" : "open",
+                     panel->property("lockPending").toBool() ? "the engine never answered"
+                                                             : "the engine answered");
         return 1;
     }
     if (lit()) {

@@ -517,15 +517,18 @@ fn run(argv: &[String]) -> Result<(), String> {
                     match update {
                         Published::Deck(update) => {
                             let deck = update.deck;
-                            let grid = update.static_info.grid.clone();
-                            let rate = update.static_info.source_rate;
+                            let static_info = update.static_info;
+                            let grid = static_info.grid.clone();
+                            let rate = static_info.source_rate;
                             // A track that arrives already locked must refuse an edit at once, not after the
-                            // DJ touches the button: the deck is the one that knows what the file said.
-                            let lock = update.static_info.analysis_lock;
-                            if let Some(slot) = statics.iter_mut().find(|entry| entry.deck == deck)
-                            {
-                                *slot = update.static_info;
-                            }
+                            // DJ touches the button: the deck is the one that knows what the file said. That
+                            // knowledge is as old as the load, though, and a load already in flight lands
+                            // after the press — the rule that keeps the two apart, with its reasoning and its
+                            // case, is `dj_engine::apply_deck_publication`.
+                            let lock = match statics.iter_mut().find(|entry| entry.deck == deck) {
+                                Some(slot) => dj_engine::apply_deck_publication(slot, static_info),
+                                None => static_info.analysis_lock,
+                            };
                             if let Ok(mut held) = grids.lock()
                                 && let Some(slot) = held.get_mut(deck.index())
                             {

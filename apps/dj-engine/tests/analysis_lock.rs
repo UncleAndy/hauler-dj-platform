@@ -33,6 +33,25 @@ fn tone(path: &Path) -> std::io::Result<()> {
     file.flush()
 }
 
+/// A deck description carrying only what the publication rule reads: the path of the track the deck
+/// loaded and the lock the file stated when the load was prepared.
+fn deck_static(path: Option<&str>, locked: bool) -> dj_engine::DeckStatic {
+    dj_engine::DeckStatic {
+        deck: dj_domain::DeckId::A,
+        load: dj_domain::DeckLoad::Ready,
+        track: None,
+        total_frames: Some(1),
+        waveform: None,
+        auto_gain: 1.0,
+        auto_gain_db: None,
+        analyzing: false,
+        analysis_lock: locked,
+        grid: None,
+        source_rate: 48_000,
+        path: path.map(str::to_owned),
+    }
+}
+
 /// Everything the store keeps beside the music, as one string.
 fn records(folder: &Path) -> String {
     std::fs::read_dir(folder)
@@ -163,4 +182,55 @@ fn a_locked_track_arrives_at_the_deck_already_locked()
 
     let _ = std::fs::remove_dir_all(&temp);
     Ok(())
+}
+
+/// The lock is the DJ's decision, and a publication of the same track may not take it away.
+///
+/// The failing sequence this case was written from: the DJ presses the lock, the file and the collection
+/// take the decision, and then the load that was already running publishes the deck again — carrying the
+/// lock as the file stood *when the load was prepared*, that is `false`. The deck lost the flag, the next
+/// press therefore asked to lock it again instead of opening it, and the check that presses twice went red
+/// with a message about the collection. Nothing in the file and nothing in the list was ever wrong.
+#[test]
+fn a_stale_publication_of_the_same_track_cannot_unlock_the_deck() {
+    // The press: the deck carries a locked file and the publisher's slot holds the decision.
+    let mut slot = deck_static(Some("/music/locked.wav"), true);
+    // The load that was already in flight lands after the press, with a stale `false` in its pocket.
+    let in_force =
+        dj_engine::apply_deck_publication(&mut slot, deck_static(Some("/music/locked.wav"), false));
+    assert!(
+        in_force,
+        "a stale publication of the same track unlocked the deck"
+    );
+    assert!(slot.analysis_lock, "the slot lost the lock the DJ set");
+
+    // A locked file arriving on the deck turns the lock on, whoever asks.
+    let mut fresh = deck_static(Some("/music/locked.wav"), false);
+    assert!(dj_engine::apply_deck_publication(
+        &mut fresh,
+        deck_static(Some("/music/locked.wav"), true)
+    ));
+    assert!(
+        fresh.analysis_lock,
+        "a locked file did not lock the deck it arrived on"
+    );
+
+    // A different track brings its own answer: the old file's lock is not this file's lock.
+    let in_force =
+        dj_engine::apply_deck_publication(&mut slot, deck_static(Some("/music/other.wav"), false));
+    assert!(
+        !in_force,
+        "a new track inherited the lock of the one it replaced"
+    );
+    assert!(
+        !slot.analysis_lock,
+        "the slot kept a lock that belongs to another file"
+    );
+
+    // And a deck that carried nothing takes what arrives.
+    let mut empty = deck_static(None, false);
+    assert!(!dj_engine::apply_deck_publication(
+        &mut empty,
+        deck_static(Some("/music/new.wav"), false)
+    ));
 }
