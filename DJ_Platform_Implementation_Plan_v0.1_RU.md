@@ -386,6 +386,7 @@ Cue-точки, сетки и прочие пользовательские да
 | **B13** | S4 audio route, hotplug/reconnect, udev | A10, B12 | DJP-CTRL-003/004 |
 | **B14** | S4 LED + display PoC с safety gate | A09, B12 | DJP-CTRL-005/007 (scope уточнить) |
 | **B15** | R1 live soak, recovery, latency и issue triage | B03, B04, B06–B13 | DJP-NFR-002–008 |
+| **B16** | Smart playlists: критерии отбора и сохранённые запросы (сначала — обсуждение критериев) | B08 | DJP-MEDIA-004 |
 
 **Замечания к B02, B03, B05** (разбор `tmp/ableton-link.md`, 2026-11-08):
 
