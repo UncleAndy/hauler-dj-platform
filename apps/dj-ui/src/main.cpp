@@ -4004,6 +4004,43 @@ static int runLayoutCheck(QQmlApplicationEngine &engine,
             return 1;
         }
     }
+
+    // The two global modes stand in the master column, centred under its knob: they belong to the whole
+    // mix, and the master is where the whole mix is decided (owner's decision, 14.11).
+    {
+        auto *masterColumn = findItem(content, QStringLiteral("masterColumn"));
+        auto *masterKnobItem = findItem(content, QStringLiteral("masterKnob"));
+        auto *snapGlobal = findItem(content, QStringLiteral("snapGlobal"));
+        auto *quantizeGlobal = findItem(content, QStringLiteral("quantizeGlobal"));
+        if (masterColumn == nullptr || masterKnobItem == nullptr || snapGlobal == nullptr
+            || quantizeGlobal == nullptr) {
+            std::fprintf(stderr, "dj-ui: the mixer has no master column or no global switches\n");
+            return 1;
+        }
+        const double knobAxis = masterKnobItem->mapToItem(content, QPointF(masterKnobItem->width() / 2.0, 0.0)).x();
+        const double switchAxis = snapGlobal->mapToItem(content, QPointF(snapGlobal->width() / 2.0, 0.0)).x();
+        const double otherAxis = quantizeGlobal->mapToItem(content, QPointF(quantizeGlobal->width() / 2.0, 0.0)).x();
+        const double knobBottom = masterKnobItem->mapToItem(content, QPointF(0.0, masterKnobItem->height())).y();
+        const double switchTop = snapGlobal->mapToItem(content, QPointF(0.0, 0.0)).y();
+        const double switchBottom = quantizeGlobal->mapToItem(content, QPointF(0.0, quantizeGlobal->height())).y();
+        std::fprintf(stdout,
+                     "dj-ui: the global switches stand %.1f px off the master's axis, %.1f px under its "
+                     "knob, %.1f px tall together, and end %.1f px above the column's bottom\n",
+                     std::abs(switchAxis - knobAxis), switchTop - knobBottom, switchBottom - switchTop,
+                     masterColumn->mapToItem(content, QPointF(0.0, masterColumn->height())).y() - switchBottom);
+        if (std::abs(switchAxis - knobAxis) > 2.0 || std::abs(otherAxis - knobAxis) > 2.0) {
+            std::fprintf(stderr, "dj-ui: the global switches are not centred under the master's knob\n");
+            return 1;
+        }
+        if (switchTop < knobBottom) {
+            std::fprintf(stderr, "dj-ui: the global switches are not below the master's knob\n");
+            return 1;
+        }
+        if (switchBottom > masterColumn->mapToItem(content, QPointF(0.0, masterColumn->height())).y()) {
+            std::fprintf(stderr, "dj-ui: the global switches hang past the master column\n");
+            return 1;
+        }
+    }
     // At rest nothing is playing, so no deck frame may wear the accent: a highlight that sits on
     // one deck for ever is the bug the owner saw.
     const QColor accent = QColor(settings.themeAccent());

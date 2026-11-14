@@ -108,13 +108,17 @@ Pane {
             Item {
                 id: masterColumn
                 objectName: "masterColumn"
-                Layout.preferredWidth: 34
+                // Wide enough for the two global switches that stand under the knob: the master is where
+                // the whole mix is decided, and the modes of the whole mix belong under it (owner's
+                // decision, 14.11).
+                Layout.preferredWidth: 48
                 Layout.fillHeight: true
 
                 // The knob sits at the top of its column, level with the channel's top knob: with
                 // every meter the same height, the master column has room to spare above its meter,
                 // and a knob hanging under that gap would read as part of the void.
                 MasterKnob {
+                    id: masterKnobItem
                     anchors.horizontalCenter: parent.horizontalCenter
                     anchors.top: parent.top
                     // Level with the channels' gain knobs: the master is the gain of the whole mix,
@@ -124,6 +128,61 @@ Pane {
                     height: mixer.eqKnobSide
                     diameter: mixer.eqKnobSide
                     gain: mixer.masterGain
+                }
+                // The two modes a DJ sets once for the set rather than per deck: snap (a loop point lands
+                // on the grid) and quantize (the loop's end is whole beats after its start). They stand in
+                // the void between the master's knob and its meter, centred on the knob, and the decks
+                // read them (owner's decision, 14.11).
+                ColumnLayout {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.top: masterKnobItem.bottom
+                    anchors.topMargin: 6
+                    spacing: 4
+
+                    Rectangle {
+                        objectName: "snapGlobal"
+                        readonly property bool on: UiSettings.snapGrid
+                        Layout.preferredWidth: 46
+                        Layout.preferredHeight: 18
+                        radius: 2
+                        color: on ? UiSettings.themeAccent : UiSettings.themeRaised
+                        border.width: 1
+                        border.color: UiSettings.themeBorder
+                        Text {
+                            anchors.centerIn: parent
+                            text: qsTr("snap")
+                            font.pixelSize: 10
+                            color: parent.on ? UiSettings.themeTextOnAccent : UiSettings.themeText
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: UiSettings.snapGrid = !UiSettings.snapGrid
+                        }
+                    }
+                    Rectangle {
+                        objectName: "quantizeGlobal"
+                        readonly property bool on: UiSettings.quantizeGrid
+                        Layout.preferredWidth: 46
+                        Layout.preferredHeight: 18
+                        radius: 2
+                        color: on ? UiSettings.themeAccent : UiSettings.themeRaised
+                        border.width: 1
+                        border.color: UiSettings.themeBorder
+                        Text {
+                            anchors.centerIn: parent
+                            text: qsTr("quant")
+                            font.pixelSize: 10
+                            color: parent.on ? UiSettings.themeTextOnAccent : UiSettings.themeText
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: UiSettings.quantizeGrid = !UiSettings.quantizeGrid
+                        }
+                    }
                 }
                 MasterMeter {
                     id: masterMeterItem
@@ -152,63 +211,10 @@ Pane {
             }
         }
 
-        // The crossfader sits at the bottom of the column, under the strips, where the hand rests. The
-        // two modes a DJ sets once for the set rather than per deck stand beside it (owner's decision,
-        // 14.11): in the row of the crossfader's law they squeezed the four curve glyphs into slivers,
-        // and the check that measures those glyphs caught exactly that.
-        RowLayout {
+        // The crossfader sits at the bottom of the column, under the strips, where the hand rests.
+        Crossfader {
             Layout.fillWidth: true
             Layout.preferredHeight: 30
-            spacing: 6
-
-            Crossfader {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 30
-            }
-            Rectangle {
-                objectName: "snapGlobal"
-                readonly property bool on: UiSettings.snapGrid
-                Layout.preferredWidth: 46
-                Layout.preferredHeight: 30
-                radius: 2
-                color: on ? UiSettings.themeAccent : UiSettings.themeRaised
-                border.width: 1
-                border.color: UiSettings.themeBorder
-                Text {
-                    anchors.centerIn: parent
-                    text: qsTr("snap")
-                    font.pixelSize: 10
-                    color: parent.on ? UiSettings.themeTextOnAccent : UiSettings.themeText
-                }
-                MouseArea {
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: UiSettings.snapGrid = !UiSettings.snapGrid
-                }
-            }
-            Rectangle {
-                objectName: "quantizeGlobal"
-                readonly property bool on: UiSettings.quantizeGrid
-                Layout.preferredWidth: 46
-                Layout.preferredHeight: 30
-                radius: 2
-                color: on ? UiSettings.themeAccent : UiSettings.themeRaised
-                border.width: 1
-                border.color: UiSettings.themeBorder
-                Text {
-                    anchors.centerIn: parent
-                    text: qsTr("quant")
-                    font.pixelSize: 10
-                    color: parent.on ? UiSettings.themeTextOnAccent : UiSettings.themeText
-                }
-                MouseArea {
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: UiSettings.quantizeGrid = !UiSettings.quantizeGrid
-                }
-            }
         }
 
         // The law in force, as four buttons in one row, each showing its own curve. The picture is
