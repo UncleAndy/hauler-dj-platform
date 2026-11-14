@@ -847,16 +847,24 @@ Pane {
 
         // Transport, at the bottom where the hand already is.
         RowLayout {
+            id: transportRow
             objectName: "transport_" + panel.deckId
             Layout.fillWidth: true
             spacing: 4
+            // Play and Cue are one pair, and a pair of buttons of two widths reads as two sizes of one
+            // control. Each takes half of what the two would take together, so the row keeps exactly the
+            // room it had and the pair lines up (owner's decision, 14.11).
+            readonly property real pairWidth:
+                Math.round((playButton.implicitWidth + cueButton.implicitWidth) / 2)
 
             ToggleButton {
+                id: playButton
                 objectName: "play_" + panel.deckId
                 // One caption, whatever the transport is doing: the lit face says "this deck is running",
                 // and a word that swaps under the hand reads as a different button (owner's decision).
                 text: qsTr("Play")
                 font.pixelSize: 11
+                Layout.preferredWidth: transportRow.pairWidth
                 enabled: panel.live
                 // Buttons must not take keyboard focus: Space belongs to the browser, not to
                 // whichever control happened to be focused.
@@ -873,6 +881,7 @@ Pane {
                 objectName: "cue_" + panel.deckId
                 text: qsTr("Cue")
                 font.pixelSize: 11
+                Layout.preferredWidth: transportRow.pairWidth
                 enabled: panel.live
                 focusPolicy: Qt.NoFocus
                 // Where the hand landed: the hold sets the point there and not where the deck has run

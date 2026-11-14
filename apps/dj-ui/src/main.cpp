@@ -3821,6 +3821,22 @@ static int measureDeckRows(QQuickWindow *window, const QString &deck)
                  startedOpen ? "open" : "folded", waveHeight());
     // The grid tools are centred on the deck: a row that is full width and a block of buttons pushed to
     // the left edge leaves the middle of the panel empty (owner's decision).
+    // Play and Cue are one pair: one width for the two, taken from what the pair would take on its own,
+    // so the row keeps its room and neither button reads as a bigger control than the other.
+    auto *playButton = findItem(window->contentItem(), QStringLiteral("play_") + deck);
+    auto *cueButton = findItem(window->contentItem(), QStringLiteral("cue_") + deck);
+    if (playButton == nullptr || cueButton == nullptr) {
+        std::fprintf(stderr, "dj-ui: the deck %s has no Play or no Cue button\n", qPrintable(deck));
+        return 1;
+    }
+    std::fprintf(stdout,
+                 "dj-ui: Play is %.0f px wide and Cue is %.0f px wide, %.0f px between them\n",
+                 playButton->width(), cueButton->width(), std::abs(playButton->width() - cueButton->width()));
+    if (std::abs(playButton->width() - cueButton->width()) > 0.5) {
+        std::fprintf(stderr, "dj-ui: Play and Cue are not one width (%.0f against %.0f)\n",
+                     playButton->width(), cueButton->width());
+        return 1;
+    }
     const QRectF gridRow = rectOf(QStringLiteral("gridedit_") + deck);
     const QRectF gridBlock = rectOf(QStringLiteral("gridBlock_") + deck);
     if (gridRow.isEmpty() || gridBlock.isEmpty()) {
