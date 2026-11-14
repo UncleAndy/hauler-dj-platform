@@ -41,9 +41,8 @@ Pane {
     }
 
     readonly property bool live: Bridge.connected
-    /// Whether a hand on the waveform is heard: a scratch. Silent by default — a booth is not a place
-    /// to discover that dragging a strip makes noise.
-    property bool scrubAudio: false
+    // Whether a hand on the waveform is heard is a setting, not a button on every deck: the mode is
+    // global and it lives in `UiSettings` (owner's decision, 14.11).
     readonly property var deck: {
         const decks = Bridge.snapshot.decks;
         if (decks === undefined || decks === null || decks.length === undefined) {
@@ -827,7 +826,7 @@ Pane {
                     Layout.minimumHeight: 40
                     deckState: panel.deck
                     envelope: envelope
-                    scrubAudio: panel.scrubAudio
+                    scrubAudio: UiSettings.scrubAudible
                     pendingLoopStart: panel.loopPending ? panel.loopStartFrame : -1
                 }
 
@@ -902,17 +901,6 @@ Pane {
                         Bridge.cue(panel.deckId, "Set", 0);
                     }
                 }
-            }
-            // The scrub mode of this deck, where the hand already is: silent, or heard as a scratch.
-            ToggleButton {
-                objectName: "scrubMode_" + panel.deckId
-                // One caption here too: the lit face says the scrub is heard, and the word stays put.
-                text: qsTr("scrub")
-                font.pixelSize: 10
-                enabled: panel.live
-                focusPolicy: Qt.NoFocus
-                lit: panel.scrubAudio
-                onClicked: panel.scrubAudio = !panel.scrubAudio
             }
             // A Button's clicked signal carries no mouse, so the shift modifier has to be read where
             // the click happens: this is a flat button drawn like its neighbours.

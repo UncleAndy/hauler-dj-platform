@@ -7883,6 +7883,10 @@ int main(int argc, char *argv[])
         QStringLiteral("Colour of the regions before the start and after the end of a track "
                        "(default: #101010, the window background)."),
         QStringLiteral("colour"));
+    const QCommandLineOption scrubOption(
+        QStringLiteral("scrub-mode"),
+        QStringLiteral("audible (a hand on the strip is heard as a scratch) or silent (the default)."),
+        QStringLiteral("mode"));
     const QCommandLineOption styleOption(
         QStringLiteral("waveform-style"),
         QStringLiteral("coloured (default: bass warm, treble cold) or plain."),
@@ -8054,6 +8058,7 @@ int main(int argc, char *argv[])
     parser.addOption(loadOption);
     parser.addOption(loadSecondOption);
     parser.addOption(outsideColorOption);
+    parser.addOption(scrubOption);
     parser.addOption(styleOption);
     parser.addOption(bandColorOption);
     parser.addOption(expectSpreadOption);
@@ -8134,6 +8139,15 @@ int main(int argc, char *argv[])
         std::fprintf(stderr, "dj-ui: %s is not a colour\n",
                      qPrintable(parser.value(outsideColorOption)));
         return 2;
+    }
+    if (parser.isSet(scrubOption)) {
+        const QString mode = parser.value(scrubOption);
+        if (mode != QStringLiteral("audible") && mode != QStringLiteral("silent")) {
+            std::fprintf(stderr, "dj-ui: --scrub-mode is \"audible\" or \"silent\", not \"%s\"\n",
+                         qPrintable(mode));
+            return 2;
+        }
+        settings.setScrubAudible(mode == QStringLiteral("audible"));
     }
     if (parser.isSet(styleOption) && !settings.setWaveformStyle(parser.value(styleOption))) {
         std::fprintf(stderr, "dj-ui: %s is not a waveform style (coloured or plain)\n",
@@ -12011,19 +12025,17 @@ int main(int argc, char *argv[])
         // A silent deck with the sound switched on: the noise must come from the hand, not from a deck
         // that quietly started playing. Moving makes sound; stopping must be silent again.
         {
-            auto *mode = findItem(window->contentItem(), QStringLiteral("scrubMode_A"));
             auto *strip = findItem(window->contentItem(), QStringLiteral("waveStrip_A"));
-            if (mode == nullptr || strip == nullptr) {
-                std::fprintf(stderr, "dj-ui: deck A has no scrub mode or no strip\n");
+            if (strip == nullptr) {
+                std::fprintf(stderr, "dj-ui: deck A has no strip\n");
                 return 1;
             }
-            // Button click: press and release at its centre.
-            const QPointF at = mode->mapToScene(QPointF(mode->width() / 2.0, mode->height() / 2.0));
-            for (const QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
-                QMouseEvent event(type, at, window->mapToGlobal(at.toPoint()), Qt::LeftButton,
-                                  Qt::LeftButton, Qt::NoModifier);
-                QCoreApplication::sendEvent(window, &event);
-                QCoreApplication::processEvents();
+            // The mode is a setting now, and the check asks the settings for it — which is the way the
+            // DJ gets it too (owner's decision, 14.11: no button on the deck).
+            settings.setScrubAudible(true);
+            if (!settings.scrubAudible()) {
+                std::fprintf(stderr, "dj-ui: the scrub mode will not switch to audible\n");
+                return 1;
             }
             pump(20);
             if (playing()) {

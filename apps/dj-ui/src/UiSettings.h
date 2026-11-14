@@ -51,6 +51,10 @@ class UiSettings : public QObject
     // the flags still travel inside each command, so the engine protocol is untouched (owner's decision).
     Q_PROPERTY(bool snapGrid READ snapGrid WRITE setSnapGrid NOTIFY changed)
     Q_PROPERTY(bool quantizeGrid READ quantizeGrid WRITE setQuantizeGrid NOTIFY changed)
+    // Whether a hand on the strip is heard: a scratch, or a silent seek. Silent by default — a booth is
+    // not a place to discover that dragging a strip makes noise (owner's decision, 14.11: a setting, not
+    // a button on every deck).
+    Q_PROPERTY(bool scrubAudible READ scrubAudible WRITE setScrubAudible NOTIFY changed)
     // Frames drawn per second; the strip and the playhead projection run at this rate.
     Q_PROPERTY(int frameHz READ frameHz NOTIFY changed)
     // Milliseconds between frames, ready for a Timer interval: QML should not divide on its own.
@@ -138,6 +142,15 @@ public:
         m_quantizeGrid = on;
         emit changed();
     }
+    bool scrubAudible() const { return m_scrubAudible; }
+    void setScrubAudible(bool on)
+    {
+        if (m_scrubAudible == on) {
+            return;
+        }
+        m_scrubAudible = on;
+        emit changed();
+    }
     int frameHz() const { return m_frameHz; }
     double waveformZoom() const { return m_waveformZoom; }
     int frameInterval() const { return qMax(1, 1000 / qMax(1, m_frameHz)); }
@@ -218,4 +231,5 @@ private:
     // Global deck modes, on by default as the deck switches were.
     bool m_snapGrid = true;
     bool m_quantizeGrid = true;
+    bool m_scrubAudible = false;
 };
