@@ -7677,9 +7677,10 @@ int main(int argc, char *argv[])
                        "report each step."));
     const QCommandLineOption transportOption(
         QStringLiteral("transport-check"),
-        QStringLiteral("With --connect and --load: play the deck, stop it and require the playhead to "
-                       "return to the cue point, scrub the overview with the hand, and require the "
-                       "clock to show the time left rather than the length."));
+        QStringLiteral("With --connect and --load: play the deck, bring the head back to the cue point "
+                       "with a tap of Cue, set the point by holding the same button, scrub the "
+                       "overview with the hand, and require the clock to show the time left rather "
+                       "than the length."));
     const QCommandLineOption pitchOption(
         QStringLiteral("pitch-check"),
         QStringLiteral("With --connect: drag a deck's pitch fader and require the engine to play at "
@@ -11689,17 +11690,18 @@ int main(int argc, char *argv[])
         const double totalFrames = fieldOf("source_frame")
                                    + fieldOf("remaining_frames");
         auto *playButton = findItem(window->contentItem(), QStringLiteral("play_A"));
-        auto *stopButton = findItem(window->contentItem(), QStringLiteral("stop_A"));
         auto *cueButton = findItem(window->contentItem(), QStringLiteral("cue_A"));
         auto *overview = findItem(window->contentItem(), QStringLiteral("deckOverview_A"));
         auto *clock = findItem(window->contentItem(), QStringLiteral("clock_A"));
-        if (playButton == nullptr || stopButton == nullptr || cueButton == nullptr
-            || overview == nullptr || clock == nullptr) {
+        if (playButton == nullptr || cueButton == nullptr || overview == nullptr
+            || clock == nullptr) {
             std::fprintf(stderr, "dj-ui: the deck is missing its transport, its clock or its overview\n");
             return 1;
         }
 
-        // Play, let the playhead move, then Stop: the deck must be silent and back at the cue point.
+        // Play, let the playhead move, then a tap of Cue: the head must be back on the cue point. The
+        // Stop button is gone (owner's decision): returning the head is the cue button's job, and the
+        // pause is the Play button's.
         press(playButton);
         pump(5);
         release(playButton);
@@ -11710,20 +11712,63 @@ int main(int argc, char *argv[])
         }
         const double moved = fieldOf("source_frame");
         const double cue = cuePoint();
-        press(stopButton);
-        release(stopButton);
+        press(cueButton);
+        pump(10);
+        release(cueButton);
+        pump(20);
+        // Freeze the deck before reading the position: a tap of Cue brings the head back and the deck
+        // rolls on from the point, and a rolling deck is no position to compare. Pausing is the Play
+        // button's job now that Stop is gone.
+        press(playButton);
+        pump(5);
+        release(playButton);
         pump(40);
-        const double stoppedAt = fieldOf("source_frame");
+        const double backAt = fieldOf("source_frame");
         std::fprintf(stdout,
-                     "dj-ui: play moved the playhead to %.0f, stop put it back at %.0f (the cue point "
-                     "is %.0f) and left the deck %s\n",
-                     moved, stoppedAt, cue, playing() ? "playing" : "silent");
+                     "dj-ui: play moved the playhead to %.0f, a tap of Cue brought it back to %.0f and "
+                     "left the deck %s (the cue point is %.0f)\n",
+                     moved, backAt, playing() ? "playing" : "paused", cue);
         if (playing()) {
-            std::fprintf(stderr, "dj-ui: stop left the deck playing\n");
+            std::fprintf(stderr, "dj-ui: the deck kept playing after Play was pressed\n");
             return 1;
         }
-        if (std::abs(stoppedAt - cue) > 1.0) {
-            std::fprintf(stderr, "dj-ui: stop did not return the playhead to the cue point\n");
+        if (backAt < cue - 2.0 || backAt - cue > 24000.0) {
+            std::fprintf(stderr,
+                         "dj-ui: the tap of Cue left the playhead at %.0f instead of the cue point "
+                         "%.0f\n",
+                         backAt, cue);
+            return 1;
+        }
+        if (backAt >= moved - 1000.0) {
+            std::fprintf(stderr, "dj-ui: the tap of Cue did not bring the playhead back\n");
+            return 1;
+        }
+        // The hold of the same button sets the point where the hand landed and leaves the deck there.
+        press(playButton);
+        pump(5);
+        release(playButton);
+        pump(300);
+        const double handLanded = fieldOf("source_frame");
+        press(cueButton);
+        pump(600);
+        release(cueButton);
+        pump(80);
+        const double leftAt = fieldOf("source_frame");
+        const double pointNow = cuePoint();
+        std::fprintf(stdout,
+                     "dj-ui: holding Cue set the point at %.0f (the hand landed at %.0f), the head is "
+                     "at %.0f and the deck is %s\n",
+                     pointNow, handLanded, leftAt, playing() ? "playing" : "silent");
+        if (pointNow <= 0.0 || std::abs(pointNow - handLanded) > 10000.0) {
+            std::fprintf(stderr, "dj-ui: the hold did not set the cue point where the hand landed\n");
+            return 1;
+        }
+        if (playing()) {
+            std::fprintf(stderr, "dj-ui: the deck kept playing after the cue point was set\n");
+            return 1;
+        }
+        if (std::abs(leftAt - pointNow) > 2.0) {
+            std::fprintf(stderr, "dj-ui: the deck did not stand on the point it had just set\n");
             return 1;
         }
 

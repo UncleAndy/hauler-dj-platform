@@ -299,20 +299,13 @@ Pane {
         return panel.timeLabel(panel.deck.source_frame);
     }
 
-    /// The point Stop and Cue return to: hotcue 0 when it is set, the start of the file otherwise.
+    /// The point Cue returns to: hotcue 0 when it is set, the start of the file otherwise.
     function cueFrame() {
         const slots = panel.deck.hotcues !== undefined ? panel.deck.hotcues : null;
         if (slots !== null && slots.length > 0 && slots[0] !== null && slots[0] !== undefined) {
             return slots[0];
         }
         return 0;
-    }
-
-    /// Stop is not Pause: it puts the playhead back on the point the deck starts from, which is what a
-    /// hand expects from the button with that name (DJP-DECK-002).
-    function stop() {
-        Bridge.play(panel.deckId, false);
-        Bridge.seek(panel.deckId, panel.cueFrame());
     }
 
     // ---- the eight pads (DJP-DECK-003) ----------------------------------------------------
@@ -870,20 +863,43 @@ Pane {
                 lit: panel.playing
                 onClicked: Bridge.play(panel.deckId, !panel.playing)
             }
-            // The cue button of a transport, not a hotcue button: pressed, it stops the deck on the cue
-            // point; held, the deck is silent there; released, it plays from the cue point. That is the
-            // gesture every DJ already knows (DJP-DECK-002).
+            // The cue button of a transport, not a hotcue button. A tap keeps the gesture every DJ
+            // knows: the head goes back to the cue point and the deck plays on from there. A hold of
+            // 400 ms sets the point where the hand landed and leaves the deck standing there — that is
+            // what the Set button used to do, and there is no Set button any more (owner's decision).
             Button {
+                id: cueButton
                 objectName: "cue_" + panel.deckId
                 text: qsTr("Cue")
                 font.pixelSize: 11
                 enabled: panel.live
                 focusPolicy: Qt.NoFocus
+                // Where the hand landed: the hold sets the point there and not where the deck has run
+                // to while the timer waited.
+                property double pressFrame: 0
                 onPressed: {
-                    Bridge.play(panel.deckId, false);
-                    Bridge.seek(panel.deckId, panel.cueFrame());
+                    pressFrame = panel.deck.source_frame !== undefined ? panel.deck.source_frame : 0;
+                    cueHold.restart();
                 }
-                onReleased: Bridge.play(panel.deckId, true)
+                onReleased: {
+                    // A quick release: the head goes back to the point and the deck plays on.
+                    if (cueHold.running) {
+                        cueHold.stop();
+                        Bridge.seek(panel.deckId, panel.cueFrame());
+                        Bridge.play(panel.deckId, true);
+                    }
+                    // After a hold the deck stands where the point was set: nothing to do on release.
+                }
+                Timer {
+                    id: cueHold
+                    interval: 400
+                    repeat: false
+                    onTriggered: {
+                        Bridge.play(panel.deckId, false);
+                        Bridge.seek(panel.deckId, cueButton.pressFrame);
+                        Bridge.cue(panel.deckId, "Set", 0);
+                    }
+                }
             }
             // The scrub mode of this deck, where the hand already is: silent, or heard as a scratch.
             ToggleButton {
@@ -895,21 +911,6 @@ Pane {
                 focusPolicy: Qt.NoFocus
                 lit: panel.scrubAudio
                 onClicked: panel.scrubAudio = !panel.scrubAudio
-            }
-            Button {
-                objectName: "stop_" + panel.deckId
-                text: qsTr("Stop")
-                font.pixelSize: 11
-                enabled: panel.live
-                focusPolicy: Qt.NoFocus
-                onClicked: panel.stop()
-            }
-            Button {
-                text: qsTr("Set")
-                font.pixelSize: 11
-                enabled: panel.live
-                focusPolicy: Qt.NoFocus
-                onClicked: Bridge.cue(panel.deckId, "Set", 0)
             }
             // A Button's clicked signal carries no mouse, so the shift modifier has to be read where
             // the click happens: this is a flat button drawn like its neighbours.
@@ -947,6 +948,37 @@ Pane {
                         panel.pressLoop((mouse.modifiers & Qt.ShiftModifier) !== 0);
                     }
                 }
+            }
+            // Slip wears the same colour as Loop when it is on: a mode has to look like a mode.
+            ToggleButton {
+                objectName: "slip_" + panel.deckId
+                text: qsTr("Slip")
+                font.pixelSize: 11
+                width: 52
+                height: 20
+                enabled: panel.live
+                focusPolicy: Qt.NoFocus
+                lit: panel.deck.slip === true
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("The sound may jump or repeat while the track under it keeps "
+                                   + "running; leaving a loop puts the sound back on the track's clock")
+                onClicked: Bridge.setSlip(panel.deckId, panel.deck.slip !== true)
+            }
+            // Reverse walks the material backwards from the playhead. It lights like the other modes,
+            // and it refuses on a track that is still streaming: the engine says so instead of stalling.
+            ToggleButton {
+                objectName: "reverse_" + panel.deckId
+                text: qsTr("Rev")
+                font.pixelSize: 11
+                width: 46
+                height: 20
+                enabled: panel.live
+                focusPolicy: Qt.NoFocus
+                lit: panel.deck.reverse === true
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Plays the material backwards from the playhead; a track held in "
+                                   + "the cache can do it, one still reading from disk cannot")
+                onClicked: Bridge.setReverse(panel.deckId, panel.deck.reverse !== true)
             }
             // The tempo the deck shows was measured once, at load. When the answer is wrong the DJ
             // asks again — a full decode, so it is asked for, never done behind their back, and a
@@ -1120,37 +1152,6 @@ Pane {
                                   : qsTr("%1 beat(s), by time").arg(Math.abs(modelData))
                     onClicked: Bridge.beatJump(panel.deckId, modelData, panel.quantize)
                 }
-            }
-            // Slip wears the same colour as Loop when it is on: a mode has to look like a mode.
-            ToggleButton {
-                objectName: "slip_" + panel.deckId
-                text: qsTr("Slip")
-                font.pixelSize: 11
-                width: 52
-                height: 20
-                enabled: panel.live
-                focusPolicy: Qt.NoFocus
-                lit: panel.deck.slip === true
-                ToolTip.visible: hovered
-                ToolTip.text: qsTr("The sound may jump or repeat while the track under it keeps "
-                                   + "running; leaving a loop puts the sound back on the track's clock")
-                onClicked: Bridge.setSlip(panel.deckId, panel.deck.slip !== true)
-            }
-            // Reverse walks the material backwards from the playhead. It lights like the other modes,
-            // and it refuses on a track that is still streaming: the engine says so instead of stalling.
-            ToggleButton {
-                objectName: "reverse_" + panel.deckId
-                text: qsTr("Rev")
-                font.pixelSize: 11
-                width: 46
-                height: 20
-                enabled: panel.live
-                focusPolicy: Qt.NoFocus
-                lit: panel.deck.reverse === true
-                ToolTip.visible: hovered
-                ToolTip.text: qsTr("Plays the material backwards from the playhead; a track held in "
-                                   + "the cache can do it, one still reading from disk cannot")
-                onClicked: Bridge.setReverse(panel.deckId, panel.deck.reverse !== true)
             }
         }
 
