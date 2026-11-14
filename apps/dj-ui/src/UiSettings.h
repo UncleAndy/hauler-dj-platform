@@ -46,6 +46,11 @@ class UiSettings : public QObject
     Q_PROPERTY(QString themeWaveBackground READ themeWaveBackground CONSTANT)
     Q_PROPERTY(QString themeWaveOutline READ themeWaveOutline CONSTANT)
     Q_PROPERTY(QString waveformStyle READ waveformStyle NOTIFY changed)
+    // The two deck modes a DJ decides once for the set rather than per deck: snap (a loop point lands on
+    // the grid) and quantize (the loop's end is whole beats after its start). The decks read these and
+    // the flags still travel inside each command, so the engine protocol is untouched (owner's decision).
+    Q_PROPERTY(bool snapGrid READ snapGrid WRITE setSnapGrid NOTIFY changed)
+    Q_PROPERTY(bool quantizeGrid READ quantizeGrid WRITE setQuantizeGrid NOTIFY changed)
     // Frames drawn per second; the strip and the playhead projection run at this rate.
     Q_PROPERTY(int frameHz READ frameHz NOTIFY changed)
     // Milliseconds between frames, ready for a Timer interval: QML should not divide on its own.
@@ -115,6 +120,24 @@ public:
     QString themeWaveOutline() const { return QStringLiteral("#5b636d"); }
 
     QString waveformStyle() const { return m_waveformStyle; }
+    bool snapGrid() const { return m_snapGrid; }
+    void setSnapGrid(bool on)
+    {
+        if (m_snapGrid == on) {
+            return;
+        }
+        m_snapGrid = on;
+        emit changed();
+    }
+    bool quantizeGrid() const { return m_quantizeGrid; }
+    void setQuantizeGrid(bool on)
+    {
+        if (m_quantizeGrid == on) {
+            return;
+        }
+        m_quantizeGrid = on;
+        emit changed();
+    }
     int frameHz() const { return m_frameHz; }
     double waveformZoom() const { return m_waveformZoom; }
     int frameInterval() const { return qMax(1, 1000 / qMax(1, m_frameHz)); }
@@ -191,4 +214,8 @@ private:
     QString m_waveformLowColor = QStringLiteral("#ff2f1f");
     QString m_waveformMidColor = QStringLiteral("#35d13a");
     QString m_waveformHighColor = QStringLiteral("#2f6bff");
+
+    // Global deck modes, on by default as the deck switches were.
+    bool m_snapGrid = true;
+    bool m_quantizeGrid = true;
 };

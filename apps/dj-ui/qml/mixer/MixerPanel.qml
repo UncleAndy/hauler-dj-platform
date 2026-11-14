@@ -152,10 +152,63 @@ Pane {
             }
         }
 
-        // The crossfader sits at the bottom of the column, under the strips, where the hand rests.
-        Crossfader {
+        // The crossfader sits at the bottom of the column, under the strips, where the hand rests. The
+        // two modes a DJ sets once for the set rather than per deck stand beside it (owner's decision,
+        // 14.11): in the row of the crossfader's law they squeezed the four curve glyphs into slivers,
+        // and the check that measures those glyphs caught exactly that.
+        RowLayout {
             Layout.fillWidth: true
             Layout.preferredHeight: 30
+            spacing: 6
+
+            Crossfader {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 30
+            }
+            Rectangle {
+                objectName: "snapGlobal"
+                readonly property bool on: UiSettings.snapGrid
+                Layout.preferredWidth: 46
+                Layout.preferredHeight: 30
+                radius: 2
+                color: on ? UiSettings.themeAccent : UiSettings.themeRaised
+                border.width: 1
+                border.color: UiSettings.themeBorder
+                Text {
+                    anchors.centerIn: parent
+                    text: qsTr("snap")
+                    font.pixelSize: 10
+                    color: parent.on ? UiSettings.themeTextOnAccent : UiSettings.themeText
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: UiSettings.snapGrid = !UiSettings.snapGrid
+                }
+            }
+            Rectangle {
+                objectName: "quantizeGlobal"
+                readonly property bool on: UiSettings.quantizeGrid
+                Layout.preferredWidth: 46
+                Layout.preferredHeight: 30
+                radius: 2
+                color: on ? UiSettings.themeAccent : UiSettings.themeRaised
+                border.width: 1
+                border.color: UiSettings.themeBorder
+                Text {
+                    anchors.centerIn: parent
+                    text: qsTr("quant")
+                    font.pixelSize: 10
+                    color: parent.on ? UiSettings.themeTextOnAccent : UiSettings.themeText
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: UiSettings.quantizeGrid = !UiSettings.quantizeGrid
+                }
+            }
         }
 
         // The law in force, as four buttons in one row, each showing its own curve. The picture is

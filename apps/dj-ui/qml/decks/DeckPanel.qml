@@ -414,13 +414,11 @@ Pane {
         return false;
     }
 
-    /// Snap: a loop point lands on the nearest line of the grid instead of on the frame the hand was on.
     /// The strip of loop sizes and beatjumps is folded to begin with: it costs a row, and a row costs
-    /// the wave. The button in the transport row decides (owner's decision, 14.11).
+    /// the wave. The button in the transport row decides (owner's decision, 14.11). Snap and quantize are
+    /// not here any more: the two modes are global, and they live in `UiSettings`, where the mixer's
+    /// switches and every deck read the one value (owner's decision, 14.11).
     property bool stripOpen: false
-    property bool snap: true
-    /// Quantize: the loop's end is a whole number of beats after its start.
-    property bool quantize: true
 
     /// The nearest line of this deck's grid, or the frame itself when there is no grid to snap to.
     function onTheGrid(frame) {
@@ -460,9 +458,9 @@ Pane {
         // playhead stands: leaving it hanging because the playhead happened to be inside another loop is
         // how a press ends up doing nothing at all.
         if (panel.loopPending) {
-            const closed = panel.snap ? panel.onTheGrid(frame) : frame;
-            const start = panel.snap ? panel.onTheGrid(panel.loopStartFrame) : panel.loopStartFrame;
-            const end = panel.quantize ? panel.wholeBeatsBetween(Math.min(start, closed),
+            const closed = UiSettings.snapGrid ? panel.onTheGrid(frame) : frame;
+            const start = UiSettings.snapGrid ? panel.onTheGrid(panel.loopStartFrame) : panel.loopStartFrame;
+            const end = UiSettings.quantizeGrid ? panel.wholeBeatsBetween(Math.min(start, closed),
                                                                  Math.max(start, closed))
                                        : Math.max(start, closed);
             const from = Math.round(Math.min(start, closed));
@@ -940,8 +938,11 @@ Pane {
                     font.pixelSize: 11
                     // The text follows the face: a loop that is only remembered has edges on the strip,
                     // not a lit button, and text meant for the accent reads as a smudge on the raised one.
-                    color: panel.loopPending || active ? UiSettings.themeTextOnAccent
-                                                       : UiSettings.themeText
+                    // On the raised face the accent reads as "the loop will land on the grid": the mode is
+                    // global now, and its switch is in the mixer, so the deck says what it is doing.
+                    color: panel.loopPending || active
+                           ? UiSettings.themeTextOnAccent
+                           : (UiSettings.snapGrid ? UiSettings.themeAccent : UiSettings.themeText)
                 }
 
                 MouseArea {
@@ -1096,51 +1097,6 @@ Pane {
             Item { Layout.fillWidth: true }
             // Snap puts a loop point on the nearest line of the grid; quantize makes the loop end a whole
             // number of beats after its start. Both are the DJ's switches, and they wear the same colour
-            // as Loop when they are on: a switch has to look like a switch at a glance.
-            Rectangle {
-                objectName: "snap_" + panel.deckId
-                readonly property bool on: panel.snap
-                Layout.preferredWidth: snapLabel.implicitWidth + 12
-                Layout.preferredHeight: 20
-                radius: 2
-                color: on ? UiSettings.themeAccent : UiSettings.themeRaised
-                border.width: 1
-                border.color: UiSettings.themeBorder
-                Text {
-                    id: snapLabel
-                    anchors.centerIn: parent
-                    text: qsTr("snap")
-                    font.pixelSize: 10
-                    color: parent.on ? UiSettings.themeTextOnAccent : UiSettings.themeText
-                }
-                MouseArea {
-                    anchors.fill: parent
-                    enabled: panel.live && panel.gridReady
-                    onClicked: panel.snap = !panel.snap
-                }
-            }
-            Rectangle {
-                objectName: "quantize_" + panel.deckId
-                readonly property bool on: panel.quantize
-                Layout.preferredWidth: quantLabel.implicitWidth + 12
-                Layout.preferredHeight: 20
-                radius: 2
-                color: on ? UiSettings.themeAccent : UiSettings.themeRaised
-                border.width: 1
-                border.color: UiSettings.themeBorder
-                Text {
-                    id: quantLabel
-                    anchors.centerIn: parent
-                    text: qsTr("quant")
-                    font.pixelSize: 10
-                    color: parent.on ? UiSettings.themeTextOnAccent : UiSettings.themeText
-                }
-                MouseArea {
-                    anchors.fill: parent
-                    enabled: panel.live && panel.gridReady
-                    onClicked: panel.quantize = !panel.quantize
-                }
-            }
             // The beatjumps of the same strip, at the right edge: a jump is measured in beats, so it
             // belongs on the grid the loop sizes do. Twelve lengths do not fit one line at every panel
             // width, so this group wraps instead of squeezing the buttons into unreadable slivers.
@@ -1163,10 +1119,10 @@ Pane {
                         enabled: panel.live
                         focusPolicy: Qt.NoFocus
                         ToolTip.visible: hovered
-                        ToolTip.text: panel.quantize
+                        ToolTip.text: UiSettings.quantizeGrid
                                       ? qsTr("%1 beat(s), on the grid").arg(Math.abs(modelData))
                                       : qsTr("%1 beat(s), by time").arg(Math.abs(modelData))
-                        onClicked: Bridge.beatJump(panel.deckId, modelData, panel.quantize)
+                        onClicked: Bridge.beatJump(panel.deckId, modelData, UiSettings.quantizeGrid)
                     }
                 }
             }

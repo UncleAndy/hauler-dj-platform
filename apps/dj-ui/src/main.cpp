@@ -6641,11 +6641,11 @@ static int runLockCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Bri
         std::fprintf(stderr, "dj-ui: the collection says locked, the button does not\n");
         return 1;
     }
-    // The switch wears the colour Snap wears when it is on: one paint for every two-state control in
-    // the deck, so a lit button means the same thing wherever the eye lands.
-    auto *snap = findItem(window->contentItem(), QStringLiteral("snap_A"));
+    // The switch wears the colour Snap wears when it is on — and Snap itself is a global switch in the
+    // mixer now, so the reference moved with it (owner's decision, 14.11).
+    auto *snap = findItem(window->contentItem(), QStringLiteral("snapGlobal"));
     if (snap == nullptr) {
-        std::fprintf(stderr, "dj-ui: the deck has no Snap switch to compare with\n");
+        std::fprintf(stderr, "dj-ui: the mixer has no Snap switch to compare with\n");
         return 1;
     }
     const QObject *face = lock->property("background").value<QObject *>();
@@ -9859,8 +9859,10 @@ int main(int argc, char *argv[])
         }
         // The switches are the DJ's: turned off, the very same pair must land where the hand was and not
         // on the grid. A switch that only looks lit is worse than none.
-        auto *snapSwitch = findItem(window->contentItem(), QStringLiteral("snap_A"));
-        auto *quantSwitch = findItem(window->contentItem(), QStringLiteral("quantize_A"));
+        // The switches are global, in the mixer: the modes are one decision for the set, and the decks
+        // read them (owner's decision, 14.11).
+        auto *snapSwitch = findItem(window->contentItem(), QStringLiteral("snapGlobal"));
+        auto *quantSwitch = findItem(window->contentItem(), QStringLiteral("quantizeGlobal"));
         if (snapSwitch == nullptr || quantSwitch == nullptr) {
             std::fprintf(stderr, "dj-ui: no snap or quantize switch\n");
             return 1;
