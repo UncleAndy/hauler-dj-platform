@@ -6872,6 +6872,18 @@ static int runPlaylistCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     };
     const auto importState = [&]() { return panel->property("importState").toMap(); };
     const auto tree = [&]() { return browser.playlistTree(); };
+    const auto drag = [&](QEvent::Type type, const QPointF &at) {
+        // A move carries no button of its own — only the set of buttons held down. A move with
+        // `LeftButton` in both fields reads as a new press, and a handler that grabs per event loses the
+        // grab it just took.
+        const Qt::MouseButton button = type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton;
+        QMouseEvent event(type, at, window->mapToGlobal(at.toPoint()), button, Qt::LeftButton,
+                          Qt::NoModifier);
+        QCoreApplication::sendEvent(window, &event);
+        QCoreApplication::processEvents();
+        QThread::msleep(20);
+    };
+
     const auto rows = [&]() { return browser.playlistRows(); };
     const auto findPlaylist = [&](const QString &name) -> QVariantMap {
         for (const QVariant &entry : tree()) {
@@ -7126,6 +7138,82 @@ static int runPlaylistCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         10000);
     require(moved, QStringLiteral("the drag did not move the row"));
 
+    // A row carried inside the playlist: the plate between two rows says where it will land, and the
+    // order changes when the hand lets go. Two rows stand in the list here (Remove dups left the first of
+    // each), so the drag of the first one past the second must turn them around.
+    // The rows themselves, not their labels: a label is centred in its row, and a boundary measured from a
+    // label is a few pixels off the boundary the plate stands on.
+    auto *rowFirst = findItem(window->contentItem(), QStringLiteral("collectionRow_0"));
+    auto *rowSecond = findItem(window->contentItem(), QStringLiteral("collectionRow_1"));
+    auto *line = findItem(window->contentItem(), QStringLiteral("playlistInsertLine"));
+    if (rowFirst == nullptr || rowSecond == nullptr || line == nullptr) {
+        std::fprintf(stderr, "dj-ui: the playlist rows or the insert line are not on the screen\n");
+        return 1;
+    }
+    const QPointF grab = rowFirst->mapToScene(
+        QPointF(rowFirst->width() / 2.0, rowFirst->height() / 2.0));
+    const QPointF below = rowSecond->mapToScene(
+        QPointF(rowSecond->width() / 2.0, rowSecond->height() * 0.85));
+    drag(QEvent::MouseButtonPress, grab);
+    for (int step = 1; step <= 6; ++step) {
+        drag(QEvent::MouseMove, grab + (below - grab) * (step / 6.0));
+    }
+    const bool lineShown = line->isVisible();
+    const double lineY = line->mapToScene(QPointF(0, 0)).y();
+    const double boundary = rowSecond->mapToScene(QPointF(0, 0)).y() + rowSecond->height();
+    drag(QEvent::MouseButtonRelease, below);
+    require(lineShown, QStringLiteral("no plate shows where the carried row will land"));
+    require(std::abs(lineY - boundary) <= 2.0,
+            QStringLiteral("the plate stands at %1 px, the boundary between the rows at %2 px")
+                .arg(lineY)
+                .arg(boundary));
+    const bool turned = waitFor(
+        [&]() { return fingerprints().size() == 2 && fingerprints().at(0) == alphaPrint
+                       && fingerprints().at(1) == betaPrint; },
+        5000);
+    require(turned, QStringLiteral("the carried row did not land in the new place"));
+    std::printf("dj-ui: the plate stands %.0f px above the boundary (%.0f vs %.0f) and the drag turned "
+                "the two rows around\n",
+                boundary - lineY, lineY, boundary);
+
+    // The keys carry the current row: Ctrl+Down sends it one place down, Ctrl+Up brings it back.
+    auto *listItem = findItem(window->contentItem(), QStringLiteral("browserList"));
+    if (listItem != nullptr) {
+        listItem->forceActiveFocus();
+        QCoreApplication::processEvents();
+    }
+    const auto pressCtrl = [&](int key) {
+        // Press and release, the way the Space check drives its shortcut: a shortcut fires from the
+        // window, whether or not a row holds the focus.
+        for (const QEvent::Type type : {QEvent::KeyPress, QEvent::KeyRelease}) {
+            QKeyEvent event(type, key, Qt::ControlModifier);
+            QCoreApplication::sendEvent(window, &event);
+        }
+        QCoreApplication::processEvents();
+        QThread::msleep(60);
+    };
+    // The row the keys carry is the one under the cursor: put it on the first row before asking.
+    browser.setCursor(rows().value(0).toMap().value(QStringLiteral("path")).toString());
+    QCoreApplication::processEvents();
+    pressCtrl(Qt::Key_Down);
+    const bool wentDown = waitFor(
+        [&]() { return fingerprints().size() == 2 && fingerprints().at(0) == betaPrint
+                       && fingerprints().at(1) == alphaPrint; },
+        5000);
+    // The cursor follows the track it was on, and that track is the second row now: the page arrives a
+    // moment after the order does, and a key pressed before it would carry no row at all.
+    waitFor([&]() { return browser.rowOf(browser.cursor()) == 1; }, 3000);
+    pressCtrl(Qt::Key_Up);
+    const bool cameUp = waitFor(
+        [&]() { return fingerprints().size() == 2 && fingerprints().at(0) == alphaPrint
+                       && fingerprints().at(1) == betaPrint; },
+        5000);
+    require(wentDown && cameUp,
+            QStringLiteral("Ctrl+Down/Ctrl+Up did not carry the row (down %1, up %2)")
+                .arg(wentDown)
+                .arg(cameUp));
+    std::printf("dj-ui: Ctrl+Down and Ctrl+Up carry the current row one place\n");
+
     // The search narrows the playlist in the index, and clearing it brings the rows back.
     browser.setFilter(QStringLiteral("Alpha"));
     require(waitFor([&]() { return fingerprints().size() == 1; }, 10000),
@@ -7181,17 +7269,6 @@ static int runPlaylistCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     }
     const QPointF start = fromRow->mapToScene(QPointF(fromRow->width() / 2.0, fromRow->height() / 2.0));
     const QPointF finish = toRow->mapToScene(QPointF(toRow->width() / 2.0, toRow->height() / 2.0));
-    const auto drag = [&](QEvent::Type type, const QPointF &at) {
-        // A move carries no button of its own — only the set of buttons held down. A move with
-        // `LeftButton` in both fields reads as a new press, and a handler that grabs per event loses the
-        // grab it just took.
-        const Qt::MouseButton button = type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton;
-        QMouseEvent event(type, at, window->mapToGlobal(at.toPoint()), button, Qt::LeftButton,
-                          Qt::NoModifier);
-        QCoreApplication::sendEvent(window, &event);
-        QCoreApplication::processEvents();
-        QThread::msleep(20);
-    };
     drag(QEvent::MouseButtonPress, start);
     for (int step = 1; step <= 6; ++step) {
         drag(QEvent::MouseMove, start + (finish - start) * (step / 6.0));

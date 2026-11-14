@@ -47,6 +47,10 @@ Pane {
     // folder it would drop into. A drag of a list row is done by the hand and hit-tested, not by moving the
     // delegate: a ListView writes the delegate's `y` on every layout, and `drag.target` on it is a fight
     // the view wins.
+    // A row carried inside the open playlist: which row, and the boundary it would be inserted at — the
+    // plate between two rows that the DJ sees while the hand is down (owner's decision, 15.11.2026).
+    property int playlistDragRow: -1
+    property int playlistInsertAt: -1
     property int draggedPlaylist: 0
     property real draggedFromY: 0
     property bool draggingPlaylist: false
@@ -80,7 +84,35 @@ Pane {
         return null;
     }
 
-    /// The rail's entry for a section, found by its name: a Repeater's delegates have no ids of their own.
+    /// Carry the row under the cursor one place up (`-1`) or down (`+1`). The keys and the plate both end
+    /// in the same command, and the cursor stays on the track it was on.
+    function moveCurrentRow(delta) {
+        const from = list.currentIndex;
+        const to = from + delta;
+        if (!Browser.inPlaylists || from < 0 || to < 0 || to >= Browser.playlistRows.length) {
+            return false;
+        }
+        Browser.playlistReorder(from, to);
+        browser.lastAction = "row " + (from + 1) + " moved to " + (to + 1);
+        return true;
+    }
+
+    /// The boundary a carried row would be inserted at, for a point of the window: `0` is above the first
+    /// row, `count` is below the last. `-1` is no boundary at all — outside the list.
+    function playlistInsertIndexAt(sceneX, sceneY) {
+        if (!Browser.inPlaylists || list === null) {
+            return -1;
+        }
+        const local = list.mapFromItem(null, sceneX, sceneY);
+        if (local.x < 0 || local.x > list.width || local.y < 0 || local.y > list.height) {
+            return -1;
+        }
+        const contentY = local.y + list.contentY;
+        const at = Math.round(contentY / browser.rowHeight);
+        return Math.max(0, Math.min(Browser.playlistRows.length, at));
+    }
+
+    /// Caret of the rail's entry for a section, found by its name: a Repeater's delegates have no ids of their own.
     function sectionRow(key) {
         const rail = sectionsRail;
         for (let index = 0; index < rail.children.length; ++index) {
@@ -90,6 +122,22 @@ Pane {
             }
         }
         return null;
+    }
+
+    // Ctrl with the arrows carries the current row one place up or down: the hand on the keys must be able
+    // to fix an order without the mouse (owner's decision, 15.11.2026). A shortcut rather than a key handler
+    // on the list: the shortcut belongs to the window and does not depend on which row has the focus.
+    Shortcut {
+        objectName: "playlistRowUp"
+        sequence: "Ctrl+Up"
+        enabled: Browser.inPlaylists
+        onActivated: browser.moveCurrentRow(-1)
+    }
+    Shortcut {
+        objectName: "playlistRowDown"
+        sequence: "Ctrl+Down"
+        enabled: Browser.inPlaylists
+        onActivated: browser.moveCurrentRow(1)
     }
 
     // The rows the DJ picked: a list of paths, so a folder and a file can travel to the collection
@@ -1917,6 +1965,25 @@ Pane {
                 }
             }
 
+            // The plate between two rows: where the carried track will land. It is drawn over the list, in
+            // the panel's own coordinates, because the panel is not a layout and a child of one would be
+            // placed by it.
+            Rectangle {
+                id: insertLine
+                objectName: "playlistInsertLine"
+                parent: browser
+                visible: browser.playlistDragRow >= 0 && browser.playlistInsertAt >= 0
+                z: 50
+                height: 2
+                width: list.width
+                color: UiSettings.themeAccent
+                readonly property real boundary: browser.playlistInsertAt * browser.rowHeight
+                                                  - list.contentY
+                x: list.mapToItem(browser, 0, 0).x
+                y: list.mapToItem(browser, 0, 0).y
+                   + Math.max(0, Math.min(list.height - height, boundary))
+            }
+
             ListView {
                 id: list
                 objectName: "browserList"
@@ -1947,8 +2014,18 @@ Pane {
                 // Arrow keys move the cursor and say so. Deliberately not `onCurrentIndexChanged`:
                 // a view handed a new model resets its index to the first row, and that reset would
                 // be remembered as the DJ's choice, wiping the place he actually left.
-                Keys.onUpPressed: browser.stepCursor(-1)
-                Keys.onDownPressed: browser.stepCursor(1)
+                // Plain arrows move the cursor. With Ctrl held the same keys carry the row itself (the
+                // shortcut below), and a cursor that steps first would leave no row to carry.
+                Keys.onUpPressed: function (event) {
+                    if ((event.modifiers & Qt.ControlModifier) === 0) {
+                        browser.stepCursor(-1);
+                    }
+                }
+                Keys.onDownPressed: function (event) {
+                    if ((event.modifiers & Qt.ControlModifier) === 0) {
+                        browser.stepCursor(1);
+                    }
+                }
 
                 // The wheel moves the cursor, not only the picture. The row the DJ is on sits in the
                 // middle of the window, so a scroll that moved the picture alone would slide the
@@ -1991,25 +2068,47 @@ Pane {
                                                                             : UiSettings.themeBackground))
 
                     // In a playlist a row is dragged to another place in the same list: the order of a
-                    // playlist is the DJ's, and a drag is how he changes it (DJP-MEDIA-004). In the
+                    // playlist is the DJ's, and the gesture is how he changes it (DJP-MEDIA-004). In the
                     // collection the same press does nothing — that list is the index's order, not his.
-                    Drag.active: Browser.inPlaylists && rowDrag.active
-                    Drag.source: row
-                    Drag.hotSpot.x: width / 2
-                    Drag.hotSpot.y: height / 2
+                    // The gesture is a DragHandler's: inside a list a mouse area loses the grab to the
+                    // flick, and the row itself is not moved — the boundary under the pointer decides.
                     DragHandler {
                         id: rowDrag
                         target: null
                         enabled: Browser.inPlaylists
-                    }
-                    DropArea {
-                        id: rowDrop
-                        anchors.fill: parent
-                        enabled: Browser.inPlaylists && !rowDrag.active
-                        onDropped: function (drop) {
-                            if (drop.source && drop.source.index !== undefined
-                                && drop.source.index !== row.index) {
-                                Browser.playlistReorder(drop.source.index, row.index);
+                        onActiveChanged: {
+                            if (active) {
+                                browser.playlistDragRow = row.index;
+                                browser.playlistInsertAt = row.index;
+                                return;
+                            }
+                            if (browser.playlistDragRow < 0) {
+                                return;
+                            }
+                            const place = centroid.scenePosition;
+                            const at = browser.playlistInsertIndexAt(place.x, place.y);
+                            const from = browser.playlistDragRow;
+                            browser.playlistDragRow = -1;
+                            browser.playlistInsertAt = -1;
+                            if (at < 0) {
+                                return;
+                            }
+                            // The engine takes the row out first and puts it back at `to`: a boundary
+                            // below the original place is one step nearer once the row is gone.
+                            const to = at > from ? at - 1 : at;
+                            if (to !== from && to >= 0 && to < Browser.playlistRows.length) {
+                                Browser.playlistReorder(from, to);
+                                browser.lastAction = "row " + (from + 1) + " moved to " + (to + 1);
+                            }
+                        }
+                        onCentroidChanged: {
+                            if (!active) {
+                                return;
+                            }
+                            const place = centroid.scenePosition;
+                            const at = browser.playlistInsertIndexAt(place.x, place.y);
+                            if (at >= 0) {
+                                browser.playlistInsertAt = at;
                             }
                         }
                     }
