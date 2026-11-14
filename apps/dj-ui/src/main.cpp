@@ -7144,6 +7144,130 @@ static int runPlaylistCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     require(!QFile::exists(playlistPath(QStringLiteral("Sets"), QStringLiteral("Warm up"))),
             QStringLiteral("the old file of the playlist stayed behind"));
 
+    // The hand: a playlist is dragged from `Sets` onto the folder `Late`, and both the tree and the mirror
+    // must show it there. Real mouse events, the way the keys and the knobs are driven — a drag tested by
+    // calling the command would prove the command, not the gesture.
+    browser.playlistFolderCreate(QStringLiteral("Late"));
+    int playlistAt = -1;
+    int lateAt = -1;
+    const bool haveRows = waitFor(
+        [&]() {
+            playlistAt = -1;
+            lateAt = -1;
+            const QVariantList rows = tree();
+            for (int index = 0; index < rows.size(); ++index) {
+                const QVariantMap row = rows.at(index).toMap();
+                if (row.value(QStringLiteral("kind")).toString() == QStringLiteral("playlist")
+                    && row.value(QStringLiteral("id")).toLongLong() == id) {
+                    playlistAt = index;
+                }
+                if (row.value(QStringLiteral("kind")).toString() == QStringLiteral("folder")
+                    && row.value(QStringLiteral("folder")).toString() == QStringLiteral("Late")) {
+                    lateAt = index;
+                }
+            }
+            return playlistAt >= 0 && lateAt >= 0;
+        },
+        5000);
+    if (!require(haveRows, QStringLiteral("the tree has no playlist row or no folder to drop on"))) {
+        return 1;
+    }
+    auto *fromRow =
+        findItem(window->contentItem(), QStringLiteral("playlistTreeRow_%1").arg(playlistAt));
+    auto *toRow = findItem(window->contentItem(), QStringLiteral("playlistTreeRow_%1").arg(lateAt));
+    if (fromRow == nullptr || toRow == nullptr) {
+        std::fprintf(stderr, "dj-ui: the tree rows to drag are not on the screen\n");
+        return 1;
+    }
+    const QPointF start = fromRow->mapToScene(QPointF(fromRow->width() / 2.0, fromRow->height() / 2.0));
+    const QPointF finish = toRow->mapToScene(QPointF(toRow->width() / 2.0, toRow->height() / 2.0));
+    const auto drag = [&](QEvent::Type type, const QPointF &at) {
+        // A move carries no button of its own — only the set of buttons held down. A move with
+        // `LeftButton` in both fields reads as a new press, and a handler that grabs per event loses the
+        // grab it just took.
+        const Qt::MouseButton button = type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton;
+        QMouseEvent event(type, at, window->mapToGlobal(at.toPoint()), button, Qt::LeftButton,
+                          Qt::NoModifier);
+        QCoreApplication::sendEvent(window, &event);
+        QCoreApplication::processEvents();
+        QThread::msleep(20);
+    };
+    drag(QEvent::MouseButtonPress, start);
+    for (int step = 1; step <= 6; ++step) {
+        drag(QEvent::MouseMove, start + (finish - start) * (step / 6.0));
+    }
+    drag(QEvent::MouseButtonRelease, finish);
+    const bool dragged = waitFor(
+        [&]() {
+            for (const QVariant &entry : tree()) {
+                const QVariantMap row = entry.toMap();
+                if (row.value(QStringLiteral("kind")).toString() == QStringLiteral("playlist")
+                    && row.value(QStringLiteral("id")).toLongLong() == id
+                    && row.value(QStringLiteral("folder")).toString() == QStringLiteral("Late")) {
+                    return true;
+                }
+            }
+            return false;
+        },
+        5000);
+    require(dragged, QStringLiteral("the drag did not carry the playlist into the folder"));
+    require(QFile::exists(playlistPath(QStringLiteral("Late"), QStringLiteral("Warm up two"))),
+            QStringLiteral("the dragged playlist has no file in its new folder"));
+    std::printf("dj-ui: the drag carried the playlist from \"Sets\" into \"Late\" and its file with it\n");
+
+    // And back to the root by the same hand: the `Playlists` entry of the rail is the place a playlist with
+    // no folder comes from, and a drop on it must land there.
+    auto *rootEntry = findItem(window->contentItem(), QStringLiteral("section_playlists"));
+    int movedAt = -1;
+    const bool foundAgain = waitFor(
+        [&]() {
+            movedAt = -1;
+            const QVariantList rows = tree();
+            for (int index = 0; index < rows.size(); ++index) {
+                const QVariantMap row = rows.at(index).toMap();
+                if (row.value(QStringLiteral("kind")).toString() == QStringLiteral("playlist")
+                    && row.value(QStringLiteral("id")).toLongLong() == id) {
+                    movedAt = index;
+                }
+            }
+            return movedAt >= 0 && rootEntry != nullptr;
+        },
+        5000);
+    if (!require(foundAgain, QStringLiteral("the moved playlist has no row to carry back"))) {
+        return 1;
+    }
+    auto *carriedRow =
+        findItem(window->contentItem(), QStringLiteral("playlistTreeRow_%1").arg(movedAt));
+    if (carriedRow == nullptr) {
+        std::fprintf(stderr, "dj-ui: the row to carry back is not on the screen\n");
+        return 1;
+    }
+    const QPointF from = carriedRow->mapToScene(
+        QPointF(carriedRow->width() / 2.0, carriedRow->height() / 2.0));
+    const QPointF onto = rootEntry->mapToScene(
+        QPointF(rootEntry->width() / 2.0, rootEntry->height() / 2.0));
+    drag(QEvent::MouseButtonPress, from);
+    for (int step = 1; step <= 6; ++step) {
+        drag(QEvent::MouseMove, from + (onto - from) * (step / 6.0));
+    }
+    drag(QEvent::MouseButtonRelease, onto);
+    const bool backAtRoot = waitFor(
+        [&]() {
+            for (const QVariant &entry : tree()) {
+                const QVariantMap row = entry.toMap();
+                if (row.value(QStringLiteral("kind")).toString() == QStringLiteral("playlist")
+                    && row.value(QStringLiteral("id")).toLongLong() == id
+                    && row.value(QStringLiteral("folder")).toString().isEmpty()
+                    && row.value(QStringLiteral("depth")).toInt() == 0) {
+                    return true;
+                }
+            }
+            return false;
+        },
+        5000);
+    require(backAtRoot, QStringLiteral("a drop on the Playlists entry did not put the playlist at the root"));
+    std::printf("dj-ui: a drop on \"Playlists\" carried it back to the root\n");
+
     // Out of the folder: the file moves to the root of the mirror.
     browser.playlistMove(id, QString());
     const bool atRoot = waitFor(

@@ -43,6 +43,54 @@ Pane {
     // The name a dialog is asking for, and what it will do with it when the DJ says yes.
     property string askedName: ""
     property string askedWhat: ""
+    // A playlist being carried by the hand: which one, where the row was when the press came, and which
+    // folder it would drop into. A drag of a list row is done by the hand and hit-tested, not by moving the
+    // delegate: a ListView writes the delegate's `y` on every layout, and `drag.target` on it is a fight
+    // the view wins.
+    property int draggedPlaylist: 0
+    property real draggedFromY: 0
+    property bool draggingPlaylist: false
+    property bool playlistDropKnown: false
+    property string playlistDropFolder: ""
+
+    /// The folder a playlist would drop into at this scene point: a folder row of the tree, or the
+    /// `Playlists` entry of the rail (the root). `null` is no target at all.
+    function playlistDropAt(sceneX, sceneY) {
+        const tree = playlistTreeList;
+        if (tree !== null && tree.visible) {
+            const local = tree.mapFromItem(null, sceneX, sceneY);
+            if (local.x >= 0 && local.x <= tree.width && local.y >= 0 && local.y <= tree.height) {
+                const at = tree.indexAt(local.x, local.y);
+                if (at >= 0 && at < Browser.playlistTree.length) {
+                    const node = Browser.playlistTree[at];
+                    if (node.kind === "folder") {
+                        return {folder: node.folder, name: node.name};
+                    }
+                }
+                return null;
+            }
+        }
+        const entry = browser.sectionRow("playlists");
+        if (entry !== null && entry !== undefined) {
+            const local = entry.mapFromItem(null, sceneX, sceneY);
+            if (local.x >= 0 && local.x <= entry.width && local.y >= 0 && local.y <= entry.height) {
+                return {folder: "", name: qsTr("the root")};
+            }
+        }
+        return null;
+    }
+
+    /// The rail's entry for a section, found by its name: a Repeater's delegates have no ids of their own.
+    function sectionRow(key) {
+        const rail = sectionsRail;
+        for (let index = 0; index < rail.children.length; ++index) {
+            const child = rail.children[index];
+            if (child.objectName === "section_" + key) {
+                return child;
+            }
+        }
+        return null;
+    }
 
     // The rows the DJ picked: a list of paths, so a folder and a file can travel to the collection
     // together. Ctrl toggles one, Shift takes the run between the anchor and the click.
@@ -1254,6 +1302,7 @@ Pane {
         // The rail of sections: Files is the list on the right; the collection and the playlists will
         // be their own views behind their own entries.
         ColumnLayout {
+            id: sectionsRail
             objectName: "browserSections"
             // The rail takes exactly what the divider gives it: a layout that may stretch it would
             // make the divider a decoration.
@@ -1285,7 +1334,13 @@ Pane {
                     // The section the list is showing is lit. Playlists has nothing behind it yet, so
                     // it stays dim rather than pretending to be a place that holds nothing.
                     readonly property bool current: ready && browser.section === key
-                    color: current ? UiSettings.themeAccentDim : "transparent"
+                    // The `Playlists` entry is the root a carried playlist comes back to, and it says so
+                    // while the hand is over it.
+                    readonly property bool dropTarget: browser.draggingPlaylist
+                                                       && browser.playlistDropKnown
+                                                       && key === "playlists"
+                                                       && browser.playlistDropFolder.length === 0
+                    color: current || dropTarget ? UiSettings.themeAccentDim : "transparent"
                     radius: 2
                     Label {
                         objectName: "sectionLabel_" + key
@@ -1351,9 +1406,17 @@ Pane {
                                                   ? 0 : treeRow.modelData.depth
                     readonly property bool chosen: Browser.playlistId === treeRow.modelData.id
                                                    && treeRow.modelData.kind === "playlist"
-                    // The rail is a tree, not a table: rows carry no stripes and no second colour. The
-                    // only colour is the playlist the DJ opened (owner's decision, 15.11.2026).
-                    color: treeRow.chosen ? UiSettings.themeAccent : "transparent"
+                    // The rail is a tree, not a table: rows carry no stripes and no second colour. Two
+                    // things light a row — the playlist the DJ opened, and the folder a carried playlist
+                    // would drop into (owner's decision, 15.11.2026).
+                    readonly property bool dropTarget: browser.draggingPlaylist
+                                                       && browser.playlistDropKnown
+                                                       && treeRow.modelData.kind === "folder"
+                                                       && browser.playlistDropFolder
+                                                          === treeRow.modelData.folder
+                    color: treeRow.chosen ? UiSettings.themeAccent
+                                          : (treeRow.dropTarget ? UiSettings.themeAccentDim
+                                                               : "transparent")
                     radius: 2
 
                     Label {
@@ -1380,7 +1443,49 @@ Pane {
                         }
                     }
 
+                    // A playlist is carried by the hand onto a folder, or onto the `Playlists` entry to go
+                    // back to the root (owner's decision, 15.11.2026). The gesture belongs to a DragHandler,
+                    // not to the row's mouse area: a vertical drag inside a list is a flick to the view, and
+                    // the view takes the grab before the row ever sees the release — the handler keeps it.
+                    // The delegate itself is not moved; the row under the pointer decides the place.
+                    DragHandler {
+                        id: treeDrag
+                        target: null
+                        enabled: treeRow.modelData.kind === "playlist"
+                        onActiveChanged: {
+                            if (active) {
+                                browser.draggedPlaylist = treeRow.modelData.id;
+                                browser.draggingPlaylist = true;
+                                browser.playlistDropKnown = false;
+                                return;
+                            }
+                            if (!browser.draggingPlaylist) {
+                                return;
+                            }
+                            const place = centroid.scenePosition;
+                            const target = browser.playlistDropAt(place.x, place.y);
+                            const id = browser.draggedPlaylist;
+                            browser.draggingPlaylist = false;
+                            browser.playlistDropKnown = false;
+                            browser.draggedPlaylist = 0;
+                            if (target !== null && id !== 0) {
+                                Browser.playlistMove(id, target.folder);
+                                browser.lastAction = "playlist " + id + " moved to " + target.name;
+                            }
+                        }
+                        onCentroidChanged: {
+                            if (!active) {
+                                return;
+                            }
+                            const place = centroid.scenePosition;
+                            const target = browser.playlistDropAt(place.x, place.y);
+                            browser.playlistDropKnown = target !== null;
+                            browser.playlistDropFolder = target === null ? "" : target.folder;
+                        }
+                    }
+
                     MouseArea {
+                        id: treeMouse
                         anchors.fill: parent
                         acceptedButtons: Qt.LeftButton | Qt.RightButton
                         onClicked: function (mouse) {
@@ -1397,28 +1502,6 @@ Pane {
                             // `All` and a folder open and close under the click, as in any tree.
                             Browser.togglePlaylistNode(node.kind,
                                                        node.folder === undefined ? "" : node.folder);
-                        }
-                    }
-
-                    // A playlist is dragged onto a folder to move it: the folder becomes its place.
-                    Drag.active: treeRow.modelData.kind === "playlist" && treeDrag.active
-                    Drag.source: treeRow
-                    Drag.hotSpot.x: width / 2
-                    Drag.hotSpot.y: height / 2
-                    DragHandler {
-                        id: treeDrag
-                        target: null
-                        enabled: treeRow.modelData.kind === "playlist"
-                    }
-                    DropArea {
-                        anchors.fill: parent
-                        enabled: treeRow.modelData.kind === "folder"
-                        onDropped: function (drop) {
-                            if (drop.source && drop.source.modelData
-                                && drop.source.modelData.kind === "playlist") {
-                                Browser.playlistMove(drop.source.modelData.id,
-                                                     treeRow.modelData.folder);
-                            }
                         }
                     }
                 }
