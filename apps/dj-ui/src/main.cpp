@@ -7004,8 +7004,21 @@ static int runPlaylistCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     const QString offered = QStringLiteral("addToPlaylist_%1").arg(id);
     const bool listed = waitFor([&]() { return panel->findChild<QObject *>(offered) != nullptr; },
                                 3000);
+    // Once, and under the name of its folder: the tree repeats a playlist under `All` and under its folder,
+    // and the menu must not.
+    int copies = 0;
+    for (QObject *child : panel->findChildren<QObject *>()) {
+        if (child->objectName() == offered) {
+            copies += 1;
+        }
+    }
+    auto *heading = panel->findChild<QObject *>(QStringLiteral("addToPlaylistHeading_Sets"));
     QMetaObject::invokeMethod(addMenu, "close");
     require(listed, QStringLiteral("the Add to playlist menu does not offer the new playlist"));
+    require(copies == 1,
+            QStringLiteral("the menu offers the playlist %1 time(s) instead of once").arg(copies));
+    require(heading != nullptr, QStringLiteral("the menu does not name the playlist's folder"));
+    std::printf("dj-ui: the collection's menu offers the playlist once, under the folder \"Sets\"\n");
 
     // The tree is drawn by the panel, not only held in the object: the rows stand where the settings say
     // (the list's row height) and a playlist inside a folder is indented by one step.
@@ -7124,6 +7137,18 @@ static int runPlaylistCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         },
         10000);
     require(atRoot, QStringLiteral("the playlist did not land at the root of the mirror"));
+
+    // A playlist that sits in no folder is offered under a heading of its own, not lost among the folders.
+    QMetaObject::invokeMethod(addMenu, "popup");
+    const bool rootHeading = waitFor(
+        [&]() {
+            return panel->findChild<QObject *>(
+                       QStringLiteral("addToPlaylistHeading_No folder")) != nullptr;
+        },
+        3000);
+    QMetaObject::invokeMethod(addMenu, "close");
+    require(rootHeading,
+            QStringLiteral("the menu does not offer a playlist that sits in no folder"));
 
     // And gone: the row leaves the tree and the file leaves the disk.
     browser.playlistDelete(id);

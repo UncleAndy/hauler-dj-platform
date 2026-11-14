@@ -841,6 +841,65 @@ void FileBrowser::playlistMove(qint64 id, const QString &folder)
     m_bridge->editPlaylists(op);
 }
 
+QVariantList FileBrowser::playlistMenu() const
+{
+    if (m_bridge == nullptr) {
+        return {};
+    }
+    const QVariantMap tree = m_bridge->playlistTree();
+    const QVariantList folders = tree.value(QStringLiteral("folders")).toList();
+    const QVariantList playlists = tree.value(QStringLiteral("playlists")).toList();
+    QVariantList rows;
+    auto playlist = [](const QVariantMap &found) {
+        QVariantMap row = found;
+        // The tree hands a playlist over without a kind: the rail adds one while it draws, and so does the
+        // menu — a row with no kind reads as a heading, and the menu offered folders and nothing to add to.
+        row.insert(QStringLiteral("kind"), QStringLiteral("playlist"));
+        return row;
+    };
+    auto heading = [](const QString &name) {
+        QVariantMap row;
+        row.insert(QStringLiteral("kind"), QStringLiteral("heading"));
+        row.insert(QStringLiteral("name"), name);
+        row.insert(QStringLiteral("id"), static_cast<qlonglong>(0));
+        return row;
+    };
+    // The root first: a playlist that sits in no folder is the one a DJ makes first, and burying it under
+    // the folders would hide exactly that one.
+    bool rootHeading = false;
+    for (const QVariant &item : playlists) {
+        const QVariantMap found = item.toMap();
+        if (!found.value(QStringLiteral("folder")).toString().isEmpty()) {
+            continue;
+        }
+        if (!rootHeading) {
+            rows.append(heading(QStringLiteral("No folder")));
+            rootHeading = true;
+        }
+        rows.append(playlist(found));
+    }
+    for (const QVariant &folder : folders) {
+        const QString path = folder.toString();
+        bool any = false;
+        for (const QVariant &item : playlists) {
+            if (item.toMap().value(QStringLiteral("folder")).toString() == path) {
+                any = true;
+            }
+        }
+        if (!any) {
+            continue;
+        }
+        rows.append(heading(path));
+        for (const QVariant &item : playlists) {
+            const QVariantMap found = item.toMap();
+            if (found.value(QStringLiteral("folder")).toString() == path) {
+                rows.append(playlist(found));
+            }
+        }
+    }
+    return rows;
+}
+
 QVariantList FileBrowser::trackRows(const QStringList &paths) const
 {
     QVariantList rows;

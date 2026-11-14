@@ -129,9 +129,17 @@ public:
     Q_PROPERTY(QString playlistName READ playlistName NOTIFY playlistChanged)
     /// True while the list on the right is a playlist rather than the collection.
     Q_PROPERTY(bool inPlaylists READ inPlaylists NOTIFY changed)
+    /// The playlists as the collection's menu offers them: every playlist **once**, grouped by its folder,
+    /// each folder under a heading of its own — `{kind: "heading"|"playlist", name, folder, id, tracks}`.
+    ///
+    /// The tree in the rail cannot serve here: it repeats a playlist under `All` and under its folder and
+    /// it carries the `All` node itself, so a menu built from it offered the same playlist twice and a row
+    /// that did nothing (owner's report, 15.11.2026).
+    Q_PROPERTY(QVariantList playlistMenu READ playlistMenu NOTIFY playlistsChanged)
 
 public:
     QVariantList playlistTree() const { return m_playlistTree; }
+    QVariantList playlistMenu() const;
     QVariantList playlistRows() const { return m_playlistRows; }
     int playlistTotal() const { return m_playlistTotal; }
     qint64 playlistId() const { return m_playlistId; }
