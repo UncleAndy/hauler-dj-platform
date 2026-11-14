@@ -6912,6 +6912,20 @@ static int runPlaylistCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
                                 : mirror.filePath(folder + QLatin1Char('/') + name
                                                   + QStringLiteral(".djplaylist.json"));
     };
+    // A click with no movement: press and release on the same point, the way a hand does it.
+    const auto clickAt = [&](QQuickItem *item) {
+        if (item == nullptr) {
+            return;
+        }
+        const QPointF at = item->mapToScene(QPointF(item->width() / 2.0, item->height() / 2.0));
+        for (const QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+            QMouseEvent event(type, at, window->mapToGlobal(at.toPoint()), Qt::LeftButton, Qt::LeftButton,
+                              Qt::NoModifier);
+            QCoreApplication::sendEvent(window, &event);
+            QCoreApplication::processEvents();
+            QThread::msleep(40);
+        }
+    };
     int failures = 0;
     const auto require = [&](bool held, const QString &what) {
         if (!held) {
@@ -6959,6 +6973,32 @@ static int runPlaylistCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         std::fprintf(stderr, "dj-ui: the collection is missing one of the two tracks\n");
         return 1;
     }
+
+    // The header sorts the collection, and only the collection: a playlist's order is the DJ's (owner's
+    // report, 15.11.2026). Both halves are checked here — the click that must sort, and the same click in
+    // the playlist that must not.
+    int artistColumn = -1;
+    const QVariantList columns = panel->property("columns").toList();
+    for (int index = 0; index < columns.size(); ++index) {
+        // A column is `{id, width}`, not a bare name: the width is part of the setting.
+        if (columns.at(index).toMap().value(QStringLiteral("id")).toString()
+            == QStringLiteral("artist")) {
+            artistColumn = index;
+        }
+    }
+    require(artistColumn >= 0, QStringLiteral("the table has no artist column to sort by"));
+    auto *artistHeader =
+        findItem(window->contentItem(), QStringLiteral("collectionHeaderCell_%1").arg(artistColumn));
+    if (artistHeader == nullptr) {
+        std::fprintf(stderr, "dj-ui: the collection's header has no artist cell\n");
+        return 1;
+    }
+    clickAt(artistHeader);
+    const bool sorted = waitFor([&]() { return !browser.collectionSort().isEmpty(); }, 3000);
+    require(sorted, QStringLiteral("a click on a column's name in the collection sorts nothing"));
+    browser.clearCollectionSort();
+    waitFor([&]() { return browser.collectionSort().isEmpty(); }, 3000);
+    std::printf("dj-ui: a click on the header sorts the collection\n");
 
     // Before the section is chosen, the tree is not on the screen at all: a column of playlists in the
     // collection's way would be a list the DJ has to work around.
@@ -7120,6 +7160,66 @@ static int runPlaylistCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     require(browser.rowOf(pickedPath) == 0,
             QStringLiteral("the cursor is not found in the playlist it stands in"));
     std::printf("dj-ui: the playlist navigates: row 0 picked by a click and the cursor found at 0\n");
+
+    // The same click in the playlists: no sort at all, and the collection behind keeps its order.
+    clickAt(artistHeader);
+    const bool stayedUnsorted =
+        waitFor([&]() { return browser.collectionSort().isEmpty(); }, 1200);
+    require(stayedUnsorted, QStringLiteral("a click on the header sorted the collection from the playlists"));
+    std::printf("dj-ui: the header sorts nothing in a playlist\n");
+
+    // The lock belongs to the track, not to the list: set or cleared on the deck, it must show on the
+    // playlist's row at once — the same fact, wherever the track is on the screen (owner's report).
+    const QString loaded = rows().value(0).toMap().value(QStringLiteral("path")).toString();
+    bridge.load(QStringLiteral("A"), loaded);
+    auto *lockButton = findItem(window->contentItem(), QStringLiteral("gridLock_A"));
+    if (!require(lockButton != nullptr
+                     && waitFor([&]() { return lockButton->isEnabled(); }, 20000),
+                 QStringLiteral("the deck never carried the track, so the lock stayed grey"))) {
+        return 1;
+    }
+    // The deck's own flag is what a second press must know: the row follows the index, and the index is
+    // written after the deck reports — a press sent while the first one is still in flight asks for the
+    // value that is already there (this is how the wide run failed while the check alone passed).
+    const auto deckLocked = [&]() {
+        for (const QVariant &entry : bridge.snapshot().value(QStringLiteral("decks")).toList()) {
+            const QVariantMap deck = entry.toMap();
+            if (deck.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                return deck.value(QStringLiteral("analysis_lock")).toBool();
+            }
+        }
+        return false;
+    };
+    const auto rowLocked = [&]() {
+        return rows().value(0).toMap().value(QStringLiteral("analysis_lock")).toBool();
+    };
+    const bool lockedBefore = rowLocked();
+    // A press in an offscreen window sometimes never arrives: the same flakiness the columns had. A press
+    // that did not land falls back to the signal the suite presses buttons with, and says which path it
+    // took — the check must not report the shell failing when the press never arrived.
+    const auto pressLock = [&](bool wanted) {
+        auto *button = findItem(window->contentItem(), QStringLiteral("gridLock_A"));
+        if (button == nullptr) {
+            std::fprintf(stderr, "dj-ui: the lock button is not on the panel\n");
+            return false;
+        }
+        clickAt(button);
+        if (waitFor([&]() { return deckLocked() == wanted; }, 3000)) {
+            return true;
+        }
+        std::fprintf(stderr, "dj-ui: the press on the lock did not land, pressing the signal\n");
+        QMetaObject::invokeMethod(button, "clicked");
+        return waitFor([&]() { return deckLocked() == wanted; }, 20000);
+    };
+    require(pressLock(!lockedBefore),
+            QStringLiteral("the deck did not take the lock from the button"));
+    require(waitFor([&]() { return rowLocked() != lockedBefore; }, 15000),
+            QStringLiteral("the lock the deck took is not shown on the playlist's row"));
+    require(pressLock(lockedBefore),
+            QStringLiteral("the deck did not drop the lock from the button"));
+    require(waitFor([&]() { return rowLocked() == lockedBefore; }, 15000),
+            QStringLiteral("the lock the deck dropped stayed on the playlist's row"));
+    std::printf("dj-ui: the lock follows the track: set on the deck it lit the row, cleared it went out\n");
 
     // A duplicate is allowed (owner's decision), and Remove dups takes the repeats of a track, keeping the
     // first of each.

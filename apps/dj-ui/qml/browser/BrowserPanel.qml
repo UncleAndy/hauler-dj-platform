@@ -491,7 +491,12 @@ Pane {
     /// Where a named column sits now: a row cell belongs to its column, not to a position, so a
     /// moved column takes its numbers with it.
     /// The mark a sorted column carries: filled for the key that decides, hollow for the one after it.
+    /// The playlists have no sorting — their order is the DJ's — so nothing is marked there (owner's
+    /// decision, 15.11.2026).
     function sortMark(id) {
+        if (browser.section !== "collection") {
+            return "";
+        }
         const keys = Browser.collectionSort;
         for (let index = 0; index < keys.length; ++index) {
             if (keys[index].column === id) {
@@ -1933,12 +1938,18 @@ Pane {
                         }
                     }
                     onReleased: function (mouse) {
-                        if (resizeIndex < 0 && pressGutterX >= 0
+                        // Sorting is the collection's business: a playlist's order is the DJ's, and a
+                        // header that sorts the collection from under the playlist would be a switch in
+                        // the wrong view (owner's report, 15.11.2026). Width and order of the columns
+                        // stay where they are: they are the table's, not the list's.
+                        const sortable = browser.section === "collection";
+                        if (sortable && resizeIndex < 0 && pressGutterX >= 0
                             && Math.abs(mouse.x - pressGutterX) <= 4) {
                             // A click on the number column: no key decides the order any more.
                             Browser.clearCollectionSort();
-                        } else if (resizeIndex < 0 && pressIndex >= 0 && dropIndex === pressIndex
-                            && Math.abs(mouse.x - pressX) <= 4) {
+                        } else if (sortable && resizeIndex < 0 && pressIndex >= 0
+                                   && dropIndex === pressIndex
+                                   && Math.abs(mouse.x - pressX) <= 4) {
                             // A click on the name: sort by this column, or by it second with Shift.
                             Browser.sortCollection(browser.columnId(pressIndex),
                                                    (mouse.modifiers & Qt.ShiftModifier) !== 0);

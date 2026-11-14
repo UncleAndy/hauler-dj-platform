@@ -599,6 +599,9 @@ Pane {
         if (panel.lockPending && landed) {
             panel.lockPending = false;
             Browser.refreshCollection();
+            // The lock is a fact about the track, and the track may be on screen in a playlist: its rows
+            // are asked again as well, or the list keeps the flag the file no longer has.
+            Browser.refreshPlaylist();
         }
         reload();
     }
