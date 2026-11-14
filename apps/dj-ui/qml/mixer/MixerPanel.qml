@@ -158,7 +158,11 @@ Pane {
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: UiSettings.snapGrid = !UiSettings.snapGrid
+                            onClicked: {
+                        UiSettings.snapGrid = !UiSettings.snapGrid;
+                        // A mode is a setting: the file carries it across a restart (owner's decision).
+                        LayoutState.snapGrid = UiSettings.snapGrid;
+                    }
                         }
                     }
                     Rectangle {
@@ -180,7 +184,10 @@ Pane {
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: UiSettings.quantizeGrid = !UiSettings.quantizeGrid
+                            onClicked: {
+                        UiSettings.quantizeGrid = !UiSettings.quantizeGrid;
+                        LayoutState.quantizeGrid = UiSettings.quantizeGrid;
+                    }
                         }
                     }
                 }

@@ -40,6 +40,12 @@ class LayoutSettings : public QObject
     // Visible fraction of a track in a deck's main waveform. Zero means "the deck's own default", so a
     // file that has never held a value still opens at the built-in zoom.
     Q_PROPERTY(double waveformSpan READ waveformSpan WRITE setWaveformSpan NOTIFY changed)
+    // The deck's modes that the DJ leaves behind: snap and quantize (global, in the mixer) and the scrub
+    // mode (a setting). They live with the other view numbers so the next start comes back the way the
+    // last one was left (owner's decision, 14.11).
+    Q_PROPERTY(bool snapGrid READ snapGrid WRITE setSnapGrid NOTIFY changed)
+    Q_PROPERTY(bool quantizeGrid READ quantizeGrid WRITE setQuantizeGrid NOTIFY changed)
+    Q_PROPERTY(bool scrubAudible READ scrubAudible WRITE setScrubAudible NOTIFY changed)
     Q_PROPERTY(QString file READ file NOTIFY changed)
     // The collection's columns, in the DJ's order: a table he arranges once and finds again.
     Q_PROPERTY(QVariantList collectionColumns READ collectionColumns NOTIFY changed)
@@ -80,6 +86,12 @@ public:
     Q_INVOKABLE void moveCollectionColumn(const QString &id, int toIndex);
     Q_INVOKABLE void resetCollectionColumns();
     double waveformSpan() const { return m_waveformSpan; }
+    bool snapGrid() const { return m_snapGrid; }
+    void setSnapGrid(bool on);
+    bool quantizeGrid() const { return m_quantizeGrid; }
+    void setQuantizeGrid(bool on);
+    bool scrubAudible() const { return m_scrubAudible; }
+    void setScrubAudible(bool on);
     void setWaveformSpan(double span);
 
     // The order of channel strips in the mixer, left to right, e.g. "CABD".
@@ -131,6 +143,10 @@ private:
         {QStringLiteral("bpm"), 0.07},    {QStringLiteral("key"), 0.05},
     };
     double m_waveformSpan = 0.0;
+    // The deck's modes, on by default as the deck switches and the mixer's were.
+    bool m_snapGrid = true;
+    bool m_quantizeGrid = true;
+    bool m_scrubAudible = false;
     QTimer *m_saveTimer = nullptr;
     QString m_file;
 };

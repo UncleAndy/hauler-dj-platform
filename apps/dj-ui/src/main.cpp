@@ -871,7 +871,7 @@ int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socket
 // Split out of main: a function of ten thousand lines loses its debug information, and GCC says so
 // (`variable tracking size limit exceeded`). The checks are the tests; they read better named.
 static int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
-                          LayoutSettings &layout)
+                          LayoutSettings &layout, UiSettings &settings)
 {
     // A list you cannot pick from is a picture of a list, so the check goes through the same
     // function the mouse does: select a track, activate it, read what the panel says happened.
@@ -1541,6 +1541,39 @@ static int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
                  "the browser keeps %d%% of the window when the type grows, and the rail width, the "
                  "font and the deck zoom come back after a restart (130 px, 14 px, 0.25)\n",
                  small, railAfter, browserPercent);
+    // The deck's modes are settings as well, and a restart has to bring them back. This run leaves snap
+    // and quantize off through the switches themselves — the write-through the hand uses is the one under
+    // test — and the scrub mode audible, and the restore check reads all three in a new process.
+    for (const char *name : {"snapGlobal", "quantizeGlobal"}) {
+        auto *sw = findItem(window->contentItem(), QString::fromLatin1(name));
+        if (sw == nullptr) {
+            std::fprintf(stderr, "dj-ui: the mixer has no %s switch to leave a state in\n", name);
+            return 1;
+        }
+        const QPointF centre = sw->mapToScene(QPointF(sw->width() / 2.0, sw->height() / 2.0));
+        for (const QEvent::Type type : {QEvent::MouseMove, QEvent::MouseButtonPress,
+                                        QEvent::MouseButtonRelease}) {
+            const Qt::MouseButtons buttons = type == QEvent::MouseButtonPress ? Qt::LeftButton
+                                                                             : Qt::NoButton;
+            const Qt::MouseButton button = type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton;
+            QMouseEvent event(type, centre, window->mapToGlobal(centre.toPoint()), button, buttons,
+                              Qt::NoModifier);
+            QCoreApplication::sendEvent(window, &event);
+            QCoreApplication::processEvents();
+            QThread::msleep(40);
+        }
+    }
+    settings.setScrubAudible(true);
+    layout.setScrubAudible(true);
+    // The file is written once the hand stops (a debounced save): leave it time to land.
+    QElapsedTimer flushed;
+    flushed.start();
+    while (flushed.elapsed() < 1200) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        QThread::msleep(20);
+    }
+    std::fprintf(stdout,
+                 "dj-ui: this run leaves snap off, quantize off and the scrub audible for the next one\n");
     return 0;
 }
 
@@ -3730,7 +3763,6 @@ static int measureDeckRows(QQuickWindow *window, const QString &deck)
     const QRectF panel = rectOf(QStringLiteral("deckPanel_") + deck);
     const QRectF wave = rectOf(QStringLiteral("deckDetail_") + deck);
     const QRectF transport = rectOf(QStringLiteral("transport_") + deck);
-    const QRectF grid = rectOf(QStringLiteral("gridedit_") + deck);
     if (panel.isEmpty() || wave.isEmpty() || transport.isEmpty()) {
         std::fprintf(stderr, "dj-ui: the deck %s has no panel, no wave or no transport row\n",
                      qPrintable(deck));
@@ -8295,6 +8327,17 @@ int main(int argc, char *argv[])
     if (parser.isSet(layoutOption) && !layout.applyPreset(parser.value(layoutOption))) {
         std::fprintf(stderr, "dj-ui: --layout expects traktor or two-deck\n");
         return 2;
+    }
+    // The deck's modes are settings the DJ leaves behind: the file carries them across a restart, and a
+    // flag given on the command line wins over a saved value (owner's decision, 14.11). The decks and the
+    // mixer read `settings`; `layout` is what the file holds, and it is read before this point.
+    settings.setSnapGrid(layout.snapGrid());
+    settings.setQuantizeGrid(layout.quantizeGrid());
+    if (parser.isSet(scrubOption)) {
+        // The flag is a decision too: it becomes the saved one, so the next start has it without a flag.
+        layout.setScrubAudible(settings.scrubAudible());
+    } else {
+        settings.setScrubAudible(layout.scrubAudible());
     }
     if (parser.isSet(collectionRootOption)) {
         layout.setCollectionRoots(parser.values(collectionRootOption));
@@ -13438,11 +13481,32 @@ int main(int argc, char *argv[])
                      "browser %0.1f%% tall and the deck zoom at a span of %s, the numbers the last run "
                      "left\n",
                      rail, font, heightShare, qPrintable(QString::number(span, 'f', 3)));
+        // The modes of the deck are settings too: the last run left snap and quantize off and the scrub
+        // audible, and both the runtime and the switches have to say so.
+        auto *snapSwitch = findItem(window->contentItem(), QStringLiteral("snapGlobal"));
+        auto *quantSwitch = findItem(window->contentItem(), QStringLiteral("quantizeGlobal"));
+        if (snapSwitch == nullptr || quantSwitch == nullptr) {
+            std::fprintf(stderr, "dj-ui: the mixer has no global switches to read back\n");
+            return 1;
+        }
+        const bool snapLit = snapSwitch->property("on").toBool();
+        const bool quantLit = quantSwitch->property("on").toBool();
+        std::fprintf(stdout,
+                     "dj-ui: the deck's modes came back as they were left: snap %s, quantize %s, scrub "
+                     "%s; the switches read %s and %s\n",
+                     settings.snapGrid() ? "on" : "off", settings.quantizeGrid() ? "on" : "off",
+                     settings.scrubAudible() ? "audible" : "silent", snapLit ? "lit" : "dark",
+                     quantLit ? "lit" : "dark");
+        if (settings.snapGrid() || settings.quantizeGrid() || !settings.scrubAudible() || snapLit
+            || quantLit) {
+            std::fprintf(stderr, "dj-ui: the deck's modes did not come back as the last run left them\n");
+            return 1;
+        }
         return 0;
     }
 
     if (parser.isSet(browserCheckOption)) {
-        return runBrowserCheck(engine, browser, layout);
+        return runBrowserCheck(engine, browser, layout, settings);
     }
 
     if (parser.isSet(pageCheckOption)) {

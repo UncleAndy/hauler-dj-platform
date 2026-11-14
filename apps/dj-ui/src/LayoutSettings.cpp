@@ -196,6 +196,36 @@ void LayoutSettings::setWaveformSpan(double span)
     scheduleSave();
 }
 
+void LayoutSettings::setSnapGrid(bool on)
+{
+    if (m_snapGrid == on) {
+        return;
+    }
+    m_snapGrid = on;
+    emit changed();
+    scheduleSave();
+}
+
+void LayoutSettings::setQuantizeGrid(bool on)
+{
+    if (m_quantizeGrid == on) {
+        return;
+    }
+    m_quantizeGrid = on;
+    emit changed();
+    scheduleSave();
+}
+
+void LayoutSettings::setScrubAudible(bool on)
+{
+    if (m_scrubAudible == on) {
+        return;
+    }
+    m_scrubAudible = on;
+    emit changed();
+    scheduleSave();
+}
+
 QString LayoutSettings::roomiestRoot() const
 {
     QString best;
@@ -387,6 +417,9 @@ bool LayoutSettings::load()
     m_browserRailWidth =
         std::clamp(root.value(QStringLiteral("browser_rail_width")).toInt(m_browserRailWidth), 72, 260);
     const double span = root.value(QStringLiteral("waveform_span")).toDouble(m_waveformSpan);
+    m_snapGrid = root.value(QStringLiteral("snap_grid")).toBool(m_snapGrid);
+    m_quantizeGrid = root.value(QStringLiteral("quantize_grid")).toBool(m_quantizeGrid);
+    m_scrubAudible = root.value(QStringLiteral("scrub_audible")).toBool(m_scrubAudible);
     m_waveformSpan = span <= 0.0 ? 0.0 : std::clamp(span, 0.0025, 1.0);
     setChannelOrder(root.value(QStringLiteral("channel_order")).toString(m_channelOrder));
     // Several roots are the normal case: one collection may live on several disks. A file written by
@@ -468,6 +501,9 @@ bool LayoutSettings::save() const
     }
     root.insert(QStringLiteral("collection_columns"), columns);
     root.insert(QStringLiteral("waveform_span"), m_waveformSpan);
+    root.insert(QStringLiteral("snap_grid"), m_snapGrid);
+    root.insert(QStringLiteral("quantize_grid"), m_quantizeGrid);
+    root.insert(QStringLiteral("scrub_audible"), m_scrubAudible);
     QFile file(m_file);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         return false;
