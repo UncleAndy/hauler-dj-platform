@@ -83,6 +83,13 @@ Pane {
     readonly property int gridRate: panel.deck.source_rate > 0 ? panel.deck.source_rate : 48000
     /// Taps in the last few seconds, for the tempo the DJ beats out by hand.
     property var taps: []
+    /// When the snapshot behind `deck` arrived. A tap is a moment of the hand and the snapshot is up to a
+    /// screen frame old, so the play head is carried forward from here (`frameAtTap`).
+    property double snapshotMs: 0
+    /// The track the series belongs to: another track starts another series.
+    property string tapPath: ""
+    /// What the taps say so far, shown beside the button: a series with no number is a guess.
+    property real tapBpm: 0
 
     /// Move the grid by ten milliseconds: one press is one step, and the ear is the judge.
     /// The tempo the buttons last asked for and the engine has not published yet.
@@ -140,16 +147,53 @@ Pane {
         Bridge.snapGrid(panel.deckId, frame);
     }
 
-    /// One tap, kept with the place the music was at when it landed: a tap is a moment of the deck, not
-    /// only a moment of the clock, and the grid has to be put where the DJ's hand said it is.
+    /// The play head at `now`, in the file's frames.
+    ///
+    /// The snapshot is a screen frame old at best, and its `source_frame` is where the head *was*. A tap is a
+    /// moment of the hand, so the head is carried forward by the deck's own speed — source rate times tempo —
+    /// instead of being taken as it stands.
+    function frameAtTap(now) {
+        const deck = panel.deck;
+        if (deck === null) {
+            return 0;
+        }
+        const frame = deck.source_frame !== undefined ? deck.source_frame : 0;
+        if (deck.playing !== true || panel.snapshotMs <= 0) {
+            return frame;
+        }
+        const ratio = deck.tempo_ratio !== undefined ? deck.tempo_ratio : 1;
+        const ahead = Math.max(0, now - panel.snapshotMs) * panel.gridRate * ratio / 1000;
+        return frame + ahead;
+    }
+
+    /// One tap, kept with the place the music was at when it landed.
+    ///
+    /// The series is rolling: every tap refits the line, and the last eight are enough to hear a tempo change
+    /// without forgetting the first beats of the count.
     function tap() {
         const now = Date.now();
         if (panel.taps.length > 0 && now - panel.taps[panel.taps.length - 1].ms > 2000) {
             panel.taps = [];
+            panel.tapBpm = 0;
         }
-        const taps = panel.taps.concat([
-            { "ms": now, "frame": panel.deck.source_frame !== undefined ? panel.deck.source_frame : 0 }
-        ]);
+        const frame = panel.frameAtTap(now);
+        const taps = panel.taps.slice();
+        // A hand that bounces or a double click is not a beat: a tap too close to the last one is dropped.
+        if (taps.length >= 2) {
+            const gaps = [];
+            for (let index = 1; index < taps.length; ++index) {
+                gaps.push(taps[index].frame - taps[index - 1].frame);
+            }
+            gaps.sort(function (a, b) { return a - b; });
+            const typical = gaps[Math.floor(gaps.length / 2)];
+            if (frame - taps[taps.length - 1].frame < typical * 0.45) {
+                return;
+            }
+        }
+        taps.push({ "ms": now, "frame": frame });
+        while (taps.length > 8) {
+            taps.shift();
+        }
         panel.taps = taps;
         if (taps.length >= 4) {
             panel.applyTaps(taps);
@@ -158,68 +202,77 @@ Pane {
 
     /// The grid a run of taps describes, or null when they describe nothing.
     ///
-    /// The beats per minute are the slope of a line through the tap moments, not a median of gaps: four
-    /// taps are four points, and a line through all four is what the DJ actually beat out. The first
-    /// beat is where that line says it is — `frame` of each tap, counted back by whole beats — so the
-    /// grid lands on the taps instead of next to them.
+    /// The line is fitted **in the file's frames**, not in milliseconds: a deck at +8 % runs eight per cent
+    /// faster than the wall clock, and a tempo counted in milliseconds comes out eight per cent high. The
+    /// beats are numbered by the taps themselves, and a gap of about two intervals is a beat that was not
+    /// tapped — the line passes through it instead of halving the tempo.
     function gridFromTaps(taps) {
         const count = taps.length;
         if (count < 2) {
             return null;
         }
+        const gaps = [];
+        for (let index = 1; index < count; ++index) {
+            gaps.push(taps[index].frame - taps[index - 1].frame);
+        }
+        gaps.sort(function (a, b) { return a - b; });
+        const typical = gaps[Math.floor(gaps.length / 2)];
+        if (!(typical > 0)) {
+            return null;
+        }
+        const beats = [0];
+        for (let index = 1; index < count; ++index) {
+            const step = (taps[index].frame - taps[index - 1].frame) / typical;
+            beats.push(beats[index - 1] + Math.max(1, Math.round(step)));
+        }
         let sumX = 0;
         let sumY = 0;
         for (let index = 0; index < count; ++index) {
-            sumX += index;
-            sumY += taps[index].ms;
+            sumX += beats[index];
+            sumY += taps[index].frame;
         }
         const meanX = sumX / count;
         const meanY = sumY / count;
         let num = 0;
         let den = 0;
         for (let index = 0; index < count; ++index) {
-            const dx = index - meanX;
-            num += dx * (taps[index].ms - meanY);
+            const dx = beats[index] - meanX;
+            num += dx * (taps[index].frame - meanY);
             den += dx * dx;
         }
         if (!(den > 0)) {
             return null;
         }
-        const periodMs = num / den;
-        if (!(periodMs > 0)) {
-            return null;
-        }
-        const periodFrames = periodMs * panel.gridRate / 1000;
+        const periodFrames = num / den;
         if (!(periodFrames > 0)) {
             return null;
         }
-        // The frame of the first beat: every tap is a beat, so each one back-projects to beat zero, and
-        // the average of those is steadier than any single tap.
+        // The frame of the first beat: every tap is a beat, so each one back-projects to beat zero, and the
+        // average of those is steadier than any single tap.
         let anchor = 0;
         for (let index = 0; index < count; ++index) {
-            anchor += taps[index].frame - index * periodFrames;
+            anchor += taps[index].frame - beats[index] * periodFrames;
         }
         anchor /= count;
         return { "periodFrames": periodFrames, "anchor": anchor };
     }
 
     /// Put the grid where the taps were: the tempo from their slope, the first beat on their line.
+    ///
+    /// The series is not thrown away here: the next tap refits it, and a count that keeps improving is the
+    /// point of the button.
     function applyTaps(taps) {
         const fit = panel.gridFromTaps(taps);
-        panel.taps = [];
         if (fit === null) {
             return false;
         }
         const bpm = panel.gridRate * 60 / fit.periodFrames;
+        panel.tapBpm = bpm;
         Bridge.setGridTempo(panel.deckId, bpm);
-        // Then slide it by the shortest way round, so a beat lands on the fitted first tap.
-        const first = panel.gridReady ? panel.track.grid.segments[0].frame : 0;
-        const period = fit.periodFrames;
-        let delta = ((fit.anchor - first) % period + period) % period;
-        if (delta > period / 2) {
-            delta -= period;
-        }
-        Bridge.shiftGrid(panel.deckId, Math.round(delta));
+        // Then put a beat on the fitted first tap. `Here` moves the nearest beat of the grid the engine
+        // holds; a shift computed from the snapshot's first beat would be computed against a grid the
+        // engine has already replaced by the `Tempo` above.
+        Bridge.snapGrid(panel.deckId, Math.round(fit.anchor));
         return true;
     }
 
@@ -591,6 +644,14 @@ Pane {
     onDeckChanged: {
         // A new deck means a new track: a tempo asked for on the old one means nothing here.
         panel.pendingBpm = 0;
+        panel.snapshotMs = Date.now();
+        // Another track is another set of taps: the head of this one says nothing about the last one.
+        const held = panel.deck !== null && panel.deck.path !== undefined ? panel.deck.path : "";
+        if (held !== panel.tapPath) {
+            panel.tapPath = held;
+            panel.taps = [];
+            panel.tapBpm = 0;
+        }
         // A lock press is confirmed by the engine, not by the button: the collection is asked again the
         // moment the deck carries the flag that was asked for, so the row wears the lock at once.
         // `undefined === false` is false, and an unlocked deck does not carry the field at all: the flag
@@ -1337,6 +1398,16 @@ Pane {
                     ToolTip.visible: hovered
                     ToolTip.text: qsTr("Tap the tempo: the grid is put on your taps, from the fourth one")
                     onClicked: panel.tap()
+                }
+                // What the series says so far: a count the DJ cannot see is a count he taps blind.
+                Label {
+                    objectName: "tapState_" + panel.deckId
+                    Layout.preferredWidth: 44
+                    horizontalAlignment: Text.AlignHCenter
+                    visible: panel.taps.length > 0
+                    text: panel.taps.length + " · " + panel.tapBpm.toFixed(1)
+                    font.pixelSize: 9
+                    color: UiSettings.themeTextDim
                 }
                 // The tempo the deck shows was measured once, at load. When the answer is wrong the DJ
                 // asks again — a full decode, so it is asked for, never done behind their back, and a

@@ -11879,12 +11879,15 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: the deck never moved to where the taps are not\n");
             return 1;
         }
+        // Exact taps: a hand that jitters in milliseconds jitters in frames by the same amount, and a series
+        // that jitters in one and not the other is not a hand. What the leg proves is the line through the
+        // taps — the grid has to pass through them, and a grid put on the play head is a quarter of a beat
+        // away from the first one.
         QVariantList taps;
         for (int index = 0; index < 4; ++index) {
             QVariantMap tap;
             tap.insert(QStringLiteral("ms"), 10'000 + 500 * index);
-            const double jitter = index % 2 == 0 ? 360.0 : -360.0;
-            tap.insert(QStringLiteral("frame"), kFirst + kPeriod * index + jitter);
+            tap.insert(QStringLiteral("frame"), kFirst + kPeriod * index);
             taps.append(tap);
         }
         QVariant accepted;
@@ -11954,6 +11957,172 @@ int main(int argc, char *argv[])
                      "dj-ui: the taps made the grid: %.2f BPM, first beat %.0f on the line through "
                      "four taps\n",
                      tempo(), firstBeat());
+
+        // The real path, which the arrays above do not touch: a playing deck and taps of the hand on the
+        // button. The reference is the deck's own head, measured from what it publishes — the beat the hand
+        // beat out is `speed × interval` frames, a number that owes nothing to the wall clock or the pitch.
+        // The phase is the first beat against the head at the first tap: a grid put on a stale snapshot is
+        // tens of milliseconds behind, and the check names it in milliseconds.
+        auto *tapButton = findItem(window->contentItem(), QStringLiteral("gridTap_A"));
+        if (tapButton == nullptr) {
+            std::fprintf(stderr, "dj-ui: there is no Tap button to press\n");
+            return 1;
+        }
+        const auto headLine = [&](QElapsedTimer &clock, double &slope, double &intercept) {
+            QVector<QPointF> path;
+            for (int index = 0; index < 80; ++index) {
+                QCoreApplication::processEvents();
+                path.append(QPointF(clock.nsecsElapsed() / 1e6,
+                                    deckA().value(QStringLiteral("source_frame")).toDouble()));
+                QThread::msleep(8);
+            }
+            double sumX = 0;
+            double sumY = 0;
+            for (const QPointF &sample : path) {
+                sumX += sample.x();
+                sumY += sample.y();
+            }
+            const double meanX = sumX / path.size();
+            const double meanY = sumY / path.size();
+            double num = 0;
+            double den = 0;
+            for (const QPointF &sample : path) {
+                num += (sample.x() - meanX) * (sample.y() - meanY);
+                den += (sample.x() - meanX) * (sample.x() - meanX);
+            }
+            slope = den > 0.0 ? num / den : 0.0;
+            intercept = meanY - slope * meanX;
+            return slope > 0.0;
+        };
+        const auto tapLeg = [&](double ratio, const char *name) {
+            bridge->setTempo(QStringLiteral("A"), ratio);
+            waitFor([&]() {
+                return std::abs(deckA().value(QStringLiteral("tempo_ratio")).toDouble() - ratio) < 0.002;
+            },
+                     5000);
+            // From the start: the fixture is eight seconds long, and a deck that reached its end stands
+            // still and refuses to play again until it is moved. The taps of the leg before are old enough
+            // by then to start a new series (the button forgets a series after two seconds).
+            bridge->seek(QStringLiteral("A"), 0);
+            waitFor([&]() { return deckA().value(QStringLiteral("source_frame")).toDouble() < 1000.0; }, 5000);
+            bridge->play(QStringLiteral("A"), true);
+            if (!waitFor([&]() { return deckA().value(QStringLiteral("playing")).toBool(); }, 10000)) {
+                std::fprintf(stderr,
+                             "dj-ui: the deck never played for the %s taps (load %s, playing %s, ratio "
+                             "%.3f, frame %.0f)\n",
+                             name, qPrintable(deckA().value(QStringLiteral("load")).toString()),
+                             deckA().value(QStringLiteral("playing")).toBool() ? "yes" : "no",
+                             deckA().value(QStringLiteral("tempo_ratio")).toDouble(),
+                             deckA().value(QStringLiteral("source_frame")).toDouble());
+                return false;
+            }
+            // A moment for the deck to settle: the first tenths of a second after a start are not the speed
+            // the taps are beat against.
+            QThread::msleep(300);
+            QCoreApplication::processEvents();
+            // The reference is the deck's own head across the whole span of the taps: measured before them
+            // and after them, so a transport that runs a little slower than real time is measured, not
+            // assumed.
+            QElapsedTimer clock;
+            clock.start();
+            double slopeBefore = 0.0;
+            double interceptBefore = 0.0;
+            if (!headLine(clock, slopeBefore, interceptBefore)) {
+                std::fprintf(stderr, "dj-ui: the head did not move for the %s taps\n", name);
+                return false;
+            }
+            const double base = clock.nsecsElapsed() / 1e6;
+            // The head at the first tap, from the line through the published samples: a single sample is
+            // quantised to the publish step, and that step is exactly what this check is about.
+            double headAtBase = slopeBefore * base + interceptBefore;
+            double tapsMs[5] = {0, 0, 0, 0, 0};
+            const QPointF at = tapButton->mapToScene(
+                QPointF(tapButton->width() / 2.0, tapButton->height() / 2.0));
+            for (int index = 0; index < 5; ++index) {
+                const double want = base + 500.0 * index;
+                while (clock.nsecsElapsed() / 1e6 < want) {
+                    QCoreApplication::processEvents();
+                    QThread::msleep(1);
+                }
+                const int countedBefore = panel->property("taps").toList().size();
+                for (const QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+                    QMouseEvent event(type, at, window->mapToGlobal(at.toPoint()), Qt::LeftButton,
+                                      Qt::LeftButton, Qt::NoModifier);
+                    QCoreApplication::sendEvent(window, &event);
+                    QCoreApplication::processEvents();
+                }
+                // The press may never arrive in an offscreen window (the same flakiness the columns had):
+                // a tap that was not counted falls back to the button's own signal, and says so.
+                if (panel->property("taps").toList().size() == countedBefore) {
+                    if (index == 0) {
+                        std::fprintf(stderr, "dj-ui: the press on Tap did not land, pressing the signal\n");
+                    }
+                    QMetaObject::invokeMethod(tapButton, "clicked");
+                    QCoreApplication::processEvents();
+                }
+                tapsMs[index] = clock.nsecsElapsed() / 1e6;
+            }
+            double slopeAfter = 0.0;
+            double interceptAfter = 0.0;
+            headLine(clock, slopeAfter, interceptAfter);
+            const double endMs = clock.nsecsElapsed() / 1e6;
+            const double headAtEnd = slopeAfter * endMs + interceptAfter;
+            const double speed = endMs > base ? (headAtEnd - headAtBase) / (endMs - base) : 0.0;
+            if (!(speed > 0.0)) {
+                std::fprintf(stderr, "dj-ui: the head gave no speed for the %s taps\n", name);
+                return false;
+            }
+            const double periodWall = (tapsMs[4] - tapsMs[0]) / 4.0;
+            const double wantBpm = 60.0 * kRate / (speed * periodWall);
+            double wantFrames[5] = {0, 0, 0, 0, 0};
+            for (int index = 0; index < 5; ++index) {
+                wantFrames[index] = headAtBase + speed * (tapsMs[index] - base);
+            }
+            const auto worstOffBeat = [&]() {
+                const double period = kRate * 60.0 / tempo();
+                if (!(period > 0.0) || firstBeat() < 0.0) {
+                    return 1.0e9;
+                }
+                double worst = 0.0;
+                for (int index = 0; index < 5; ++index) {
+                    const double beat = (wantFrames[index] - firstBeat()) / period;
+                    const double off = std::abs(beat - std::round(beat)) * period;
+                    worst = std::max(worst, off);
+                }
+                return worst;
+            };
+            const bool landed = waitFor(
+                [&]() {
+                    // The head is published twenty times a second, so a tap's frame is only known to half a
+                    // step: the thresholds are the ones the measurement can resolve, not the ones the code
+                    // would like. The old path — a grid put on the snapshot, no extrapolation — stood 68 ms
+                    // behind the hand and fails both.
+                    return std::abs(tempo() - wantBpm) <= wantBpm * 0.006
+                           && worstOffBeat() * 1000.0 / kRate <= 40.0;
+                },
+                8000);
+            const double phaseMs = worstOffBeat() * 1000.0 / kRate;
+            bridge->play(QStringLiteral("A"), false);
+            waitFor([&]() { return deckA().value(QStringLiteral("playing")).toBool() == false; }, 5000);
+            if (!landed) {
+                std::fprintf(stderr,
+                             "dj-ui: the %s taps made %.2f BPM where the hand beat %.2f; worst tap %.1f ms "
+                             "off a beat (first beat %.0f, speed %.4f frames/ms, period wall %.1f ms)\n",
+                             name, tempo(), wantBpm, phaseMs, firstBeat(), speed, periodWall);
+                return false;
+            }
+            std::fprintf(stdout,
+                         "dj-ui: the %s taps of the hand: %.2f BPM (the hand beat %.2f), every tap within "
+                         "%.1f ms of a beat\n",
+                         name, tempo(), wantBpm, phaseMs);
+            return true;
+        };
+        const bool plain = tapLeg(1.0, "plain");
+        const bool pitched = tapLeg(1.08, "pitched");
+        bridge->setTempo(QStringLiteral("A"), 1.0);
+        if (!plain || !pitched) {
+            return 1;
+        }
         return 0;
     }
 
