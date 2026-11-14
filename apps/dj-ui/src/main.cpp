@@ -261,6 +261,214 @@ static int runBusyCheck(BridgeClient &bridge, const QString &socketPath, const Q
     return 0;
 }
 
+// The journal of plays, from the DJ's side: a deck plays, the engine counts continuous playing, and a
+// play lands in the snapshot only when it was long enough. The tracker's own rules — a pause ends the
+// interval, a loop inside it does not, a stalled publisher does not inflate it — have unit tests; this
+// proves the wiring: the deck's transport, the publisher's audio clock and the row in the database.
+//
+// Two habits make it robust in a suite that shares one engine. The waits are counted in the engine's own
+// audio clock, which is what the journal counts, so a busy machine that renders slower than real time
+// moves both sides together. And every case is measured as a *change* of the journal, not as its length:
+// a check that runs after others must not care what they left behind.
+static int runHistoryCheck(BridgeClient &bridge, const QString &socketPath, const QString &track,
+                           int timeoutMs)
+{
+    QEventLoop loop;
+    QTimer watchdog;
+    watchdog.setSingleShot(true);
+    QObject::connect(&watchdog, &QTimer::timeout, &loop, &QEventLoop::quit);
+    watchdog.start(timeoutMs);
+
+    constexpr double kShort = 1.2;
+    constexpr double kLong = 3.5;
+    int failures = 0;
+    int before = 0;
+    bool started = false;
+    bool ready = false;
+    bool waiting = false;
+    bool stopping = false;
+    int stopTicks = 0;
+    double startedAt = 0.0;
+    double target = 0.0;
+    double recorded = 0.0;
+    std::function<void()> reached;
+    std::function<void()> afterStop;
+
+    const auto clockSeconds = [&]() {
+        const QVariantMap snapshot = bridge.snapshot();
+        const double rate = snapshot.value(QStringLiteral("sample_rate")).toDouble();
+        if (rate <= 0.0) {
+            return 0.0;
+        }
+        return snapshot.value(QStringLiteral("audio_clock_samples")).toDouble() / rate;
+    };
+    const auto rows = [&]() { return bridge.snapshot().value(QStringLiteral("plays")).toList(); };
+    const auto deckPlaying = [&]() {
+        for (const QVariant &entry : bridge.snapshot().value(QStringLiteral("decks")).toList()) {
+            const QVariantMap deck = entry.toMap();
+            if (deck.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                return deck.value(QStringLiteral("playing")).toBool();
+            }
+        }
+        return false;
+    };
+    const auto play = [&](bool on) { bridge.play(QStringLiteral("A"), on); };
+    const auto waitSeconds = [&](double seconds, std::function<void()> then) {
+        startedAt = clockSeconds();
+        target = seconds;
+        reached = then;
+        waiting = true;
+    };
+    // A stop is a message, not a fact: the deck is quiet only when the snapshot says so, and every case
+    // that follows a stop waits for that instead of for a wall-clock guess.
+    const auto stopThen = [&](std::function<void()> then) {
+        play(false);
+        stopping = true;
+        stopTicks = 0;
+        afterStop = then;
+    };
+
+    QObject::connect(&bridge, &BridgeClient::connectedChanged, &loop, [&]() {
+        if (!bridge.isConnected() || started) {
+            return;
+        }
+        started = true;
+        if (!track.isEmpty()) {
+            bridge.load(QStringLiteral("A"), track);
+        }
+    });
+
+    QObject::connect(&bridge, &BridgeClient::snapshotChanged, &loop, [&]() {
+        if (stopping) {
+            stopTicks += 1;
+            if ((!deckPlaying() && stopTicks > 1) || stopTicks > 400) {
+                stopping = false;
+                auto then = afterStop;
+                afterStop = nullptr;
+                then();
+            }
+            return;
+        }
+        if (waiting && clockSeconds() - startedAt >= target) {
+            waiting = false;
+            auto then = reached;
+            reached = nullptr;
+            then();
+            return;
+        }
+        if (!started || ready) {
+            return;
+        }
+        bool loaded = false;
+        bool playing = false;
+        for (const QVariant &entry : bridge.snapshot().value(QStringLiteral("decks")).toList()) {
+            const QVariantMap deck = entry.toMap();
+            if (deck.value(QStringLiteral("deck")).toString() != QStringLiteral("A")) {
+                continue;
+            }
+            loaded = deck.value(QStringLiteral("load")).toString() == QStringLiteral("Ready");
+            playing = deck.value(QStringLiteral("playing")).toBool();
+        }
+        if (!loaded || playing) {
+            return;
+        }
+        ready = true;
+
+        // Let the load settle before the first case: a publication still in flight changes what the deck
+        // holds, and the journal follows the file a deck is playing, so a case that starts on the tail of
+        // a load can be split in two.
+        waitSeconds(1.0, [&]() {
+        // Case one: below the threshold.
+        before = static_cast<int>(rows().size());
+        play(true);
+        waitSeconds(kShort, [&]() {
+            stopThen([&]() {
+                if (static_cast<int>(rows().size()) != before) {
+                    std::fprintf(stderr,
+                                 "dj-ui: a play of %.1f s was recorded (the threshold is 2 s)\n", kShort);
+                    failures += 1;
+                }
+                // Case two: above it.
+                before = static_cast<int>(rows().size());
+                play(true);
+                waitSeconds(kLong, [&]() {
+                    stopThen([&]() {
+                        // What the case has to prove is that a long play lands and that every row is a
+                        // play that counts. How many rows it lands in is the engine's business: a deck
+                        // that slips (an underrun, a re-publication) ends one interval and opens another,
+                        // and a half below the threshold is dropped exactly as the rule says.
+                        const QVariantList journal = rows();
+                        recorded = 0.0;
+                        if (journal.size() > before) {
+                            for (int index = before; index < journal.size(); ++index) {
+                                recorded += journal[index].toMap().value(QStringLiteral("seconds")).toDouble();
+                            }
+                        }
+                        if (journal.size() == before) {
+                            std::fprintf(stderr, "dj-ui: a play of %.1f s added no record\n", kLong);
+                            failures += 1;
+                        }
+                        if (recorded > kLong + 0.8) {
+                            std::fprintf(stderr,
+                                         "dj-ui: a play of %.1f s was recorded as %.2f s\n", kLong,
+                                         recorded);
+                            failures += 1;
+                        }
+                        for (int index = before; index < journal.size(); ++index) {
+                            const double seconds =
+                                journal[index].toMap().value(QStringLiteral("seconds")).toDouble();
+                            if (seconds < 1.8) {
+                                std::fprintf(stderr,
+                                             "dj-ui: a record of %.2f s is below the 2 s threshold\n",
+                                             seconds);
+                                failures += 1;
+                            }
+                        }
+                        // Case three: two short listens with a pause between them.
+                        before = static_cast<int>(rows().size());
+                        play(true);
+                        waitSeconds(kShort, [&]() {
+                            stopThen([&]() {
+                                play(true);
+                                waitSeconds(kShort, [&]() {
+                                    stopThen([&]() {
+                                        if (static_cast<int>(rows().size()) != before) {
+                                            std::fprintf(stderr,
+                                                         "dj-ui: two listens of %.1f s with a pause "
+                                                         "between them added %d rows\n",
+                                                         kShort,
+                                                         static_cast<int>(rows().size()) - before);
+                                            failures += 1;
+                                        }
+                                        if (failures == 0) {
+                                            std::fprintf(stdout,
+                                                         "dj-ui: %.1f s of playing left no record, %.1f s "
+                                                         "left records of %.2f s in total, and %.1f s + a "
+                                                         "pause + %.1f s left none — the journal holds "
+                                                         "only plays that count\n",
+                                                         kShort, kLong, recorded, kShort, kShort);
+                                        }
+                                        loop.quit();
+                                    });
+                                });
+                            });
+                        });
+                    });
+                });
+            });
+        });
+        });
+    });
+
+    bridge.connectToEngine(socketPath);
+    loop.exec();
+    if (failures != 0) {
+        std::fprintf(stderr, "dj-ui: the journal of plays is not what the deck did\n");
+        return 1;
+    }
+    return 0;
+}
+
 // End to end: the UI's gain command, the engine applying it, and the number coming back in the
 // snapshot. The unit test proves the routing; this proves the wire.
 static int runGainCheck(BridgeClient &bridge, const QString &socketPath, int timeoutMs)
@@ -7926,6 +8134,11 @@ int main(int argc, char *argv[])
                        "with a tap of Cue, set the point by holding the same button, scrub the "
                        "overview with the hand, and require the clock to show the time left rather "
                        "than the length."));
+    const QCommandLineOption historyCheckOption(
+        QStringLiteral("history-check"),
+        QStringLiteral("With --connect and --load: play the deck below and above the engine's "
+                       "--history-min-seconds, once with a pause in the middle, and require the "
+                       "journal in the snapshot to hold exactly the plays that count."));
     const QCommandLineOption pitchOption(
         QStringLiteral("pitch-check"),
         QStringLiteral("With --connect: drag a deck's pitch fader and require the engine to play at "
@@ -8105,6 +8318,7 @@ int main(int argc, char *argv[])
     parser.addOption(padsOption);
     parser.addOption(loopOption);
     parser.addOption(busyCheckOption);
+    parser.addOption(historyCheckOption);
     parser.addOption(refusalCheckOption);
     parser.addOption(spaceCheckOption);
     parser.addOption(wheelCheckOption);
@@ -8541,6 +8755,12 @@ int main(int argc, char *argv[])
         BridgeClient busyBridge;
         return runBusyCheck(busyBridge, parser.value(connectOption), parser.value(loadOption),
                             parser.value(loadSecondOption), 15000);
+    }
+
+    if (parser.isSet(historyCheckOption)) {
+        BridgeClient historyBridge;
+        return runHistoryCheck(historyBridge, parser.value(connectOption), parser.value(loadOption),
+                               60000);
     }
 
     if (parser.isSet(gainCheckOption)) {
