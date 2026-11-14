@@ -158,17 +158,17 @@ Pane {
     }
 
     function choose(index, modifiers) {
-        if (index < 0 || index >= Browser.entries.length) {
+        if (index < 0 || index >= browser.showingRows.length) {
             return;
         }
-        const path = Browser.entries[index].path;
+        const path = browser.showingRows[index].path;
         let chosen = browser.selection.slice();
         if ((modifiers & Qt.ShiftModifier) !== 0 && browser.anchorIndex >= 0) {
             const from = Math.min(browser.anchorIndex, index);
             const to = Math.max(browser.anchorIndex, index);
             chosen = [];
             for (let row = from; row <= to; ++row) {
-                chosen.push(Browser.entries[row].path);
+                chosen.push(browser.showingRows[row].path);
             }
         } else if ((modifiers & Qt.ControlModifier) !== 0) {
             const at = chosen.indexOf(path);
@@ -268,14 +268,14 @@ Pane {
     /// cursor through a binding, and reading it in the same call gives the row the list had before the
     /// key — the view then moves a step behind the hand.
     function stepCursor(delta) {
-        const count = Browser.entries.length;
+        const count = browser.showingRows.length;
         if (count === 0) {
             return;
         }
         const row = Browser.rowOf(Browser.cursor);
         const from = row < 0 ? 0 : row;
         const next = Math.max(0, Math.min(count - 1, from + delta));
-        Browser.setCursor(Browser.entries[next].path);
+        Browser.setCursor(browser.showingRows[next].path);
         // The row the DJ is on sits in the middle of the window, not against its edge: a list that
         // parks the cursor under the last visible row gives the eye nothing below it to read next.
         list.positionViewAtIndex(next, ListView.Center);
@@ -536,8 +536,13 @@ Pane {
         border.width: 1
     }
 
-    readonly property var selected: list.currentIndex >= 0 && list.currentIndex < Browser.entries.length
-                                    ? Browser.entries[list.currentIndex] : null
+    // The rows under the hand: the collection (or the folder) in one place, the open playlist's tracks in
+    // the other. Selection, the cursor and the keyboard belong to the list that is showing — a playlist
+    // navigated with the collection's rows is a list with no cursor at all.
+    readonly property var showingRows: Browser.inPlaylists ? Browser.playlistRows : Browser.entries
+    readonly property var selected: list.currentIndex >= 0
+                                    && list.currentIndex < browser.showingRows.length
+                                    ? browser.showingRows[list.currentIndex] : null
 
     // Loading is deliberate: a deck button, or the number key of that deck. A double click only
     // opens a folder — it never puts a track into a deck, because a stray double click during a set
@@ -616,10 +621,10 @@ Pane {
 
     // Double click and Enter on a folder: open it. Nothing else acts on a double click.
     function openFolder(index) {
-        if (index < 0 || index >= Browser.entries.length) {
+        if (index < 0 || index >= browser.showingRows.length) {
             return false;
         }
-        const entry = Browser.entries[index];
+        const entry = browser.showingRows[index];
         if (entry.dir !== true) {
             browser.lastAction = "not a folder";
             return false;
@@ -1848,7 +1853,7 @@ Pane {
                 // The highlight is where the browser remembers the cursor stood: a list that comes
                 // back puts it there, and a row that is gone leaves no highlight at all. Written as a
                 // binding on purpose — setting the index by hand would break it and lose the place.
-                currentIndex: Browser.entries.length >= 0 ? Browser.rowOf(Browser.cursor) : -1
+                currentIndex: browser.showingRows.length >= 0 ? Browser.rowOf(Browser.cursor) : -1
                 // The cursor is placed by hand, and the view goes there at once: a list that glides to
                 // the row it already knows reads as lag, not as motion.
                 highlightMoveDuration: 0

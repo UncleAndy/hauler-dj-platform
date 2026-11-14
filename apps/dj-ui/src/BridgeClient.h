@@ -51,9 +51,11 @@ public:
     QString filter() const { return m_filter; }
     /// The remembered row of the list that is showing.
     QString cursor() const;
-    /// The remembered rows, per place: the file list and the collection are two different places.
+    /// The remembered rows, per place: the file list, the collection and the playlists are three
+    /// different places, and a cursor from one of them is not a row of another.
     QString filesCursor() const { return m_filesCursor; }
     QString collectionCursor() const { return m_collectionCursor; }
+    QString playlistsCursor() const { return m_playlistsCursor; }
     /// Remember where the cursor stands in the list that is showing.
     Q_INVOKABLE void setCursor(const QString &path);
     /// Seed both places at startup, before either list has been built.
@@ -278,6 +280,9 @@ private:
     // one must not lose its place because the DJ looked at the other.
     QString m_filesCursor;
     QString m_collectionCursor;
+    /// Where the cursor stands in the playlists: its own place, so opening a playlist does not move the
+    /// collection's cursor and coming back does not lose it.
+    QString m_playlistsCursor;
     QString m_filesFolder;
     // The sort keys of the collection, in order: `{column, ascending}`.
     QVariantList m_sort;

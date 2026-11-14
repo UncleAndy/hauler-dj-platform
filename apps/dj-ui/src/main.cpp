@@ -7042,7 +7042,6 @@ static int runPlaylistCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         return 1;
     }
     const double top = firstTreeRow->mapToScene(QPointF(0, 0)).y();
-    const double beneath = indented->mapToScene(QPointF(0, 0)).y();
     const double inset = indented->property("x").toDouble();
     require(std::abs(inset - 20.0) <= 0.5,
             QStringLiteral("the indented row does not stand 20 px in (it stands %1)")
@@ -7094,6 +7093,22 @@ static int runPlaylistCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
                     headerRect.height(), cellRect.top() - headerRect.bottom());
     }
 
+    // Navigation belongs to the list under the hand: a click on a playlist row picks that row, and the
+    // cursor is found again in the playlist it stands in — a playlist navigated with the collection's
+    // rows is a list with no cursor at all.
+    QMetaObject::invokeMethod(panel, "choose", Q_ARG(QVariant, QVariant(0)),
+                              Q_ARG(QVariant, QVariant(0)));
+    const QString firstPath = rows().value(0).toMap().value(QStringLiteral("path")).toString();
+    // The click handler asks for the cursor as well: the choice and the cursor are two halves of one act.
+    browser.setCursor(firstPath);
+    const QString pickedPath =
+        panel->property("selected").toMap().value(QStringLiteral("path")).toString();
+    require(!pickedPath.isEmpty() && pickedPath == firstPath,
+            QStringLiteral("a click on a playlist row does not pick that row"));
+    require(browser.rowOf(pickedPath) == 0,
+            QStringLiteral("the cursor is not found in the playlist it stands in"));
+    std::printf("dj-ui: the playlist navigates: row 0 picked by a click and the cursor found at 0\n");
+
     // A duplicate is allowed (owner's decision), and Remove dups takes the repeats of a track, keeping the
     // first of each.
     browser.playlistRemoveDuplicates();
@@ -7137,6 +7152,23 @@ static int runPlaylistCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         },
         10000);
     require(atRoot, QStringLiteral("the playlist did not land at the root of the mirror"));
+    // The root of the tree shows it too: a playlist with no folder is a row of the root, not only a line
+    // inside `All`.
+    // The file lands before the snapshot does: the tree is waited for, not read once.
+    const bool rootRow = waitFor(
+        [&]() {
+            for (const QVariant &entry : tree()) {
+                const QVariantMap row = entry.toMap();
+                if (row.value(QStringLiteral("kind")).toString() == QStringLiteral("playlist")
+                    && row.value(QStringLiteral("id")).toLongLong() == id
+                    && row.value(QStringLiteral("depth")).toInt() == 0) {
+                    return true;
+                }
+            }
+            return false;
+        },
+        5000);
+    require(rootRow, QStringLiteral("a playlist in no folder is not a row of the root"));
 
     // A playlist that sits in no folder is offered under a heading of its own, not lost among the folders.
     QMetaObject::invokeMethod(addMenu, "popup");

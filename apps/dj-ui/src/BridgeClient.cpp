@@ -154,12 +154,18 @@ QString FileBrowser::defaultCollectionRoot() const
 
 QString FileBrowser::cursor() const
 {
+    if (m_mode == QLatin1String("playlists")) {
+        return m_playlistsCursor;
+    }
     return m_mode == QLatin1String("collection") ? m_collectionCursor : m_filesCursor;
 }
 
 void FileBrowser::setCursor(const QString &path)
 {
-    QString &remembered = m_mode == QLatin1String("collection") ? m_collectionCursor : m_filesCursor;
+    QString &remembered = m_mode == QLatin1String("playlists")
+                              ? m_playlistsCursor
+                              : (m_mode == QLatin1String("collection") ? m_collectionCursor
+                                                                       : m_filesCursor);
     if (remembered == path) {
         return;
     }
@@ -175,8 +181,12 @@ void FileBrowser::seedCursors(const QString &files, const QString &collection)
 
 int FileBrowser::rowOf(const QString &path) const
 {
-    for (int index = 0; index < m_entries.size(); ++index) {
-        if (m_entries.at(index).toMap().value(QStringLiteral("path")).toString() == path) {
+    // The row is counted in the list the DJ is looking at: a playlist's rows are its own, and a path
+    // looked for among the collection's rows would never be found there (or worse, found at another
+    // place).
+    const QVariantList &rows = m_mode == QLatin1String("playlists") ? m_playlistRows : m_entries;
+    for (int index = 0; index < rows.size(); ++index) {
+        if (rows.at(index).toMap().value(QStringLiteral("path")).toString() == path) {
             return index;
         }
     }
@@ -471,6 +481,14 @@ void FileBrowser::loadMore()
 
 namespace {
 
+/// A string as the engine reads it: a null `QString` becomes JSON `null`, and the engine's op wants a
+/// string — a folder of `""` is the root, a folder of `null` is a rejected command with no visible reason.
+/// Every text going into an op passes through here.
+QString spoken(const QString &value)
+{
+    return value.isNull() ? QStringLiteral("") : value;
+}
+
 /// A row of a collection page as the list draws it.
 ///
 /// One shape for the collection and for a playlist (DJP-MEDIA-004): the table that draws the first
@@ -669,6 +687,15 @@ void FileBrowser::rebuildPlaylistTree()
             flat.append(leaf(item.toMap(), 1));
         }
     }
+    // A playlist that sits in no folder is a row of the root as well: `All` is the flat view of
+    // everything, and the root is where a playlist without a folder belongs. One does not replace the
+    // other (owner's report, 15.11.2026, and with `All` closed such a playlist had no row at all).
+    for (const QVariant &item : playlists) {
+        const QVariantMap found = item.toMap();
+        if (found.value(QStringLiteral("folder")).toString().isEmpty()) {
+            flat.append(leaf(found, 0));
+        }
+    }
     for (const QVariant &folder : folders) {
         const QString path = folder.toString();
         const bool open = !m_collapsed.contains(QStringLiteral("folder:") + path);
@@ -765,6 +792,8 @@ void FileBrowser::openPlaylist(qint64 id, const QString &name)
     }
     m_playlistId = id;
     m_playlistName = name;
+    // A cursor from another playlist is not a row of this one.
+    m_playlistsCursor.clear();
     m_playlistRows.clear();
     m_playlistTotal = 0;
     emit playlistPageChanged();
@@ -790,7 +819,7 @@ void FileBrowser::playlistCreate(const QString &name, const QString &folder)
     }
     QVariantMap create;
     create.insert(QStringLiteral("name"), name);
-    create.insert(QStringLiteral("folder"), folder);
+    create.insert(QStringLiteral("folder"), spoken(folder));
     QVariantMap op;
     op.insert(QStringLiteral("Create"), create);
     m_bridge->editPlaylists(op);
@@ -835,7 +864,7 @@ void FileBrowser::playlistMove(qint64 id, const QString &folder)
     }
     QVariantMap move;
     move.insert(QStringLiteral("playlist"), static_cast<qlonglong>(id));
-    move.insert(QStringLiteral("folder"), folder);
+    move.insert(QStringLiteral("folder"), spoken(folder));
     QVariantMap op;
     op.insert(QStringLiteral("Move"), move);
     m_bridge->editPlaylists(op);
@@ -979,7 +1008,7 @@ void FileBrowser::playlistFolderCreate(const QString &path)
         return;
     }
     QVariantMap folder;
-    folder.insert(QStringLiteral("path"), path.trimmed());
+    folder.insert(QStringLiteral("path"), spoken(path.trimmed()));
     QVariantMap op;
     op.insert(QStringLiteral("FolderCreate"), folder);
     m_bridge->editPlaylists(op);
@@ -991,8 +1020,8 @@ void FileBrowser::playlistFolderRename(const QString &from, const QString &to)
         return;
     }
     QVariantMap folder;
-    folder.insert(QStringLiteral("from"), from.trimmed());
-    folder.insert(QStringLiteral("to"), to.trimmed());
+    folder.insert(QStringLiteral("from"), spoken(from.trimmed()));
+    folder.insert(QStringLiteral("to"), spoken(to.trimmed()));
     QVariantMap op;
     op.insert(QStringLiteral("FolderRename"), folder);
     m_bridge->editPlaylists(op);
@@ -1004,7 +1033,7 @@ void FileBrowser::playlistFolderDelete(const QString &path)
         return;
     }
     QVariantMap folder;
-    folder.insert(QStringLiteral("path"), path.trimmed());
+    folder.insert(QStringLiteral("path"), spoken(path.trimmed()));
     QVariantMap op;
     op.insert(QStringLiteral("FolderDelete"), folder);
     m_bridge->editPlaylists(op);
