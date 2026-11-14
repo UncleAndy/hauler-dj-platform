@@ -1237,3 +1237,17 @@ dj-ui: the tempo dialog keeps its content inside itself
 **Ограничение, названное честно.** Запасной поиск — не вторая мера, а второй заход: он находит темп
 там, где доля в музыке есть, но он не выдумывает её там, где её нет. Семь отказов из двенадцати
 остались отказами, и у пяти из них лучшая сетка действительно слабая (1,1–1,5).
+
+## Обновление 2026-11-14 — компактная дека (ADR-0011 принят)
+
+Ряд управления сеткой стоит по центру деки и скрыт под замком; замок — в первом ряду справа от пэдов;
+эталон цвета замка переехал на глобальные тумблеры, потому что своих у деки больше нет.
+
+```
+dj-ui: the lock sits 4,0 px right of the pads and 0,0 px from the row's right edge
+dj-ui: the lock is in force on both sides before the second press
+dj-ui: the lock left the collection with the second press
+dj-ui: the grid row is back on the panel with the lock off
+dj-ui: the grid tools are 354 px wide and stand 0 px off the middle of their row
+dj-ui: Play is 55 px wide and Cue is 55 px wide, 0 px between them
+```

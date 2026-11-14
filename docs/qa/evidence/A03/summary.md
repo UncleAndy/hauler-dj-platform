@@ -648,3 +648,15 @@ look-ahead). Сверил каждый пункт с кодом и замери�
 | Leash Broken | 0,6× | 0,6× | 0,6× |
 | Movin My Body | 0,1× | 0,1× | 0,2× |
 
+## Обновление 2026-11-14 — компактная дека (ADR-0011 принят)
+
+Ряд транспорта: `Stop` и `Set` ушли, `Slip` и `Rev` встали на их место, а удержание `Cue` (400 мс)
+ставит точку — короткое нажатие по-прежнему предслушивает. `Play` и `Cue` теперь одной ширины
+(половина того, что пара занимала), место пары не изменилось.
+
+```
+dj-ui: holding Cue set the point at 82212 (the hand landed at 82212), the head is at 82212 and the deck is silent
+dj-ui: Play is 55 px wide and Cue is 55 px wide, 0 px between them
+dj-ui: the pitch throw is ±16,0 % (0,840 … 1,160)
+dj-ui: ten pixels up the pitch fader asks for 1,0256 and the engine plays at 1,0256 (deck B at 1,000)
+```

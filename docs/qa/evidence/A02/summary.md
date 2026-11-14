@@ -184,3 +184,12 @@ F32 обязателен: свидетель `a_deck_on_a_cache_entry_plays_the_
 
 Оговорка: замер снят на тёплом page cache; холодный диск даст больше времени на первой загрузке,
 но размеры записей и поведение вытеснения от этого не зависят.
+
+## Обновление 2026-11-14 — компактная дека (ADR-0011 принят)
+
+Проверка `--transport-extras-check` переписана: кнопок `nudge` в деке больше нет, поэтому ушёл и её
+случай — прыжок, slip и реверс проверяются как раньше. `nudge` остался в движке.
+
+```
+dj-ui: a jump of one beat moved the play head 35689 frames and landed on the grid, slip drew its virtual head on both strips (0,3123 against the sound at 0,3748), and reverse walked the head down to 239937 and forward again, and the deck was left paused for the next check
+```

@@ -186,3 +186,11 @@ strips (0,3123 against the sound at 0,3748), and reverse walked the head down to
 
 Если понадобится строгий счётчик — он делается в деке (поле `reverse_stalls`, инкремент в `pull`, когда
 окно ждут) и публикуется в состоянии; пока замер стоимости покрывает вопрос с большим запасом.
+
+## Обновление 2026-11-14 — компактная дека (ADR-0011 принят)
+
+Кнопки `nudge` убраны из деки (в движке остались), двенадцать кнопок транспорта проверяются без них.
+
+```
+dj-ui: a jump of one beat moved the play head 35689 frames and landed on the grid, slip drew its virtual head on both strips (0,3123 against the sound at 0,3748), and reverse walked the head down to 239937 and forward again, and the deck was left paused for the next check
+```

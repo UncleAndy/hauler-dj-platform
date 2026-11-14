@@ -680,3 +680,16 @@ dj-ui: at 1,2880, past the fader's 1,160, the handle sits at 2,5…9,5 px of 88,
 
 Шаг проверки стоит в `--pitch-check` и падает на старом коде: тест написан до правки, красный прогон —
 `-27,9…-20,9 px`, зелёный — `2,5…9,5 px`.
+
+## Обновление 2026-11-14 — компактная дека (ADR-0011 принят)
+
+Режимы деки (`Snap`, `Quant`, `Scrub`) стали настройками: три ключа в `layout.json`
+(`snap_grid`, `quantize_grid`, `scrub_audible`), и пара процессов доказывает, что они переживают
+перезапуск — первый оставляет их, второй в новом процессе читает те же значения и те же лица
+тумблеров. Флаг `--scrub-mode` тоже запоминается, но уступает явному флагу при следующем запуске.
+
+```
+dj-ui: a new run opens with the rail at 130 px, the browser text at 14 px, the browser 45,0% tall and the deck zoom at a span of 0.250, the numbers the last run left
+dj-ui: the deck's modes came back as they were left: snap off, quantize off, scrub audible; the switches read dark and dark
+dj-ui: the global switches stand 0,0 px off the master's axis, 6,0 px under its knob, 40,0 px tall together, and end 282,0 px above the column's bottom
+```

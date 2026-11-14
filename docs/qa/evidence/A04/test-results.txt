@@ -380,3 +380,9 @@ traceability: every DJP-* requirement has an owned row
 [2/12] Running AUTOMOC file extraction for target dj-ui
 dj-ui: QML scene loaded, no Qt warnings
 check.sh: all gates passed
+
+## Обновление 2026-11-14 — строки свежего прогона гейта
+
+```
+dj-ui: the global switches stand 0,0 px off the master's axis, 6,0 px under its knob, 40,0 px tall together, and end 282,0 px above the column's bottom
+```

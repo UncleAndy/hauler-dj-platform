@@ -79,3 +79,14 @@ dj-ui: theme: 0,5% bright pixels, dominant colours: #181818 68% #101010 27%
 
 Замер гейта (`--pads-check`): «the waveform strip carries 2 pad mark(s)», «the mark wears #5fb85f and is
 called Drop at 0,250 of the track».
+
+## Обновление 2026-11-14 — компактная дека (ADR-0011 принят)
+
+Полоса петли и битджампа сложена в одну раскрывающуюся строку с общей кнопкой `Loop/Jump`; пэды
+поднялись в первый ряд, а `Play` и `Cue` стали одной ширины.
+
+```
+dj-ui: the strip open: a row of 20 px, a wave of 139 px, the loop sizes start 0 px from the row's left edge and the beatjumps end 0 px from its right one
+dj-ui: the strip folded: the wave went from 139 to 163 px, 24 px for a row of 20 px
+dj-ui: Play is 55 px wide and Cue is 55 px wide, 0 px between them
+```

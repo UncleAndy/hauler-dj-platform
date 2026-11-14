@@ -331,3 +331,9 @@ traceability: every DJP-* requirement has an owned row
 [2/12] Running AUTOMOC file extraction for target dj-ui
 dj-ui: QML scene loaded, no Qt warnings
 check.sh: all gates passed
+
+## Обновление 2026-11-14 — строки свежего прогона гейта
+
+```
+dj-ui: a jump of one beat moved the play head 35689 frames and landed on the grid, slip drew its virtual head on both strips (0,3123 against the sound at 0,3748), and reverse walked the head down to 239937 and forward again, and the deck was left paused for the next check
+```
