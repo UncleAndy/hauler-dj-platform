@@ -229,9 +229,11 @@ pub fn detect(mono: &[f32], rate: f64) -> Option<Tempo> {
     // Which side of the beat the grid ended up on. A full-spectrum envelope likes the hats, and the hats
     // are the offbeat: on `Leash Broken` the settled grid sat exactly half a beat from the owner's, on the
     // offbeat eighths. The kick band is what says where the beat is, so the side is decided on it.
+    // Сторону решает огибающая ударов, а не одна низкая полоса: в хаусе бас играет на оффбите, и
+    // низкая полоса видит там удар, которого нет; корпус (150–400 Гц) видит клэп на доле.
     on_the_beat_side(
         &mut tempo,
-        kick.as_deref().unwrap_or(&envelope),
+        accent.as_deref().or(kick.as_deref()).unwrap_or(&envelope),
         &envelope,
         per_second,
     );
@@ -252,7 +254,12 @@ pub fn detect(mono: &[f32], rate: f64) -> Option<Tempo> {
         // And the side last of all: the bar and the level both move the grid, so a phase chosen before
         // them is the phase of a grid that no longer exists. Measured on the corpus: of sixteen tracks
         // whose grid sat off the beat, eleven were fixed by this one repeat.
-        on_the_beat_side(&mut tempo, band, &envelope, per_second);
+        on_the_beat_side(
+            &mut tempo,
+            accent.as_deref().unwrap_or(band),
+            &envelope,
+            per_second,
+        );
     }
     Some(tempo)
 }
@@ -2369,8 +2376,8 @@ fn snap_to_onsets(tempo: &mut Tempo, envelope: &[f32], per_second: f64) {
 /// успехом объясняет пульс в четыре третьих доли или в две третьих, и раньше такие ответы чинились
 /// только для одного случая (три четверти). Замер на корпусе raveform: 28 % треков читались как 2:3
 /// или 4:3 — самая частая ошибка после честного попадания.
-// Двойные родственники стоят в лестнице последними: на огибающей ударов, где у настоящей доли
-// удар есть на каждом её ударе, половина объясняет только половину, и приор решает остальное.
+// В лестнице и тройные, и двойные родственники: тройные видны по ударам (у них удар есть только на
+// части долей), двойные — по приору темпа (у бочки через долю половина объясняется не хуже доли).
 const LEVEL_LADDER: [f64; 6] = [3.0 / 2.0, 2.0 / 3.0, 4.0 / 3.0, 3.0 / 4.0, 2.0, 0.5];
 
 /// Какую часть своих долей кандидат объясняет бочкой.
@@ -2428,9 +2435,8 @@ fn settle_level(tempo: &mut Tempo, envelope: &[f32], kick: &[f32], rate: f64, pe
             best_share = share;
         }
     }
-    // Ворота по доле бочки: приор может перевесить при равной доле, но не тогда, когда кандидат
-    // объясняет бочку заметно хуже. Без них сетка сползала с честных 174 BPM на 131 в драм-энд-бейсе,
-    // где бочка стоит через долю и любая тройная доля объясняет её хуже.
+    // Ворота по доле ударов: приор может перевесить при равной доле, но не тогда, когда кандидат
+    // объясняет удары заметно хуже. Без них сетка сползала с честных 174 BPM на 131 в драм-энд-бейсе.
     let share_gate = best_share >= own_share * 0.8;
     if (best.0 / segment.bpm - 1.0).abs() < 0.005
         || best.1 <= own_share * level_prior(segment.bpm) * 1.25
