@@ -1479,9 +1479,16 @@ fn level_prior(bpm: f64) -> f64 {
     if bpm <= 0.0 {
         return 0.0;
     }
-    let octaves = (bpm / PREFERRED_BPM).log2() / 0.35;
+    // Шире и выше, чем было (0,35 октавы вокруг 120): на корпусе это была причина половины
+    // ошибок октавы — сетка на 87 BPM при правде 174 читалась уверенно, потому что 87 ближе к 120.
+    // 0,6 октавы вокруг 128 оставляет технику на месте (128 — её центр), но не тянет вниз
+    // драм-энд-бейс, у которого доля вдвое чаще.
+    let octaves = (bpm / LEVEL_PREFERRED_BPM).log2() / 0.6;
     (-0.5 * octaves * octaves).exp()
 }
+
+/// Где сидит музыка, которую играет диджей, в BPM.
+const LEVEL_PREFERRED_BPM: f64 = 128.0;
 
 fn decide_level(envelope: &[f32], per_second: f64, bpm: f64) -> f64 {
     if !(bpm.is_finite() && bpm > 0.0) {
