@@ -1453,8 +1453,34 @@ int runScenarios(BridgeClient &bridge, QQuickWindow &window, const QString &deck
     // button can download it, and it has to open from the strip the DJ actually sees.
     cases.push_back({"the model panel opens and names the licence before anything is downloaded",
                      [](Runner &run, Reason &why) {
-                         if (!run.click(QStringLiteral("modelButton"))) {
+                         QQuickItem *button = run.item(QStringLiteral("modelButton"));
+                         if (button == nullptr) {
                              why = QStringLiteral("there is no model button in the top strip");
+                             return false;
+                         }
+                         // The strip carries two labels that change on every publication: the engine
+                         // status and the revision counter. A button standing to their left moves
+                         // under the hand, so it is the last thing in the strip and keeps its width —
+                         // both read from the geometry, not from the QML text.
+                         QQuickItem *strip = button->parentItem();
+                         if (strip == nullptr) {
+                             why = QStringLiteral("the button is not in the strip");
+                             return false;
+                         }
+                         const qreal rightEdge = button->x() + button->width();
+                         if (rightEdge < strip->width() - 12.0) {
+                             why = QStringLiteral("the button ends %1 px short of the right edge: it is not "
+                                                  "the last thing in the strip")
+                                       .arg(strip->width() - rightEdge, 0, 'f', 1);
+                             return false;
+                         }
+                         if (std::abs(button->width() - 112.0) > 1.0) {
+                             why = QStringLiteral("the button is %1 px wide: it takes its width from its text")
+                                       .arg(button->width(), 0, 'f', 1);
+                             return false;
+                         }
+                         if (!run.click(QStringLiteral("modelButton"))) {
+                             why = QStringLiteral("the model button did not take the click");
                              return false;
                          }
                          // The dialog is a Popup, not an item: the tree only carries its body.

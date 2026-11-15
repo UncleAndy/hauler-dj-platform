@@ -25,15 +25,6 @@ Pane {
             font.pixelSize: 10
         }
         Item { Layout.fillWidth: true }
-        Button {
-            objectName: "modelButton"
-            text: Bridge.snapshot.model !== undefined && Bridge.snapshot.model.variant !== undefined
-                  ? qsTr("Model: %1").arg(Bridge.snapshot.model.variant)
-                  : qsTr("Model: built-in")
-            font.pixelSize: 10
-            padding: 4
-            onClicked: modelPanel.open()
-        }
         Label {
             text: Bridge.status
             color: Bridge.connected ? UiSettings.themeText : UiSettings.themeDanger
@@ -45,6 +36,18 @@ Pane {
                   : qsTr("no engine")
             color: UiSettings.themeTextDim
             font.pixelSize: 10
+        }
+        // Справа от счётчика и с постоянной шириной: текст состояния меняется каждую секунду, и
+        // кнопка, стоящая слева от него, ездила бы под рукой.
+        Button {
+            objectName: "modelButton"
+            Layout.preferredWidth: 112
+            text: Bridge.snapshot.model !== undefined && Bridge.snapshot.model.variant !== undefined
+                  ? qsTr("Model: %1").arg(Bridge.snapshot.model.variant)
+                  : qsTr("Model: built-in")
+            font.pixelSize: 10
+            padding: 4
+            onClicked: modelPanel.open()
         }
     }
 
