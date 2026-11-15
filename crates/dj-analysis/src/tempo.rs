@@ -167,7 +167,6 @@ pub fn onset_envelope(mono: &[f32]) -> Option<Vec<f32>> {
     let mut previous = vec![0.0f32; bins];
     let mut block = vec![0.0f32; BLOCK];
     let mut flux = Vec::with_capacity(mono.len() / HOP + 1);
-
     let mut start = 0;
     while start + BLOCK <= mono.len() {
         block.copy_from_slice(&mono[start..start + BLOCK]);
@@ -217,8 +216,9 @@ fn remove_the_running_mean(flux: Vec<f32>, window: usize) -> Vec<f32> {
 /// separates a beat from its subdivisions and tells which beat of it is the first.
 pub fn detect(mono: &[f32], rate: f64) -> Option<Tempo> {
     let envelope = onset_envelope(mono)?;
-    let mut tempo = detect_in_envelope(&envelope, rate)?;
     let kick = kick_envelope(mono, rate);
+    let accent = accent_envelope(mono, rate);
+    let mut tempo = detect_in_envelope_with(&envelope, accent.as_deref(), rate)?;
     if let Some(band) = kick.as_deref() {
         on_the_bar(&envelope, band, rate, &mut tempo);
     }
@@ -229,7 +229,12 @@ pub fn detect(mono: &[f32], rate: f64) -> Option<Tempo> {
     // Which side of the beat the grid ended up on. A full-spectrum envelope likes the hats, and the hats
     // are the offbeat: on `Leash Broken` the settled grid sat exactly half a beat from the owner's, on the
     // offbeat eighths. The kick band is what says where the beat is, so the side is decided on it.
-    on_the_beat_side(&mut tempo, kick.as_deref().unwrap_or(&envelope), per_second);
+    on_the_beat_side(
+        &mut tempo,
+        kick.as_deref().unwrap_or(&envelope),
+        &envelope,
+        per_second,
+    );
     // The bar last of all: which beat of it is the first is a question about the accent, and the accent
     // has to be counted on the beats the music actually plays. Measured before the period was settled, it
     // was counted on a lattice a hair out of place — and the shift was then written over by the settle.
@@ -237,7 +242,17 @@ pub fn detect(mono: &[f32], rate: f64) -> Option<Tempo> {
         align_the_bar(&mut tempo, band, per_second);
         // And the reading itself: four thirds of the music's is a tempo the onsets support as well as the
         // truth, and only the bar's accent tells them apart.
-        settle_four_the_third(&mut tempo, &envelope, band, per_second);
+        settle_level(
+            &mut tempo,
+            &envelope,
+            accent.as_deref().unwrap_or(band),
+            rate,
+            per_second,
+        );
+        // And the side last of all: the bar and the level both move the grid, so a phase chosen before
+        // them is the phase of a grid that no longer exists. Measured on the corpus: of sixteen tracks
+        // whose grid sat off the beat, eleven were fixed by this one repeat.
+        on_the_beat_side(&mut tempo, band, &envelope, per_second);
     }
     Some(tempo)
 }
@@ -250,11 +265,19 @@ pub fn detect(mono: &[f32], rate: f64) -> Option<Tempo> {
 /// stretch of it answers a different beat for a section, the grid is built from stretches, and a track
 /// that changes tempo is described as one instead of being averaged into a tempo it never plays.
 pub fn detect_in_envelope(envelope: &[f32], rate: f64) -> Option<Tempo> {
-    primary_tempo(envelope, rate).or_else(|| fallback_tempo(envelope, rate))
+    detect_in_envelope_with(envelope, None, rate)
+}
+
+/// То же, но с отдельной огибающей для ворот: по ней решается, несёт ли сетка удар.
+///
+/// Envelope отвечает за темп и фазу — там нужны все онсеты; ворота отвечают на вопрос «есть ли удар
+/// на доле», и на него лучше отвечает перкуссионная полоса: шляпки на оффбите в неё не входят.
+pub fn detect_in_envelope_with(envelope: &[f32], gate: Option<&[f32]>, rate: f64) -> Option<Tempo> {
+    primary_tempo(envelope, gate, rate).or_else(|| fallback_tempo(envelope, rate))
 }
 
 /// The walk the analyser has always taken. Unchanged: a track it answers keeps exactly the grid it had.
-fn primary_tempo(envelope: &[f32], rate: f64) -> Option<Tempo> {
+fn primary_tempo(envelope: &[f32], gate: Option<&[f32]>, rate: f64) -> Option<Tempo> {
     let per_second = rate / HOP as f64;
     let (bpm, clear) = choose_tempo(envelope, per_second)?;
     // The windows answer a periodicity; which beat it is, is a second question — see [`decide_level`].
@@ -273,7 +296,7 @@ fn primary_tempo(envelope: &[f32], rate: f64) -> Option<Tempo> {
     if stretches.len() > 1
         && let Some(changing) = grid_of_stretches(envelope, per_second, bpm, &stretches, true)
     {
-        return carries_the_beat(envelope, per_second, changing);
+        return carries_the_beat(envelope, gate, per_second, changing);
     }
     // A track whose tempo moves smoothly: the beat is walked from beat to beat, so the period is read
     // from the intervals behind the beat and not from a window that straddles the change (DJP-SYNC-002).
@@ -300,7 +323,7 @@ fn primary_tempo(envelope: &[f32], rate: f64) -> Option<Tempo> {
                 && same_level(&grid.segments, rigid.bpm())
                 && followed_score > rigid_score * ELASTIC_MARGIN
             {
-                return carries_the_beat(envelope, per_second, grid);
+                return carries_the_beat(envelope, gate, per_second, grid);
             }
         }
     }
@@ -335,11 +358,11 @@ fn primary_tempo(envelope: &[f32], rate: f64) -> Option<Tempo> {
                 && same_level(&drifting.segments, rigid.bpm())
                 && drift_score > rigid_score * ELASTIC_MARGIN
             {
-                return carries_the_beat(envelope, per_second, drifting);
+                return carries_the_beat(envelope, gate, per_second, drifting);
             }
         }
     }
-    rigid.and_then(|tempo| carries_the_beat(envelope, per_second, tempo))
+    rigid.and_then(|tempo| carries_the_beat(envelope, gate, per_second, tempo))
 }
 
 /// How far from the beat the walk looks for its next beat, as a fraction of the period.
@@ -796,9 +819,23 @@ fn tempo_at(envelope: &[f32], per_second: f64, bpm: f64, phase: f64) -> Option<T
 /// halfway between them, because the music puts its hits there. Measured on the reference set, the weakest
 /// track of the seven came out at 1,28 and the strongest at 2,68; three minutes of rubato, which the detector
 /// must keep refusing, comes out at 1,00 to 1,05.
+/// Насколько удар на доле должен быть сильнее удара между долями.
+///
+/// Два к одному — это не про громкость, а про наличие доли: тон и шум дают 1,00, музыка с долей —
+/// заметно больше. Порог не двигался; то, что раньше отказывало четырём честным техно-трекам
+/// (контраст 1,05…1,15 на полной огибающей), теперь проходит за счёт полосного фронтенда: в полосах
+/// бочка и шляпки разведены, и доля видна по удару, а не по громкости оффбита.
 const BEAT_CONTRAST_FLOOR: f64 = 1.2;
 
-fn carries_the_beat(envelope: &[f32], per_second: f64, tempo: Tempo) -> Option<Tempo> {
+fn carries_the_beat(
+    envelope: &[f32],
+    gate: Option<&[f32]>,
+    per_second: f64,
+    tempo: Tempo,
+) -> Option<Tempo> {
+    // Контраст считается по ударам (низкая полоса и корпус), если эта огибающая есть: у техно на
+    // оффбите шляпки, и в полной огибающей они глушат разницу между долей и половиной.
+    let band = gate.unwrap_or(envelope);
     let mut ratios = Vec::new();
     for segment in &tempo.segments {
         let period = per_second * 60.0 / segment.bpm;
@@ -808,8 +845,8 @@ fn carries_the_beat(envelope: &[f32], per_second: f64, tempo: Tempo) -> Option<T
         // The same phase the level was chosen on: the grid's own anchor is a beat of that lattice, but
         // the comb's phase is the one the measure was taken at, and two answers to one question would
         // have the gate refusing grids the level decision accepted.
-        let (phase, _) = best_phase_and_score(envelope, period);
-        let (on, halfway) = beat_against_halfway(envelope, period, phase);
+        let (phase, _) = best_phase_and_score(band, period);
+        let (on, halfway) = beat_against_halfway(band, period, phase);
         if on <= 0.0 {
             continue;
         }
@@ -1909,6 +1946,49 @@ const KICK_ON_BEATS: f64 = 1.4;
 /// the more common one is the better guess, and the gate above is what decides whether it can.
 const METRES: [u8; 2] = [4, 3];
 
+/// Полоса корпуса: снейр и клэп — вторая половина ударов, которые тоже стоят на доле.
+const BODY_FROM_HZ: f64 = 150.0;
+const BODY_TO_HZ: f64 = 400.0;
+
+/// Огибающая ударов: низкая полоса и корпус вместе.
+///
+/// Бочка одна не отвечает на вопрос «где доля» в драм-энд-бейсе: там бочка стоит через долю, а между
+/// ней — снейр, и обе половины ударов принадлежат долям. Уровень поэтому решается по сумме полос:
+/// у настоящей доли на каждом её ударе есть хоть что-то ударное, у тройного или двойного родственника —
+/// нет. Замер на корпусе: с одной бочкой сетка уходила с 174 BPM на 130 (три четверти) у девяти
+/// треков из выборки.
+pub fn accent_envelope(mono: &[f32], rate: f64) -> Option<Vec<f32>> {
+    let mut spectrum = Spectrum::new(BLOCK)?;
+    let bins = BLOCK / 2;
+    let hz_per_bin = rate / BLOCK as f64;
+    let low_to = ((KICK_HZ / hz_per_bin).round() as usize).clamp(1, bins - 1);
+    let body_from = ((BODY_FROM_HZ / hz_per_bin).round() as usize).clamp(1, bins - 1);
+    let body_to = ((BODY_TO_HZ / hz_per_bin).round() as usize).clamp(2, bins - 1);
+    let mut magnitudes = vec![0.0f32; bins];
+    let mut previous = vec![0.0f32; bins];
+    let mut block = vec![0.0f32; BLOCK];
+    let mut flux = Vec::with_capacity(mono.len() / HOP + 1);
+    let mut start = 0;
+    while start + BLOCK <= mono.len() {
+        block.copy_from_slice(&mono[start..start + BLOCK]);
+        spectrum.magnitudes(&block, &mut magnitudes);
+        let mut sum = 0.0f32;
+        for bin in 1..low_to {
+            sum += (magnitudes[bin] - previous[bin]).max(0.0) * magnitudes[bin];
+        }
+        for bin in body_from..body_to {
+            sum += (magnitudes[bin] - previous[bin]).max(0.0) * magnitudes[bin];
+        }
+        flux.push(sum);
+        previous.copy_from_slice(&magnitudes);
+        start += HOP;
+    }
+    if flux.len() < 64 {
+        return None;
+    }
+    Some(remove_the_running_mean(flux, 94))
+}
+
 /// The onset envelope of the kick band: flux below [`KICK_HZ`], weighted by the magnitude it reaches.
 ///
 /// Weighted, unlike [`onset_envelope`]: the rise of a kick is wide and slow, and weighting it by the
@@ -2283,129 +2363,105 @@ fn snap_to_onsets(tempo: &mut Tempo, envelope: &[f32], per_second: f64) {
     }];
 }
 
-/// How much the first beat of the bar stands above the rest of it, in the kick band.
+/// Отношения метрической лестницы: сама доля, её тройные и двойные родственники.
 ///
-/// The mean kick on the bar's first slot over the mean of the other slots. A bar that is really counted
-/// the way the music plays it has an accent: the first beat carries the loudest hit of the four. A bar cut
-/// into the wrong number of beats has no accent at all — its slots all carry the same mixture — so this is
-/// a measure of whether the bar is counted right, not of how loud the track is.
-fn bar_contrast(kick: &[f32], period: f64, phase: f64, metre: usize) -> f64 {
-    if !(period.is_finite() && period >= 2.0) || metre < 2 {
-        return 0.0;
-    }
-    let reach = (period * 0.12).clamp(1.0, 8.0) as usize;
-    let mut sums = vec![0.0f64; metre];
-    let mut counts = vec![0usize; metre];
-    let mut beat = 0usize;
-    let mut position = phase.rem_euclid(period);
-    while position < kick.len() as f64 {
-        let at = position.round() as usize;
-        if at < kick.len() {
-            let from = at.saturating_sub(reach);
-            let to = (at + reach).min(kick.len().saturating_sub(1));
-            let loudest = kick[from..=to].iter().copied().fold(0.0f32, f32::max);
-            sums[beat % metre] += f64::from(loudest);
-            counts[beat % metre] += 1;
-        }
-        beat += 1;
-        position += period;
-    }
-    if beat < 2 * metre || counts.contains(&0) {
-        return 0.0;
-    }
-    let means: Vec<f64> = (0..metre)
-        .map(|slot| sums[slot] / counts[slot] as f64)
-        .collect();
-    let first = means[0];
-    let rest = means[1..].iter().sum::<f64>() / (metre - 1) as f64;
-    if rest <= 0.0 {
-        return 0.0;
-    }
-    first / rest
+/// Октава — не единственный родственник доли: на триольном арпеджио или шаффле гребёнка с тем же
+/// успехом объясняет пульс в четыре третьих доли или в две третьих, и раньше такие ответы чинились
+/// только для одного случая (три четверти). Замер на корпусе raveform: 28 % треков читались как 2:3
+/// или 4:3 — самая частая ошибка после честного попадания.
+// Двойные родственники стоят в лестнице последними: на огибающей ударов, где у настоящей доли
+// удар есть на каждом её ударе, половина объясняет только половину, и приор решает остальное.
+const LEVEL_LADDER: [f64; 6] = [3.0 / 2.0, 2.0 / 3.0, 4.0 / 3.0, 3.0 / 4.0, 2.0, 0.5];
+
+/// Какую часть своих долей кандидат объясняет бочкой.
+///
+/// Бочка стоит на доле, триоли и шляпки — между долями. Поэтому кандидат, у которого каждый удар
+/// приходится на бочку, и есть доля; кандидат, у которого бочка только на каждом втором или третьем
+/// ударе, — её подразделение или её тройной родственник.
+fn kick_share(kick: &[f32], period: f64, phase: f64) -> f64 {
+    let strongest = kick.iter().cloned().fold(0.0f32, f32::max);
+    played_share(kick, period, phase, strongest)
 }
 
-/// Whether the tempo is four thirds of the music's, decided by the bar's accent.
+/// Переставить сетку на ту ступень метрической лестницы, которую бочка объясняет лучше.
 ///
-/// The same accent period divides into four beats of the music and into three of the answer: the tempo comes
-/// out four thirds of the truth, and the onsets fit that answer as well as they fit the truth — a grid of
-/// three quarter-notes catches the same hits as a grid of four, only spread differently. What does not fit
-/// is the bar: counted in four the first beat carries the accent, counted in three the accents fall on
-/// different slots and average out.
+/// Считается только для сетки из одной доли: у сетки с участками своя жизнь, и трогать её этой
+/// правкой нельзя. Решение принимается с запасом: кандидат должен объясняться бочкой на четверть
+/// лучше текущей доли с учётом приора темпа, иначе сетка остаётся как была.
 ///
-/// So the reading is asked twice — as it stands and at three quarters of it — and the bar's accent decides.
-/// Measured on `Среди своих Stems - Music.wav`: ours 124,103 BPM with an accent ratio near 1, the owner's
-/// 93,078 with 3,0. The margin is a third: an accent that stands only a little above the rest does not
-/// move a grid.
-fn settle_four_the_third(tempo: &mut Tempo, envelope: &[f32], kick: &[f32], per_second: f64) {
+/// Почему бочка, а не огибающая: триольное арпеджио громче бочки и в полной огибающей даёт сильную
+/// периодичность в четыре третьих доли. Низкая полоса этого лишена — там только удар.
+fn settle_level(tempo: &mut Tempo, envelope: &[f32], kick: &[f32], rate: f64, per_second: f64) {
     if !tempo.is_single() {
         return;
     }
     let Some(segment) = tempo.segments.first().copied() else {
         return;
     };
-    let metre = usize::from(tempo.metre.clamp(2, 8));
+    if !(segment.bpm.is_finite() && segment.bpm > 0.0) {
+        return;
+    }
     let own_period = per_second * 60.0 / segment.bpm;
     let own_phase = ((segment.first_beat_frame as f64 - BLOCK as f64 / 2.0) / HOP as f64)
         .rem_euclid(own_period);
-    let own = bar_contrast(kick, own_period, own_phase, metre);
-    // Only when the bar we found has no accent to speak of: a bar that carries an accent is counted the way
-    // the music plays it, and looking further from there found accents that were not there — `One Love`
-    // went from 131 to 174,667 and `Endless Summer` from 130 to 173,334 on this rule.
-    if own >= 2.0 {
-        return;
-    }
-    let mut best = (own, segment.bpm, segment.first_beat_frame as f64);
-    // Downwards only: the mistake being corrected is a tempo measured four thirds too high, and offering
-    // the other direction as well let three tracks be counted at four thirds of themselves.
-    for multiple in [0.75f64] {
-        let candidate = segment.bpm * multiple;
+    // Уровень сравнивается по лучшей фазе, а не по текущей: если сетка стоит на оффбите, удар на её
+    // долях молчит, и любой кандидат, у которого фаза подобрана заново, «победил» бы только из-за
+    // этого. Фазой занимается `on_the_beat_side`, здесь вопрос только о ступени лестницы.
+    let (own_best_phase, _) = best_phase_and_score(kick, own_period);
+    let own_share = kick_share(kick, own_period, own_best_phase);
+    let mut best = (segment.bpm, own_share * level_prior(segment.bpm), own_phase);
+    let mut best_share = own_share;
+    for ratio in LEVEL_LADDER {
+        let candidate = segment.bpm * ratio;
+        if (candidate / segment.bpm - 1.0).abs() < 0.01 {
+            continue;
+        }
         if !(LEVEL_MIN_BPM..=LEVEL_MAX_BPM).contains(&candidate) {
             continue;
         }
         let period = per_second * 60.0 / candidate;
-        let (phase, _) = best_phase_and_score(envelope, period);
-        let contrast = bar_contrast(kick, period, phase, metre);
-        if contrast > best.0 {
-            best = (contrast, candidate, phase * HOP as f64 + BLOCK as f64 / 2.0);
+        let (phase, _) = best_phase_and_score(kick, period);
+        let share = kick_share(kick, period, phase);
+        let score = share * level_prior(candidate);
+        if score > best.1 {
+            best = (candidate, score, phase);
+            best_share = share;
         }
     }
-    // The reading has to *have* an accent, not merely a bigger number than a bar with none: on `One Love`
-    // the four-thirds reading scored 0,96 against our 0,15, and 0,96 is still a bar with no accent in it.
-    // What the accent is worth is read off the scale of the measure itself — a bar counted right puts the
-    // first beat well above the rest, and only a real accent (over two) is worth moving a grid for.
-    if best.1 == segment.bpm || best.0 < 2.0 || best.0 <= own * 1.3 {
+    // Ворота по доле бочки: приор может перевесить при равной доле, но не тогда, когда кандидат
+    // объясняет бочку заметно хуже. Без них сетка сползала с честных 174 BPM на 131 в драм-энд-бейсе,
+    // где бочка стоит через долю и любая тройная доля объясняет её хуже.
+    let share_gate = best_share >= own_share * 0.8;
+    if (best.0 / segment.bpm - 1.0).abs() < 0.005
+        || best.1 <= own_share * level_prior(segment.bpm) * 1.25
+        || !share_gate
+    {
         return;
     }
-    // The new reading gets the same treatment as any other: its period settled over the whole track, its
-    // side of the beat decided, its bar put on the accent.
+    let first = best.2 * HOP as f64 + BLOCK as f64 / 2.0;
+    if !(first.is_finite() && first >= 0.0) {
+        return;
+    }
     let mut moved = Tempo {
         segments: vec![TempoSegment {
-            bpm: best.1,
-            first_beat_frame: best.2.round().max(0.0) as u64,
+            bpm: best.0,
+            first_beat_frame: first.round() as u64,
             beat: 0,
         }],
         confidence: tempo.confidence,
         metre: tempo.metre,
     };
     snap_to_onsets(&mut moved, envelope, per_second);
-    on_the_beat_side(&mut moved, kick, per_second);
+    on_the_beat_side(&mut moved, kick, envelope, per_second);
     align_the_bar(&mut moved, kick, per_second);
+    on_the_bar(envelope, kick, rate, &mut moved);
     if let Some(segment) = moved.segments.first().copied()
-        && (segment.bpm / best.1 - 1.0).abs() < 0.01
+        && (segment.bpm / best.0 - 1.0).abs() < 0.01
     {
         *tempo = moved;
     }
 }
 
-/// Move the grid so that its first beat is the first beat of the bar.
-///
-/// A bar is a pattern of accents: the kick of the first beat is the loudest of the four, and that is what
-/// says where the bar starts. The question is asked of the kick band over the whole track — every beat is
-/// given the slot it holds in the bar, the slot with the loudest mean wins, and the grid is moved by whole
-/// beats onto it. Whole beats keep the lattice: the lines do not move, only which of them opens a bar.
-///
-/// Measured on the reference set: the loudest kick stands on the owner's first beat of the bar on all seven
-/// readable tracks, and before this the grid sat one beat late on five of them and three beats late on one.
 fn align_the_bar(tempo: &mut Tempo, kick: &[f32], per_second: f64) {
     if !tempo.is_single() {
         return;
@@ -2475,7 +2531,7 @@ fn align_the_bar(tempo: &mut Tempo, kick: &[f32], per_second: f64) {
 /// eighth: the comb cannot tell which of the two sides is the beat, and the full spectrum prefers the hats,
 /// which are broadband. The kick band does not: a track's beat is the kick, and the offbeat rarely has one.
 /// So the side is decided there, and a grid found on the wrong side is moved by half a period.
-fn on_the_beat_side(tempo: &mut Tempo, band: &[f32], per_second: f64) {
+fn on_the_beat_side(tempo: &mut Tempo, band: &[f32], envelope: &[f32], per_second: f64) {
     if !tempo.is_single() {
         return;
     }
@@ -2489,10 +2545,29 @@ fn on_the_beat_side(tempo: &mut Tempo, band: &[f32], per_second: f64) {
     let phase =
         ((segment.first_beat_frame as f64 - BLOCK as f64 / 2.0) / HOP as f64).rem_euclid(period);
     let (on, halfway) = beat_against_halfway(band, period, phase);
-    if !(on.is_finite() && halfway.is_finite()) || halfway <= on * 2.0 {
+    // Два к одному — порог, который не срабатывал там, где он нужен: на корпусе у треков, стоящих
+    // на оффбите, бочка давала 1,4…1,9 в пользу другой стороны, и сетка оставалась на оффбите.
+    // Сторону поэтому решает 1,35, а полная огибающая только проверяет, что сдвиг не теряет ударов:
+    // если на новой стороне их заметно меньше, это не оффбит, а другая музыка.
+    if !(on.is_finite() && halfway.is_finite()) || halfway <= on * 1.35 {
         return;
     }
-    let shifted = phase + period * 0.5;
+    let shifted = (phase + period * 0.5).rem_euclid(period);
+    let before = played_share(
+        envelope,
+        period,
+        phase,
+        envelope.iter().cloned().fold(0.0f32, f32::max),
+    );
+    let after = played_share(
+        envelope,
+        period,
+        shifted,
+        envelope.iter().cloned().fold(0.0f32, f32::max),
+    );
+    if after < before * 0.9 {
+        return;
+    }
     let first = shifted * HOP as f64 + BLOCK as f64 / 2.0;
     if !(first.is_finite() && first >= 0.0) {
         return;
