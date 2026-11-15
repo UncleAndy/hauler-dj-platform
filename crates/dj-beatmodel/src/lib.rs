@@ -5,6 +5,8 @@
 //! `ln(1 + 1000·x)`. Сверка с эталоном — `docs/qa/evidence/A15/raveform.md`, раздел про фронтенд:
 //! расхождение с torchaudio обязано быть в пределах float32, иначе активации разъедутся.
 
+pub mod dbn;
 pub mod mel;
 
+pub use dbn::{DbnConfig, decode_beats};
 pub use mel::{MelConfig, log_mel, mel_filterbank};
