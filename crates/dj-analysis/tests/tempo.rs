@@ -844,3 +844,72 @@ fn the_beat_is_not_mistaken_for_its_triplets() {
         assert!(error <= 20.0, "the grid is {error:.1} ms off the beat");
     }
 }
+
+/// Приор не меняет штатный путь: без него ответ обязан совпасть байт в байт.
+#[test]
+fn without_a_prior_the_answers_are_the_same() {
+    let samples = accented_click_track(128.0, 24.0, 4);
+    let plain = dj_analysis::tempo::detect(&samples, RATE).expect("a tempo");
+    let with_none = dj_analysis::tempo::detect_with_prior(&samples, RATE, None).expect("a tempo");
+    assert_eq!(plain, with_none);
+}
+
+/// Приор половины темпа уводит сетку на половину — и период, и шаг остаются ровными.
+#[test]
+fn a_prior_of_half_the_tempo_moves_the_grid_to_the_half() {
+    let samples = accented_click_track(128.0, 24.0, 4);
+    let plain = dj_analysis::tempo::detect(&samples, RATE).expect("a tempo");
+    let prior = dj_analysis::tempo::LevelPrior {
+        bpm: plain.bpm() / 2.0,
+        tolerance: 0.02,
+        anchor: None,
+    };
+    let forced =
+        dj_analysis::tempo::detect_with_prior(&samples, RATE, Some(&prior)).expect("a tempo");
+    let ratio = forced.bpm() / prior.bpm;
+    assert!(
+        (ratio - 1.0).abs() < 0.02,
+        "the grid stayed at {} BPM instead of {}",
+        forced.bpm(),
+        prior.bpm
+    );
+    assert!(forced.is_single(), "a click track has one tempo");
+}
+
+/// Приор, который не ложится ни на одну ступень, ставится как есть: уровень источника — измерение.
+#[test]
+fn a_prior_off_the_ladder_is_taken_as_it_is() {
+    let samples = accented_click_track(128.0, 24.0, 4);
+    // 100 при 128 — это 0,78: ближайшая ступень 4/5 даёт 102,4, то есть 2,4 % мимо порога 2 %.
+    let prior = dj_analysis::tempo::LevelPrior {
+        bpm: 100.0,
+        tolerance: 0.02,
+        anchor: None,
+    };
+    let forced =
+        dj_analysis::tempo::detect_with_prior(&samples, RATE, Some(&prior)).expect("a tempo");
+    let error = (forced.bpm() / 100.0 - 1.0).abs();
+    assert!(
+        error < 0.02,
+        "the grid stayed at {} BPM instead of 100",
+        forced.bpm()
+    );
+}
+
+/// Приор вне рабочего диапазона не трогает измеренную сетку.
+#[test]
+fn a_prior_out_of_range_is_ignored() {
+    let samples = accented_click_track(128.0, 24.0, 4);
+    let plain = dj_analysis::tempo::detect(&samples, RATE).expect("a tempo");
+    let prior = dj_analysis::tempo::LevelPrior {
+        bpm: 40.0,
+        tolerance: 0.02,
+        anchor: None,
+    };
+    let kept =
+        dj_analysis::tempo::detect_with_prior(&samples, RATE, Some(&prior)).expect("a tempo");
+    assert_eq!(
+        plain, kept,
+        "a prior outside the working range must not move the grid"
+    );
+}

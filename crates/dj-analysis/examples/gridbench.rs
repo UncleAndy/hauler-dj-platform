@@ -8,7 +8,7 @@
 use std::io::Write as _;
 use std::path::Path;
 
-use dj_analysis::tempo::{Tempo, detect};
+use dj_analysis::tempo::{LevelPrior, Tempo, detect_with_prior};
 use dj_codec::StreamDecoder;
 
 struct Reference {
@@ -197,6 +197,7 @@ fn main() {
     let mut only_clean = false;
     let mut ids: Option<Vec<String>> = None;
     let mut dump: Option<String> = None;
+    let mut prior_path: Option<String> = None;
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
@@ -216,6 +217,11 @@ fn main() {
                 }
             }
             "--only-clean" => only_clean = true,
+            "--level-prior" => {
+                if let Some(value) = arguments.next() {
+                    prior_path = Some(value);
+                }
+            }
             "--dump-beats" => {
                 if let Some(value) = arguments.next() {
                     dump = Some(value);
@@ -234,6 +240,23 @@ fn main() {
                 }
             }
             other => eprintln!("неизвестный ключ: {other}"),
+        }
+    }
+    let mut priors = std::collections::HashMap::new();
+    if let Some(path) = &prior_path {
+        match std::fs::read_to_string(path) {
+            Ok(text) => {
+                for line in text.lines() {
+                    let mut fields = line.split('\t');
+                    if let (Some(id), Some(bpm)) = (fields.next(), fields.next())
+                        && let Ok(bpm) = bpm.trim().parse::<f64>()
+                    {
+                        let anchor = fields.next().and_then(|v| v.trim().parse::<f64>().ok());
+                        priors.insert(id.trim().to_string(), (bpm, anchor));
+                    }
+                }
+            }
+            Err(error) => eprintln!("приоры {path}: {error}"),
         }
     }
     let rows = match load_corpus(Path::new(&corpus)) {
@@ -257,14 +280,14 @@ fn main() {
         if index % every != 0 || (only_clean && !row.clean) || done >= limit {
             continue;
         }
-        if let Some(wanted) = &ids {
-            let stem = Path::new(&row.path)
-                .file_stem()
-                .map(|name| name.to_string_lossy().to_string())
-                .unwrap_or_default();
-            if !wanted.contains(&stem) {
-                continue;
-            }
+        let stem = Path::new(&row.path)
+            .file_stem()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if let Some(wanted) = &ids
+            && !wanted.contains(&stem)
+        {
+            continue;
         }
         let started = std::time::Instant::now();
         let beats = reference_beats(row);
@@ -273,10 +296,15 @@ fn main() {
         } else {
             row.segments.first().map_or(row.bpm, |(_, bpm)| *bpm)
         };
+        let prior = priors.get(&stem).map(|(bpm, anchor)| LevelPrior {
+            bpm: *bpm,
+            tolerance: 0.02,
+            anchor: *anchor,
+        });
         let decoded = decode(Path::new(&row.path));
-        let our = decoded
-            .ok()
-            .and_then(|(mono, rate)| detect(&mono, rate).map(|tempo| (tempo, rate)));
+        let our = decoded.ok().and_then(|(mono, rate)| {
+            detect_with_prior(&mono, rate, prior.as_ref()).map(|tempo| (tempo, rate))
+        });
         let elapsed = started.elapsed().as_secs_f64() * 1000.0;
         seconds += elapsed / 1000.0;
         done += 1;
@@ -294,10 +322,6 @@ fn main() {
         *tally.entry(class).or_default() += 1;
         let grid = grid_of(&tempo, rate);
         if let Some(dir) = &dump {
-            let stem = Path::new(&row.path)
-                .file_stem()
-                .map(|name| name.to_string_lossy().to_string())
-                .unwrap_or_default();
             let mut body = String::new();
             for beat in our_beats(&tempo, rate, row.duration) {
                 body.push_str(&format!("{beat:.4}\n"));
