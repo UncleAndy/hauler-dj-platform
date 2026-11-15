@@ -1,0 +1,60 @@
+# Внешние модели удара: описание, не веса.
+#
+# В репозитории весов нет и не будет (ADR-0012): здесь только то, что нужно, чтобы скачать модель,
+# проверить её и показать пользователю лицензию. Артефакты лежат в релизе GitHub.
+#
+# Выбор варианта в приложении — по доступности: есть full — работает он; есть только small — он; нет
+# ни одного — классический детектор. Правило живёт в резолвере модели, а не в вызывающем коде.
+
+version = 1
+release_tag = "models-v1"
+
+[[model]]
+id = "beat_this"
+variant = "full"
+title = "Beat This! (full)"
+version = "1.0.0"
+format = "onnx"
+bytes = 83162656
+sha256 = "1e92d69463843b0cf553fd4e062b1e3e67c95731433ebe23c88350e28787b5bf"
+artifact = "https://github.com/UncleAndy/hauler-dj-platform/releases/download/models-v1/beat_this-final0.onnx"
+source = "https://github.com/CPJKU/beat_this"
+checkpoint_sha256 = "8c328b45f59d8dd3dff219253ff6a8d6482be57d0133a29140e2febbf8eb8331"
+license = "MIT"
+license_url = "https://github.com/CPJKU/beat_this/blob/main/LICENSE"
+attribution = "Beat This! — Francesco Foscarin, Jan Schlüter, Gerhard Widmer (CPJKU, ISMIR 2024)"
+quality_f1 = 0.956
+seconds_per_track = 5.9
+
+[[model]]
+id = "beat_this"
+variant = "small"
+title = "Beat This! (small)"
+version = "1.0.0"
+format = "onnx"
+bytes = 10555598
+sha256 = "46a1eedb9a1631ac04596ee6afc7cf5b2f915ce30118b0f7b7847ad6ad4fd0b1"
+artifact = "https://github.com/UncleAndy/hauler-dj-platform/releases/download/models-v1/beat_this-small0.onnx"
+source = "https://github.com/CPJKU/beat_this"
+checkpoint_sha256 = "6074be2c4d490c5f6101fcc374a1ec72ae93456e23bb6019783b849f5dc7d47b"
+license = "MIT"
+license_url = "https://github.com/CPJKU/beat_this/blob/main/LICENSE"
+attribution = "Beat This! — Francesco Foscarin, Jan Schlüter, Gerhard Widmer (CPJKU, ISMIR 2024)"
+quality_f1 = 0.948
+seconds_per_track = 3.5
+
+# Вход и выход у обоих вариантов одинаковые: мел-спектрограмма [1, frames, 128] на 22 050 Гц
+# (окно 1024, шаг 441, 128 мел-бин, 30…11 000 Гц, ln(1 + 1000·x)) и два логита — доля и сильная доля.
+# Пакет режет трек на куски по 1500 кадров (30 с) с перекрытием 6 кадров; границы отбрасываются.
+[io]
+input = "spectrogram"
+sample_rate = 22050
+n_fft = 1024
+hop = 441
+mel_bins = 128
+f_min = 30.0
+f_max = 11000.0
+log_multiplier = 1000.0
+outputs = ["beat", "downbeat"]
+frames_per_chunk = 1500
+border_frames = 6
