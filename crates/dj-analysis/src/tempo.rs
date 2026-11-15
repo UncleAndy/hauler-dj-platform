@@ -2400,6 +2400,7 @@ fn kick_share(kick: &[f32], period: f64, phase: f64) -> f64 {
 /// периодичность в четыре третьих доли. Низкая полоса этого лишена — там только удар.
 fn settle_level(tempo: &mut Tempo, envelope: &[f32], kick: &[f32], rate: f64, per_second: f64) {
     if !tempo.is_single() {
+        settle_level_in_parts(tempo, kick, per_second);
         return;
     }
     let Some(segment) = tempo.segments.first().copied() else {
@@ -2463,6 +2464,77 @@ fn settle_level(tempo: &mut Tempo, envelope: &[f32], kick: &[f32], rate: f64, pe
     on_the_bar(envelope, kick, rate, &mut moved);
     if let Some(segment) = moved.segments.first().copied()
         && (segment.bpm / best.0 - 1.0).abs() < 0.01
+    {
+        *tempo = moved;
+    }
+}
+
+/// Метрическая лестница для сетки с участками.
+///
+/// Ступень решается по каждому участку отдельно (своя доля, свой отрезок огибающей), и если участки
+/// сходятся на одном отношении, масштабируются все: трек уезжает на ступень целиком, а не по частям.
+/// Участки, где решать нечего (меньше восьми долей), голоса не имеют.
+fn settle_level_in_parts(tempo: &mut Tempo, accent: &[f32], per_second: f64) {
+    let frames = accent.len() as f64;
+    let mut votes: Vec<(f64, f64)> = Vec::new();
+    for (index, segment) in tempo.segments.iter().enumerate() {
+        if !(segment.bpm.is_finite() && segment.bpm > 0.0) {
+            continue;
+        }
+        let start = ((segment.first_beat_frame as f64 - BLOCK as f64 / 2.0) / HOP as f64)
+            .clamp(0.0, frames);
+        let end = tempo.segments.get(index + 1).map_or(frames, |next| {
+            ((next.first_beat_frame as f64 - BLOCK as f64 / 2.0) / HOP as f64).clamp(start, frames)
+        });
+        if end - start < 64.0 {
+            continue;
+        }
+        let slice = &accent[start as usize..end as usize];
+        let own_period = per_second * 60.0 / segment.bpm;
+        let (own_phase, _) = best_phase_and_score(slice, own_period);
+        let own_share = kick_share(slice, own_period, own_phase);
+        let mut best = (1.0, own_share);
+        for ratio in LEVEL_LADDER {
+            let candidate = segment.bpm * ratio;
+            if !(LEVEL_MIN_BPM..=LEVEL_MAX_BPM).contains(&candidate) {
+                continue;
+            }
+            let period = per_second * 60.0 / candidate;
+            let (phase, _) = best_phase_and_score(slice, period);
+            let share = kick_share(slice, period, phase);
+            if share > best.1 {
+                best = (ratio, share);
+            }
+        }
+        if best.1 > own_share * 1.15 {
+            votes.push((best.0, end - start));
+        }
+    }
+    if votes.is_empty() {
+        return;
+    }
+    votes.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    let total: f64 = votes.iter().map(|(_, weight)| *weight).sum();
+    let mut seen = 0.0;
+    let mut choice = votes[0].0;
+    for (ratio, weight) in &votes {
+        seen += *weight;
+        if seen >= total * 0.5 {
+            choice = *ratio;
+            break;
+        }
+    }
+    if (choice - 1.0).abs() < 0.01 {
+        return;
+    }
+    let mut moved = tempo.clone();
+    for segment in &mut moved.segments {
+        segment.bpm *= choice;
+    }
+    if moved
+        .segments
+        .iter()
+        .all(|segment| (MIN_BPM..=MAX_BPM).contains(&segment.bpm))
     {
         *tempo = moved;
     }
