@@ -198,6 +198,9 @@ fn main() {
     let mut ids: Option<Vec<String>> = None;
     let mut dump: Option<String> = None;
     let mut prior_path: Option<String> = None;
+    let mut beatmodel: Option<String> = None;
+    let mut ort_library: Option<String> = None;
+    let mut prior_dump: Option<String> = None;
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
@@ -217,6 +220,21 @@ fn main() {
                 }
             }
             "--only-clean" => only_clean = true,
+            "--beatmodel" => {
+                if let Some(value) = arguments.next() {
+                    beatmodel = Some(value);
+                }
+            }
+            "--dump-prior" => {
+                if let Some(value) = arguments.next() {
+                    prior_dump = Some(value);
+                }
+            }
+            "--ort" => {
+                if let Some(value) = arguments.next() {
+                    ort_library = Some(value);
+                }
+            }
             "--level-prior" => {
                 if let Some(value) = arguments.next() {
                     prior_path = Some(value);
@@ -259,6 +277,18 @@ fn main() {
             Err(error) => eprintln!("приоры {path}: {error}"),
         }
     }
+    let mut model = match (&beatmodel, &ort_library) {
+        (Some(model_path), Some(library)) => {
+            match dj_beatmodel::BeatModel::load(Path::new(library), Path::new(model_path)) {
+                Ok(model) => Some(model),
+                Err(error) => {
+                    eprintln!("модель {model_path}: {error}");
+                    return;
+                }
+            }
+        }
+        _ => None,
+    };
     let rows = match load_corpus(Path::new(&corpus)) {
         Ok(rows) => rows,
         Err(error) => {
@@ -296,15 +326,49 @@ fn main() {
         } else {
             row.segments.first().map_or(row.bpm, |(_, bpm)| *bpm)
         };
-        let prior = priors.get(&stem).map(|(bpm, anchor)| LevelPrior {
-            bpm: *bpm,
-            tolerance: 0.02,
-            anchor: *anchor,
-        });
+        let mut chosen: Option<(f64, Option<f64>)> = None;
         let decoded = decode(Path::new(&row.path));
         let our = decoded.ok().and_then(|(mono, rate)| {
+            let prior = match model.as_mut() {
+                Some(model) => match dj_beatmodel::prior(
+                    model,
+                    &mono,
+                    rate,
+                    &dj_beatmodel::DbnConfig::default(),
+                ) {
+                    Ok(Some(guess)) => Some(LevelPrior {
+                        bpm: guess.bpm,
+                        tolerance: 0.02,
+                        anchor: Some(guess.anchor),
+                    }),
+                    Ok(None) => None,
+                    Err(error) => {
+                        eprintln!("{stem}: {error}");
+                        None
+                    }
+                },
+                None => priors.get(&stem).map(|(bpm, anchor)| LevelPrior {
+                    bpm: *bpm,
+                    tolerance: 0.02,
+                    anchor: *anchor,
+                }),
+            };
+            if let Some(prior) = &prior {
+                chosen = Some((prior.bpm, prior.anchor));
+            }
             detect_with_prior(&mono, rate, prior.as_ref()).map(|tempo| (tempo, rate))
         });
+        if let (Some(path), Some((bpm, anchor))) = (&prior_dump, chosen) {
+            let line = format!(
+                "{stem}\t{bpm:.4}\t{}\n",
+                anchor.map_or("-".to_string(), |value| format!("{value:.4}"))
+            );
+            let _ = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .and_then(|mut file| file.write_all(line.as_bytes()));
+        }
         let elapsed = started.elapsed().as_secs_f64() * 1000.0;
         seconds += elapsed / 1000.0;
         done += 1;

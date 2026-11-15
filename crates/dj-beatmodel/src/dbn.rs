@@ -105,9 +105,16 @@ pub fn decode_beats(activation: &[f32], config: &DbnConfig) -> Vec<f64> {
         .collect();
 
     let frames = activation.len();
-    let mut score = vec![f32::NEG_INFINITY; space.size];
-    for start in &space.start {
-        score[*start] = log_beat[0];
+    // Первый кадр не обязан быть долей: путь может начаться посреди доли. Иначе декодер всегда
+    // отдаёт удар в нуле, и якорь, взятый по первой доле, ставит сетку на полдоли в сторону —
+    // на корпусе это стоило фазы 113 мс и F1 0,37.
+    let mut score = vec![0.0f32; space.size];
+    for (state, value) in score.iter_mut().enumerate() {
+        *value = if space.offset[state] == 0 {
+            log_beat[0]
+        } else {
+            log_off[0]
+        };
     }
     // обратные указатели: для каждой пары (кадр, состояние) — откуда пришли
     let mut back = vec![0u16; frames * space.size];

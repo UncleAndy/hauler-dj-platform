@@ -16,3 +16,5 @@ workspace = true
 
 [dev-dependencies]
 dj-audio-core = { path = "../dj-audio-core" }
+# Замер с внешней моделью: стенд `gridbench --beatmodel`. Нейросетевой путь в крейт анализа не входит.
+dj-beatmodel = { path = "../dj-beatmodel" }

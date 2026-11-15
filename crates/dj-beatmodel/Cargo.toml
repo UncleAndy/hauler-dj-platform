@@ -9,6 +9,9 @@ authors.workspace = true
 
 [dependencies]
 rustfft = "6"
+# Исполнение модели: ONNX Runtime грузится динамически, библиотека ищется рядом с приложением или
+# по ORT_DYLIB_PATH. Без модели и без библиотеки крейт не нужен вызывающему коду.
+ort = { version = "2.0.0-rc.15", default-features = false, features = ["load-dynamic", "std"] }
 
 [lints]
 workspace = true

@@ -7,6 +7,10 @@
 
 pub mod dbn;
 pub mod mel;
+pub mod model;
+pub mod resample;
 
 pub use dbn::{DbnConfig, decode_beats};
 pub use mel::{MelConfig, log_mel, mel_filterbank};
+pub use model::{BeatModel, ModelError, Prior, prior, prior_from_beats};
+pub use resample::resample;
