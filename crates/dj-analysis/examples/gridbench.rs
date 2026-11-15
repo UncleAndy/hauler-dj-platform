@@ -142,6 +142,28 @@ fn nearest_beat(segments: &[(f64, f64)], t: f64) -> Option<f64> {
     Some(start + ((t - start) / period).round() * period)
 }
 
+fn our_beats(tempo: &Tempo, rate: f64, duration: f64) -> Vec<f64> {
+    let segments = grid_of(tempo, rate);
+    let mut beats = Vec::new();
+    for (index, (start, bpm)) in segments.iter().enumerate() {
+        let stop = segments
+            .get(index + 1)
+            .map_or(duration + 5.0, |(next, _)| *next);
+        if *bpm <= 0.0 {
+            continue;
+        }
+        let period = 60.0 / *bpm;
+        let mut beat = *start;
+        while beat < stop {
+            if beat >= 0.0 {
+                beats.push(beat);
+            }
+            beat += period;
+        }
+    }
+    beats
+}
+
 fn reference_beats(reference: &Reference) -> Vec<f64> {
     let segments = if reference.clean || reference.segments.is_empty() {
         vec![(reference.first, reference.bpm)]
@@ -174,6 +196,7 @@ fn main() {
     let mut limit = usize::MAX;
     let mut only_clean = false;
     let mut ids: Option<Vec<String>> = None;
+    let mut dump: Option<String> = None;
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
@@ -193,6 +216,11 @@ fn main() {
                 }
             }
             "--only-clean" => only_clean = true,
+            "--dump-beats" => {
+                if let Some(value) = arguments.next() {
+                    dump = Some(value);
+                }
+            }
             "--ids" => {
                 if let Some(value) = arguments.next() {
                     ids = Some(
@@ -265,6 +293,17 @@ fn main() {
         let class = level_class(tempo.bpm(), reference_bpm);
         *tally.entry(class).or_default() += 1;
         let grid = grid_of(&tempo, rate);
+        if let Some(dir) = &dump {
+            let stem = Path::new(&row.path)
+                .file_stem()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let mut body = String::new();
+            for beat in our_beats(&tempo, rate, row.duration) {
+                body.push_str(&format!("{beat:.4}\n"));
+            }
+            let _ = std::fs::write(Path::new(dir).join(format!("{stem}.txt")), body);
+        }
         let mut distances = Vec::with_capacity(beats.len());
         let mut times = Vec::with_capacity(beats.len());
         for beat in &beats {
