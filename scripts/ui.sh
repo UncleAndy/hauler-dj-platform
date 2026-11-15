@@ -12,6 +12,11 @@ if [ -z "${DJ_PLATFORM_DEVSHELL:-}" ]; then
   exec nix develop --command bash "$0" "$@"
 fi
 
+# Проверки не должны зависеть от того, установлена ли у владельца внешняя модель: с ней замер идёт
+# девять секунд вместо двух и отвечает нейросеть, а не наш детектор. Путь модели проверяют отдельно
+# (`--tempo-check` с DJ_BEATMODEL=on и ORT_DYLIB_PATH).
+export DJ_BEATMODEL="${DJ_BEATMODEL:-off}"
+
 # Build outside the tree by default: a cache created from another checkout path makes CMake refuse
 # to proceed ("the source ... does not match the source ... used to generate cache"), and a
 # repository-local build/ then belongs to whoever ran the build first.

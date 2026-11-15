@@ -831,8 +831,8 @@ fn run(argv: &[String]) -> Result<(), String> {
                     analyzing: true,
                 });
                 let path = std::path::PathBuf::from(&request.path);
-                match dj_analysis::tempo::analyse(&path) {
-                    Ok(Some(found)) => {
+                match dj_engine::beatmodel::analyse(&path) {
+                    Some(found) => {
                         // An explicit request outranks what the file remembers: that is the whole
                         // point of the button — the stored grid was wrong.
                         let segments: Vec<dj_domain::BeatSegment> = found
@@ -871,11 +871,10 @@ fn run(argv: &[String]) -> Result<(), String> {
                             grid: Box::new(grid),
                         });
                     }
-                    Ok(None) => eprintln!(
+                    None => eprintln!(
                         "dj-engine: no tempo found in {} — the grid is unchanged",
                         request.path
                     ),
-                    Err(message) => eprintln!("dj-engine: {message}"),
                 }
                 // The answer is published at once, the badge lingers: a state that lasts a couple of
                 // frames is not information, it is a flicker. The measurement is over either way.

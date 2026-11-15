@@ -18,6 +18,8 @@ dj-config = { path = "../../crates/dj-config" }
 dj-deck = { path = "../../crates/dj-deck" }
 dj-domain = { path = "../../crates/dj-domain" }
 dj-library = { path = "../../crates/dj-library" }
+dj-models = { path = "../../crates/dj-models" }
+dj-beatmodel = { path = "../../crates/dj-beatmodel" }
 dj-mixer = { path = "../../crates/dj-mixer" }
 serde_json.workspace = true
 signal-hook.workspace = true

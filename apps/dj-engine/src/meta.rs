@@ -292,7 +292,7 @@ pub fn analyze_file(store: &Store, volume: &str, root: &Path, path: &Path, force
     let needs_grid = force || known.as_ref().is_none_or(|meta| meta.beatgrid.is_none());
     let needs_key = force || known.as_ref().is_none_or(|meta| meta.key.is_none());
     let mut measured = false;
-    if needs_grid && let Ok(Some(found)) = dj_analysis::tempo::analyse(path) {
+    if needs_grid && let Some(found) = crate::beatmodel::analyse(path) {
         let segments: Vec<BeatSegment> = found
             .segments
             .iter()

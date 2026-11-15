@@ -21,6 +21,7 @@ use dj_domain::{
 use dj_mixer::{ChannelSettings, CrossAssign, CrossfaderCurve, Mixer};
 use dj_sync::{DeckClock, Phase, PitchLimits, RateTrim, Reading, SyncMode, plan as plan_sync};
 
+pub mod beatmodel;
 pub mod history;
 pub mod meta;
 pub mod metronome;
@@ -2136,7 +2137,7 @@ pub fn prepare_track_with_key(
     // audio callback never sees it. A file whose tempo cannot be measured plays without a grid.
     // The measurement is expressed in the file's own frames — the decoder reads at the file's rate and
     // so does the deck, so a 44.1 kHz track keeps its grid in 44.1 kHz frames whatever the device runs at.
-    let measured_tempo = dj_analysis::tempo::analyse(path).ok().flatten();
+    let measured_tempo = crate::beatmodel::analyse(path);
     let measured_grid = measured_tempo.and_then(|found| {
         let segments: Vec<BeatSegment> = found
             .segments

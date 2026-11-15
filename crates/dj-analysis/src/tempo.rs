@@ -2862,6 +2862,27 @@ fn settle_tempo(envelope: &[f32], per_second: f64, bpm: f64, first: f64) -> Opti
 }
 
 /// Read the head of a file as mono and measure its tempo.
+/// Декодировать файл в моно: один проход, тот же поток, что у замера.
+///
+/// Нужен вызывающему, который считает что-то ещё по тому же сигналу (внешняя модель удара):
+/// второй декод того же файла — это секунды на каждом треке.
+pub fn decode_mono(path: &std::path::Path) -> Result<(Vec<f32>, f64), MediaError> {
+    let mut decoder = StreamDecoder::open(path)?;
+    let rate = decoder.sample_rate();
+    let mut buffer = vec![0.0f32; 4096 * 2];
+    let mut mono = Vec::with_capacity(1 << 20);
+    loop {
+        let read = decoder.read_frames(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        for frame in 0..read {
+            mono.push((buffer[frame * 2] + buffer[frame * 2 + 1]) * 0.5);
+        }
+    }
+    Ok((mono, f64::from(rate)))
+}
+
 pub fn analyse(path: &std::path::Path) -> Result<Option<Tempo>, MediaError> {
     let mut decoder = StreamDecoder::open(path)?;
     let rate = decoder.sample_rate();
