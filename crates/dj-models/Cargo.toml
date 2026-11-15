@@ -1,0 +1,19 @@
+[package]
+name = "dj-models"
+description = "External beat models: manifest, store, checksum, download. No weights in the repository."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde.workspace = true
+toml.workspace = true
+# SHA-256 of the artifact is the only thing that separates "downloaded" from "the right bytes".
+sha2 = "0.10"
+# One blocking GET per model, on request, never in the default path: a small client is enough.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+
+[lints]
+workspace = true
