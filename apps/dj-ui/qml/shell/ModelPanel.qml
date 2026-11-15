@@ -14,6 +14,10 @@ Dialog {
     title: qsTr("Beat model")
     modal: true
     width: 560
+    // По центру ОКНА, а не полосы: плашка объявлена внутри верхней полосы, и без этого диалог
+    // встаёт по её центру — то есть у самого верха экрана.
+    parent: Overlay.overlay
+    anchors.centerIn: Overlay.overlay
     standardButtons: Dialog.Close
 
     /// What the engine last published about the model; empty until one is installed.

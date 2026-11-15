@@ -218,6 +218,8 @@ public:
 
     // ---- facts from the widgets --------------------------------------------------------------
     QQuickItem *item(const QString &name) const { return findItem(m_window.contentItem(), name); }
+    /// The window's content item: the frame a centred dialog is measured against.
+    QQuickItem *windowItem() const { return m_window.contentItem(); }
 
     double property(const QString &name, const char *key) const
     {
@@ -1492,6 +1494,27 @@ int runScenarios(BridgeClient &bridge, QQuickWindow &window, const QString &deck
                              2000);
                          if (!opened) {
                              why = QStringLiteral("the button opened no panel");
+                             return false;
+                         }
+                         // По центру окна, а не полосы: диалог объявлен внутри верхней плашки, и
+                         // без явного якоря он встаёт у верхнего края.
+                         QQuickItem *body = run.item(QStringLiteral("modelPanelBody"));
+                         QQuickItem *window = run.windowItem();
+                         if (body == nullptr || window == nullptr) {
+                             why = QStringLiteral("the panel body or the window is missing");
+                             return false;
+                         }
+                         const QPointF centre =
+                             body->mapToItem(window, QPointF(body->width() / 2.0, body->height() / 2.0));
+                         const QPointF middle(window->width() / 2.0, window->height() / 2.0);
+                         if (std::abs(centre.x() - middle.x()) > 30.0
+                             || std::abs(centre.y() - middle.y()) > 30.0) {
+                             why = QStringLiteral("the panel sits at %1,%2 instead of the window's centre "
+                                                  "%3,%4")
+                                       .arg(centre.x(), 0, 'f', 0)
+                                       .arg(centre.y(), 0, 'f', 0)
+                                       .arg(middle.x(), 0, 'f', 0)
+                                       .arg(middle.y(), 0, 'f', 0);
                              return false;
                          }
                          QQuickItem *licence = run.item(QStringLiteral("modelLicence"));
