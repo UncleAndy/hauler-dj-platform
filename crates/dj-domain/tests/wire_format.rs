@@ -425,3 +425,30 @@ fn an_installed_model_status_carries_its_licence() {
     assert!(text.contains("\"license\":\"MIT\""), "{text}");
     assert!(!text.contains("busy"), "rest is not written: {text}");
 }
+
+#[test]
+fn the_shells_model_command_reads_as_the_protocol_spells_it() {
+    // The shape the shell builds by hand in `BridgeClient::downloadModel` / `removeModel`.
+    let download: DjCommand =
+        serde_json::from_str(r#"{"Model":{"op":{"Download":{"variant":"small"}}}}"#)
+            .unwrap_or_else(|error| panic!("download: {error}"));
+    assert_eq!(
+        download,
+        DjCommand::Model {
+            op: dj_domain::ModelOp::Download {
+                variant: "small".to_string()
+            }
+        }
+    );
+    let remove: DjCommand =
+        serde_json::from_str(r#"{"Model":{"op":{"Delete":{"variant":"full"}}}}"#)
+            .unwrap_or_else(|error| panic!("delete: {error}"));
+    assert_eq!(
+        remove,
+        DjCommand::Model {
+            op: dj_domain::ModelOp::Delete {
+                variant: "full".to_string()
+            }
+        }
+    );
+}
