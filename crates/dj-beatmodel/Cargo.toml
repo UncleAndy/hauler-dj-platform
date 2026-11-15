@@ -1,0 +1,14 @@
+[package]
+name = "dj-beatmodel"
+description = "Front-end of the external beat model: log-mel spectrogram, then the ONNX session."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+rustfft = "6"
+
+[lints]
+workspace = true
