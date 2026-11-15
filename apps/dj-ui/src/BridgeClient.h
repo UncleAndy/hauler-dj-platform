@@ -357,6 +357,13 @@ public:
     /// Read the collection again from the files: tags and metadata, then the genre counts. The engine
     /// walks the disks; the browser only asks.
     Q_INVOKABLE int rescan(const QStringList &roots);
+    /// Download an external beat model into the user's store (ADR-0012).
+    ///
+    /// The shell shows the licence and the attribution before it sends this; the engine downloads and
+    /// verifies the file, and publishes what it installed in the snapshot's `model`.
+    Q_INVOKABLE int downloadModel(const QString &variant);
+    /// Delete an installed beat model: analysis falls back to the built-in detector.
+    Q_INVOKABLE int removeModel(const QString &variant);
     /// Send a command that carries nothing: on the wire it is a bare name, not `{"Name": {}}`.
     ///
     /// The protocol's unit commands are serialized as strings, and a client that wraps one in an object

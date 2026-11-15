@@ -33,6 +33,7 @@ qt_add_qml_module(dj-ui
         qml/Main.qml
         qml/shell/ShellLayout.qml
         qml/shell/GlobalBar.qml
+        qml/shell/ModelPanel.qml
         qml/browser/BrowserPanel.qml
         qml/decks/DeckPanel.qml
         qml/decks/ToggleButton.qml

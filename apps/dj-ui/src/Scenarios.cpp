@@ -1448,6 +1448,47 @@ int runScenarios(BridgeClient &bridge, QQuickWindow &window, const QString &deck
                          return true;
                      }});
 
+    // ---- the optional beat model (ADR-0012) ---------------------------------------------------
+    // The model never ships with the app: the panel has to say what it is licensed under before any
+    // button can download it, and it has to open from the strip the DJ actually sees.
+    cases.push_back({"the model panel opens and names the licence before anything is downloaded",
+                     [](Runner &run, Reason &why) {
+                         if (!run.click(QStringLiteral("modelButton"))) {
+                             why = QStringLiteral("there is no model button in the top strip");
+                             return false;
+                         }
+                         // The dialog is a Popup, not an item: the tree only carries its body.
+                         const bool opened = waitFor(
+                             [&] {
+                                 QQuickItem *body = run.item(QStringLiteral("modelPanelBody"));
+                                 return body != nullptr && body->isVisible();
+                             },
+                             2000);
+                         if (!opened) {
+                             why = QStringLiteral("the button opened no panel");
+                             return false;
+                         }
+                         QQuickItem *licence = run.item(QStringLiteral("modelLicence"));
+                         if (licence == nullptr) {
+                             why = QStringLiteral("the panel shows no licence text");
+                             return false;
+                         }
+                         const QString text = licence->property("text").toString();
+                         if (!text.contains(QStringLiteral("MIT License"))
+                             || !text.contains(QStringLiteral("CPJKU"))) {
+                             why = QStringLiteral("the licence area does not name MIT and the authors");
+                             return false;
+                         }
+                         // The download button must not look ready before the licence is on screen:
+                         // the panel is the only place the terms are shown.
+                         QQuickItem *download = run.item(QStringLiteral("modelDownloadSmall"));
+                         if (download == nullptr) {
+                             why = QStringLiteral("there is no download button");
+                             return false;
+                         }
+                         return true;
+                     }});
+
     int failed = 0;
     for (const Case &entry : cases) {
         runner.reset();

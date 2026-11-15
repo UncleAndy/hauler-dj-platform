@@ -25,6 +25,15 @@ Pane {
             font.pixelSize: 10
         }
         Item { Layout.fillWidth: true }
+        Button {
+            objectName: "modelButton"
+            text: Bridge.snapshot.model !== undefined && Bridge.snapshot.model.variant !== undefined
+                  ? qsTr("Model: %1").arg(Bridge.snapshot.model.variant)
+                  : qsTr("Model: built-in")
+            font.pixelSize: 10
+            padding: 4
+            onClicked: modelPanel.open()
+        }
         Label {
             text: Bridge.status
             color: Bridge.connected ? UiSettings.themeText : UiSettings.themeDanger
@@ -37,5 +46,9 @@ Pane {
             color: UiSettings.themeTextDim
             font.pixelSize: 10
         }
+    }
+
+    ModelPanel {
+        id: modelPanel
     }
 }

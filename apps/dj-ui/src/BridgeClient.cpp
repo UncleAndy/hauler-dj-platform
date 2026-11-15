@@ -1826,6 +1826,32 @@ int BridgeClient::rescan(const QStringList &roots)
     return id;
 }
 
+int BridgeClient::downloadModel(const QString &variant)
+{
+    QJsonObject options;
+    options.insert(QStringLiteral("variant"), variant);
+    QJsonObject op;
+    op.insert(QStringLiteral("Download"), options);
+    QJsonObject command;
+    command.insert(QStringLiteral("Model"), QJsonObject{{QStringLiteral("op"), op}});
+    const int id = sendCommand(QString(), command);
+    setStatus(tr("downloading the %1 model").arg(variant));
+    return id;
+}
+
+int BridgeClient::removeModel(const QString &variant)
+{
+    QJsonObject options;
+    options.insert(QStringLiteral("variant"), variant);
+    QJsonObject op;
+    op.insert(QStringLiteral("Delete"), options);
+    QJsonObject command;
+    command.insert(QStringLiteral("Model"), QJsonObject{{QStringLiteral("op"), op}});
+    const int id = sendCommand(QString(), command);
+    setStatus(tr("removing the %1 model").arg(variant));
+    return id;
+}
+
 void FileBrowser::rescanCollection()
 {
     if (m_bridge == nullptr) {
