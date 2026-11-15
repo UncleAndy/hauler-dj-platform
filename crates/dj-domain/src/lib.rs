@@ -454,6 +454,14 @@ pub enum DjCommand {
     },
     /// Stop a running analysis between files: the file in hand is finished.
     AnalyzeCancel,
+    /// Внешняя модель удара: скачать или удалить (ADR-0012).
+    ///
+    /// Экран показывает лицензию и атрибуцию до того, как отправит это, и решает сам: приложение
+    /// работает и без модели, только уровнем темпа хуже.
+    Model {
+        /// Что сделать.
+        op: ModelOp,
+    },
     /// Answer the duplicate question the engine is waiting on.
     ImportAnswer {
         /// What to do with the file in question.
@@ -724,6 +732,7 @@ impl DjCommand {
             | DjCommand::AnalyzeTracks { .. }
             | DjCommand::AnalyzeCancel
             | DjCommand::ImportAnswer { .. }
+            | DjCommand::Model { .. }
             | DjCommand::QueryCollection { .. }
             | DjCommand::QueryPlaylist { .. }
             | DjCommand::Playlists { .. }
@@ -853,6 +862,21 @@ pub enum CommandOrigin {
     Controller,
     /// The engine itself (scheduler, session restore).
     Internal,
+}
+
+/// Что сделать с внешней моделью удара.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ModelOp {
+    /// Скачать величину (`full` или `small`) в хранилище пользователя.
+    Download {
+        /// Величина из манифеста.
+        variant: String,
+    },
+    /// Удалить установленную величину.
+    Delete {
+        /// Величина из манифеста.
+        variant: String,
+    },
 }
 
 /// Outcome of a command, reported back to the issuer.
@@ -1579,6 +1603,33 @@ pub struct PlayRow {
     pub seconds: f64,
 }
 
+/// Состояние внешней модели удара (ADR-0012): что установлено и не идёт ли работа.
+///
+/// В снапшот попадает только то, что нужно экрану: величину, лицензию, признак работы и последнюю
+/// ошибку. Манифест с размерами и хэшами знает клиент, а веса — хранилище пользователя.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ModelStatus {
+    /// Установленная величина: `full`, `small` или пусто.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub variant: String,
+    /// Лицензия установленной модели, SPDX.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub license: String,
+    /// Скачивание или удаление идёт прямо сейчас.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub busy: bool,
+    /// Последняя ошибка загрузки или удаления, если была.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub error: String,
+}
+
+impl ModelStatus {
+    /// Ничего не установлено и ничего не происходит: тогда поля нет и в проводе.
+    pub fn is_empty(&self) -> bool {
+        self.variant.is_empty() && !self.busy && self.error.is_empty()
+    }
+}
+
 /// Read-only state published to the UI and controllers (DJP-ARCH-004).
 ///
 /// `revision` grows monotonically and `epoch` changes when the engine restarts, so a
@@ -1609,6 +1660,12 @@ pub struct Snapshot {
     /// from here, because the settings file is the engine's to read (it owns `dj-config`).
     #[serde(default, skip_serializing_if = "is_zero_frame_hz")]
     pub frame_hz: u32,
+    /// Внешняя модель удара: что установлено (ADR-0012).
+    ///
+    /// Defaulted and skipped when nothing is installed, so the wire stays byte-identical on a build
+    /// without the model, and an older client reads a snapshot it knows.
+    #[serde(default, skip_serializing_if = "ModelStatus::is_empty")]
+    pub model: ModelStatus,
     /// Crossfader position at the moment of publication.
     pub crossfader: f32,
     /// Crossfader law in force at the moment of publication.

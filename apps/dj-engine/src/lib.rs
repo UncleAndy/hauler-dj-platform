@@ -384,6 +384,7 @@ pub fn snapshot(
     let mut published_decks: Vec<DeckSnapshot> = decks.iter().map(Deck::snapshot).collect();
     fill_phase_errors(&mut published_decks, beats_per_bar(decks));
     Snapshot {
+        model: Default::default(),
         playlists: None,
         playlist_page: None,
         plays: Vec::new(),
@@ -969,6 +970,8 @@ pub struct StateCells {
     /// The worker writes here and the publisher reads; neither is the audio callback, and a batch of
     /// files never blocks the mix.
     import: std::sync::Mutex<Option<dj_domain::ImportState>>,
+    /// Что известно про внешнюю модель удара: величину, лицензию, работу, ошибку.
+    model: std::sync::Mutex<dj_domain::ModelStatus>,
     /// The analysis the DJ started from the collection: progress of the batch.
     analysis: std::sync::Mutex<Option<dj_domain::AnalyzeState>>,
     /// The last collection page the browser asked for: the engine writes it, the panel reads it.
@@ -1159,6 +1162,20 @@ impl StateCells {
             .clone()
     }
 
+    /// Что известно про внешнюю модель удара, для снапшота.
+    pub fn set_model(&self, status: dj_domain::ModelStatus) {
+        let mut guard = self.model.lock().unwrap_or_else(|error| error.into_inner());
+        *guard = status;
+    }
+
+    /// Что известно про внешнюю модель удара, для читателя.
+    pub fn model(&self) -> dj_domain::ModelStatus {
+        self.model
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+
     /// What the analysis worker published, for the snapshot.
     pub fn set_analysis(&self, state: Option<dj_domain::AnalyzeState>) {
         let mut guard = self
@@ -1195,6 +1212,7 @@ impl StateCells {
             loop_mode: std::sync::Mutex::new(Vec::new()),
             active_loops: std::sync::Mutex::new(Vec::new()),
             import: std::sync::Mutex::new(None),
+            model: std::sync::Mutex::new(dj_domain::ModelStatus::default()),
             analysis: std::sync::Mutex::new(None),
             collection: std::sync::Mutex::new(None),
             playlists: std::sync::Mutex::new(None),
@@ -1519,6 +1537,7 @@ impl StateCells {
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
                 .clone(),
+            model: self.model(),
             protocol: dj_domain::STATE_PROTOCOL.to_string(),
             cache_budget_bytes: self.cache_budget.load(Ordering::Relaxed),
             revision,
@@ -1803,6 +1822,13 @@ pub enum Routed {
         /// Target deck.
         deck: DeckId,
     },
+    /// Скачивание или удаление внешней модели: сеть и диск, никогда не аудио-поток.
+    Model {
+        /// Команда, которую надо подтвердить.
+        command_id: u64,
+        /// Что сделать.
+        op: dj_domain::ModelOp,
+    },
     /// Handed to the worker that measures tempo: a full decode, so never the callback.
     Analyze {
         /// Target deck.
@@ -1976,6 +2002,10 @@ pub fn route(command: &ScheduledCommand) -> Routed {
         DjCommand::ImportAnswer { answer } => Routed::ImportAnswer {
             command_id: command.id,
             answer: *answer,
+        },
+        DjCommand::Model { op } => Routed::Model {
+            command_id: command.id,
+            op: op.clone(),
         },
         DjCommand::AnalyzeTrack { path } => Routed::AnalyzeFile { path: path.clone() },
         DjCommand::AnalyzeTracks { paths, parallel } => Routed::AnalyzeFiles {

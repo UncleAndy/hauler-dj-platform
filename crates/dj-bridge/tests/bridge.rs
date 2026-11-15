@@ -31,6 +31,7 @@ fn play_command(id: u64) -> ScheduledCommand {
 
 fn empty_snapshot(revision: u64) -> Snapshot {
     Snapshot {
+        model: Default::default(),
         plays: Vec::new(),
         recent_window_ms: 0,
         frame_hz: 0,
@@ -266,6 +267,7 @@ fn a_split_connection_writes_while_its_reader_is_blocked() {
 
     // Meanwhile the writer must still be able to answer.
     let snapshot = ServerMessage::Snapshot(Box::new(dj_domain::Snapshot {
+        model: Default::default(),
         import: None,
         analysis: None,
         collection: None,

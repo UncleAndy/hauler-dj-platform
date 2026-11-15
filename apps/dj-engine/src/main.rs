@@ -1860,6 +1860,40 @@ fn serve_client(
                         }
                         continue;
                     }
+                    dj_engine::Routed::Model { command_id, op } => {
+                        // Модель — это сеть и диск, не аудио: команда принимается сразу, работа идёт
+                        // на своём потоке, а состояние едет в снапшоте.
+                        let mut status = dj_engine::beatmodel::installed_status();
+                        status.busy = true;
+                        status.error.clear();
+                        cells.set_model(status);
+                        if alerts
+                            .send(ServerMessage::Ack(dj_domain::Ack::accepted(command_id)))
+                            .is_err()
+                        {
+                            return;
+                        }
+                        let worker_cells = Arc::clone(&cells);
+                        std::thread::spawn(move || {
+                            let outcome = match &op {
+                                dj_domain::ModelOp::Download { variant } => {
+                                    dj_engine::beatmodel::download(variant)
+                                }
+                                dj_domain::ModelOp::Delete { variant } => {
+                                    dj_engine::beatmodel::remove(variant)
+                                }
+                            };
+                            match outcome {
+                                Ok(status) => worker_cells.set_model(status),
+                                Err(error) => {
+                                    let mut status = dj_engine::beatmodel::installed_status();
+                                    status.error = error;
+                                    worker_cells.set_model(status);
+                                }
+                            }
+                        });
+                        continue;
+                    }
                     dj_engine::Routed::Rescan { command_id, roots } => {
                         // The walk belongs to the engine: the browser must not touch the disks for a list.
                         // Every file is asked for what it knows — a record with a grid and a key is left

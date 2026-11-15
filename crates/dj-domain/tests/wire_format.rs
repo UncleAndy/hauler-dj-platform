@@ -7,8 +7,8 @@
 
 use dj_domain::{
     Ack, CommandId, CrossfaderCurve, DeckId, DeckLoad, DeckSnapshot, DjCommand, EqBand, EqGains,
-    FrameRange, Levels, RejectReason, STATE_PROTOCOL, ScheduledCommand, Snapshot, SourceFrame,
-    TrackMeta,
+    FrameRange, Levels, ModelStatus, RejectReason, STATE_PROTOCOL, ScheduledCommand, Snapshot,
+    SourceFrame, TrackMeta,
 };
 
 fn play() -> DjCommand {
@@ -149,6 +149,7 @@ fn acks_report_applied_sample_and_rejection_reason() {
 #[test]
 fn a_snapshot_is_self_describing_enough_to_be_refused() {
     let snapshot = Snapshot {
+        model: Default::default(),
         playlists: None,
         playlist_page: None,
         import: None,
@@ -402,4 +403,25 @@ fn a_unit_command_is_a_bare_name() {
         serde_json::from_value::<dj_domain::DjCommand>(serde_json::json!({ "ImportCancel": {} }))
             .is_err()
     );
+}
+
+#[test]
+fn an_empty_model_status_stays_off_the_wire() {
+    let text =
+        serde_json::to_string(&ModelStatus::default()).unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(text, "{}", "an empty model says nothing");
+}
+
+#[test]
+fn an_installed_model_status_carries_its_licence() {
+    let status = ModelStatus {
+        variant: "small".to_string(),
+        license: "MIT".to_string(),
+        busy: false,
+        error: String::new(),
+    };
+    let text = serde_json::to_string(&status).unwrap_or_else(|error| panic!("{error}"));
+    assert!(text.contains("\"variant\":\"small\""), "{text}");
+    assert!(text.contains("\"license\":\"MIT\""), "{text}");
+    assert!(!text.contains("busy"), "rest is not written: {text}");
 }

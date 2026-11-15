@@ -6,7 +6,7 @@
 //! работает классический детектор, и это не ошибка, а штатный путь.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 
 use dj_analysis::tempo::{LevelPrior, Tempo};
 use dj_beatmodel::{BeatModel, DbnConfig, prior};
@@ -60,34 +60,94 @@ fn library() -> Option<PathBuf> {
     None
 }
 
-/// Модель на процесс: загрузка стоит треть секунды, а треков за сеанс много.
-fn model() -> Option<&'static Mutex<BeatModel>> {
-    static MODEL: OnceLock<Option<Mutex<BeatModel>>> = OnceLock::new();
-    MODEL
-        .get_or_init(|| {
-            let installed = installed()?;
-            let library = library()?;
+/// Состояние загрузки модели на процесс: загрузка стоит треть секунды, а треков за сеанс много.
+///
+/// `tried` не даёт загружать заново на каждом треке, если модель не загрузилась. После скачивания
+/// или удаления состояние сбрасывается: следующая сетка перечитает хранилище.
+#[derive(Default)]
+struct Session {
+    model: Option<BeatModel>,
+    tried: bool,
+}
+
+static SESSION: Mutex<Session> = Mutex::new(Session {
+    model: None,
+    tried: false,
+});
+
+/// Забыть загруженную сессию: после скачивания или удаления модель другая.
+fn invalidate() {
+    let mut session = SESSION.lock().unwrap_or_else(|error| error.into_inner());
+    session.model = None;
+    session.tried = false;
+}
+
+/// Дать модели посчитать: загружает при первом обращении, `None` — модели нет или она не встала.
+fn with_model<T>(work: impl FnOnce(&mut BeatModel) -> T) -> Option<T> {
+    let mut session = SESSION.lock().unwrap_or_else(|error| error.into_inner());
+    if !session.tried {
+        session.tried = true;
+        if let (Some(installed), Some(library)) = (installed(), library()) {
             match BeatModel::load(&library, &installed.path) {
                 Ok(model) => {
                     eprintln!(
                         "dj-engine: модель удара {} ({})",
                         installed.entry.variant, installed.entry.license
                     );
-                    Some(Mutex::new(model))
+                    session.model = Some(model);
                 }
-                Err(error) => {
-                    eprintln!("dj-engine: {error}; работаем своим детектором");
-                    None
-                }
+                Err(error) => eprintln!("dj-engine: {error}; работаем своим детектором"),
             }
-        })
-        .as_ref()
+        }
+    }
+    session.model.as_mut().map(work)
+}
+
+/// Что известно про модель прямо сейчас: для снапшота.
+pub fn installed_status() -> dj_domain::ModelStatus {
+    match installed() {
+        Some(installed) => dj_domain::ModelStatus {
+            variant: installed.entry.variant,
+            license: installed.entry.license,
+            busy: false,
+            error: String::new(),
+        },
+        None => dj_domain::ModelStatus::default(),
+    }
+}
+
+/// Скачать величину в хранилище пользователя.
+pub fn download(variant: &str) -> Result<dj_domain::ModelStatus, String> {
+    let manifest = parse_manifest(MANIFEST).map_err(|error| error.to_string())?;
+    let entry = manifest
+        .model
+        .iter()
+        .find(|entry| entry.variant == variant)
+        .ok_or_else(|| format!("в манифесте нет величины {variant}"))?;
+    let store = Store::new(Store::default_root());
+    dj_models::install(entry, &store).map_err(|error| error.to_string())?;
+    invalidate();
+    Ok(installed_status())
+}
+
+/// Удалить величину из хранилища пользователя.
+pub fn remove(variant: &str) -> Result<dj_domain::ModelStatus, String> {
+    let manifest = parse_manifest(MANIFEST).map_err(|error| error.to_string())?;
+    let entry = manifest
+        .model
+        .iter()
+        .find(|entry| entry.variant == variant)
+        .ok_or_else(|| format!("в манифесте нет величины {variant}"))?;
+    let store = Store::new(Store::default_root());
+    store.remove(entry).map_err(|error| error.to_string())?;
+    invalidate();
+    Ok(installed_status())
 }
 
 /// Каким путём считается сетка: для журнала и проверок.
 pub fn source() -> &'static str {
     match installed() {
-        Some(installed) if model().is_some() => match installed.entry.variant.as_str() {
+        Some(installed) if with_model(|_| ()).is_some() => match installed.entry.variant.as_str() {
             "full" => "модель full",
             "small" => "модель small",
             _ => "модель",
@@ -105,19 +165,16 @@ pub fn analyse(path: &Path) -> Option<Tempo> {
             return None;
         }
     };
-    let guess = model().and_then(|model| {
-        let mut model = match model.lock() {
-            Ok(model) => model,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        match prior(&mut model, &mono, rate, &DbnConfig::default()) {
+    let guess = with_model(
+        |model| match prior(model, &mono, rate, &DbnConfig::default()) {
             Ok(guess) => guess,
             Err(error) => {
                 eprintln!("dj-engine: {}: {error}", path.display());
                 None
             }
-        }
-    });
+        },
+    )
+    .flatten();
     let prior = guess.map(|guess| LevelPrior {
         bpm: guess.bpm,
         tolerance: 0.02,

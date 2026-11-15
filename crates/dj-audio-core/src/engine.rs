@@ -191,7 +191,8 @@ impl Engine {
             DjCommand::Import { .. }
             | DjCommand::ImportCancel
             | DjCommand::ImportAnswer { .. }
-            | DjCommand::AnalyzeTrack { .. } => {
+            | DjCommand::AnalyzeTrack { .. }
+            | DjCommand::Model { .. } => {
                 Some(Ack::rejected(command_id, RejectReason::NotSupported))
             }
             DjCommand::Sync { .. } | DjCommand::Master { .. } | DjCommand::MasterOff => Some(Ack {
@@ -281,6 +282,7 @@ impl Engine {
     /// audio callback.
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
+            model: Default::default(),
             import: None,
             analysis: None,
             collection: None,
