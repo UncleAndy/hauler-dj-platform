@@ -468,30 +468,9 @@ fn apply_level_prior(
     for segment in &mut moved.segments {
         segment.bpm *= scale;
     }
-    // Если прежняя нумерация почему-то не растёт, доли считаются заново от якорей по новому темпу.
-    if moved
-        .segments
-        .windows(2)
-        .any(|pair| pair[1].beat <= pair[0].beat)
-    {
-        let frames: Vec<u64> = moved
-            .segments
-            .iter()
-            .map(|segment| segment.first_beat_frame)
-            .collect();
-        let bpms: Vec<f64> = moved.segments.iter().map(|segment| segment.bpm).collect();
-        let mut beat = 0u64;
-        for index in 0..moved.segments.len() {
-            if index > 0 {
-                let period = rate * 60.0 / bpms[index - 1];
-                let steps = ((frames[index] as f64 - frames[index - 1] as f64) / period)
-                    .round()
-                    .max(1.0);
-                beat += steps as u64;
-            }
-            moved.segments[index].beat = beat;
-        }
-    }
+    // Номера долей пересчитываются от якорей по новому темпу: масштабирование меняет период, и
+    // прежние номера перестают с ним сходиться, а пара (кадр, доля) — это то, что читается из файла.
+    beats_from_frames(&mut moved.segments, rate);
     if !(moved.bpm().is_finite() && moved.bpm() > 0.0) {
         return;
     }
@@ -1321,6 +1300,31 @@ fn carried_windows(envelope: &[f32], per_second: f64, period: f64, phase: f64) -
     (share, contrast)
 }
 
+/// Номера долей по якорям и темпу, а не по счёту окна.
+///
+/// Участок объявляет «в этом кадре такая-то доля». Если номер пришёл из счёта окна, он может разойтись
+/// с собственным темпом участка: на `Среди своих (final).mp3` второй участок объявлял 310-ю долю на
+/// 150-й секунде при 93 BPM, где их 232. Файл хранит пару (кадр, доля), и по такой паре темп читается
+/// как 124 — отсюда «новый битгрид сохраняется, а после перезапуска грузится неверный».
+fn beats_from_frames(segments: &mut [TempoSegment], rate: f64) {
+    if segments.is_empty() || !(rate.is_finite() && rate > 0.0) {
+        return;
+    }
+    segments[0].beat = 0;
+    for index in 1..segments.len() {
+        let bpm = segments[index - 1].bpm;
+        if !(bpm.is_finite() && bpm > 0.0) {
+            return;
+        }
+        let period = rate * 60.0 / bpm;
+        let frames = segments[index]
+            .first_beat_frame
+            .saturating_sub(segments[index - 1].first_beat_frame) as f64;
+        let steps = (frames / period).round().max(1.0) as u64;
+        segments[index].beat = segments[index - 1].beat + steps;
+    }
+}
+
 /// A one-segment grid at a tempo the fallback chose.
 ///
 /// The metre stays four: a bar is counted on the kick band, and the fallback works on the full spectrum
@@ -1393,7 +1397,15 @@ fn carries_the_beat(
         return None;
     }
     let mean = ratios.iter().sum::<f64>() / ratios.len() as f64;
-    (mean >= BEAT_CONTRAST_FLOOR).then_some(tempo)
+    if mean < BEAT_CONTRAST_FLOOR {
+        return None;
+    }
+    // Номера долей приводятся к собственным якорям участков: счёт окна и темп участка — два ответа на
+    // один вопрос, и расходиться они не имеют права, потому что пара (кадр, доля) уходит в файл и по
+    // ней темп читается заново.
+    let mut tempo = tempo;
+    beats_from_frames(&mut tempo.segments, per_second * HOP as f64);
+    Some(tempo)
 }
 
 /// The grid of a track that holds one tempo: the old answer, unchanged.

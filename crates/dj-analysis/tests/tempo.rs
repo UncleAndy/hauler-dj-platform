@@ -642,6 +642,30 @@ fn two_tempos(first: f64, first_seconds: f64, second: f64, second_seconds: f64) 
 }
 
 #[test]
+fn the_anchor_of_a_change_is_counted_at_the_tempo_that_ended() {
+    // Якорь участка — пара (кадр, доля), и по ней файл читает темп заново. Если номер доли пришёл из
+    // счёта окна, он расходится с собственным темпом участка: на `Среди своих (final).mp3` второй
+    // участок объявлял 310-ю долю на 150-й секунде при 93 BPM, где их 232, — и после перезапуска
+    // грузился темп 124 вместо 93.
+    let samples = two_tempos(124.0, 120.0, 104.0, 120.0);
+    let tempo = dj_analysis::tempo::detect(&samples, RATE).expect("две смены темпа");
+    assert!(tempo.segments.len() >= 2, "{:?}", tempo.segments);
+    for pair in tempo.segments.windows(2) {
+        let period = RATE * 60.0 / pair[0].bpm;
+        let frames = (pair[1].first_beat_frame - pair[0].first_beat_frame) as f64;
+        let counted = (pair[1].beat - pair[0].beat) as f64;
+        let expected = frames / period;
+        assert!(
+            (counted - expected).abs() <= 1.5,
+            "доля участка {} против {expected:.1} по темпу {}: {:?}",
+            counted,
+            pair[0].bpm,
+            tempo.segments
+        );
+    }
+}
+
+#[test]
 fn a_track_that_changes_tempo_is_described_as_two() {
     // An edit, not a new track: the beat has to keep counting and the grid has to be right on both
     // sides of the cut. Averaging the two tempos — which is what one grid for the whole file does —
