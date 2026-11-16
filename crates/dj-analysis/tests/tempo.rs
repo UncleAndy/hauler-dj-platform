@@ -642,6 +642,21 @@ fn two_tempos(first: f64, first_seconds: f64, second: f64, second_seconds: f64) 
 }
 
 #[test]
+fn a_change_a_grid_cannot_resolve_is_not_a_change() {
+    // 93,0 → 92,8 — это 0,2 %, меньше шага декодера (20 мс при 93 BPM = 0,3 %). На
+    // `Среди своих (final).mp3` такой «участок» объявлялся в середине трека, и владелец слышал
+    // некорректную смену BPM там, где музыка не меняется.
+    let samples = two_tempos(93.0, 120.0, 92.8, 120.0);
+    let tempo = dj_analysis::tempo::detect(&samples, RATE).expect("темп");
+    assert_eq!(
+        tempo.segments.len(),
+        1,
+        "смена на 0,2 % не описывается сеткой: {:?}",
+        tempo.segments
+    );
+}
+
+#[test]
 fn the_anchor_of_a_change_is_counted_at_the_tempo_that_ended() {
     // Якорь участка — пара (кадр, доля), и по ней файл читает темп заново. Если номер доли пришёл из
     // счёта окна, он расходится с собственным темпом участка: на `Среди своих (final).mp3` второй
