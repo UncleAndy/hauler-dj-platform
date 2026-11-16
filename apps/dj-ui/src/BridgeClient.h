@@ -400,6 +400,11 @@ public:
     Q_INVOKABLE int snapGrid(const QString &deck, qlonglong frame);
     /// Give the deck's track this tempo, keeping its first beat where it is.
     Q_INVOKABLE int setGridTempo(const QString &deck, double bpm);
+    /// A hand on the record: `held` is the touch, `speed` is the material's speed in source frames per
+    /// second, signed. Coalesced — a mouse emits far more moves than the engine has blocks.
+    Q_INVOKABLE int putHandOn(const QString &deck, bool held);
+    /// The speed of the hand while it holds the record: source frames per second, signed.
+    Q_INVOKABLE int setHandSpeed(const QString &deck, double speed);
     /// Count `beats` beats to the bar: the DJ's fix for a bar the measurement counted in four.
     Q_INVOKABLE int setGridMetre(const QString &deck, int beats);
     /// Start a new stretch of the grid at `frame`: the play head, where the music changes.
@@ -499,6 +504,11 @@ private:
     // Which file each deck holds, as this client loaded it: a re-measure needs the path, and the
     // engine should not have to remember what its client already knows.
     QMap<QString, QString> m_deckPaths;
+    /// The hand on each deck: whether it holds, the last speed it stated, and when it stated it. A mouse
+    /// moves faster than the engine renders, so the wire carries one update per block at most.
+    QHash<QString, bool> handHeld_;
+    QHash<QString, double> handSpeed_;
+    QHash<QString, qint64> handLastMs_;
     /// Sends one grid edit, or refuses when this client never loaded a file into the deck.
     int sendGridEdit(const QString &deck, const QJsonValue &edit);
 };

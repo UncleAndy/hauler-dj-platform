@@ -8729,6 +8729,11 @@ int main(int argc, char *argv[])
         QStringLiteral("metronome-check"),
         QStringLiteral("With --connect and --load: require the deck's metronome button to reach the "
                        "engine, the state to come back, and the click to be played on the beats."));
+    const QCommandLineOption scratchOption(
+        QStringLiteral("scratch-check"),
+        QStringLiteral("With --connect and --load: require a drag on the waveform to take the record in "
+                       "hand — the transport stops, the material moves the way the hand goes, a still hand "
+                       "stops it, and letting go gives the record back to the motor."));
     const QCommandLineOption tapOption(
         QStringLiteral("tap-check"),
         QStringLiteral("With --connect and --load: require the tapped grid to be put on the taps — the "
@@ -9100,6 +9105,7 @@ int main(int argc, char *argv[])
     parser.addOption(importFixtureOption);
     parser.addOption(gridReconnectOption);
     parser.addOption(metronomeOption);
+    parser.addOption(scratchOption);
     parser.addOption(tapOption);
     parser.addOption(gridLinesOption);
     parser.addOption(gridCheckOption);
@@ -12315,6 +12321,172 @@ int main(int argc, char *argv[])
                      "dj-ui: the metronome clicks the grid: the button lit, the deck played %llu clicks "
                      "on its beats, and switching it off stopped them\n",
                      played);
+        return 0;
+    }
+
+    if (parser.isSet(scratchOption)) {
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+            return 1;
+        }
+        const QString fixture = parser.value(loadOption);
+        if (fixture.isEmpty()) {
+            std::fprintf(stderr, "dj-ui: --scratch-check needs --load\n");
+            return 1;
+        }
+        const auto waitFor = [](const std::function<bool()> &ready, int budget) {
+            QElapsedTimer timer;
+            timer.start();
+            while (timer.elapsed() < budget) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                if (ready()) {
+                    return true;
+                }
+                QThread::msleep(10);
+            }
+            return ready();
+        };
+        bridge->connectToEngine(parser.value(connectOption));
+        if (!waitFor([&]() { return bridge->isConnected(); }, 3000)) {
+            std::fprintf(stderr, "dj-ui: no engine\n");
+            return 1;
+        }
+        const auto deckA = [&]() {
+            const QVariantList decks = bridge->snapshot().value(QStringLiteral("decks")).toList();
+            for (const QVariant &entry : decks) {
+                const QVariantMap deck = entry.toMap();
+                if (deck.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                    return deck;
+                }
+            }
+            return QVariantMap();
+        };
+        const auto frame = [&]() { return deckA().value(QStringLiteral("source_frame")).toLongLong(); };
+        const auto playing = [&]() { return deckA().value(QStringLiteral("playing")).toBool(); };
+
+        bridge->load(QStringLiteral("A"), fixture);
+        if (!waitFor(
+                [&]() {
+                    const QVariantMap deck = deckA();
+                    return deck.value(QStringLiteral("load")).toString() == QStringLiteral("Ready")
+                           && !deck.value(QStringLiteral("track"))
+                                   .toMap()
+                                   .value(QStringLiteral("grid"))
+                                   .toMap()
+                                   .value(QStringLiteral("segments"))
+                                   .toList()
+                                   .isEmpty();
+                },
+                20000)) {
+            std::fprintf(stderr, "dj-ui: the deck never finished loading for the scratch\n");
+            return 1;
+        }
+        // The measurement re-attaches the material and puts the deck back at the start: play from the
+        // frame it settled on, not from the one it was heading to.
+        waitFor([&]() { return false; }, 300);
+
+        bridge->play(QStringLiteral("A"), true);
+        if (!waitFor(playing, 5000)) {
+            std::fprintf(stderr, "dj-ui: the deck did not start playing for the scratch\n");
+            return 1;
+        }
+        (void)waitFor([&]() { return frame() > 0; }, 3000);
+
+        auto *strip = findItem(window->contentItem(), QStringLiteral("waveStrip_A"));
+        if (strip == nullptr) {
+            std::fprintf(stderr, "dj-ui: the deck has no waveform strip to take hold of\n");
+            return 1;
+        }
+        const auto send = [&](QEvent::Type type, const QPointF &at) {
+            // A move carries the button that is *held*, not the one that was pressed: a move with no button
+            // held is not a drag, and the hand lets go of the record in the middle of it.
+            // A press and a release both name the left button; only a move carries none. `buttons` is what
+            // is held *after* the event, so a release has none.
+            QMouseEvent event(type, at, window->mapToGlobal(at.toPoint()),
+                              type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
+                              type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton,
+                              Qt::NoModifier);
+            QCoreApplication::sendEvent(window, &event);
+            QCoreApplication::processEvents();
+        };
+        const QPointF at = strip->mapToScene(QPointF(strip->width() * 0.5, strip->height() * 0.5));
+
+        // A hand on the record stops the motor: the record's speed is the hand's from here on. The hand is
+        // taken by the first move, not by the press — a click on the wave is only a click.
+        send(QEvent::MouseButtonPress, at);
+        send(QEvent::MouseMove, at - QPointF(2.0, 0.0));
+        if (!waitFor([&]() { return !playing(); }, 3000)) {
+            std::fprintf(stderr, "dj-ui: taking the record in hand did not stop the transport\n");
+            return 1;
+        }
+        const qint64 grabbed = frame();
+
+        // Twelve moves to the left: the material goes forward, as the picture says it does.
+        for (int step = 1; step <= 12; ++step) {
+            send(QEvent::MouseMove, at - QPointF(10.0 * step, 0.0));
+            (void)waitFor([&]() { return false; }, 15);
+        }
+        const qint64 moved = frame();
+        if (moved <= grabbed) {
+            std::fprintf(stderr,
+                         "dj-ui: the hand moved left but the material went nowhere (%lld -> %lld)\n",
+                         static_cast<long long>(grabbed),
+                         static_cast<long long>(moved));
+            return 1;
+        }
+        // A hand, not a jump: 120 px of a zoomed strip is a fraction of a second of material, and the
+        // whole file is eight.
+        const qint64 travelled = moved - grabbed;
+        if (travelled > 48'000 * 2) {
+            std::fprintf(stderr, "dj-ui: the drag jumped %lld frames instead of moving the material\n",
+                         static_cast<long long>(travelled));
+            return 1;
+        }
+
+        // A hand that stops moving comes to rest: the record has the speed it was last given until the
+        // hand's silence reaches the deck, and then it stands still. So the check asks that it *stops*, not
+        // that it never moved after the last event.
+        (void)waitFor([&]() { return false; }, 200);
+        const qint64 rested = frame();
+        (void)waitFor([&]() { return false; }, 300);
+        if (frame() != rested) {
+            std::fprintf(stderr, "dj-ui: a still hand kept moving the record (%lld -> %lld)\n",
+                         static_cast<long long>(rested), static_cast<long long>(frame()));
+            return 1;
+        }
+
+        // Letting go gives the record back to the motor, from where the hand left it.
+        send(QEvent::MouseButtonRelease, at - QPointF(120.0, 0.0));
+        if (!waitFor(playing, 3000)) {
+            std::fprintf(stderr, "dj-ui: the motor did not take the record back after the hand let go\n");
+            return 1;
+        }
+        if (frame() < moved) {
+            std::fprintf(stderr, "dj-ui: the motor carried the record backwards (%lld -> %lld)\n",
+                         static_cast<long long>(moved), static_cast<long long>(frame()));
+            return 1;
+        }
+        // The motor, not the hand: after the hand lets go the deck has to carry the material at the file's
+        // own speed, which is the one thing that says the hand is really off the record.
+        (void)waitFor([&]() { return false; }, 100);
+        const qint64 carriedAt = frame();
+        const double rate = deckA().value(QStringLiteral("source_rate")).toDouble();
+        (void)waitFor([&]() { return false; }, 400);
+        const qint64 carriedTo = frame();
+        const double expected = rate * 0.4;
+        const double actual = static_cast<double>(carriedTo - carriedAt);
+        if (std::abs(actual - expected) > expected * 0.35) {
+            std::fprintf(stderr,
+                         "dj-ui: after the hand let go the material moved at %.2f of the file's speed\n",
+                         actual / expected);
+            return 1;
+        }
+        std::fprintf(stdout,
+                     "dj-ui: the waveform is the record: the hand stopped the motor, moved the material "
+                     "%lld frames to the left, a still hand moved nothing, and letting go handed it back "
+                     "to the motor\n",
+                     static_cast<long long>(travelled));
         return 0;
     }
 

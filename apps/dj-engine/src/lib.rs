@@ -58,6 +58,7 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
         | DjCommand::LoopMove { deck, .. }
         | DjCommand::SetTempoRatio { deck, .. }
         | DjCommand::Nudge { deck, .. }
+        | DjCommand::Hand { deck, .. }
         | DjCommand::BeatJump { deck, .. }
         | DjCommand::SetSlip { deck, .. }
         | DjCommand::SetReverse { deck, .. }
@@ -87,6 +88,14 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
                 } else {
                     target.pause();
                 }
+                Ack::applied(id, at)
+            }
+            // The hand works in the file's own frames per second; the deck counts in the device's, so the
+            // conversion belongs here, where the device rate is known, and not in the shell.
+            DjCommand::Hand { speed, held, .. } => {
+                let rate = speed / f64::from(target.output_rate().max(1));
+                target.grab(*held);
+                target.set_hand_rate(rate);
                 Ack::applied(id, at)
             }
             DjCommand::SetLoopMode { enabled, .. } => {

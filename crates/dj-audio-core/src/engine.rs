@@ -210,6 +210,8 @@ impl Engine {
                 command_id,
                 dj_domain::RejectReason::NotSupported,
             )),
+            // This renderer holds one tone and no record: a hand on the platter has nothing to move here.
+            DjCommand::Hand { .. } => Some(Ack::rejected(command_id, RejectReason::NotSupported)),
             DjCommand::SetCrossfaderCurve { .. }
             | DjCommand::SetMasterGain { .. }
             | DjCommand::SetChannelEq { .. }

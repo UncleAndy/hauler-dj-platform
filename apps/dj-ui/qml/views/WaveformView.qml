@@ -200,16 +200,16 @@ Item {
     /// The deck was playing before the hand touched the strip.
     property bool scrubWasPlaying: false
 
-    // A hand that stops moving stops making sound. Twenty-eight milliseconds is shorter than the gap
-    // between two moves of a deliberate drag, so the deck only ever plays a grain of what the hand
-    // passes over — a scratch, not a snippet running on under the playhead.
+    // A hand that stops moving stops making sound: the record stands still and the needle sits in a groove
+    // that is not moving. Forty milliseconds is shorter than the gap between two moves of a deliberate
+    // drag, so the deck only ever plays what the hand passes over.
     Timer {
         id: scrubIdle
-        interval: 28
+        interval: 20
         repeat: false
         onTriggered: {
-            if (view.scrubHeld && !view.scrubWasPlaying && view.deckId.length > 0) {
-                Bridge.play(view.deckId, false);
+            if (view.scrubHeld && view.deckId.length > 0) {
+                Bridge.setHandSpeed(view.deckId, 0.0);
             }
         }
     }
@@ -425,7 +425,11 @@ Item {
                 // deck plays while the hand moves, so the move is heard as a scratch.
                 property bool scrubbing: false
                 property real lastX: 0.0
+                property real lastMs: 0.0
                 property bool wasPlaying: false
+                /// The hand takes the record only when it moves: a click is a click, and stopping the
+                /// transport for one would be a sound nobody asked for.
+                property bool holding: false
 
                 onWheel: function (wheel) {
                     view.zoomBy(wheel.angleDelta.y > 0 ? 1.25 : 0.8);
@@ -437,40 +441,45 @@ Item {
                     }
                     hand.scrubbing = true;
                     hand.lastX = mouse.x;
+                    hand.lastMs = Date.now();
                     hand.wasPlaying = view.playing;
                     view.scrubHeld = true;
                     view.scrubWasPlaying = view.playing;
-                    if (view.scrubAudio && !view.playing) {
-                        // A held hand on a silent deck makes no sound until it moves; the move below
-                        // starts the deck for as long as the movement lasts.
-                        scrubIdle.restart();
-                    }
+                    scrubIdle.restart();
                 }
                 onPositionChanged: function (mouse) {
                     if (!hand.scrubbing) {
                         return;
                     }
+                    const now = Date.now();
+                    const elapsed = Math.max(1.0, now - hand.lastMs);
                     const deltaPixels = mouse.x - hand.lastX;
                     hand.lastX = mouse.x;
-                    // A hand moving right takes the material back: the playhead does not move, the track
-                    // does. Frames per pixel comes from the zoom, so the picture and the sound agree.
-                    const deltaFrames = -deltaPixels * view.columnsPerPixel * view.framesPerBucket;
-                    const total = view.columns * view.framesPerBucket;
-                    const target = Math.max(0.0, Math.min(Math.max(0.0, total - 1),
-                                                          view.shownFrame + deltaFrames));
-                    view.shownFrame = target;
-                    view.anchorFrame = target;
-                    view.anchorMilliseconds = Date.now();
-                    Bridge.seek(view.deckId, Math.floor(target));
-                    if (view.scrubAudio && !view.scrubWasPlaying) {
-                        // Sound from the hand: the deck plays while it moves, and falls silent when it
-                        // stops. Without this a paused deck simply started playing on the first move and
-                        // kept running after the hand let go mid-way.
-                        if (!view.playing) {
-                            Bridge.play(view.deckId, true);
+                    hand.lastMs = now;
+                    // A hand moving right takes the material back; frames per pixel comes from the zoom, so
+                    // the picture and the sound agree. What goes to the deck is a speed — source frames per
+                    // second — because that is what a hand has, and the deck turns it into its own rate.
+                    if (!hand.holding) {
+                        if (deltaPixels === 0) {
+                            hand.lastMs = now;
+                            return;
                         }
-                        scrubIdle.restart();
+                        // The first move is the touch: the deck stops its motor by its own rule and follows
+                        // the hand from here.
+                        hand.holding = true;
+                        Bridge.putHandOn(view.deckId, true);
                     }
+                    const deltaFrames = -deltaPixels * view.columnsPerPixel * view.framesPerBucket;
+                    const speed = deltaFrames * 1000.0 / elapsed;
+                    const limit = 4.0 * view.sourceRate;
+                    Bridge.setHandSpeed(view.deckId, Math.max(-limit, Math.min(limit, speed)));
+                    // The picture follows the hand; the sound is the deck's business now.
+                    const total = view.columns * view.framesPerBucket;
+                    view.shownFrame = Math.max(0.0, Math.min(Math.max(0.0, total - 1),
+                                                             view.shownFrame + deltaFrames));
+                    view.anchorFrame = view.shownFrame;
+                    view.anchorMilliseconds = now;
+                    scrubIdle.restart();
                 }
                 function endScrub() {
                     if (!hand.scrubbing) {
@@ -479,11 +488,12 @@ Item {
                     hand.scrubbing = false;
                     view.scrubHeld = false;
                     scrubIdle.stop();
-                    if (view.scrubAudio && !hand.wasPlaying) {
-                        // The playhead ends where the hand left it: a grain of audio played while the hand
-                        // moved, and the position must not keep the distance the grain covered.
-                        Bridge.seek(view.deckId, Math.floor(view.shownFrame));
-                        Bridge.play(view.deckId, false);
+                    // The hand lets go: the motor takes the record back from wherever the hand left it. No
+                    // seek — the position is already the one that was heard, and a jump there would be a
+                    // sound nobody played.
+                    if (hand.holding) {
+                        hand.holding = false;
+                        Bridge.putHandOn(view.deckId, false);
                     }
                 }
                 onReleased: endScrub()

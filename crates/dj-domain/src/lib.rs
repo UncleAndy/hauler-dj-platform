@@ -651,6 +651,21 @@ pub enum DjCommand {
     /// a hand set is a decision, not a state to undo. A lit SYNC over nothing would be a button lying
     /// about what it does, so the mode goes off with the leader.
     MasterOff,
+    /// A hand on the record (DJP-DECK-009): the speed it moves the material at, and whether it holds.
+    ///
+    /// The speed is physical — source frames per second, signed — so the shell can work it out from the
+    /// mouse and the zoom alone, without knowing the deck's device rate. The engine turns it into the
+    /// deck's own units. Continuous by nature: the shell sends it while the hand moves and stops sending
+    /// when the hand lets go, which is why a still hand is `speed: 0` and not a missing command.
+    Hand {
+        /// Target deck.
+        deck: DeckId,
+        /// Source frames per second; positive is forward, negative is back, zero is a hand that holds
+        /// the record still — silence, because the needle sits in a groove that is not moving.
+        speed: f64,
+        /// True while the hand is on the record.
+        held: bool,
+    },
     /// Bend the rate the way a hand on the platter does (DJP-DECK-006): `-1 … 1`, zero lets go.
     ///
     /// Continuous: the shell sends the deflection while the control is held and zero on release. It is
@@ -780,6 +795,9 @@ impl DjCommand {
             | DjCommand::BeatJump { .. }
             | DjCommand::SetSlip { .. }
             | DjCommand::SetReverse { .. }
+            // A hand's speed is a continuous control: the next update is a millisecond away, and the one
+            // that matters is the last before the hand stops.
+            | DjCommand::Hand { .. }
             | DjCommand::Sync { .. }
             | DjCommand::Master { .. }
             | DjCommand::MasterOff

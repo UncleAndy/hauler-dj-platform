@@ -259,10 +259,21 @@ fn releasing_the_record_gives_it_back_to_the_motor() {
     assert!(left_at < 200_000, "the hand went backwards to {left_at}");
 
     deck.grab(false);
-    deck.render(&mut out);
-    let carried = deck.position();
+    // The stretcher comes back the way a fresh track puts it in: it fills its windows from silence first,
+    // so the motor's first blocks carry no material. What the witness asks is that the motor takes the
+    // record back *and* that the head never runs backwards while it does.
+    let mut carried = left_at;
+    for _ in 0..4 {
+        deck.render(&mut out);
+        let now = deck.position();
+        assert!(
+            now >= carried,
+            "the head ran backwards after the hand let go ({carried} -> {now})"
+        );
+        carried = now;
+    }
     assert!(
-        carried > left_at && carried <= left_at + 257,
+        carried > left_at && carried <= left_at + 4 * 257,
         "the motor carried the record from {left_at} to {carried}"
     );
 }

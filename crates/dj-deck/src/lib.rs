@@ -421,6 +421,11 @@ pub struct Deck {
     hand_pos: f64,
     /// True while a hand holds the record.
     hand_engaged: bool,
+    /// Whether the transport was running when the hand took the record: letting go gives it back.
+    ///
+    /// The rule that a touch stops the motor belongs to the instrument, not to the shell: a shell that had
+    /// to remember it would have to know, on release, a state that had already changed under it.
+    hand_resume: bool,
     /// Material around the play head for the hand to move over: one seek per block, read both ways.
     hand_window: Vec<f32>,
     reverse: bool,
@@ -517,6 +522,7 @@ impl Deck {
             hand_rate: 0.0,
             hand_pos: 0.0,
             hand_engaged: false,
+            hand_resume: false,
             // Emptiness is the ordinary state: the window is made when a hand first takes the record, so a
             // deck that is only ever played through pays nothing for a scratch it never does.
             hand_window: Vec::new(),
@@ -715,6 +721,11 @@ impl Deck {
         self.hand_engaged = on;
         self.hand_rate = 0.0;
         if on {
+            // A hand on a turning record stops the motor; the record's speed is the hand's from here on.
+            if self.playing {
+                self.playing = false;
+                self.hand_resume = true;
+            }
             if self.hand_window.len() < HAND_WINDOW_FRAMES * 2 {
                 // On the command path, never on the audio callback: a scratch piece must not allocate.
                 self.hand_window = vec![0.0; HAND_WINDOW_FRAMES * 2];
@@ -728,7 +739,19 @@ impl Deck {
             // The stretcher is the motor's answer to speed; with a hand on the record it has nothing to
             // answer, and re-entering it on release is a fresh entry.
             self.keylock_engaged = false;
+        } else if self.hand_resume {
+            // The hand lets go: the motor carries the record on from wherever the hand left it. Key lock
+            // comes back on the next block that needs it (the stretcher's seam is its own task): forcing it
+            // here would put the amply-delayed path back in front of material the hand just played.
+            self.hand_resume = false;
+            self.playing = true;
         }
+    }
+
+    /// The rate this deck renders at: output frames per second, the unit a hand's speed is measured
+    /// against when a caller has frames per second of the file.
+    pub fn output_rate(&self) -> u32 {
+        self.output_rate
     }
 
     /// True while a hand holds the record.

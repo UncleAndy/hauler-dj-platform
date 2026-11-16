@@ -1,5 +1,7 @@
 #include "BridgeClient.h"
 
+#include <QDateTime>
+
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QThread>
@@ -2029,6 +2031,48 @@ int BridgeClient::setGridTempo(const QString &deck, double bpm)
     QJsonObject edit;
     edit.insert(QStringLiteral("Tempo"), inner);
     return sendGridEdit(deck, edit);
+}
+
+int BridgeClient::putHandOn(const QString &deck, bool held)
+{
+    handLastMs_.remove(deck);
+    handSpeed_.remove(deck);
+    handHeld_[deck] = held;
+    QJsonObject options;
+    options.insert(QStringLiteral("deck"), deck);
+    options.insert(QStringLiteral("speed"), 0.0);
+    options.insert(QStringLiteral("held"), held);
+    QJsonObject command;
+    command.insert(QStringLiteral("Hand"), options);
+    return sendCommand(deck, command);
+}
+
+int BridgeClient::setHandSpeed(const QString &deck, double speed)
+{
+    // A mouse emits hundreds of moves a second and the engine has one block every five milliseconds: an
+    // update that arrives inside the same block would be applied and overwritten unseen. Coalescing here
+    // keeps the wire quiet and costs nothing the ear can hear.
+    if (!handHeld_.value(deck, false)) {
+        return -1;
+    }
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    const qint64 last = handLastMs_.value(deck, 0);
+    if (last != 0 && now - last < 5) {
+        return 0;
+    }
+    const double previous = handSpeed_.value(deck, 0.0);
+    if (qAbs(speed - previous) < qAbs(speed) * 0.02) {
+        return 0;
+    }
+    handLastMs_[deck] = now;
+    handSpeed_[deck] = speed;
+    QJsonObject options;
+    options.insert(QStringLiteral("deck"), deck);
+    options.insert(QStringLiteral("speed"), speed);
+    options.insert(QStringLiteral("held"), true);
+    QJsonObject command;
+    command.insert(QStringLiteral("Hand"), options);
+    return sendCommand(deck, command);
 }
 
 int BridgeClient::setGridMetre(const QString &deck, int beats)

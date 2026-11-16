@@ -531,6 +531,10 @@ TOML
         --grid-here-check --load "$metronome_file"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --metronome-check --load "$metronome_file"
+    # The waveform is the record: a drag on it takes the deck in hand, the material follows the hand and
+    # stops with it, and letting go gives the record back to the motor.
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
+        --scratch-check --load "$metronome_file"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --eq-check
     # A double click is the way back to neutral on every mouse-driven control, and each control has its
     # own neutral: a gain or a band goes flat, a fader opens, the master stands at three quarters of its
