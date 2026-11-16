@@ -12719,19 +12719,32 @@ int main(int argc, char *argv[])
                 std::fprintf(stderr, "dj-ui: the deck panel is not there to ask about the menu\n");
                 return 1;
             }
-            const QPointF buttonAt = metreButton->mapToScene(QPointF(0, 0));
-            const double menuX = deckPanel->property("metreMenuX").toDouble();
-            const double menuY = deckPanel->property("metreMenuY").toDouble();
-            if (std::abs(menuX - buttonAt.x()) > 2.0
-                || std::abs(menuY - (buttonAt.y() + metreButton->height())) > 40.0) {
+            QVariant at;
+            if (!QMetaObject::invokeMethod(deckPanel, "metreMenuAt", Q_RETURN_ARG(QVariant, at))) {
+                std::fprintf(stderr, "dj-ui: the panel does not say where the metre menu is\n");
+                return 1;
+            }
+            const QVariantMap atMap = at.toMap();
+            const double menuX = atMap.value(QStringLiteral("x")).toDouble();
+            const double menuY = atMap.value(QStringLiteral("y")).toDouble();
+            // Место считается от самой кнопки: левый верх меню — на её левом краю, верх — на её низу.
+            // Высоту кнопки отдаёт QML: там же, где живёт само меню, — иначе сравниваются два разных
+            // представления об одном предмете.
+            const double wantX = 0.0;
+            const double wantY = atMap.value(QStringLiteral("buttonHeight")).toDouble();
+            // Вплотную: меню — сосед кнопки, а не что-то «примерно там же». Два пикселя на рамку
+            // всплывающего окна, не больше.
+            if (std::abs(menuX - wantX) > 2.0 || std::abs(menuY - wantY) > 2.0) {
                 std::fprintf(stderr,
                              "dj-ui: the metre menu opened at %.0f,%.0f instead of the button at %.0f,%.0f\n",
                              menuX,
                              menuY,
-                             buttonAt.x(),
-                             buttonAt.y() + metreButton->height());
+                             wantX,
+                             wantY);
                 return 1;
             }
+            std::fprintf(stderr, "dj-ui: the metre menu sits at %.0f,%.0f under the button at %.0f,%.0f\n",
+                         menuX, menuY, wantX, wantY);
         }
 
         if (bridge->setGridMetre(QStringLiteral("A"), 3) < 0) {
