@@ -91,7 +91,7 @@ fn with_model<T>(work: impl FnOnce(&mut BeatModel) -> T) -> Option<T> {
             match BeatModel::load(&library, &installed.path) {
                 Ok(model) => {
                     eprintln!(
-                        "dj-engine: модель удара {} ({})",
+                        "dj-engine: модель удара подключена: {} ({})",
                         installed.entry.variant, installed.entry.license
                     );
                     session.model = Some(model);
@@ -109,6 +109,31 @@ fn with_model<T>(work: impl FnOnce(&mut BeatModel) -> T) -> Option<T> {
 /// поверх установленной модели.
 pub fn seed_model(cells: &crate::StateCells, root: &Path) {
     cells.set_model(installed_status_at(root));
+}
+
+/// Сказать в журнал при старте, чем будет считаться сетка.
+///
+/// Без этой строки тихий откат неотличим от работающей модели: установленная модель без библиотеки
+/// ONNX Runtime молчит, и «новые методы не помогли» ищут в детекторе, а не в отсутствующем файле.
+pub fn announce() {
+    let status = installed_status();
+    if status.variant.is_empty() {
+        eprintln!("dj-engine: модель удара не установлена — сетка считается своим детектором");
+        return;
+    }
+    match library() {
+        Some(path) => eprintln!(
+            "dj-engine: модель удара {} ({}) из {}",
+            status.variant,
+            status.license,
+            path.display()
+        ),
+        None => eprintln!(
+            "dj-engine: модель удара {} установлена, но libonnxruntime.so не найдена — работает свой \
+             детектор (нужна библиотека рядом с движком или ORT_DYLIB_PATH)",
+            status.variant
+        ),
+    }
 }
 
 /// Что известно про модель прямо сейчас: для снапшота.
