@@ -12232,17 +12232,69 @@ int main(int argc, char *argv[])
         }
         // A flag is not a click: the deck has to play, and the engine has to count the clicks it played on
         // the beats it crossed. The count is the one number a check can measure instead of hearing.
-        // Two questions, asked separately: the deck has to be playing, and the clicks have to follow. A
-        // single wait that only looks at the clicks cannot say which of the two went wrong.
+        // The engine attaches the file at a block boundary, and the measurement that follows re-attaches
+        // it: a deck told to play before that lands is put back at the start and stopped, which is exactly
+        // what a metronome that never clicked looked like. So the load has to settle first, and the play
+        // has to be seen holding before the clicks are counted.
+        const auto settled = [&]() {
+            const QVariantMap deck = deckA();
+            const QString load = deck.value(QStringLiteral("load")).toString();
+            return load.isEmpty() || load == QStringLiteral("Ready");
+        };
+        if (!waitFor(settled, 20000)) {
+            std::fprintf(stderr, "dj-ui: the deck never finished loading for the metronome\n");
+            return 1;
+        }
+        waitFor([&]() { return false; }, 300);
+        // The engine attaches a file at a block boundary and a measurement that finishes re-attaches it,
+        // which puts the deck back at the start, stopped. A hand would press play again; so does this.
+        const auto playing = [&]() {
+            return deckA().value(QStringLiteral("playing")).toBool();
+        };
         bridge->play(QStringLiteral("A"), true);
-        if (!waitFor([&]() { return deckA().value(QStringLiteral("playing")).toBool(); }, 5000)) {
+        if (!waitFor(playing, 5000)) {
             std::fprintf(stderr, "dj-ui: the deck did not start playing for the metronome\n");
             return 1;
         }
-        if (!waitFor([&]() { return clicks() >= 2; }, 8000)) {
-            std::fprintf(stderr,
-                         "dj-ui: the deck played but the metronome clicked %llu times\n",
-                         static_cast<unsigned long long>(clicks()));
+        const auto clicksArrive = [&]() {
+            for (int tick = 0; tick < 80; ++tick) {
+                if (clicks() >= 2) {
+                    return true;
+                }
+                if (!playing()) {
+                    // A reload landed: start again from where the engine put the deck.
+                    bridge->play(QStringLiteral("A"), true);
+                }
+                waitFor([&]() { return false; }, 100);
+            }
+            return clicks() >= 2;
+        };
+        if (!clicksArrive()) {
+            // Everything a silent metronome could be: the deck's own state, the grid it clicks against,
+            // and whether the head is moving at all. A count of zero on its own says nothing.
+            const QVariantMap deck = deckA();
+            const QVariantMap grid = deck.value(QStringLiteral("track"))
+                                         .toMap()
+                                         .value(QStringLiteral("grid"))
+                                         .toMap();
+            const QVariantList segments = grid.value(QStringLiteral("segments")).toList();
+            const auto segment = segments.isEmpty() ? QVariantMap() : segments.first().toMap();
+            std::fprintf(
+                stderr,
+                "dj-ui: the deck played but the metronome clicked %llu times "
+                "(frame %lld playing %d metronome %d bpm %.3f first %lld metre %d segments %lld "
+                "segment0 frame %lld beat %lld bpm %.3f)\n",
+                static_cast<unsigned long long>(clicks()),
+                static_cast<long long>(deck.value(QStringLiteral("source_frame")).toLongLong()),
+                int(deck.value(QStringLiteral("playing")).toBool()),
+                int(flag()),
+                grid.value(QStringLiteral("bpm")).toDouble(),
+                static_cast<long long>(grid.value(QStringLiteral("first_beat_frame")).toLongLong()),
+                grid.value(QStringLiteral("beats_per_bar")).toInt(),
+                static_cast<long long>(segments.size()),
+                static_cast<long long>(segment.value(QStringLiteral("frame")).toLongLong()),
+                static_cast<long long>(segment.value(QStringLiteral("beat")).toLongLong()),
+                segment.value(QStringLiteral("bpm")).toDouble());
             return 1;
         }
         const unsigned long long played = clicks();
