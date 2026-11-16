@@ -278,11 +278,11 @@ impl BeatGrid {
 
     /// The grid as it is stored beside the music: the first segment becomes `bpm` and
     /// `first_beat_frame`, the rest become anchors.
-    pub fn stored_anchors(&self) -> Vec<(u64, u64)> {
+    pub fn stored_anchors(&self) -> Vec<(u64, u64, f64)> {
         self.segments
             .iter()
             .skip(1)
-            .map(|segment| (segment.frame, segment.beat))
+            .map(|segment| (segment.frame, segment.beat, segment.bpm))
             .collect()
     }
 
@@ -294,7 +294,7 @@ impl BeatGrid {
     pub fn from_stored(
         bpm: f64,
         first_beat_frame: u64,
-        anchors: &[(u64, u64)],
+        anchors: &[(u64, u64, Option<f64>)],
         rate: f64,
         beats_per_bar: u8,
     ) -> Option<Self> {
@@ -303,14 +303,23 @@ impl BeatGrid {
             beat: 0,
             bpm,
         }];
-        for (frame, beat) in anchors {
+        // Which stretches state their own tempo: only an anchor that carries one does. A file written
+        // before anchors had a tempo states it for the first stretch and leaves the rest to be read
+        // out of the anchor after them, exactly as before.
+        let mut stated = vec![false];
+        for (frame, beat, own) in anchors {
+            let own = own.filter(|value| value.is_finite() && *value > 0.0);
+            stated.push(own.is_some());
             segments.push(BeatSegment {
                 frame: *frame,
                 beat: *beat,
-                bpm: 0.0, // filled below from the stretch's own length
+                bpm: own.unwrap_or(0.0),
             });
         }
         for index in 0..segments.len() {
+            if stated[index] {
+                continue;
+            }
             let length = match segments.get(index + 1) {
                 Some(next) => {
                     let frames = next.frame.saturating_sub(segments[index].frame) as f64;

@@ -269,11 +269,46 @@ pub fn detect_with_prior_and_beats(
         return rigid;
     };
     let rigid = rigid?;
-    let Some(segments) = grid_from_beats(beats, rate) else {
+    let Some(mut segments) = grid_from_beats(beats, rate) else {
         return Some(rigid);
     };
+    // Доли модели, разошедшиеся меньше чем на COHERENT_SPAN, — один темп, и это свидетельство против
+    // участков: доли идут по активациям, и «трек держит темп» видно в них целиком. Ответ — один
+    // участок по медиане их темпа (на `Air and Tur — Love Emotion` классика делила 125 на 93,7 —
+    // квартольное прочтение той же доли, — а доли модели шли 480 мс все 399 секунд).
+    if segments.len() > 1 {
+        let fastest = segments
+            .iter()
+            .map(|segment| segment.bpm)
+            .fold(0.0_f64, f64::max);
+        let slowest = segments
+            .iter()
+            .map(|segment| segment.bpm)
+            .fold(f64::INFINITY, f64::min);
+        if slowest > 0.0 && fastest / slowest - 1.0 <= COHERENT_SPAN {
+            let mut tempos: Vec<f64> = segments.iter().map(|segment| segment.bpm).collect();
+            tempos.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let median = tempos[tempos.len() / 2];
+            segments = vec![TempoSegment {
+                bpm: median,
+                first_beat_frame: segments[0].first_beat_frame,
+                beat: segments[0].beat,
+            }];
+        }
+    }
+    // Один темп по долям модели — это свидетельство против участков классики: доли идут по
+    // активациям, и «трек держит темп» видно в них целиком. Спор решает огибающая: участки остаются,
+    // только если объясняют онсеты лучше одного темпа на ELASTIC_MARGIN.
     if segments.len() < 2 {
-        return Some(rigid);
+        // Доли модели держатся одного темпа — значит трек его держит, и участки классики этому не
+        // указ: спор здесь решается не силой онсетов на линии (у редкой сетки она всегда выше —
+        // четверти на 93,7 объясняют 125-ю долю не хуже самой доли), а тем, что доли модели видят
+        // темп целиком. Участки остаются только тогда, когда их заявляют сами доли.
+        return Some(Tempo {
+            segments,
+            confidence: rigid.confidence,
+            metre: rigid.metre,
+        });
     }
     // Уровень — свойство трека: если доли прочитаны на другой ступени, участки описывают другую
     // музыку, и лучше остаться при прежней сетке, чем опубликовать чужой уровень (на корпусе так
@@ -531,6 +566,7 @@ fn primary_tempo(envelope: &[f32], gate: Option<&[f32]>, rate: f64) -> Option<Te
     );
     if stretches.len() > 1
         && let Some(changing) = grid_of_stretches(envelope, per_second, bpm, &stretches, true)
+        && changes_are_supported(envelope, per_second, &changing.segments)
     {
         return carries_the_beat(envelope, gate, per_second, changing);
     }
@@ -557,6 +593,7 @@ fn primary_tempo(envelope: &[f32], gate: Option<&[f32]>, rate: f64) -> Option<Te
             if walked_span >= MIN_DRIFT
                 && drifts_one_way(&grid.segments)
                 && same_level(&grid.segments, rigid.bpm())
+                && changes_are_supported(envelope, per_second, &grid.segments)
                 && followed_score > rigid_score * ELASTIC_MARGIN
             {
                 return carries_the_beat(envelope, gate, per_second, grid);
@@ -592,6 +629,7 @@ fn primary_tempo(envelope: &[f32], gate: Option<&[f32]>, rate: f64) -> Option<Te
                 && walked >= MIN_DRIFT
                 && drifts_one_way(&drifting.segments)
                 && same_level(&drifting.segments, rigid.bpm())
+                && changes_are_supported(envelope, per_second, &drifting.segments)
                 && drift_score > rigid_score * ELASTIC_MARGIN
             {
                 return carries_the_beat(envelope, gate, per_second, drifting);
@@ -758,6 +796,108 @@ pub fn grid_from_beats(beats: &[f64], rate: f64) -> Option<Vec<TempoSegment>> {
         });
     }
     Some(segments)
+}
+
+/// Отношения темпа, которые означают другую долю, а не другой раздел.
+const LEVEL_STEPS: [f64; 4] = [0.5, 2.0, 0.75, 4.0 / 3.0];
+
+/// Насколько отношение может уйти от ступени и остаться ступенью.
+const LEVEL_STEP_TOLERANCE: f64 = 0.02;
+
+/// Насколько доли модели должны разойтись по темпу, чтобы это считалось сменой, а не одним темпом.
+///
+/// Три процента — больше любого дрожания декодера (0,6 % медианно, 1,5 % в девятом дециле) и меньше
+/// слышимой смены раздела: у владельца провал темпа уводит долю на 5,3 % (`Среди своих (acustic
+/// final)` 92,3 → 87,6). Порог назван до прогона на треке, где сетка поехала.
+const COHERENT_SPAN: f64 = 0.03;
+
+/// Окно вокруг границы участка, в котором проверяется, что смена темпа слышна, секунды.
+///
+/// Пятнадцать секунд — это тридцать долей при 125 BPM: в них укладывается раздел, но не сглаживается
+/// провал.
+const CHANGE_PROOF_SECONDS: f64 = 15.0;
+
+/// Насколько тише среднего по треку должно быть окно, чтобы оно не голосовало.
+///
+/// Четверть: у «ямы» без ударных огибающая тише остального трека, и сетка в ней объясняет почти
+/// ничего — ни жёсткая, ни с участками. Такой участок не свидетельствует о смене темпа, и граница по
+/// нему не ставится (на `Air and Tur — Love Emotion` классический проход делил 125 на 93,7 в яме).
+const CHANGE_PROOF_FLOOR: f64 = 0.25;
+
+/// Смена темпа в участке больше этой доли считается разделом и требует свидетельства по месту.
+///
+/// Проценты, а не любая разница: плавный дрейф — это сетка целиком, и у него доказательство общее
+/// (`ELASTIC_MARGIN` на всём треке), а раздел — местное утверждение, и оно проверяется там, где
+/// заявлено.
+const CHANGE_PROOF_SPAN: f64 = 0.01;
+
+/// Держится ли каждая смена темпа на музыке вокруг её границы.
+///
+/// Смена раздела — местное утверждение: «здесь играет другой темп». Проверяется там, где заявлено, —
+/// в окне [`CHANGE_PROOF_SECONDS`] вокруг границы: сетка с участками обязана объяснять онсеты лучше,
+/// чем тот же темп, протянутый из предыдущего участка. Окно, которое тише трека на
+/// [`CHANGE_PROOF_FLOOR`], не голосует вовсе: в «яме» без ударных оба ответа объясняют ничего, и
+/// счёт там — шум, а не музыка.
+fn changes_are_supported(envelope: &[f32], per_second: f64, segments: &[TempoSegment]) -> bool {
+    if segments.len() < 2 {
+        return true;
+    }
+    let end = envelope.len() as f64;
+    let loudness = |from: f64, to: f64| -> f64 {
+        let low = from.max(0.0) as usize;
+        let high = (to.max(0.0) as usize).min(envelope.len());
+        if high <= low {
+            return 0.0;
+        }
+        envelope[low..high]
+            .iter()
+            .map(|value| f64::from(*value))
+            .sum::<f64>()
+            / (high - low) as f64
+    };
+    let whole = loudness(0.0, end);
+    for index in 1..segments.len() {
+        let ratio = segments[index].bpm / segments[index - 1].bpm;
+        let change = ratio - 1.0;
+        if change.abs() <= CHANGE_PROOF_SPAN {
+            continue;
+        }
+        // Отношение ступенью (половина, четверть, две трети, три вторых) — это не смена раздела, а
+        // другая доля той же музыки: 125 BPM, прочитанные квартолями, дают 93,75. Раздел так не
+        // меняется, и граница по такой ступени не ставится.
+        if LEVEL_STEPS
+            .iter()
+            .any(|step| (ratio / step - 1.0).abs() <= LEVEL_STEP_TOLERANCE)
+        {
+            return false;
+        }
+        let boundary = (segments[index].first_beat_frame as f64 - BLOCK as f64 / 2.0) / HOP as f64;
+        let window = CHANGE_PROOF_SECONDS * per_second;
+        let from = (boundary - window).max(0.0);
+        let to = (boundary + window).min(end);
+        if loudness(from, to) < whole * CHANGE_PROOF_FLOOR {
+            return false;
+        }
+        let candidate = grid_onset_between(envelope, segments, per_second, from, to);
+        let before = grid_onset_between(
+            envelope,
+            &[TempoSegment {
+                bpm: segments[index - 1].bpm,
+                first_beat_frame: segments[index - 1].first_beat_frame,
+                beat: segments[index - 1].beat,
+            }],
+            per_second,
+            from,
+            to,
+        );
+        let (Some(candidate), Some(before)) = (candidate, before) else {
+            return false;
+        };
+        if candidate <= before * ELASTIC_MARGIN {
+            return false;
+        }
+    }
+    true
 }
 
 /// How far from the beat the walk looks for its next beat, as a fraction of the period.
@@ -1773,20 +1913,38 @@ const MIN_DRIFT: f64 = 0.01;
 
 /// The mean onset strength at the beats a grid implies, up to `end` (in hops).
 fn grid_onset(envelope: &[f32], segments: &[TempoSegment], per_second: f64, end: f64) -> f64 {
+    grid_onset_between(envelope, segments, per_second, 0.0, end).unwrap_or(0.0)
+}
+
+/// Средняя сила онсетов на линиях сетки внутри окна `[from, to)`, в хопах огибающей.
+fn grid_onset_between(
+    envelope: &[f32],
+    segments: &[TempoSegment],
+    per_second: f64,
+    from: f64,
+    to: f64,
+) -> Option<f64> {
     let mut sum = 0.0f64;
     let mut counted = 0usize;
     for (position, segment) in segments.iter().enumerate() {
         if !(segment.bpm.is_finite() && segment.bpm > 0.0) {
-            return 0.0;
+            return None;
         }
         let period = per_second * 60.0 / segment.bpm;
         let until = segments
             .get(position + 1)
-            .map_or(end, |next| {
+            .map_or(to, |next| {
                 (next.first_beat_frame as f64 - BLOCK as f64 / 2.0) / HOP as f64
             })
-            .min(end);
-        let mut hop = (segment.first_beat_frame as f64 - BLOCK as f64 / 2.0) / HOP as f64;
+            .min(to);
+        // Линии до окна не считаются, но шаг от них отсчитывается: иначе фаза сетки в окне
+        // оказалась бы фазой начала файла.
+        let start = (segment.first_beat_frame as f64 - BLOCK as f64 / 2.0) / HOP as f64;
+        let skipped = ((from - start) / period).floor().max(0.0);
+        let mut hop = start + skipped * period;
+        while hop < from {
+            hop += period;
+        }
         let mut guard = 0usize;
         while hop < until && guard < 100_000 {
             if let Some(value) = envelope.get(hop.round().max(0.0) as usize) {
@@ -1798,9 +1956,9 @@ fn grid_onset(envelope: &[f32], segments: &[TempoSegment], per_second: f64, end:
         }
     }
     if counted == 0 {
-        0.0
+        None
     } else {
-        sum / counted as f64
+        Some(sum / counted as f64)
     }
 }
 

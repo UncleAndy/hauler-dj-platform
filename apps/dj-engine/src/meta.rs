@@ -123,10 +123,10 @@ pub fn restore(
                 // The file states a tempo and pins the rest with anchors; the grid is what the rest of
                 // the program speaks. A stored grid that cannot be a grid is ignored rather than trusted.
                 let rate = f64::from(prepared.static_info.source_rate);
-                let anchors: Vec<(u64, u64)> = stored
+                let anchors: Vec<(u64, u64, Option<f64>)> = stored
                     .anchors
                     .iter()
-                    .map(|anchor| (anchor.frame, anchor.beat))
+                    .map(|anchor| (anchor.frame, anchor.beat, anchor.bpm))
                     .collect();
                 let grid = BeatGrid::from_stored(
                     stored.bpm,
@@ -223,7 +223,11 @@ pub fn write_beatgrid(
         anchors: grid
             .stored_anchors()
             .into_iter()
-            .map(|(frame, beat)| dj_library::Anchor { frame, beat })
+            .map(|(frame, beat, bpm)| dj_library::Anchor {
+                frame,
+                beat,
+                bpm: Some(bpm),
+            })
             .collect(),
     });
     if existed {

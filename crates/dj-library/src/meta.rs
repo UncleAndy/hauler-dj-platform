@@ -52,11 +52,18 @@ pub struct Cue {
 }
 
 /// One point where the grid was pinned by hand, for files whose tempo drifts.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Anchor {
     pub frame: u64,
     /// Beat number counted from the first beat.
     pub beat: u64,
+    /// Tempo of the stretch this anchor starts, in BPM.
+    ///
+    /// Written by this build for every anchor. A file written before it has none: such a stretch took
+    /// its tempo from the anchor after it, which is how a two-point grid used to be read — and which
+    /// left the last stretch with the tempo of the whole file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bpm: Option<f64>,
 }
 
 /// The beat grid: a tempo and the frame of its first beat, plus manual anchors.

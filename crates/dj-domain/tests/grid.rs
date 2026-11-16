@@ -191,7 +191,7 @@ fn what_a_file_holds_becomes_a_grid() {
 
     // A file with one anchor: the stretch before it gets the tempo that makes the grid pass through
     // both points, the last stretch keeps the stated tempo.
-    let anchors = [(0u64, 0u64), (190_000, 8)];
+    let anchors = [(0u64, 0u64, None), (190_000, 8, None)];
     let stored = BeatGrid::from_stored(120.0, 0, &[anchors[1]], RATE, 4).expect("a grid");
     assert_eq!(stored.segments().len(), 2);
     let first = stored.segments()[0];
@@ -205,8 +205,27 @@ fn what_a_file_holds_becomes_a_grid() {
     assert!((stored.segments()[1].bpm - 120.0).abs() < 1e-9);
     assert!((stored.beat_at(190_000, RATE) - 8.0).abs() < 1e-9);
 
-    // And the way back: what is stored is the first segment plus the anchors.
-    assert_eq!(stored.stored_anchors(), vec![(190_000, 8)]);
+    // And the way back: what is stored is the first segment plus the anchors, and an anchor carries the
+    // tempo of the stretch it starts — the second stretch is the file's 120, not the 121,26 the old
+    // reading deduced for the first one.
+    assert_eq!(stored.stored_anchors(), vec![(190_000, 8, 120.0)]);
+
+    // A stretch that states its own tempo is read as stated, not deduced from the next anchor: a grid
+    // whose second stretch is slower than its first cannot be described by two points at all.
+    let stated = BeatGrid::from_stored(120.0, 0, &[(96_000, 4, Some(96.0))], RATE, 4)
+        .expect("a grid with its own tempo");
+    assert_eq!(stated.segments().len(), 2);
+    assert!(
+        (stated.segments()[0].bpm - 120.0).abs() < 1e-9,
+        "{}",
+        stated.segments()[0].bpm
+    );
+    assert!(
+        (stated.segments()[1].bpm - 96.0).abs() < 1e-9,
+        "{}",
+        stated.segments()[1].bpm
+    );
+    assert_eq!(stated.stored_anchors(), vec![(96_000, 4, 96.0)]);
 }
 
 #[test]
