@@ -14230,14 +14230,32 @@ int main(int argc, char *argv[])
             const double elapsed = window.elapsed() / 1000.0;
             const double to = frameOf();
             bridge->play(QStringLiteral("A"), false);
+            // The clip that is on the deck, not the one this check assumed: a file at another rate moves a
+            // different number of source frames for the same second of sound.
+            qint64 meterRate = 0;
+            for (const QVariant &entry : bridge->snapshot().value(QStringLiteral("decks")).toList()) {
+                const QVariantMap map = entry.toMap();
+                if (map.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                    meterRate = map.value(QStringLiteral("source_rate")).toLongLong();
+                }
+            }
             const double heard = (to - from) / (elapsed * 48000.0);
             std::fprintf(stdout,
-                         "dj-ui: the deck consumed %.3f seconds of the file per second at %.4f\n",
-                         heard, playing);
+                         "dj-ui: the deck consumed %.3f seconds of the file per second at %.4f "
+                         "(elapsed %.3f s, source rate %lld)\n",
+                         heard,
+                         playing,
+                         elapsed,
+                         static_cast<long long>(meterRate));
             if (elapsed < 0.5 || std::abs(heard - playing) > 0.06) {
                 std::fprintf(stderr,
-                             "dj-ui: the fader says %.3f but the material moved at %.3f\n",
-                             playing, heard);
+                             "dj-ui: the fader says %.3f but the material moved at %.3f "
+                             "(elapsed %.3f s, source rate %lld, %lld frames)\n",
+                             playing,
+                             heard,
+                             elapsed,
+                             static_cast<long long>(meterRate),
+                             static_cast<long long>(to - from));
                 return 1;
             }
         }
