@@ -54,6 +54,31 @@ pub enum GridEdit {
         /// Frame of the track the beat has to land on.
         frame: u64,
     },
+    /// Move only the stretch that plays at this frame, by this many frames; positive is later.
+    ///
+    /// [`GridEdit::Shift`] moves the whole grid, and on a track with two tempos that drags the sections the
+    /// DJ already matched to the drums. This one moves the section under the play head and leaves the rest.
+    ShiftStretch {
+        /// Frame inside the stretch to move — the play head.
+        frame: u64,
+        /// Frames to move it by; positive is later.
+        frames: i64,
+    },
+    /// Put a beat of the stretch that plays at this frame onto that very frame.
+    ///
+    /// [`GridEdit::Here`] for one section: the stretch under the play head moves the shortest way onto the
+    /// head, the other sections stay put.
+    SnapStretch {
+        /// Frame the beat has to land on — the play head.
+        frame: u64,
+    },
+    /// Read the stretch that plays at this frame `factor` times its tempo: `2.0` doubles it, `0.5` halves.
+    LevelStretch {
+        /// Frame inside the stretch — the play head.
+        frame: u64,
+        /// What the tempo of that section is multiplied by.
+        factor: f64,
+    },
     /// Count this many beats to the bar.
     ///
     /// The measurement counts the accents of the low band, and a bar whose accent it cannot hear is counted

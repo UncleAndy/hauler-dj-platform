@@ -391,7 +391,11 @@ public:
     /// measure.
     Q_INVOKABLE int analyzeTempo(const QString &deck);
     /// Move the deck's grid by `frames` (positive is later). The DJ's ear is the authority here.
-    Q_INVOKABLE int shiftGrid(const QString &deck, qlonglong frames);
+    Q_INVOKABLE int shiftGrid(const QString &deck, qlonglong frame, qlonglong frames);
+    /// Put a beat of the stretch under `frame` onto `frame` — the ⌖ button, which acts on one section.
+    Q_INVOKABLE int snapStretch(const QString &deck, qlonglong frame);
+    /// Double or halve the tempo of the stretch under `frame`, leaving the other sections alone.
+    Q_INVOKABLE int levelStretch(const QString &deck, qlonglong frame, double factor);
     /// Put a beat of the deck's grid exactly on `frame` — the play head.
     Q_INVOKABLE int snapGrid(const QString &deck, qlonglong frame);
     /// Give the deck's track this tempo, keeping its first beat where it is.

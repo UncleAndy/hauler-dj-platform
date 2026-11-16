@@ -300,6 +300,60 @@ impl BeatGrid {
         found
     }
 
+    /// Move the stretch that plays at this frame by `frames`, leaving the others where they are.
+    ///
+    /// The stretch's own anchor is what moves, and it has to stay between its neighbours: a section that
+    /// overtakes the one after it is not a correction but a reordering.
+    pub fn with_stretch_shift(&self, frame: u64, frames: i64) -> Option<Self> {
+        if frames == 0 {
+            return Some(self.clone());
+        }
+        let index = self.stretch_at(frame);
+        let segment = self.segments[index];
+        let moved = i64::try_from(segment.frame).ok()? + frames;
+        if moved < 0 {
+            return None;
+        }
+        let moved = moved as u64;
+        if index > 0 && moved <= self.segments[index - 1].frame {
+            return None;
+        }
+        if let Some(next) = self.segments.get(index + 1)
+            && moved >= next.frame
+        {
+            return None;
+        }
+        let mut segments = self.segments.clone();
+        segments[index].frame = moved;
+        Self::rebuilt(segments, self.beats_per_bar)
+    }
+
+    /// Put the nearest beat of the stretch at this frame onto the frame itself.
+    ///
+    /// What moves is the stretch under the play head; the beat count is untouched, because the lines are
+    /// what is being placed and not the counting.
+    pub fn with_stretch_snap(&self, frame: u64, rate: f64) -> Option<Self> {
+        if !(rate.is_finite() && rate > 0.0) {
+            return None;
+        }
+        let beat = self.beat_at(frame, rate).round();
+        let placed = self.frame_of_beat(beat, rate);
+        if !placed.is_finite() {
+            return None;
+        }
+        let offset = (frame as f64 - placed).round() as i64;
+        self.with_stretch_shift(frame, offset)
+    }
+
+    /// Read the stretch that plays at this frame at `factor` times its tempo.
+    pub fn with_stretch_level(&self, frame: u64, factor: f64) -> Option<Self> {
+        if !(factor.is_finite() && factor > 0.0) {
+            return None;
+        }
+        let index = self.stretch_at(frame);
+        self.with_stretch_tempo(frame, self.segments[index].bpm * factor)
+    }
+
     /// Split the stretch that plays at this frame: a new section starts there, at the tempo it has.
     ///
     /// Refused when there is nothing to split — the frame is on the stretch's own first beat — because a
@@ -370,10 +424,15 @@ impl BeatGrid {
             beat: 0,
             bpm,
         }];
-        // Which stretches state their own tempo: only an anchor that carries one does. A file written
-        // before anchors had a tempo states it for the first stretch and leaves the rest to be read
-        // out of the anchor after them, exactly as before.
-        let mut stated = vec![false];
+        // Which stretches state their own tempo. A file written before anchors had a tempo states one
+        // tempo for the whole grid and lets the stretches be read out of the pairs of points; a file
+        // written by this build states each stretch's tempo, and then the first stretch's own tempo is the
+        // one in the file, not something derived from the first anchor — deriving it there was what made
+        // a saved 93 BPM grid read back as 192 after a restart.
+        let stated_any = anchors
+            .iter()
+            .any(|(_, _, own)| own.is_some_and(|value| value.is_finite() && value > 0.0));
+        let mut stated = vec![stated_any];
         for (frame, beat, own) in anchors {
             let own = own.filter(|value| value.is_finite() && *value > 0.0);
             stated.push(own.is_some());

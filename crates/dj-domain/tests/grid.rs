@@ -269,3 +269,48 @@ fn a_waltz_keeps_its_three_beat_bar_through_a_shift_and_through_the_file() {
     );
     assert_eq!(old.square_beats(), 16);
 }
+
+#[test]
+fn the_old_tools_move_only_the_stretch_under_the_play_head() {
+    // Две секции: 120 BPM с кадра 0 и 100 BPM с кадра 240 000. Инструменты, которыми DJ выправляет
+    // сетку, обязаны править ту секцию, где стоит голова, — иначе правка конца тянет за собой начало,
+    // уже выверенное по бочке.
+    let two = BeatGrid::from_stored(120.0, 0, &[(240_000, 16, Some(100.0))], RATE, 4)
+        .expect("две секции");
+    assert_eq!(two.segments().len(), 2);
+
+    // Сдвиг на 10 мс в первой секции: вторая остаётся на месте.
+    let shifted = two.with_stretch_shift(0, 480).expect("сдвиг первой");
+    assert_eq!(shifted.segments()[0].frame, 480);
+    assert_eq!(shifted.segments()[1].frame, 240_000);
+
+    // И наоборот: правка второй не двигает первую.
+    let later = two.with_stretch_shift(250_000, 480).expect("сдвиг второй");
+    assert_eq!(later.segments()[0].frame, 0);
+    assert_eq!(later.segments()[1].frame, 240_480);
+
+    // Темп и уровень — тоже только своей секции.
+    let retimed = two.with_stretch_tempo(250_000, 101.0).expect("темп второй");
+    assert!((retimed.segments()[0].bpm - 120.0).abs() < 1e-9);
+    assert!((retimed.segments()[1].bpm - 101.0).abs() < 1e-9);
+    let doubled = two
+        .with_stretch_level(250_000, 2.0)
+        .expect("уровень второй");
+    assert!((doubled.segments()[0].bpm - 120.0).abs() < 1e-9);
+    assert!((doubled.segments()[1].bpm - 200.0).abs() < 1e-9);
+
+    // ⌖ ставит долю секции на голову и не трогает соседнюю.
+    let head = 250_000;
+    let snapped = two.with_stretch_snap(head, RATE).expect("доля на голову");
+    let after = snapped.segments()[1].frame;
+    let beat = snapped.beat_at(after, RATE);
+    let placed = snapped.frame_of_beat(beat.round(), RATE);
+    assert!(
+        (placed - head as f64).abs() <= 1.0,
+        "доля встала на {placed:.1} вместо {head}"
+    );
+    assert_eq!(snapped.segments()[0].frame, 0);
+
+    // Секция не переезжает через соседнюю: это не правка, а перестановка.
+    assert!(two.with_stretch_shift(250_000, -240_000).is_none());
+}

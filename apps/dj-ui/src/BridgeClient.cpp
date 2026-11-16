@@ -1976,12 +1976,37 @@ int BridgeClient::sendGridEdit(const QString &deck, const QJsonValue &edit)
     return sendCommand(deck, command);
 }
 
-int BridgeClient::shiftGrid(const QString &deck, qlonglong frames)
+int BridgeClient::shiftGrid(const QString &deck, qlonglong frame, qlonglong frames)
 {
+    // Кадр приходит от руки, а не из снапшота: снапшот на кадр экрана отстаёт, и правка тогда попадает
+    // в соседнюю секцию.
     QJsonObject inner;
+    inner.insert(QStringLiteral("frame"), QJsonValue::fromVariant(frame));
     inner.insert(QStringLiteral("frames"), QJsonValue::fromVariant(frames));
     QJsonObject edit;
-    edit.insert(QStringLiteral("Shift"), inner);
+    edit.insert(QStringLiteral("ShiftStretch"), inner);
+    return sendGridEdit(deck, edit);
+}
+
+int BridgeClient::snapStretch(const QString &deck, qlonglong frame)
+{
+    QJsonObject inner;
+    inner.insert(QStringLiteral("frame"), QJsonValue::fromVariant(frame));
+    QJsonObject edit;
+    edit.insert(QStringLiteral("SnapStretch"), inner);
+    return sendGridEdit(deck, edit);
+}
+
+int BridgeClient::levelStretch(const QString &deck, qlonglong frame, double factor)
+{
+    if (!(factor > 0.0)) {
+        return -1;
+    }
+    QJsonObject inner;
+    inner.insert(QStringLiteral("frame"), QJsonValue::fromVariant(frame));
+    inner.insert(QStringLiteral("factor"), factor);
+    QJsonObject edit;
+    edit.insert(QStringLiteral("LevelStretch"), inner);
     return sendGridEdit(deck, edit);
 }
 

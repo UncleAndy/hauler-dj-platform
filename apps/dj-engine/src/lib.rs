@@ -1713,7 +1713,7 @@ pub fn edit_grid(grid: Option<&BeatGrid>, edit: &GridEdit, source_rate: u32) -> 
         // Everything else reads a grid that exists — there is nothing to halve and nothing to move — and
         // is refused rather than invented.
         return match edit {
-            GridEdit::Here { frame } => {
+            GridEdit::Here { frame } | GridEdit::SnapStretch { frame } => {
                 BeatGrid::single(STARTING_BPM, *frame).map(|grid| grid.with_beats_per_bar(4))
             }
             GridEdit::Tempo { bpm } | GridEdit::StretchTempo { bpm, .. } => {
@@ -1727,6 +1727,36 @@ pub fn edit_grid(grid: Option<&BeatGrid>, edit: &GridEdit, source_rate: u32) -> 
         // four bars is: a grid that is shifted past the start of the file is rebased by whole squares
         // instead of stopping at zero.
         GridEdit::Shift { frames } => grid.shifted(*frames, f64::from(source_rate)),
+        // На одиночной сетке путь остаётся прежним — со всей его арифметикой квадратов и перебазированием;
+        // на сетке с участками двигается только тот, что под головой.
+        GridEdit::ShiftStretch { frame, frames } => {
+            if grid.is_single() {
+                grid.shifted(*frames, f64::from(source_rate))
+            } else {
+                grid.with_stretch_shift(*frame, *frames)
+            }
+        }
+        GridEdit::SnapStretch { frame } => {
+            if grid.is_single() {
+                let rate = f64::from(source_rate);
+                let beat = grid.beat_at(*frame, rate).round();
+                let placed = grid.frame_of_beat(beat, rate);
+                if placed.is_finite() {
+                    grid.shifted(((*frame) as f64 - placed).round() as i64, rate)
+                } else {
+                    None
+                }
+            } else {
+                grid.with_stretch_snap(*frame, f64::from(source_rate))
+            }
+        }
+        GridEdit::LevelStretch { frame, factor } => {
+            if grid.is_single() {
+                grid.retimed(grid.bpm() * *factor)
+            } else {
+                grid.with_stretch_level(*frame, *factor)
+            }
+        }
         GridEdit::Tempo { bpm } => grid.retimed(*bpm),
         GridEdit::Double => grid.retimed(grid.bpm() * 2.0),
         GridEdit::Half => grid.retimed(grid.bpm() / 2.0),

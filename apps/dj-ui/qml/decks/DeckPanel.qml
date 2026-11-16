@@ -122,7 +122,13 @@ Pane {
     }
 
     function shiftGrid(direction) {
-        Bridge.shiftGrid(panel.deckId, direction * Math.round(panel.gridRate * 0.010));
+        Bridge.shiftGrid(panel.deckId, Math.round(panel.frameAtTap(Date.now())),
+                         direction * Math.round(panel.gridRate * 0.010));
+    }
+
+    /// Голова деки кадром: правки сетки несут её с собой, чтобы попасть в ту секцию, которую DJ слышит.
+    function headFrame() {
+        return Math.round(panel.frameAtTap(Date.now()));
     }
 
     /// Move the grid by one beat of the tempo under the play head. Ten milliseconds solve a late kick;
@@ -133,7 +139,7 @@ Pane {
             return;
         }
         const beat = Math.round(panel.gridRate * 60 / panel.localBpm);
-        Bridge.shiftGrid(panel.deckId, direction * beat);
+        Bridge.shiftGrid(panel.deckId, panel.headFrame(), direction * beat);
     }
 
     /// Put a beat of the grid on the play head. The two mistakes a grid makes are "a few milliseconds
@@ -144,7 +150,7 @@ Pane {
         if (frame < 0) {
             return;
         }
-        Bridge.snapGrid(panel.deckId, frame);
+        Bridge.snapStretch(panel.deckId, panel.headFrame());
     }
 
     /// Разбить сетку на плейхеде: новый участок начинается там, где меняется музыка.
@@ -1353,7 +1359,7 @@ Pane {
                     focusPolicy: Qt.NoFocus
                     ToolTip.visible: hovered
                     ToolTip.text: qsTr("Read the grid half as fast")
-                    onClicked: Bridge.halveGrid(panel.deckId)
+                    onClicked: Bridge.levelStretch(panel.deckId, panel.headFrame(), 0.5)
                 }
                 GridTool {
                     objectName: "gridDouble_" + panel.deckId
@@ -1364,7 +1370,7 @@ Pane {
                     focusPolicy: Qt.NoFocus
                     ToolTip.visible: hovered
                     ToolTip.text: qsTr("Read the grid twice as fast")
-                    onClicked: Bridge.doubleGrid(panel.deckId)
+                    onClicked: Bridge.levelStretch(panel.deckId, panel.headFrame(), 2.0)
                 }
                 // Размер такта: замер считает акценты низкой полосы и без акцента ставит четыре, а вальс
                 // и такт на шесть — решение DJ. Кнопка показывает то, что стоит сейчас.
