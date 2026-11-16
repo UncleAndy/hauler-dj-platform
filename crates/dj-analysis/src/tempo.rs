@@ -272,8 +272,6 @@ pub fn detect_with_prior_and_beats(
     let Some(mut segments) = grid_from_beats(beats, rate) else {
         return Some(rigid);
     };
-    merge_near_segments(&mut segments);
-    beats_from_frames(&mut segments, rate);
     // Доли модели, разошедшиеся меньше чем на COHERENT_SPAN, — один темп, и это свидетельство против
     // участков: доли идут по активациям, и «трек держит темп» видно в них целиком. Ответ — один
     // участок по медиане их темпа (на `Air and Tur — Love Emotion` классика делила 125 на 93,7 —
@@ -1302,50 +1300,6 @@ fn carried_windows(envelope: &[f32], per_second: f64, period: f64, phase: f64) -
     (share, contrast)
 }
 
-/// Слить соседние участки, чей темп отличается на волосок.
-///
-/// Порог 0,3 %: у любой сетки есть шум измерения (шаг декодера 20 мс — это 0,3 % периода доли), и
-/// граница по такому различию не описывает музыку, а дрожит. На `Среди своих (final).mp3` проход
-/// объявлял смену 92,993 → 92,882 (0,1 %) на 150-й секунде — владелец слышит там «некорректную смену
-/// BPM», а смены нет.
-fn merge_near_segments(segments: &mut Vec<TempoSegment>) {
-    /// Разница темпа, которую сетка различить не может.
-    const SAME_TEMPO: f64 = 0.003;
-    /// Длина участка, при которой граница по волоску — шум, а не часть плавного хода.
-    ///
-    /// Тридцать две доли — восемь тактов. У дрейфа участки по десятку долей, и там каждая граница
-    /// законна: она описывает кусок плавного хода. У шума участок длинный, и одиночная граница внутри
-    /// него не описывает ничего.
-    const LONG_STRETCH: u64 = 32;
-    let mut merged: Vec<TempoSegment> = Vec::with_capacity(segments.len());
-    for segment in segments.iter() {
-        match merged.last() {
-            Some(previous)
-                if previous.bpm.is_finite()
-                    && previous.bpm > 0.0
-                    && (segment.bpm / previous.bpm - 1.0).abs() <= SAME_TEMPO =>
-            {
-                // Сливаем только внутри длинных участков: иначе плавный ход теряет свои границы.
-                let mut span = u64::MAX;
-                if let Some(after) = segments
-                    .iter()
-                    .position(|candidate| candidate.beat == segment.beat)
-                    .and_then(|index| segments.get(index + 1))
-                {
-                    span = after.beat.saturating_sub(segment.beat);
-                }
-                let before = segment.beat.saturating_sub(previous.beat);
-                if before >= LONG_STRETCH && span >= LONG_STRETCH {
-                    continue;
-                }
-                merged.push(*segment);
-            }
-            _ => merged.push(*segment),
-        }
-    }
-    *segments = merged;
-}
-
 /// Номера долей по якорям и темпу, а не по счёту окна.
 ///
 /// Участок объявляет «в этом кадре такая-то доля». Если номер пришёл из счёта окна, он может разойтись
@@ -1450,7 +1404,6 @@ fn carries_the_beat(
     // один вопрос, и расходиться они не имеют права, потому что пара (кадр, доля) уходит в файл и по
     // ней темп читается заново.
     let mut tempo = tempo;
-    merge_near_segments(&mut tempo.segments);
     beats_from_frames(&mut tempo.segments, per_second * HOP as f64);
     Some(tempo)
 }
