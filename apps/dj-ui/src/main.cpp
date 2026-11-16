@@ -12232,7 +12232,13 @@ int main(int argc, char *argv[])
         }
         // A flag is not a click: the deck has to play, and the engine has to count the clicks it played on
         // the beats it crossed. The count is the one number a check can measure instead of hearing.
+        // Two questions, asked separately: the deck has to be playing, and the clicks have to follow. A
+        // single wait that only looks at the clicks cannot say which of the two went wrong.
         bridge->play(QStringLiteral("A"), true);
+        if (!waitFor([&]() { return deckA().value(QStringLiteral("playing")).toBool(); }, 5000)) {
+            std::fprintf(stderr, "dj-ui: the deck did not start playing for the metronome\n");
+            return 1;
+        }
         if (!waitFor([&]() { return clicks() >= 2; }, 8000)) {
             std::fprintf(stderr,
                          "dj-ui: the deck played but the metronome clicked %llu times\n",

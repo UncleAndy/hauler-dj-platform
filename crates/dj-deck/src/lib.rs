@@ -73,6 +73,18 @@ const TEMPO_GLIDE_SECONDS: f64 = 0.03;
 /// rate change never allocates inside the callback.
 const MAX_TEMPO_BLOCK_FRAMES: usize = 8192;
 
+/// Fastest the hand can drive the record, in source frames per output frame.
+///
+/// Four times the record's own speed is past what a DJ can do with a wrist, and it keeps the window a
+/// fixed size: a block at this rate asks for four times its own length of material, no more.
+pub const MAX_HAND_RATE: f64 = 4.0;
+
+/// Material the hand's window holds, in frames.
+///
+/// The window is read with one seek per block, so it only has to hold the span of a block at the fastest
+/// hand plus the kernel's edges: `4 · 8192` frames of the longest block the deck renders, and some slack.
+const HAND_WINDOW_FRAMES: usize = MAX_TEMPO_BLOCK_FRAMES * 4 + 512;
+
 /// Where a deck reads frames from. Implemented by the prefetcher; tests provide their own.
 pub trait DeckSource: Send {
     /// Sample rate of the material.
@@ -398,6 +410,19 @@ pub struct Deck {
     /// is what a listener hears as a click.
     keylock_engaged: bool,
     /// Whether the material is walked backwards from the playhead (DJP-DECK-007).
+    /// Speed of the record under the hand, in source frames per output frame; zero when hands are off.
+    ///
+    /// Absolute, not a correction to the motor: while a hand holds the record, the record's speed *is*
+    /// the hand's speed, and the motor is out of the position. That is what makes a slow drag sound slow
+    /// and a still hand sound of nothing at all.
+    hand_rate: f64,
+    /// Where the hand has taken the record, in source frames, kept as a fraction so a slow drag does not
+    /// round the head to a standstill.
+    hand_pos: f64,
+    /// True while a hand holds the record.
+    hand_engaged: bool,
+    /// Material around the play head for the hand to move over: one seek per block, read both ways.
+    hand_window: Vec<f32>,
     reverse: bool,
     /// One block of material read backwards, reversed in place before it is handed on.
     reverse_scratch: Vec<f32>,
@@ -489,6 +514,12 @@ impl Deck {
             stretch_in: vec![0.0; MAX_TEMPO_BLOCK_FRAMES * 2],
             stretch_carry: 0.0,
             keylock_engaged: false,
+            hand_rate: 0.0,
+            hand_pos: 0.0,
+            hand_engaged: false,
+            // Emptiness is the ordinary state: the window is made when a hand first takes the record, so a
+            // deck that is only ever played through pays nothing for a scratch it never does.
+            hand_window: Vec::new(),
             reverse: false,
             reverse_scratch: vec![0.0; MAX_TEMPO_BLOCK_FRAMES * 2],
             reverse_window: Vec::new(),
@@ -670,6 +701,50 @@ impl Deck {
     /// Whether the pitch is held while the tempo moves.
     pub fn keylock(&self) -> bool {
         self.keylock
+    }
+
+    /// A hand takes the record, or lets it go.
+    ///
+    /// While it holds, the record's speed is the hand's speed and the motor is out of the position: the
+    /// deck sounds what the hand does, including nothing at all when the hand is still. On release the
+    /// motor takes over from wherever the hand left the record — which is where the sound already is.
+    pub fn grab(&mut self, on: bool) {
+        if on == self.hand_engaged {
+            return;
+        }
+        self.hand_engaged = on;
+        self.hand_rate = 0.0;
+        if on {
+            if self.hand_window.len() < HAND_WINDOW_FRAMES * 2 {
+                // On the command path, never on the audio callback: a scratch piece must not allocate.
+                self.hand_window = vec![0.0; HAND_WINDOW_FRAMES * 2];
+            }
+            // The head the ear hears is the one the hand takes. The read head sits ahead of it by the
+            // stretcher's delay, and by the material the tempo stage has already pulled in: the hand
+            // must take the frame under the needle, not the frame the deck is preparing.
+            self.hand_pos = self.heard_at(self.position) as f64;
+            self.scratch_frames = 0;
+            self.phase = 0.0;
+            // The stretcher is the motor's answer to speed; with a hand on the record it has nothing to
+            // answer, and re-entering it on release is a fresh entry.
+            self.keylock_engaged = false;
+        }
+    }
+
+    /// True while a hand holds the record.
+    pub fn hand_engaged(&self) -> bool {
+        self.hand_engaged
+    }
+
+    /// The speed the hand asks for: source frames per output frame, positive is forward.
+    ///
+    /// Zero is a hand that holds the record still, and that is silence: the needle sits in the groove and
+    /// the record is not moving.
+    pub fn set_hand_rate(&mut self, rate: f64) {
+        if !rate.is_finite() {
+            return;
+        }
+        self.hand_rate = rate.clamp(-MAX_HAND_RATE, MAX_HAND_RATE);
     }
 
     /// Drop the frames carried for the tempo stage: the playhead is about to move or stop.
@@ -1608,7 +1683,7 @@ impl Deck {
     /// deck's contribution to the mix, not the mix itself (that is A04).
     pub fn render(&mut self, out: &mut [f32]) {
         out.fill(0.0);
-        if !self.playing || self.source.is_none() {
+        if (!self.playing && !self.hand_engaged) || self.source.is_none() {
             // Silent, but the bar does not snap to zero: it falls back at its own speed, so a pause
             // reads as a fade rather than a glitch on the strip.
             self.levels = decay_to_silence(&mut self.level_decay, out.len() / 2);
@@ -1616,16 +1691,27 @@ impl Deck {
             return;
         }
 
-        if self.keylock_engaged {
+        if !self.hand_engaged && self.keylock_engaged {
             // Only the stretcher cares: the resampling stage is sample-continuous and takes a jump.
             self.glide_tempo(out.len() / 2);
         }
-        let step = self.tempo_ratio * self.rate_ratio;
+        // The motor's speed and the record's speed are two different things while a hand is on the
+        // record: the motor keeps turning under the slipmat, the record goes where the hand takes it.
+        let motor = self.tempo_ratio * self.rate_ratio;
+        let step = if self.hand_engaged {
+            self.hand_rate
+        } else {
+            motor
+        };
         // Key lock answers the tempo, not the file's rate: a 44,1 kHz file at the deck's own speed is a
         // resampling job, and sending it through the stretcher would delay it for nothing.
         let wants_keylock =
             self.keylock && ((self.tempo_ratio - 1.0).abs() > 1e-9 || self.keylock_engaged);
-        if !wants_keylock {
+        if self.hand_engaged {
+            // The hand is the record: no tempo stage, no stretcher, no key lock — the pitch follows the
+            // speed of the hand, which is the whole point of the instrument.
+            self.render_by_hand(out, step);
+        } else if !wants_keylock {
             // At the file's own speed the output is byte for byte what it was before any tempo stage
             // existed, which is what the golden render compares against.
             if (step - 1.0).abs() < 1e-9 {
@@ -1646,7 +1732,8 @@ impl Deck {
         if self.slip {
             #[allow(clippy::cast_precision_loss)]
             let frames = out.len() as f64 / 2.0;
-            self.slip_virtual += frames * step;
+            // Slip is the track's own clock: a hand on the record does not move it, the motor does.
+            self.slip_virtual += frames * motor;
         }
 
         // Trim, then the measured correction: both are gain staging before the EQ, and neither one is
@@ -1704,6 +1791,134 @@ impl Deck {
             out[index * 2 + 1] *= gain;
         }
         self.resume_fade = self.resume_fade.saturating_sub(frames - start);
+    }
+
+    /// Play the material the hand moves over, at the hand's own speed and in either direction.
+    ///
+    /// One seek per block puts the material around the play head into the window; the interpolator then
+    /// reads it with a positive step, and a hand that walks backwards reads the same window reversed.
+    /// The interpolator's kernel looks back from the frame it is asked about, so a negative step given to
+    /// it directly lands a fraction of a frame off; turning the material round instead keeps a backward
+    /// pass exact, which is what a scratch is made of.
+    fn render_by_hand(&mut self, out: &mut [f32], step: f64) {
+        let frames = out.len() / 2;
+        if frames == 0 {
+            return;
+        }
+        if !step.is_finite() {
+            out.fill(0.0);
+            return;
+        }
+        // A hand that is not moving makes no sound: the needle is in the groove and the record stands
+        // still. A thousandth of a frame per frame is a hand that stands still, and rendering it would
+        // repeat one frame forever at a click's worth of noise.
+        if step.abs() < 1e-3 {
+            out.fill(0.0);
+            self.position = self.hand_pos.max(0.0).round() as u64;
+            return;
+        }
+
+        let (taps, history) = self.resampler.interpolation().geometry();
+        // Room for the kernel on both sides of the material the block asks for: the window is a view of
+        // the record, and the interpolation reads past both ends of what it plays.
+        let pad = 4 * (taps + history) + 8;
+        let capacity = (HAND_WINDOW_FRAMES - 2 * pad - 8) as f64;
+        // Pieces stay short: the kernel needs its own room at both ends, and a piece that ends inside the
+        // window's edge would be played as silence by the interpolator rather than as material.
+        let chunk = (capacity / step.abs()).floor().clamp(1.0, 256.0) as usize;
+        let mut done = 0usize;
+        while done < frames {
+            let take = (frames - done).min(chunk);
+            if !self.render_hand_piece(&mut out[done * 2..(done + take) * 2], step, pad) {
+                out[done * 2..].fill(0.0);
+                break;
+            }
+            done += take;
+        }
+        self.position = self.hand_pos.max(0.0).round() as u64;
+    }
+
+    /// One piece of the hand's block: read the material around it, sample it, move the head.
+    ///
+    /// Returns false when the record has run out under the hand.
+    fn render_hand_piece(&mut self, out: &mut [f32], step: f64, pad: usize) -> bool {
+        let take = out.len() / 2;
+        if take == 0 {
+            return true;
+        }
+        let span = step * (take as f64 - 1.0);
+        let low = self.hand_pos + span.min(0.0);
+        let high = self.hand_pos + span.max(0.0);
+        let total = self.source.as_ref().and_then(|source| source.frames());
+        let start = (low.floor() as i64 - pad as i64).max(0) as u64;
+        // Twice the pad at the far end: the kernel reaches forward past the last frame it plays, and a
+        // window that stops at the material the block asked for leaves the tail with a truncated kernel.
+        let mut end = (high.ceil() as i64 + 2 * pad as i64 + 1).max(start as i64 + 1) as u64;
+        if let Some(total) = total {
+            end = end.min(total.max(1));
+        }
+        if end <= start + 1 {
+            return false;
+        }
+        let need = usize::try_from(end - start)
+            .unwrap_or(0)
+            .min(HAND_WINDOW_FRAMES)
+            .min(self.hand_window.len() / 2);
+        self.fill_hand_window(start, need);
+
+        // Where the head sits in the window. Read forwards from there; a negative step turns the window
+        // round first, so the kernel always looks the way it was designed to.
+        let mut phase = self.hand_pos - start as f64;
+        let mut rate = step;
+        if step < 0.0 {
+            let mut reversed = std::mem::take(&mut self.reverse_scratch);
+            if reversed.len() < need * 2 {
+                reversed = vec![0.0; need * 2];
+            }
+            for index in 0..need {
+                let from = (need - 1 - index) * 2;
+                reversed[index * 2] = self.hand_window[from];
+                reversed[index * 2 + 1] = self.hand_window[from + 1];
+            }
+            self.hand_window[..need * 2].copy_from_slice(&reversed[..need * 2]);
+            self.reverse_scratch = reversed;
+            phase = (need as f64 - 1.0) - phase;
+            rate = -step;
+        }
+        let _ = self
+            .resampler
+            .process(&self.hand_window[..need * 2], out, 0, phase, rate);
+        // The head moves by what the hand asked for, not by what the interpolator reports: the two agree
+        // to a fraction of a frame, and the hand's own integral is the model.
+        self.hand_pos += step * take as f64;
+        if step < 0.0 && self.hand_pos < 0.0 {
+            self.hand_pos = 0.0;
+            return false;
+        }
+        true
+    }
+
+    /// Put `frames` of material from source frame `start` into the hand's window.
+    ///
+    /// A cache answers a seek with an index assignment, so this is a read and not a wait; what the file
+    /// does not hold is silence, and the hand walking past the end of the record hears exactly that.
+    fn fill_hand_window(&mut self, start: u64, frames: usize) {
+        let Some(source) = self.source.as_mut() else {
+            self.hand_window.fill(0.0);
+            return;
+        };
+        let _ = source.seek(start);
+        let mut got = 0usize;
+        while got < frames {
+            match source.read(&mut self.hand_window[got * 2..frames * 2]) {
+                Ok(0) => break,
+                Ok(taken) => got += taken,
+                Err(_) => break,
+            }
+        }
+        for sample in &mut self.hand_window[got * 2..frames * 2] {
+            *sample = 0.0;
+        }
     }
 
     /// Play `out` at the deck's tempo: pull more or less source material than the block holds and
