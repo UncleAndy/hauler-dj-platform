@@ -201,6 +201,7 @@ fn main() {
     let mut beatmodel: Option<String> = None;
     let mut ort_library: Option<String> = None;
     let mut prior_dump: Option<String> = None;
+    let mut grid_from_model = false;
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
@@ -225,6 +226,7 @@ fn main() {
                     beatmodel = Some(value);
                 }
             }
+            "--grid-from-model" => grid_from_model = true,
             "--dump-prior" => {
                 if let Some(value) = arguments.next() {
                     prior_dump = Some(value);
@@ -329,19 +331,23 @@ fn main() {
         let mut chosen: Option<(f64, Option<f64>)> = None;
         let decoded = decode(Path::new(&row.path));
         let our = decoded.ok().and_then(|(mono, rate)| {
+            // Один проход по модели на трек: уровень и доли берутся из одних активаций.
+            let mut model_beats: Option<Vec<f64>> = None;
             let prior = match model.as_mut() {
-                Some(model) => match dj_beatmodel::prior(
+                Some(model) => match dj_beatmodel::prior_and_beats(
                     model,
                     &mono,
                     rate,
                     &dj_beatmodel::DbnConfig::default(),
                 ) {
-                    Ok(Some(guess)) => Some(LevelPrior {
-                        bpm: guess.bpm,
-                        tolerance: 0.02,
-                        anchor: Some(guess.anchor),
-                    }),
-                    Ok(None) => None,
+                    Ok((guess, found)) => {
+                        model_beats = Some(found);
+                        guess.map(|guess| LevelPrior {
+                            bpm: guess.bpm,
+                            tolerance: 0.02,
+                            anchor: Some(guess.anchor),
+                        })
+                    }
                     Err(error) => {
                         eprintln!("{stem}: {error}");
                         None
@@ -355,6 +361,15 @@ fn main() {
             };
             if let Some(prior) = &prior {
                 chosen = Some((prior.bpm, prior.anchor));
+            }
+            if grid_from_model {
+                return dj_analysis::tempo::detect_with_prior_and_beats(
+                    &mono,
+                    rate,
+                    prior.as_ref(),
+                    model_beats.as_deref(),
+                )
+                .map(|tempo| (tempo, rate));
             }
             detect_with_prior(&mono, rate, prior.as_ref()).map(|tempo| (tempo, rate))
         });

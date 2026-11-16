@@ -12,5 +12,5 @@ pub mod resample;
 
 pub use dbn::{DbnConfig, decode_beats};
 pub use mel::{MelConfig, log_mel, mel_filterbank};
-pub use model::{BeatModel, ModelError, Prior, prior, prior_from_beats};
+pub use model::{BeatModel, ModelError, Prior, beats, prior, prior_and_beats, prior_from_beats};
 pub use resample::resample;

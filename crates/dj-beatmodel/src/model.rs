@@ -145,6 +145,36 @@ fn sigmoid(value: f32) -> f32 {
     1.0 / (1.0 + (-value).exp())
 }
 
+/// Доли трека по модели: мел → модель → DBN, без обращения к нашему детектору.
+///
+/// Это сырой материал для сетки: декодер идёт по активациям и потому видит местные изменения темпа,
+/// которые глобальная гребёнка сглаживает.
+pub fn beats(
+    model: &mut BeatModel,
+    mono: &[f32],
+    rate: f64,
+    config: &DbnConfig,
+) -> Result<Vec<f64>, ModelError> {
+    let activation = model.activations(mono, rate)?;
+    Ok(decode_beats(&activation, config))
+}
+
+/// Уровень и доли за один проход: активации модели считаются один раз.
+///
+/// [`prior`] и [`beats`] по отдельности — это два прохода по файлу, а сетка по долям нужна ровно
+/// тогда же, когда уровень: девять секунд на трек превращаются в четыре.
+pub fn prior_and_beats(
+    model: &mut BeatModel,
+    mono: &[f32],
+    rate: f64,
+    config: &DbnConfig,
+) -> Result<(Option<Prior>, Vec<f64>), ModelError> {
+    let activation = model.activations(mono, rate)?;
+    let beats = decode_beats(&activation, config);
+    let prior = prior_from_beats(&beats);
+    Ok((prior, beats))
+}
+
 /// Уровень и якорь по аудио: мел → модель → DBN.
 pub fn prior(
     model: &mut BeatModel,

@@ -243,16 +243,76 @@ pub struct LevelPrior {
 /// говорим о разном, и портить измеренную сетку нечем.
 pub fn detect_with_prior(mono: &[f32], rate: f64, prior: Option<&LevelPrior>) -> Option<Tempo> {
     let envelope = onset_envelope(mono)?;
+    detect_settled(mono, rate, prior, &envelope)
+}
+
+/// Сетка по долям извне (модель удара), принятая только если музыка её подтверждает.
+///
+/// Доли модели идут по активациям, поэтому видят местный темп — провал, возврат, уход в конце. Но
+/// они же и дрожат: на ровной электронике сетка, построенная по ним, гуляет за дрожанием декодера и
+/// объясняет онсеты хуже одной доли. Поэтому участки из [`grid_from_beats`] здесь не ответ, а
+/// предложение: оно принимается, если объясняет онсеты лучше жёсткой сетки на [`ELASTIC_MARGIN`], —
+/// то же правило, по которому принимается сетка с дрейфом. Без предложения, без музыки и при
+/// споре уровней ответом остаётся прежняя сетка.
+///
+/// Мера — средняя сила онсетов на линии сетки, а не сумма: у частой сетки линий больше, и сумма
+/// вознаграждала бы плотность, а не попадание.
+pub fn detect_with_prior_and_beats(
+    mono: &[f32],
+    rate: f64,
+    prior: Option<&LevelPrior>,
+    beats: Option<&[f64]>,
+) -> Option<Tempo> {
+    let envelope = onset_envelope(mono)?;
+    let rigid = detect_settled(mono, rate, prior, &envelope);
+    let Some(beats) = beats else {
+        return rigid;
+    };
+    let rigid = rigid?;
+    let Some(segments) = grid_from_beats(beats, rate) else {
+        return Some(rigid);
+    };
+    if segments.len() < 2 {
+        return Some(rigid);
+    }
+    // Уровень — свойство трека: если доли прочитаны на другой ступени, участки описывают другую
+    // музыку, и лучше остаться при прежней сетке, чем опубликовать чужой уровень (на корпусе так
+    // выходило 179,5 BPM там, где доля 128).
+    let level = segments.iter().map(|segment| segment.bpm).sum::<f64>() / segments.len() as f64;
+    if (level / rigid.bpm() - 1.0).abs() > 0.02 {
+        return Some(rigid);
+    }
+    let per_second = rate / HOP as f64;
+    let end = envelope.len() as f64;
+    let segmented = grid_onset(&envelope, &segments, per_second, end);
+    let steady = grid_onset(&envelope, &rigid.segments, per_second, end);
+    if segmented <= steady * ELASTIC_MARGIN {
+        return Some(rigid);
+    }
+    Some(Tempo {
+        segments,
+        confidence: rigid.confidence,
+        metre: rigid.metre,
+    })
+}
+
+/// Ответ по тому, что уже посчитано: огибающая и полосы.
+fn detect_settled(
+    mono: &[f32],
+    rate: f64,
+    prior: Option<&LevelPrior>,
+    envelope: &[f32],
+) -> Option<Tempo> {
     let kick = kick_envelope(mono, rate);
     let accent = accent_envelope(mono, rate);
-    let mut tempo = detect_in_envelope_with(&envelope, accent.as_deref(), rate)?;
+    let mut tempo = detect_in_envelope_with(envelope, accent.as_deref(), rate)?;
     if let Some(band) = kick.as_deref() {
-        on_the_bar(&envelope, band, rate, &mut tempo);
+        on_the_bar(envelope, band, rate, &mut tempo);
     }
     // The last word belongs to the onsets the grid lands on: the level and the bar are choices, the
     // period and the anchor are measurements, and a measurement is taken where the music is.
     let per_second = rate / HOP as f64;
-    snap_to_onsets(&mut tempo, &envelope, per_second);
+    snap_to_onsets(&mut tempo, envelope, per_second);
     // Which side of the beat the grid ended up on. A full-spectrum envelope likes the hats, and the hats
     // are the offbeat: on `Leash Broken` the settled grid sat exactly half a beat from the owner's, on the
     // offbeat eighths. The kick band is what says where the beat is, so the side is decided on it.
@@ -260,8 +320,8 @@ pub fn detect_with_prior(mono: &[f32], rate: f64, prior: Option<&LevelPrior>) ->
     // низкая полоса видит там удар, которого нет; корпус (150–400 Гц) видит клэп на доле.
     on_the_beat_side(
         &mut tempo,
-        accent.as_deref().or(kick.as_deref()).unwrap_or(&envelope),
-        &envelope,
+        accent.as_deref().or(kick.as_deref()).unwrap_or(envelope),
+        envelope,
         per_second,
     );
     // The bar last of all: which beat of it is the first is a question about the accent, and the accent
@@ -273,7 +333,7 @@ pub fn detect_with_prior(mono: &[f32], rate: f64, prior: Option<&LevelPrior>) ->
         // truth, and only the bar's accent tells them apart.
         settle_level(
             &mut tempo,
-            &envelope,
+            envelope,
             accent.as_deref().unwrap_or(band),
             rate,
             per_second,
@@ -284,7 +344,7 @@ pub fn detect_with_prior(mono: &[f32], rate: f64, prior: Option<&LevelPrior>) ->
         on_the_beat_side(
             &mut tempo,
             accent.as_deref().unwrap_or(band),
-            &envelope,
+            envelope,
             per_second,
         );
     }
@@ -292,7 +352,7 @@ pub fn detect_with_prior(mono: &[f32], rate: f64, prior: Option<&LevelPrior>) ->
         apply_level_prior(
             &mut tempo,
             prior,
-            &envelope,
+            envelope,
             accent.as_deref(),
             kick.as_deref(),
             rate,
@@ -365,9 +425,37 @@ fn apply_level_prior(
     }
     let mut moved = tempo.clone();
     let scale = scaled / own;
+    // Уровень — свойство трека, а не отрезка, поэтому масштабируются все участки. Номера долей при
+    // этом остаются прежними: они уже растут строго, а обнуление делало пару (кадр, доля)
+    // невалидной, и `BeatGrid::from_segments` отвергал сетку целиком — трек с двумя участками под
+    // приором оставался без сетки, а в приложении это выглядело как анализ, который не завершается
+    // (Air & Tur — Love Emotion (Extended Mix).flac, 399 с, 125 → 93,7 BPM).
     for segment in &mut moved.segments {
         segment.bpm *= scale;
-        segment.beat = 0;
+    }
+    // Если прежняя нумерация почему-то не растёт, доли считаются заново от якорей по новому темпу.
+    if moved
+        .segments
+        .windows(2)
+        .any(|pair| pair[1].beat <= pair[0].beat)
+    {
+        let frames: Vec<u64> = moved
+            .segments
+            .iter()
+            .map(|segment| segment.first_beat_frame)
+            .collect();
+        let bpms: Vec<f64> = moved.segments.iter().map(|segment| segment.bpm).collect();
+        let mut beat = 0u64;
+        for index in 0..moved.segments.len() {
+            if index > 0 {
+                let period = rate * 60.0 / bpms[index - 1];
+                let steps = ((frames[index] as f64 - frames[index - 1] as f64) / period)
+                    .round()
+                    .max(1.0);
+                beat += steps as u64;
+            }
+            moved.segments[index].beat = beat;
+        }
     }
     if !(moved.bpm().is_finite() && moved.bpm() > 0.0) {
         return;
@@ -511,6 +599,165 @@ fn primary_tempo(envelope: &[f32], gate: Option<&[f32]>, rate: f64) -> Option<Te
         }
     }
     rigid.and_then(|tempo| carries_the_beat(envelope, gate, per_second, tempo))
+}
+
+/// Сколько долей должно быть в участке сетки, чтобы он что-то описывал.
+///
+/// Восемь долей — два такта: короче участок описывает стяжку, а не смену раздела, и на волне это
+/// видно как дрожание темпа.
+pub const BEAT_GRID_MINIMUM: usize = 8;
+
+/// Насколько доли декодера дрожат вокруг настоящего удара, секунды.
+///
+/// Декодер шагает кадрами по 20 мс, и доли вокруг кадра ещё гуляют: на настоящем треке (447 долей,
+/// «Среди своих (acustic final).mp3») наклон по окну из восьми долей уходит от среднего на 0,62 %
+/// медианно и на 1,5 % в девятом дециле — это 26 мс на долю. Ниже этого «смена темпа» и «дрожание
+/// декодера» неразличимы, поэтому порог в процентах здесь не годится: он либо режет ровный трек,
+/// либо пропускает провал.
+pub const BEAT_GRID_JITTER: f64 = 0.026;
+
+/// Суммы по долям, чтобы невязка любого участка считалась в несколько действий.
+struct BeatSums {
+    index: Vec<f64>,
+    time: Vec<f64>,
+    index_squared: Vec<f64>,
+    time_squared: Vec<f64>,
+    index_time: Vec<f64>,
+}
+
+/// Прямая по участку долей: период, начало и сумма квадратов невязки.
+struct BeatFit {
+    period: f64,
+    intercept: f64,
+    residual: f64,
+}
+
+impl BeatSums {
+    fn of(beats: &[f64]) -> Self {
+        let mut sums = Self {
+            index: vec![0.0; beats.len() + 1],
+            time: vec![0.0; beats.len() + 1],
+            index_squared: vec![0.0; beats.len() + 1],
+            time_squared: vec![0.0; beats.len() + 1],
+            index_time: vec![0.0; beats.len() + 1],
+        };
+        for (index, time) in beats.iter().enumerate() {
+            let k = index as f64;
+            sums.index[index + 1] = sums.index[index] + k;
+            sums.time[index + 1] = sums.time[index] + time;
+            sums.index_squared[index + 1] = sums.index_squared[index] + k * k;
+            sums.time_squared[index + 1] = sums.time_squared[index] + time * time;
+            sums.index_time[index + 1] = sums.index_time[index] + k * time;
+        }
+        sums
+    }
+
+    /// Прямая по долям `from..=to`: МНК по номеру доли, с невязкой для выбора точек перелома.
+    fn fit(&self, from: usize, to: usize) -> Option<BeatFit> {
+        let count = (to - from + 1) as f64;
+        if count < 3.0 {
+            return None;
+        }
+        let (low, high) = (from, to + 1);
+        let sum_index = self.index[high] - self.index[low];
+        let sum_time = self.time[high] - self.time[low];
+        let sum_index_squared = self.index_squared[high] - self.index_squared[low];
+        let sum_time_squared = self.time_squared[high] - self.time_squared[low];
+        let sum_index_time = self.index_time[high] - self.index_time[low];
+        let denominator = count * sum_index_squared - sum_index * sum_index;
+        if denominator.abs() < f64::EPSILON {
+            return None;
+        }
+        let period = (count * sum_index_time - sum_index * sum_time) / denominator;
+        let intercept = (sum_time - period * sum_index) / count;
+        let residual =
+            sum_time_squared + count * intercept * intercept + period * period * sum_index_squared
+                - 2.0 * intercept * sum_time
+                - 2.0 * period * sum_index_time
+                + 2.0 * intercept * period * sum_index;
+        Some(BeatFit {
+            period,
+            intercept,
+            residual: residual.max(0.0),
+        })
+    }
+}
+
+/// Сетка по готовым долям: участки одного темпа, включая провалы и возвраты.
+///
+/// Доли приходят из декодера по активациям, поэтому местный темп виден в них напрямую — в отличие
+/// от гребёнки, которая ищет один темп на весь трек. Задача ставится как кусочно-линейная
+/// «номер доли → время»: точки перелома выбирает динамическое программирование по сумме квадратов
+/// невязки, а каждый лишний участок стоит `ln N · σ²`, где σ — дрожание долей декодера
+/// ([`BEAT_GRID_JITTER`]). Такой счёт различает провал и дрожание по существу, а не по проценту: у
+/// провала невязка на два порядка больше цены участка, у дрожания — в разы меньше.
+///
+/// Направление смены не важно: замедление с возвратом — такая же смена, как ускорение. Якорь
+/// участка — точка на его прямой, а не фактическая доля: соседние участки описывают музыку вместе,
+/// и линия сетки обязана стоять на обоих.
+///
+/// Возвращает `None`, если долей слишком мало или они не идут по времени: сетку из такого материала
+/// не построить, и вызывающий остаётся при своём детекторе.
+pub fn grid_from_beats(beats: &[f64], rate: f64) -> Option<Vec<TempoSegment>> {
+    if beats.len() < BEAT_GRID_MINIMUM * 2 || !(rate.is_finite() && rate > 0.0) {
+        return None;
+    }
+    if beats.iter().any(|beat| !beat.is_finite()) || beats.windows(2).any(|pair| pair[1] <= pair[0])
+    {
+        return None;
+    }
+    let count = beats.len();
+    let sums = BeatSums::of(beats);
+    let penalty = BEAT_GRID_JITTER * BEAT_GRID_JITTER * (count as f64).ln();
+    // best[k] — лучшая цена описания первых k долей; length[k] — длина последнего участка.
+    let mut best = vec![f64::INFINITY; count + 1];
+    let mut length = vec![0usize; count + 1];
+    best[0] = 0.0;
+    for end in BEAT_GRID_MINIMUM..=count {
+        for span in BEAT_GRID_MINIMUM..=end {
+            let start = end - span;
+            if !best[start].is_finite() {
+                continue;
+            }
+            let Some(fit) = sums.fit(start, end - 1) else {
+                continue;
+            };
+            let total = best[start] + fit.residual + penalty;
+            if total < best[end] {
+                best[end] = total;
+                length[end] = span;
+            }
+        }
+    }
+    if !best[count].is_finite() {
+        return None;
+    }
+    let mut bounds = vec![count];
+    let mut end = count;
+    while end > 0 {
+        let span = length[end];
+        if span == 0 {
+            return None;
+        }
+        end -= span;
+        bounds.push(end);
+    }
+    bounds.reverse();
+
+    let mut segments = Vec::with_capacity(bounds.len() - 1);
+    for pair in bounds.windows(2) {
+        let fit = sums.fit(pair[0], pair[1] - 1)?;
+        if !(fit.period.is_finite() && fit.period > 0.0) {
+            return None;
+        }
+        let anchor = fit.intercept + fit.period * pair[0] as f64;
+        segments.push(TempoSegment {
+            bpm: 60.0 / fit.period,
+            first_beat_frame: (anchor * rate).round().max(0.0) as u64,
+            beat: pair[0] as u64,
+        });
+    }
+    Some(segments)
 }
 
 /// How far from the beat the walk looks for its next beat, as a fraction of the period.

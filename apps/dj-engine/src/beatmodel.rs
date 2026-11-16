@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use dj_analysis::tempo::{LevelPrior, Tempo};
-use dj_beatmodel::{BeatModel, DbnConfig, prior};
+use dj_beatmodel::{BeatModel, DbnConfig, prior_and_beats};
 use dj_models::{ModelEntry, Store, parse_manifest, prefer};
 
 /// Манифест моделей: только описание, весов в репозитории нет.
@@ -136,6 +136,11 @@ pub fn announce() {
     }
 }
 
+/// Путь к артефакту установленной модели: для диагностических прогонов, которые грузят её сами.
+pub fn installed_artifact() -> Option<PathBuf> {
+    installed().map(|installed| installed.path)
+}
+
 /// Что известно про модель прямо сейчас: для снапшота.
 pub fn installed_status() -> dj_domain::ModelStatus {
     installed_status_at(&Store::default_root())
@@ -212,20 +217,24 @@ pub fn analyse(path: &Path) -> Option<Tempo> {
             return None;
         }
     };
-    let guess = with_model(
-        |model| match prior(model, &mono, rate, &DbnConfig::default()) {
-            Ok(guess) => guess,
-            Err(error) => {
-                eprintln!("dj-engine: {}: {error}", path.display());
-                None
-            }
-        },
-    )
-    .flatten();
+    // Один проход по модели: из одних активаций и уровень, и доли. Два прохода стоили вдвое.
+    let (guess, model_beats) =
+        with_model(
+            |model| match prior_and_beats(model, &mono, rate, &DbnConfig::default()) {
+                Ok(decoded) => decoded,
+                Err(error) => {
+                    eprintln!("dj-engine: {}: {error}", path.display());
+                    (None, Vec::new())
+                }
+            },
+        )
+        .unwrap_or((None, Vec::new()));
     let prior = guess.map(|guess| LevelPrior {
         bpm: guess.bpm,
         tolerance: 0.02,
         anchor: Some(guess.anchor),
     });
-    dj_analysis::tempo::detect_with_prior(&mono, rate, prior.as_ref())
+    // Доли модели — предложение, а не ответ: сетку по ним принимает арбитраж по онсетам (провал
+    // темпа проходит, дрожание декодера на ровном треке — нет). Без модели это прежний путь.
+    dj_analysis::tempo::detect_with_prior_and_beats(&mono, rate, prior.as_ref(), Some(&model_beats))
 }

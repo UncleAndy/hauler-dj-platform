@@ -898,6 +898,43 @@ fn a_prior_off_the_ladder_is_taken_as_it_is() {
 
 /// Приор вне рабочего диапазона не трогает измеренную сетку.
 #[test]
+fn a_prior_over_two_stretches_leaves_a_grid_that_can_be_built() {
+    // Уровень приора двигает все участки сразу. Номера долей при этом обязаны строго расти: пара
+    // (кадр, доля), которая не растёт, трек не описывает, и `BeatGrid::from_segments` отвергает
+    // сетку целиком — трек с двумя участками под приором оставался без сетки, а в приложении это
+    // выглядело как «анализ не может завершиться»
+    // (Air & Tur — Love Emotion (Extended Mix).flac, 399 с, 125 → 93,7 BPM).
+    let samples = two_tempos(124.0, 120.0, 94.0, 120.0);
+    // Приор вдвое ниже: лестница даёт ступень 1/2, участки переезжают — ровно тот случай, где
+    // номера долей и обнулялись (при совпадении с нашим темпом приор не двигает ничего и дефект
+    // не виден).
+    let prior = dj_analysis::tempo::LevelPrior {
+        bpm: 62.0,
+        tolerance: 0.02,
+        anchor: None,
+    };
+    let tempo = dj_analysis::tempo::detect_with_prior(&samples, RATE, Some(&prior))
+        .expect("две смены темпа под приором");
+    assert!(
+        tempo.segments.len() >= 2,
+        "трек с двумя темпами описан одним участком: {:?}",
+        tempo.segments
+    );
+    for pair in tempo.segments.windows(2) {
+        assert!(
+            pair[1].first_beat_frame > pair[0].first_beat_frame,
+            "кадры участков не растут: {:?}",
+            tempo.segments
+        );
+        assert!(
+            pair[1].beat > pair[0].beat,
+            "номера долей участков не растут: {:?}",
+            tempo.segments
+        );
+    }
+}
+
+#[test]
 fn a_prior_out_of_range_is_ignored() {
     let samples = accented_click_track(128.0, 24.0, 4);
     let plain = dj_analysis::tempo::detect(&samples, RATE).expect("a tempo");
@@ -911,5 +948,201 @@ fn a_prior_out_of_range_is_ignored() {
     assert_eq!(
         plain, kept,
         "a prior outside the working range must not move the grid"
+    );
+}
+
+// ---- сетка по готовым долям: провал темпа и возврат -------------------------------------------
+
+/// Доли из периодов: время каждой следующей доли прибавляет свой период.
+fn beats_from(periods: &[f64]) -> Vec<f64> {
+    let mut beats = vec![0.0];
+    for period in periods {
+        beats.push(beats[beats.len() - 1] + period);
+    }
+    beats
+}
+
+/// Дрожание долей декодера: он шагает кадрами по 20 мс, и вокруг кадра доли гуляют на ±26 мс.
+fn with_decoder_jitter(beats: &[f64]) -> Vec<f64> {
+    beats
+        .iter()
+        .enumerate()
+        .map(|(index, time)| time + (((index * 7919 + 13) % 53) as f64 - 26.0) * 0.001)
+        .collect()
+}
+
+#[test]
+fn a_steady_beat_train_is_one_segment() {
+    let periods = vec![60.0 / 128.0; 200];
+    let beats = beats_from(&periods);
+    let segments = dj_analysis::tempo::grid_from_beats(&beats, RATE).expect("сетка");
+    assert_eq!(segments.len(), 1, "ровный трек не делится: {segments:?}");
+    assert!(
+        (segments[0].bpm - 128.0).abs() < 0.35,
+        "{}",
+        segments[0].bpm
+    );
+}
+
+#[test]
+fn the_decoder_jitter_does_not_cut_a_steady_track() {
+    // Тот же ровный трек, но доли с настоящим дрожанием декодера: порог в процентах от наклона
+    // резал его на участки, потому что наклон по восьми долям шумит на 0,62 % медианно.
+    let periods = vec![60.0 / 92.0; 200];
+    let beats = with_decoder_jitter(&beats_from(&periods));
+    let segments = dj_analysis::tempo::grid_from_beats(&beats, RATE).expect("сетка");
+    assert_eq!(
+        segments.len(),
+        1,
+        "дрожание декодера — не смена темпа: {segments:?}"
+    );
+    assert!((segments[0].bpm - 92.0).abs() < 0.5, "{}", segments[0].bpm);
+}
+
+#[test]
+fn a_slowdown_with_a_recovery_is_three_segments() {
+    // 128 → 124 → 128: провал, ради которого сетка и строится по долям.
+    let mut periods = vec![60.0 / 128.0; 40];
+    periods.extend(vec![60.0 / 124.0; 50]);
+    periods.extend(vec![60.0 / 128.0; 60]);
+    let beats = beats_from(&periods);
+    let segments = dj_analysis::tempo::grid_from_beats(&beats, RATE).expect("сетка");
+    assert!(
+        segments.len() >= 3,
+        "провал обязан дать хотя бы три участка: {segments:?}"
+    );
+    let fastest = segments.iter().map(|s| s.bpm).fold(0.0_f64, f64::max);
+    let slowest = segments.iter().map(|s| s.bpm).fold(f64::INFINITY, f64::min);
+    assert!((fastest - 128.0).abs() < 0.6, "{fastest}");
+    assert!((slowest - 124.0).abs() < 0.6, "{slowest}");
+}
+
+#[test]
+fn a_slowdown_a_listener_hears_is_not_jitter() {
+    // Провал в 1,5 % на двадцати долях — то, что слышно как «поехало на полдоли», но что порог в
+    // процент от наклона пропускал: он был ниже шума окна. Дрожание декодера при этом то же.
+    let mut periods = vec![60.0 / 128.0; 40];
+    periods.extend(vec![60.0 / 126.0; 20]);
+    periods.extend(vec![60.0 / 128.0; 40]);
+    let beats = with_decoder_jitter(&beats_from(&periods));
+    let segments = dj_analysis::tempo::grid_from_beats(&beats, RATE).expect("сетка");
+    assert!(
+        segments.len() >= 2,
+        "провал в полтора процента обязан быть участком: {segments:?}"
+    );
+    let slowest = segments.iter().map(|s| s.bpm).fold(f64::INFINITY, f64::min);
+    assert!((slowest - 126.0).abs() < 0.6, "медленный участок {slowest}");
+}
+
+#[test]
+fn a_few_beats_are_not_a_grid() {
+    assert!(dj_analysis::tempo::grid_from_beats(&[0.0, 0.5, 1.0], RATE).is_none());
+    assert!(dj_analysis::tempo::grid_from_beats(&[], RATE).is_none());
+}
+
+#[test]
+fn the_grid_follows_a_real_acoustic_track_through_its_slowdowns() {
+    // Доли настоящего трека (291,6 с, 447 долей), снятые моделью: темп держится около 92,4 BPM,
+    // проседает дважды (около 143 и 200 с) и уходит к 87,6 BPM в конце. Одна сетка на такой трек
+    // уезжает от музыки на секунды — это и есть жалоба владельца; сетка по участкам обязана
+    // держать каждую долю. Порог 40 мс — дрожание долей декодера (±26 мс) плюс кадр.
+    let text = include_str!("fixtures/acoustic-ballad-beats.txt");
+    let beats: Vec<f64> = text
+        .split_whitespace()
+        .filter_map(|value| value.parse::<f64>().ok())
+        .collect();
+    assert!(beats.len() > 400, "долей: {}", beats.len());
+    let segments = dj_analysis::tempo::grid_from_beats(&beats, RATE).expect("сетка");
+    assert!(
+        segments.len() >= 3,
+        "у трека с двумя провалами и уходом темпа не может быть одной доли: {segments:?}"
+    );
+    let mut worst = 0.0_f64;
+    for (number, heard) in beats.iter().enumerate() {
+        let index = segments
+            .iter()
+            .rposition(|segment| segment.beat <= number as u64)
+            .unwrap_or_default();
+        let segment = &segments[index];
+        let period = 60.0 / segment.bpm;
+        let anchor = segment.first_beat_frame as f64 / RATE;
+        let placed = anchor + (number as f64 - segment.beat as f64) * period;
+        worst = worst.max((placed - heard).abs() * 1000.0);
+    }
+    assert!(
+        worst <= 40.0,
+        "худшая доля {worst:.1} мс от музыки при {} участках",
+        segments.len()
+    );
+}
+
+/// Клик-трек с провалом темпа и доли, на которых он сыгран.
+fn clicking_with_a_dip(sections: &[(f64, f64)]) -> (Vec<f32>, Vec<f64>) {
+    let total: f64 = sections.iter().map(|(_, seconds)| seconds).sum();
+    let mut samples = vec![0.0f32; (RATE * total) as usize];
+    let mut beats = Vec::new();
+    // Позиция — в отсчётах, время доли — в секундах: их и ждёт grid_from_beats.
+    let mut position = 0.0f64;
+    for (bpm, seconds) in sections {
+        let period = RATE * 60.0 / *bpm;
+        let until = position + RATE * seconds;
+        while position < until {
+            let start = position as usize;
+            if start + 192 < samples.len() {
+                for i in 0..192 {
+                    let decay = 1.0 - i as f32 / 192.0;
+                    samples[start + i] = decay * if i % 2 == 0 { 0.8 } else { -0.8 };
+                }
+            }
+            beats.push(position / RATE);
+            position += period;
+        }
+    }
+    (samples, beats)
+}
+
+#[test]
+fn a_slowdown_is_taken_from_the_beats_when_the_music_says_so() {
+    // Клик-трек 128 → 124 → 128 и доли, сыгранные на нём: одна сетка на весь трек расходится с
+    // музыкой на соседнюю долю, участки — нет. Арбитраж обязан их взять.
+    let (audio, beats) = clicking_with_a_dip(&[(128.0, 24.0), (124.0, 20.0), (128.0, 16.0)]);
+    let tempo = dj_analysis::tempo::detect_with_prior_and_beats(&audio, RATE, None, Some(&beats))
+        .expect("темп провала");
+    assert!(
+        tempo.segments.len() >= 3,
+        "провал не стал участками: {:?}",
+        tempo.segments
+    );
+    let slowest = tempo
+        .segments
+        .iter()
+        .map(|segment| segment.bpm)
+        .fold(f64::INFINITY, f64::min);
+    let fastest = tempo
+        .segments
+        .iter()
+        .map(|segment| segment.bpm)
+        .fold(0.0_f64, f64::max);
+    assert!((slowest - 124.0).abs() < 1.0, "медленный участок {slowest}");
+    assert!((fastest - 128.0).abs() < 1.0, "быстрый участок {fastest}");
+}
+
+#[test]
+fn beats_that_wander_are_not_taken_on_a_track_that_holds_its_tempo() {
+    // Дрожание декодера на ровной электронике: доли гуляют вокруг решётки на десятки миллисекунд.
+    // Сетка по ним объясняет музыку хуже жёсткой, и арбитраж её не берёт (на корпусе из 40 ровных
+    // треков такая сетка резалась на семь участков и портила фазу на 28 треках).
+    let audio = click_track(128.0, 0, 60.0);
+    let period = 60.0 / 128.0;
+    let beats: Vec<f64> = (0..120)
+        .map(|index| index as f64 * period + 0.030 * (index as f64 * 0.35).sin())
+        .collect();
+    let tempo = dj_analysis::tempo::detect_with_prior_and_beats(&audio, RATE, None, Some(&beats))
+        .expect("темп ровного клика");
+    assert_eq!(
+        tempo.segments.len(),
+        1,
+        "ровный трек с дрожащими долями описан участками: {:?}",
+        tempo.segments
     );
 }
