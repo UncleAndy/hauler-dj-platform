@@ -103,12 +103,34 @@ fn with_model<T>(work: impl FnOnce(&mut BeatModel) -> T) -> Option<T> {
     session.model.as_mut().map(work)
 }
 
+/// Объявить установленную модель в состоянии движка: с первой публикации после старта.
+///
+/// Без этого снапшот молчит до первой команды модели, и экран после рестарта показывает «built-in»
+/// поверх установленной модели.
+pub fn seed_model(cells: &crate::StateCells, root: &Path) {
+    cells.set_model(installed_status_at(root));
+}
+
 /// Что известно про модель прямо сейчас: для снапшота.
 pub fn installed_status() -> dj_domain::ModelStatus {
-    match installed() {
-        Some(installed) => dj_domain::ModelStatus {
-            variant: installed.entry.variant,
-            license: installed.entry.license,
+    installed_status_at(&Store::default_root())
+}
+
+/// То же, но для явно названного хранилища: так это проверяется без переменных окружения.
+pub fn installed_status_at(root: &Path) -> dj_domain::ModelStatus {
+    let Ok(manifest) = parse_manifest(MANIFEST) else {
+        return dj_domain::ModelStatus::default();
+    };
+    let store = Store::new(root);
+    let present: Vec<&ModelEntry> = manifest
+        .model
+        .iter()
+        .filter(|entry| store.is_installed(entry))
+        .collect();
+    match prefer(present) {
+        Some(entry) => dj_domain::ModelStatus {
+            variant: entry.variant.clone(),
+            license: entry.license.clone(),
             busy: false,
             error: String::new(),
         },

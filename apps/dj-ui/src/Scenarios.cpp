@@ -1517,6 +1517,8 @@ int runScenarios(BridgeClient &bridge, QQuickWindow &window, const QString &deck
                                        .arg(middle.y(), 0, 'f', 0);
                              return false;
                          }
+                         std::fprintf(stdout, "model strip: %s\n",
+                                      qPrintable(button->property("text").toString()));
                          QQuickItem *licence = run.item(QStringLiteral("modelLicence"));
                          if (licence == nullptr) {
                              why = QStringLiteral("the panel shows no licence text");

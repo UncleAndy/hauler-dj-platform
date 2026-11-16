@@ -472,6 +472,9 @@ fn run(argv: &[String]) -> Result<(), String> {
 
     // The render thread writes scalars here; nothing in the audio path allocates or locks.
     let cells = Arc::new(StateCells::new());
+    // Что уже стоит в хранилище — с первой публикации, а не после команды: иначе после рестарта
+    // экран говорит «built-in» про установленную модель, пока её не скачают заново.
+    dj_engine::beatmodel::seed_model(&cells, &dj_models::Store::default_root());
     // The playlists come back before anything else: the index says what this session has, the mirror says
     // what survived it, and the tree is published once so the panel opens on it (DJP-MEDIA-004).
     if let Some(mirror) = dj_engine::playlists::default_mirror() {
