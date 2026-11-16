@@ -12693,6 +12693,51 @@ int main(int argc, char *argv[])
                          static_cast<long long>(start + beat));
             return 1;
         }
+        // Инструменты переменной сетки: разбить участок, задать ему темп, убрать его. Команды те же,
+        // что шлют кнопки ряда и диалог BPM; кадр берётся из сетки, а не из головы, — этой проверке
+        // нужен участок, а не позиция транспорта.
+        const int segmentsBefore = int(gridOf().size());
+        const qint64 deeper = start + beat * 64;
+        if (bridge->splitGrid(QStringLiteral("A"), deeper) < 0) {
+            std::fprintf(stderr, "dj-ui: the split was refused\n");
+            return 1;
+        }
+        if (!waitFor([&]() { return int(gridOf().size()) == segmentsBefore + 1; }, 5000)) {
+            std::fprintf(stderr, "dj-ui: the split left %d stretches instead of %d\n",
+                         int(gridOf().size()), segmentsBefore + 1);
+            return 1;
+        }
+        // Темп участка: та же функция, которую зовёт диалог BPM и стрелки по 0,1.
+        if (bridge->setGridStretchTempo(QStringLiteral("A"), deeper, 101.0) < 0) {
+            std::fprintf(stderr, "dj-ui: the stretch tempo was refused\n");
+            return 1;
+        }
+        const auto stretchTempo = [&](int index) {
+            const QVariantList segments = gridOf();
+            if (index >= segments.size()) {
+                return 0.0;
+            }
+            return segments.at(index).toMap().value(QStringLiteral("bpm")).toDouble();
+        };
+        if (!waitFor([&]() { return std::fabs(stretchTempo(1) - 101.0) < 0.6; }, 5000)) {
+            std::fprintf(stderr, "dj-ui: the second stretch reads %.2f BPM instead of 101\n",
+                         stretchTempo(1));
+            return 1;
+        }
+        if (!waitFor([&]() { return std::fabs(stretchTempo(0) - tempo) < 0.6; }, 5000)) {
+            std::fprintf(stderr, "dj-ui: the first stretch moved to %.2f BPM\n", stretchTempo(0));
+            return 1;
+        }
+        if (bridge->dropGridStretch(QStringLiteral("A"), deeper) < 0) {
+            std::fprintf(stderr, "dj-ui: the drop was refused\n");
+            return 1;
+        }
+        if (!waitFor([&]() { return int(gridOf().size()) == segmentsBefore; }, 5000)) {
+            std::fprintf(stderr, "dj-ui: dropping the stretch left %d stretches instead of %d\n",
+                         int(gridOf().size()), segmentsBefore);
+            return 1;
+        }
+
         if (!click(QStringLiteral("gridBeatLeft_A"))) {
             return 1;
         }

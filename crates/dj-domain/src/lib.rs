@@ -54,6 +54,33 @@ pub enum GridEdit {
         /// Frame of the track the beat has to land on.
         frame: u64,
     },
+    /// Start a new stretch of the grid at this frame, at the tempo the stretch there already has.
+    ///
+    /// The DJ's route to a variable grid: put the play head where the music changes, split, then type the
+    /// tempo of that stretch. Nothing about the grid before the head moves, so the part already matched to
+    /// the drums stays matched.
+    Split {
+        /// Frame where the new stretch begins — the play head.
+        frame: u64,
+    },
+    /// Drop the stretch that plays at this frame, merging it into the one before it.
+    ///
+    /// The first stretch is refused: something has to describe the beginning of the track, and dropping it
+    /// would leave the grid with no anchor at all.
+    DropStretch {
+        /// Frame inside the stretch to drop — the play head.
+        frame: u64,
+    },
+    /// Give the stretch that plays at this frame this tempo, leaving every other stretch alone.
+    ///
+    /// This is the manual tempo of a variable grid: [`GridEdit::Tempo`] retimes the whole grid, which is the
+    /// same thing only while the track has one stretch.
+    StretchTempo {
+        /// Frame inside the stretch to retime — the play head.
+        frame: u64,
+        /// Beats per minute for that stretch.
+        bpm: f64,
+    },
 }
 
 /// A deck as the engine sees it.

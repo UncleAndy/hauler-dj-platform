@@ -2006,6 +2006,37 @@ int BridgeClient::setGridTempo(const QString &deck, double bpm)
     return sendGridEdit(deck, edit);
 }
 
+int BridgeClient::splitGrid(const QString &deck, qlonglong frame)
+{
+    QJsonObject inner;
+    inner.insert(QStringLiteral("frame"), QJsonValue::fromVariant(frame));
+    QJsonObject edit;
+    edit.insert(QStringLiteral("Split"), inner);
+    return sendGridEdit(deck, edit);
+}
+
+int BridgeClient::dropGridStretch(const QString &deck, qlonglong frame)
+{
+    QJsonObject inner;
+    inner.insert(QStringLiteral("frame"), QJsonValue::fromVariant(frame));
+    QJsonObject edit;
+    edit.insert(QStringLiteral("DropStretch"), inner);
+    return sendGridEdit(deck, edit);
+}
+
+int BridgeClient::setGridStretchTempo(const QString &deck, qlonglong frame, double bpm)
+{
+    if (!(bpm > 0.0)) {
+        return -1;
+    }
+    QJsonObject inner;
+    inner.insert(QStringLiteral("frame"), QJsonValue::fromVariant(frame));
+    inner.insert(QStringLiteral("bpm"), bpm);
+    QJsonObject edit;
+    edit.insert(QStringLiteral("StretchTempo"), inner);
+    return sendGridEdit(deck, edit);
+}
+
 int BridgeClient::doubleGrid(const QString &deck)
 {
     return sendGridEdit(deck, QJsonValue(QStringLiteral("Double")));

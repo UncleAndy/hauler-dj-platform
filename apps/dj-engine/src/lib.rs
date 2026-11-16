@@ -1716,7 +1716,7 @@ pub fn edit_grid(grid: Option<&BeatGrid>, edit: &GridEdit, source_rate: u32) -> 
             GridEdit::Here { frame } => {
                 BeatGrid::single(STARTING_BPM, *frame).map(|grid| grid.with_beats_per_bar(4))
             }
-            GridEdit::Tempo { bpm } => {
+            GridEdit::Tempo { bpm } | GridEdit::StretchTempo { bpm, .. } => {
                 BeatGrid::single(*bpm, 0).map(|grid| grid.with_beats_per_bar(4))
             }
             _ => None,
@@ -1730,6 +1730,11 @@ pub fn edit_grid(grid: Option<&BeatGrid>, edit: &GridEdit, source_rate: u32) -> 
         GridEdit::Tempo { bpm } => grid.retimed(*bpm),
         GridEdit::Double => grid.retimed(grid.bpm() * 2.0),
         GridEdit::Half => grid.retimed(grid.bpm() / 2.0),
+        // Участок под плейхедом: рука работает там, где уши, поэтому все три берут кадр, а не номер
+        // строки в списке, которого DJ не видит.
+        GridEdit::Split { frame } => grid.split_at(*frame, f64::from(source_rate)),
+        GridEdit::DropStretch { frame } => grid.without_stretch_at(*frame),
+        GridEdit::StretchTempo { frame, bpm } => grid.with_stretch_tempo(*frame, *bpm),
         // The nearest beat, moved onto the frame: the shift is what the grid already knows how to do, so
         // the tempo, the numbering and the bar all stay where they are and only the place changes.
         GridEdit::Here { frame } => {

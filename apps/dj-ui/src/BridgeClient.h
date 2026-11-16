@@ -396,6 +396,12 @@ public:
     Q_INVOKABLE int snapGrid(const QString &deck, qlonglong frame);
     /// Give the deck's track this tempo, keeping its first beat where it is.
     Q_INVOKABLE int setGridTempo(const QString &deck, double bpm);
+    /// Start a new stretch of the grid at `frame`: the play head, where the music changes.
+    Q_INVOKABLE int splitGrid(const QString &deck, qlonglong frame);
+    /// Drop the stretch of the grid that plays at `frame`, merging it into the one before it.
+    Q_INVOKABLE int dropGridStretch(const QString &deck, qlonglong frame);
+    /// Give the stretch of the grid that plays at `frame` this tempo, leaving the rest alone.
+    Q_INVOKABLE int setGridStretchTempo(const QString &deck, qlonglong frame, double bpm);
     /// Read the same grid twice as fast, or half as fast: the half/double of a mis-read tempo.
     Q_INVOKABLE int doubleGrid(const QString &deck);
     Q_INVOKABLE int halveGrid(const QString &deck);

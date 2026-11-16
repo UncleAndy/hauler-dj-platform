@@ -116,7 +116,9 @@ Pane {
             return;
         }
         panel.pendingBpm = wanted;
-        Bridge.setGridTempo(panel.deckId, wanted);
+        // Темп участка под головой, а не всей сетки: на треке с переменным темпом DJ правит тот раздел,
+        // где стоит голова, и остальные не должны ехать за ним.
+        panel.setStretchTempo(wanted);
     }
 
     function shiftGrid(direction) {
@@ -143,6 +145,21 @@ Pane {
             return;
         }
         Bridge.snapGrid(panel.deckId, frame);
+    }
+
+    /// Разбить сетку на плейхеде: новый участок начинается там, где меняется музыка.
+    function splitStretch() {
+        Bridge.splitGrid(panel.deckId, Math.round(panel.frameAtTap(Date.now())));
+    }
+
+    /// Убрать участок под плейхедом: его доли достаются предыдущему.
+    function dropStretch() {
+        Bridge.dropGridStretch(panel.deckId, Math.round(panel.frameAtTap(Date.now())));
+    }
+
+    /// Темп участка под плейхедом — ручной темп переменной сетки.
+    function setStretchTempo(bpm) {
+        Bridge.setGridStretchTempo(panel.deckId, Math.round(panel.frameAtTap(Date.now())), bpm);
     }
 
     /// The play head at `now`, in the file's frames.
@@ -1349,6 +1366,33 @@ Pane {
                     ToolTip.text: qsTr("Read the grid twice as fast")
                     onClicked: Bridge.doubleGrid(panel.deckId)
                 }
+                // Участок сетки: переменный темп ставится там, где стоит голова — разбить в точке смены,
+                // убрать лишний участок. Без этих кнопок переменную сетку можно было получить из замера,
+                // но не поставить руками.
+                GridTool {
+                    objectName: "gridSplit_" + panel.deckId
+                    enabled: panel.gridToolsLive
+                    text: qsTr("＋")
+                    font.pixelSize: 9
+                    Layout.preferredWidth: 18
+                    Layout.preferredHeight: 18
+                    focusPolicy: Qt.NoFocus
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Start a new grid stretch at the play head")
+                    onClicked: panel.splitStretch()
+                }
+                GridTool {
+                    objectName: "gridDropStretch_" + panel.deckId
+                    enabled: panel.gridToolsLive
+                    text: qsTr("−")
+                    font.pixelSize: 9
+                    Layout.preferredWidth: 18
+                    Layout.preferredHeight: 18
+                    focusPolicy: Qt.NoFocus
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Drop the stretch under the play head")
+                    onClicked: panel.dropStretch()
+                }
                 GridTool {
                     objectName: "gridTempo_" + panel.deckId
                     enabled: panel.gridToolsLive
@@ -1594,7 +1638,7 @@ Pane {
                 }
                 onAccepted: {
                     // Either separator: a DJ types 128.0 or 128,0 and means the same thing.
-                    Bridge.setGridTempo(panel.deckId, parseFloat(text.replace(",", ".")));
+                    panel.setStretchTempo(parseFloat(text.replace(",", ".")));
                     tempoEdit.close();
                 }
             }
@@ -1615,7 +1659,7 @@ Pane {
                     onClicked: {
                         const typed = parseFloat(tempoField.text.replace(",", "."));
                         if (typed >= 20 && typed <= 400) {
-                            Bridge.setGridTempo(panel.deckId, typed);
+                            panel.setStretchTempo(typed);
                         }
                         tempoEdit.close();
                     }

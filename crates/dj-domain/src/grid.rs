@@ -286,6 +286,73 @@ impl BeatGrid {
             .collect()
     }
 
+    /// The stretch that plays at this frame, as a number in track order.
+    ///
+    /// A frame before the first beat belongs to the first stretch: the grid is drawn both ways from its
+    /// anchor, and the stretch the DJ is looking at is the first one.
+    pub fn stretch_at(&self, frame: u64) -> usize {
+        let mut found = 0;
+        for (index, segment) in self.segments.iter().enumerate() {
+            if segment.frame <= frame {
+                found = index;
+            }
+        }
+        found
+    }
+
+    /// Split the stretch that plays at this frame: a new section starts there, at the tempo it has.
+    ///
+    /// Refused when there is nothing to split — the frame is on the stretch's own first beat — because a
+    /// section with no length describes nothing.
+    pub fn split_at(&self, frame: u64, rate: f64) -> Option<Self> {
+        let index = self.stretch_at(frame);
+        let stretch = self.segments[index];
+        if frame <= stretch.frame || !(rate.is_finite() && rate > 0.0) {
+            return None;
+        }
+        let beat = self.beat_at(frame, rate).round() as u64;
+        if beat <= stretch.beat {
+            return None;
+        }
+        let mut segments = self.segments.clone();
+        segments.insert(
+            index + 1,
+            BeatSegment {
+                frame,
+                beat,
+                bpm: stretch.bpm,
+            },
+        );
+        Self::rebuilt(segments, self.beats_per_bar)
+    }
+
+    /// Drop the stretch that plays at this frame, merging it into the one before it.
+    ///
+    /// The first stretch is refused: the grid has to describe the beginning of the track.
+    pub fn without_stretch_at(&self, frame: u64) -> Option<Self> {
+        if self.segments.len() < 2 {
+            return None;
+        }
+        let index = self.stretch_at(frame);
+        if index == 0 {
+            return None;
+        }
+        let mut segments = self.segments.clone();
+        segments.remove(index);
+        Self::rebuilt(segments, self.beats_per_bar)
+    }
+
+    /// Give the stretch that plays at this frame this tempo, leaving the others alone.
+    pub fn with_stretch_tempo(&self, frame: u64, bpm: f64) -> Option<Self> {
+        if !(bpm.is_finite() && bpm > 0.0) {
+            return None;
+        }
+        let index = self.stretch_at(frame);
+        let mut segments = self.segments.clone();
+        segments[index].bpm = bpm;
+        Self::rebuilt(segments, self.beats_per_bar)
+    }
+
     /// A grid from what a file holds: a tempo, the first beat, and the anchors that pin the rest.
     ///
     /// An anchor only says where a beat is, so the tempo of the stretch it starts comes from the anchor
