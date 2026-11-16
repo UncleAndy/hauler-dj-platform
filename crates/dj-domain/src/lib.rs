@@ -54,6 +54,16 @@ pub enum GridEdit {
         /// Frame of the track the beat has to land on.
         frame: u64,
     },
+    /// Count this many beats to the bar.
+    ///
+    /// The measurement counts the accents of the low band, and a bar whose accent it cannot hear is counted
+    /// in four — a waltz that reads as four is the DJ's to fix, and so is a bar of six. Everything that
+    /// counts bars reads this: the bar line on the wave, the `bar N/4` of the deck, and the square a shift
+    /// rebases by.
+    Metre {
+        /// Beats in a bar, 2 to 8; anything else is refused rather than clamped into a bar nobody plays.
+        beats: u8,
+    },
     /// Start a new stretch of the grid at this frame, at the tempo the stretch there already has.
     ///
     /// The DJ's route to a variable grid: put the play head where the music changes, split, then type the

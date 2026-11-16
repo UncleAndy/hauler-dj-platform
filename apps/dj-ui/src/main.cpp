@@ -12693,6 +12693,32 @@ int main(int argc, char *argv[])
                          static_cast<long long>(start + beat));
             return 1;
         }
+        // Размер такта: замер отдаёт четыре, DJ ставит три и возвращает обратно. Счёт такта на деке
+        // читает то же поле снапшота, так что проверка смотрит ровно то, что видит глаз.
+        const auto metreNow = [&]() {
+            return deckA()
+                .value(QStringLiteral("track"))
+                .toMap()
+                .value(QStringLiteral("grid"))
+                .toMap()
+                .value(QStringLiteral("beats_per_bar"))
+                .toInt();
+        };
+        const int metreBefore = metreNow();
+        if (bridge->setGridMetre(QStringLiteral("A"), 3) < 0) {
+            std::fprintf(stderr, "dj-ui: the metre change was refused\n");
+            return 1;
+        }
+        if (!waitFor([&]() { return metreNow() == 3; }, 5000)) {
+            std::fprintf(stderr, "dj-ui: the bar reads %d instead of 3\n", metreNow());
+            return 1;
+        }
+        if (bridge->setGridMetre(QStringLiteral("A"), metreBefore) < 0
+            || !waitFor([&]() { return metreNow() == metreBefore; }, 5000)) {
+            std::fprintf(stderr, "dj-ui: the bar did not come back to %d\n", metreBefore);
+            return 1;
+        }
+
         // Инструменты переменной сетки: разбить участок, задать ему темп, убрать его. Команды те же,
         // что шлют кнопки ряда и диалог BPM; кадр берётся из сетки, а не из головы, — этой проверке
         // нужен участок, а не позиция транспорта.

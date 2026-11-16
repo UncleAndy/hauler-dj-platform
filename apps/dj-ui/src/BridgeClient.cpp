@@ -2006,6 +2006,18 @@ int BridgeClient::setGridTempo(const QString &deck, double bpm)
     return sendGridEdit(deck, edit);
 }
 
+int BridgeClient::setGridMetre(const QString &deck, int beats)
+{
+    if (beats < 2 || beats > 8) {
+        return -1;
+    }
+    QJsonObject inner;
+    inner.insert(QStringLiteral("beats"), beats);
+    QJsonObject edit;
+    edit.insert(QStringLiteral("Metre"), inner);
+    return sendGridEdit(deck, edit);
+}
+
 int BridgeClient::splitGrid(const QString &deck, qlonglong frame)
 {
     QJsonObject inner;

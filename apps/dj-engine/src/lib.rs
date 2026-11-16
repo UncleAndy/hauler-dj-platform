@@ -1732,6 +1732,14 @@ pub fn edit_grid(grid: Option<&BeatGrid>, edit: &GridEdit, source_rate: u32) -> 
         GridEdit::Half => grid.retimed(grid.bpm() / 2.0),
         // Участок под плейхедом: рука работает там, где уши, поэтому все три берут кадр, а не номер
         // строки в списке, которого DJ не видит.
+        // Размер такта — решение DJ, а не измерение: оно правит только счёт, линии сетки не двигаются.
+        GridEdit::Metre { beats } => {
+            if (2..=8).contains(beats) {
+                Some(grid.clone().with_beats_per_bar(*beats))
+            } else {
+                None
+            }
+        }
         GridEdit::Split { frame } => grid.split_at(*frame, f64::from(source_rate)),
         GridEdit::DropStretch { frame } => grid.without_stretch_at(*frame),
         GridEdit::StretchTempo { frame, bpm } => grid.with_stretch_tempo(*frame, *bpm),

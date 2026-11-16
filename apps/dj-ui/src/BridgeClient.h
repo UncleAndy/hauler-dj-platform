@@ -396,6 +396,8 @@ public:
     Q_INVOKABLE int snapGrid(const QString &deck, qlonglong frame);
     /// Give the deck's track this tempo, keeping its first beat where it is.
     Q_INVOKABLE int setGridTempo(const QString &deck, double bpm);
+    /// Count `beats` beats to the bar: the DJ's fix for a bar the measurement counted in four.
+    Q_INVOKABLE int setGridMetre(const QString &deck, int beats);
     /// Start a new stretch of the grid at `frame`: the play head, where the music changes.
     Q_INVOKABLE int splitGrid(const QString &deck, qlonglong frame);
     /// Drop the stretch of the grid that plays at `frame`, merging it into the one before it.

@@ -1366,6 +1366,20 @@ Pane {
                     ToolTip.text: qsTr("Read the grid twice as fast")
                     onClicked: Bridge.doubleGrid(panel.deckId)
                 }
+                // Размер такта: замер считает акценты низкой полосы и без акцента ставит четыре, а вальс
+                // и такт на шесть — решение DJ. Кнопка показывает то, что стоит сейчас.
+                GridTool {
+                    objectName: "gridMetre_" + panel.deckId
+                    enabled: panel.gridToolsLive
+                    text: qsTr("%1/4").arg(panel.beatsPerBar)
+                    font.pixelSize: 9
+                    Layout.preferredWidth: 26
+                    Layout.preferredHeight: 18
+                    focusPolicy: Qt.NoFocus
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Beats in a bar")
+                    onClicked: metreMenu.open()
+                }
                 // Участок сетки: переменный темп ставится там, где стоит голова — разбить в точке смены,
                 // убрать лишний участок. Без этих кнопок переменную сетку можно было получить из замера,
                 // но не поставить руками.
@@ -1505,6 +1519,22 @@ Pane {
     }
 
     // What a right click offers: the eight colours, a name and a way to clear the pad.
+    /// Размер такта: семь пунктов, по одному на 2/4…8/4. Пункт — команда движку, своего состояния у
+    /// меню нет: что стоит, показывает кнопка.
+    Menu {
+        id: metreMenu
+        objectName: "metreMenu_" + panel.deckId
+
+        Repeater {
+            model: [2, 3, 4, 5, 6, 7, 8]
+            delegate: MenuEntry {
+                objectName: "metreItem_" + modelData + "_" + panel.deckId
+                text: qsTr("%1/4").arg(modelData)
+                onTriggered: Bridge.setGridMetre(panel.deckId, modelData)
+            }
+        }
+    }
+
     Menu {
         id: cueMenu
         property int slot: 0
