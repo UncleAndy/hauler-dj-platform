@@ -12705,6 +12705,35 @@ int main(int argc, char *argv[])
                 .toInt();
         };
         const int metreBefore = metreNow();
+        // Меню размера встаёт у кнопки: владелец находил его в левом верхнем углу окна, потому что
+        // всплывающее окно без места открывается в начало координат. Само окно стенду недоступно, но
+        // панель отдаёт его координаты — они и сравниваются с положением кнопки.
+        if (QQuickItem *metreButton = findItem(window->contentItem(), QStringLiteral("gridMetre_A"))) {
+            if (!click(QStringLiteral("gridMetre_A"))) {
+                return 1;
+            }
+            // Дать меню раскрыться: waitFor ждёт всё окно, когда условие не выполняется.
+            (void)waitFor([&]() { return false; }, 120);
+            QQuickItem *deckPanel = findItem(window->contentItem(), QStringLiteral("deckPanel_A"));
+            if (deckPanel == nullptr) {
+                std::fprintf(stderr, "dj-ui: the deck panel is not there to ask about the menu\n");
+                return 1;
+            }
+            const QPointF buttonAt = metreButton->mapToScene(QPointF(0, 0));
+            const double menuX = deckPanel->property("metreMenuX").toDouble();
+            const double menuY = deckPanel->property("metreMenuY").toDouble();
+            if (std::abs(menuX - buttonAt.x()) > 2.0
+                || std::abs(menuY - (buttonAt.y() + metreButton->height())) > 40.0) {
+                std::fprintf(stderr,
+                             "dj-ui: the metre menu opened at %.0f,%.0f instead of the button at %.0f,%.0f\n",
+                             menuX,
+                             menuY,
+                             buttonAt.x(),
+                             buttonAt.y() + metreButton->height());
+                return 1;
+            }
+        }
+
         if (bridge->setGridMetre(QStringLiteral("A"), 3) < 0) {
             std::fprintf(stderr, "dj-ui: the metre change was refused\n");
             return 1;

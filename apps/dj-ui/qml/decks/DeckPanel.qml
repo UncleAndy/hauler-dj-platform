@@ -16,6 +16,10 @@ Pane {
     id: panel
     // Named so a check can press what the DJ presses: the panel owns the tap→grid arithmetic.
     objectName: "deckPanel_" + panel.deckId
+    /// Где встало меню размера, в координатах окна. Стенд не достаёт до самого всплывающего окна, а эти
+    /// два числа — то, что видит глаз: они обязаны совпасть с положением кнопки.
+    readonly property real metreMenuX: metreMenu.x
+    readonly property real metreMenuY: metreMenu.y
 
     required property string deckId
     required property string deckLabel
@@ -1375,6 +1379,7 @@ Pane {
                 // Размер такта: замер считает акценты низкой полосы и без акцента ставит четыре, а вальс
                 // и такт на шесть — решение DJ. Кнопка показывает то, что стоит сейчас.
                 GridTool {
+                    id: metreButton
                     objectName: "gridMetre_" + panel.deckId
                     enabled: panel.gridToolsLive
                     text: qsTr("%1/4").arg(panel.beatsPerBar)
@@ -1384,7 +1389,16 @@ Pane {
                     focusPolicy: Qt.NoFocus
                     ToolTip.visible: hovered
                     ToolTip.text: qsTr("Beats in a bar")
-                    onClicked: metreMenu.open()
+                    // Меню встаёт под самой кнопкой: `open()` без места ставит всплывающее окно в начало
+                    // координат окна, и до кнопки его приходилось искать.
+                    onClicked: {
+                        // Меню встаёт под самой кнопкой: `open()` без места открывает всплывающее окно
+                        // в начале координат окна, и до кнопки его приходилось искать.
+                        const at = metreButton.mapToItem(null, 0, 0);
+                        metreMenu.x = at.x;
+                        metreMenu.y = at.y + metreButton.height;
+                        metreMenu.open();
+                    }
                 }
                 // Участок сетки: переменный темп ставится там, где стоит голова — разбить в точке смены,
                 // убрать лишний участок. Без этих кнопок переменную сетку можно было получить из замера,
@@ -1530,6 +1544,11 @@ Pane {
     Menu {
         id: metreMenu
         objectName: "metreMenu_" + panel.deckId
+        /// Где стоит кнопка размера, в координатах окна: по ним проверка видит, что меню открылось у неё,
+        /// а не в углу.
+        // Место задаётся в момент нажатия. Связка здесь не годится: `mapToItem()` — вызов, а не
+        // наблюдаемое свойство, и связка один раз посчитала ноль в начале координат, оставив меню в
+        // левом верхнем углу окна.
 
         Repeater {
             model: [2, 3, 4, 5, 6, 7, 8]
