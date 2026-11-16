@@ -2,6 +2,7 @@
 name = "dj-engine"
 description = "The audio engine process: owns the device, answers commands, publishes state (ADR-0003)."
 version.workspace = true
+build = "build.rs"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

@@ -75,6 +75,9 @@
           ];
 
           buildInputs = with pkgs; [
+            # ONNX Runtime: движок грузит его динамически для внешней модели удара (ADR-0012).
+            # Без библиотеки модель остаётся установленной, но не используется.
+            onnxruntime
             # NOTE: do NOT add glibc.dev to buildInputs here. It puts -isystem <glibc-dev>/include
             # ahead of libstdc++ in the include search order, and then <cstdlib> -> #include_next
             # <stdlib.h> fails ("stdlib.h: No such file"). bindgen gets the headers via
@@ -108,6 +111,10 @@
               cp ${cargoConfig} .cargo/config.toml 2>/dev/null \
                 || echo "dj-platform: .cargo/config.toml is not writable; env vars are set for this shell only" >&2
             fi
+
+            # Путь к libonnxruntime.so: скрипты кладут копию рядом с dj-engine, и переменная
+            # окружения при запуске уже не нужна.
+            export DJ_ORT_LIBRARY="$(ls ${pkgs.onnxruntime}/lib/libonnxruntime.so* 2>/dev/null | head -1)"
 
             export DJ_PLATFORM_DEVSHELL=1
             echo "dj-platform dev shell — rust $(rustc --version | cut -d" " -f2), qt ${qt.qtbase.version}, cmake $(cmake --version | head -1 | cut -d" " -f3)"
