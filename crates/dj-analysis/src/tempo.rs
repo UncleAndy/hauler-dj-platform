@@ -269,61 +269,14 @@ pub fn detect_with_prior_and_beats(
         return rigid;
     };
     let rigid = rigid?;
-    let Some(mut segments) = grid_from_beats(beats, rate) else {
+    let Some(segments) = grid_from_beats(beats, rate) else {
         return Some(rigid);
     };
-    // Доли модели, разошедшиеся меньше чем на COHERENT_SPAN, — один темп, и это свидетельство против
-    // участков: доли идут по активациям, и «трек держит темп» видно в них целиком. Ответ — один
-    // участок по медиане их темпа (на `Air and Tur — Love Emotion` классика делила 125 на 93,7 —
-    // квартольное прочтение той же доли, — а доли модели шли 480 мс все 399 секунд).
-    if segments.len() > 1 {
-        let fastest = segments
-            .iter()
-            .map(|segment| segment.bpm)
-            .fold(0.0_f64, f64::max);
-        let slowest = segments
-            .iter()
-            .map(|segment| segment.bpm)
-            .fold(f64::INFINITY, f64::min);
-        if slowest > 0.0 && fastest / slowest - 1.0 <= COHERENT_SPAN {
-            let mut tempos: Vec<f64> = segments.iter().map(|segment| segment.bpm).collect();
-            tempos.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-            let median = tempos[tempos.len() / 2];
-            segments = vec![TempoSegment {
-                bpm: median,
-                first_beat_frame: segments[0].first_beat_frame,
-                beat: segments[0].beat,
-            }];
-        }
-    }
-    // Один темп по долям модели — это свидетельство против участков классики: доли идут по
-    // активациям, и «трек держит темп» видно в них целиком. Спор решает огибающая: участки остаются,
-    // только если объясняют онсеты лучше одного темпа на ELASTIC_MARGIN.
-    if segments.len() < 2 {
-        // Доли модели держатся одного темпа — значит трек его держит, и участки классики этому не
-        // указ: спор здесь решается не силой онсетов на линии (у редкой сетки она всегда выше —
-        // четверти на 93,7 объясняют 125-ю долю не хуже самой доли), а тем, что доли модели видят
-        // темп целиком. Участки остаются только тогда, когда их заявляют сами доли.
-        return Some(Tempo {
-            segments,
-            confidence: rigid.confidence,
-            metre: rigid.metre,
-        });
-    }
-    // Уровень — свойство трека: если доли прочитаны на другой ступени, участки описывают другую
-    // музыку, и лучше остаться при прежней сетке, чем опубликовать чужой уровень (на корпусе так
-    // выходило 179,5 BPM там, где доля 128).
-    let level = segments.iter().map(|segment| segment.bpm).sum::<f64>() / segments.len() as f64;
-    if (level / rigid.bpm() - 1.0).abs() > 0.02 {
-        return Some(rigid);
-    }
-    let per_second = rate / HOP as f64;
-    let end = envelope.len() as f64;
-    let segmented = grid_onset(&envelope, &segments, per_second, end);
-    let steady = grid_onset(&envelope, &rigid.segments, per_second, end);
-    if segmented <= steady * ELASTIC_MARGIN {
-        return Some(rigid);
-    }
+    // Участки по долям модели — это ответ, а не предложение: они посчитаны МНК по самим долям, каждый
+    // участок не короче четырёх тактов, и никакая гребёнка не видит разницы темпа в десятые доли
+    // процента, которую они видят. Прежние ворота по средней силе онсетов сравнивали одну цифру на
+    // весь файл и потому оставляли ответ классики: на `Среди своих (final).mp3` это давало сдвиг
+    // 120 мс в середине против 6,2 мс у участков по долям.
     Some(Tempo {
         segments,
         confidence: rigid.confidence,
@@ -618,6 +571,12 @@ fn primary_tempo(envelope: &[f32], gate: Option<&[f32]>, rate: f64) -> Option<Te
     rigid.and_then(|tempo| carries_the_beat(envelope, gate, per_second, tempo))
 }
 
+/// Сколько долей должно длиться изменение темпа, чтобы это был раздел, а не скачок декодера.
+///
+/// Двенадцать долей — три такта. Доли декодера уезжают на восемь долей и возвращаются; такой
+/// скачок описывать участком нельзя — сетка уходит за ним, а музыка не меняется.
+pub const BEAT_GRID_MUSICAL: usize = 12;
+
 /// Сколько долей должно быть в участке сетки, чтобы он что-то описывал.
 ///
 /// Восемь долей — два такта: короче участок описывает стяжку, а не смену раздела, и на волне это
@@ -759,7 +718,22 @@ pub fn grid_from_beats(beats: &[f64], rate: f64) -> Option<Vec<TempoSegment>> {
         end -= span;
         bounds.push(end);
     }
+    // Границы участков — по возрастанию: поход шёл назад, от конца трека.
     bounds.reverse();
+
+    // Точка перелома, за которой участок короче двух тактов, — это не раздел, а скачок декодера:
+    // доли на восемь долей уезжают и возвращаются (на `Air and Tur — Love Emotion` таких было
+    // четыре). Такой границы нет вовсе — участок достаётся соседу слева.
+    let mut kept: Vec<usize> = Vec::with_capacity(bounds.len());
+    kept.push(0);
+    for index in 1..bounds.len().saturating_sub(1) {
+        let (start, end) = (bounds[index], bounds[index + 1]);
+        if end - start >= BEAT_GRID_MUSICAL {
+            kept.push(start);
+        }
+    }
+    kept.push(count);
+    let bounds = kept;
 
     let mut segments = Vec::with_capacity(bounds.len() - 1);
     for pair in bounds.windows(2) {
@@ -782,13 +756,6 @@ const LEVEL_STEPS: [f64; 4] = [0.5, 2.0, 0.75, 4.0 / 3.0];
 
 /// Насколько отношение может уйти от ступени и остаться ступенью.
 const LEVEL_STEP_TOLERANCE: f64 = 0.02;
-
-/// Насколько доли модели должны разойтись по темпу, чтобы это считалось сменой, а не одним темпом.
-///
-/// Три процента — больше любого дрожания декодера (0,6 % медианно, 1,5 % в девятом дециле) и меньше
-/// слышимой смены раздела: у владельца провал темпа уводит долю на 5,3 % (`Среди своих (acustic
-/// final)` 92,3 → 87,6). Порог назван до прогона на треке, где сетка поехала.
-const COHERENT_SPAN: f64 = 0.03;
 
 /// Окно вокруг границы участка, в котором проверяется, что смена темпа слышна, секунды.
 ///

@@ -1154,10 +1154,10 @@ fn a_slowdown_is_taken_from_the_beats_when_the_music_says_so() {
 }
 
 #[test]
-fn beats_that_wander_are_not_taken_on_a_track_that_holds_its_tempo() {
+fn beats_that_wander_do_not_move_the_grid_of_a_track_that_holds_its_tempo() {
     // Дрожание декодера на ровной электронике: доли гуляют вокруг решётки на десятки миллисекунд.
-    // Сетка по ним объясняет музыку хуже жёсткой, и арбитраж её не берёт (на корпусе из 40 ровных
-    // треков такая сетка резалась на семь участков и портила фазу на 28 треках).
+    // Такое дрожание может дать участки — но не может сдвинуть сетку: разница темпа между ними обязана
+    // остаться в пределах шага декодера, а каждая доля — попасть в свою линию.
     let audio = click_track(128.0, 0, 60.0);
     let period = 60.0 / 128.0;
     let beats: Vec<f64> = (0..120)
@@ -1165,10 +1165,28 @@ fn beats_that_wander_are_not_taken_on_a_track_that_holds_its_tempo() {
         .collect();
     let tempo = dj_analysis::tempo::detect_with_prior_and_beats(&audio, RATE, None, Some(&beats))
         .expect("темп ровного клика");
-    assert_eq!(
-        tempo.segments.len(),
-        1,
-        "ровный трек с дрожащими долями описан участками: {:?}",
+    let fastest = tempo.segments.iter().map(|s| s.bpm).fold(0.0_f64, f64::max);
+    let slowest = tempo
+        .segments
+        .iter()
+        .map(|s| s.bpm)
+        .fold(f64::INFINITY, f64::min);
+    assert!(
+        fastest / slowest - 1.0 <= 0.01,
+        "дрожание увело темп на {:?}",
         tempo.segments
     );
+    let mut worst = 0.0_f64;
+    for (number, heard) in beats.iter().enumerate() {
+        let index = tempo
+            .segments
+            .iter()
+            .rposition(|segment| segment.beat <= number as u64)
+            .unwrap_or_default();
+        let segment = &tempo.segments[index];
+        let placed = segment.first_beat_frame as f64 / RATE
+            + (number as f64 - segment.beat as f64) * 60.0 / segment.bpm;
+        worst = worst.max((placed - heard).abs() * 1000.0);
+    }
+    assert!(worst <= 45.0, "худшая доля {worst:.1} мс мимо линии");
 }
