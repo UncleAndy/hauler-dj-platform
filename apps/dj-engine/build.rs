@@ -18,7 +18,7 @@ fn main() {
     let source = PathBuf::from(&library);
     if !source.is_file() {
         println!(
-            "cargo:warning=DJ_ORT_LIBRARY={library} не найден: движок останется без модели удара"
+            "cargo:warning=DJ_ORT_LIBRARY={library} does not exist: the engine will run without the beat model"
         );
         return;
     }
@@ -33,9 +33,12 @@ fn main() {
         return;
     };
     let destination = profile.join(name);
+    // Прошлая копия пришла из хранилища nix и только для чтения: `fs::copy` поверх неё падает на
+    // правах, поэтому старое имя убирается. Неудача удаления — тоже повод попробовать копию.
+    let _ = std::fs::remove_file(&destination);
     if std::fs::copy(&source, &destination).is_err() {
         println!(
-            "cargo:warning=не удалось положить {} рядом с движком",
+            "cargo:warning=could not place {} next to the engine",
             name.to_string_lossy()
         );
     }

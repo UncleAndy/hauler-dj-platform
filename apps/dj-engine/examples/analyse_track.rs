@@ -7,7 +7,7 @@ fn main() {
         eprintln!("usage: analyse_track <file>");
         return;
     };
-    println!("источник уровня: {}", dj_engine::beatmodel::source());
+    println!("level source: {}", dj_engine::beatmodel::source());
     let started = std::time::Instant::now();
     match dj_engine::beatmodel::analyse(std::path::Path::new(&path)) {
         Some(tempo) => println!(
@@ -18,6 +18,6 @@ fn main() {
             tempo.confidence,
             started.elapsed()
         ),
-        None => println!("темпа нет (за {:?})", started.elapsed()),
+        None => println!("no tempo (in {:?})", started.elapsed()),
     }
 }

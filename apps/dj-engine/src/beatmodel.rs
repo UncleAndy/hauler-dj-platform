@@ -91,12 +91,12 @@ fn with_model<T>(work: impl FnOnce(&mut BeatModel) -> T) -> Option<T> {
             match BeatModel::load(&library, &installed.path) {
                 Ok(model) => {
                     eprintln!(
-                        "dj-engine: модель удара подключена: {} ({})",
+                        "dj-engine: beat model ready: {} ({})",
                         installed.entry.variant, installed.entry.license
                     );
                     session.model = Some(model);
                 }
-                Err(error) => eprintln!("dj-engine: {error}; работаем своим детектором"),
+                Err(error) => eprintln!("dj-engine: {error}; using the built-in detector"),
             }
         }
     }
@@ -118,19 +118,19 @@ pub fn seed_model(cells: &crate::StateCells, root: &Path) {
 pub fn announce() {
     let status = installed_status();
     if status.variant.is_empty() {
-        eprintln!("dj-engine: модель удара не установлена — сетка считается своим детектором");
+        eprintln!("dj-engine: no beat model installed — the grid comes from the built-in detector");
         return;
     }
     match library() {
         Some(path) => eprintln!(
-            "dj-engine: модель удара {} ({}) из {}",
+            "dj-engine: beat model {} ({}) from {}",
             status.variant,
             status.license,
             path.display()
         ),
         None => eprintln!(
-            "dj-engine: модель удара {} установлена, но libonnxruntime.so не найдена — работает свой \
-             детектор (нужна библиотека рядом с движком или ORT_DYLIB_PATH)",
+            "dj-engine: beat model {} is installed but libonnxruntime.so was not found — using the \
+             built-in detector (put the library next to the engine or set ORT_DYLIB_PATH)",
             status.variant
         ),
     }
@@ -195,11 +195,11 @@ pub fn remove(variant: &str) -> Result<dj_domain::ModelStatus, String> {
 pub fn source() -> &'static str {
     match installed() {
         Some(installed) if with_model(|_| ()).is_some() => match installed.entry.variant.as_str() {
-            "full" => "модель full",
-            "small" => "модель small",
-            _ => "модель",
+            "full" => "beat model full",
+            "small" => "beat model small",
+            _ => "beat model",
         },
-        _ => "свой детектор",
+        _ => "built-in detector",
     }
 }
 

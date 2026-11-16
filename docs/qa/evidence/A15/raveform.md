@@ -461,13 +461,13 @@ Python выбирают разные, и это не влияет на метр�
 только при первой загрузке сессии, а она случается на первом замере трека — не при старте. Плюс
 `ORT_DYLIB_PATH` не переживает ни ярлык, ни перезапуск.
 
-Теперь при старте одна строка, и она называет исход:
+При старте одна строка, и она называет исход — по-английски, как весь журнал движка:
 
 ```
-dj-engine: модель удара small (MIT) из /home/…/release/libonnxruntime.so
-dj-engine: модель удара подключена: small (MIT)          # на первом замере
-dj-engine: модель удара small установлена, но libonnxruntime.so не найдена —
-           работает свой детектор (нужна библиотека рядом с движком или ORT_DYLIB_PATH)
+dj-engine: beat model small (MIT) from /home/…/release/libonnxruntime.so
+dj-engine: beat model ready: small (MIT)          # на первом замере
+dj-engine: beat model small is installed but libonnxruntime.so was not found — using the
+           built-in detector (put the library next to the engine or set ORT_DYLIB_PATH)
 ```
 
 Библиотеку рядом с бинарником кладёт `build.rs` движка из `DJ_ORT_LIBRARY` (dev shell). Обе ветки

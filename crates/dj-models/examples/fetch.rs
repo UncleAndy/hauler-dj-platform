@@ -13,7 +13,7 @@ fn main() {
     let text = match std::fs::read_to_string(&manifest_path) {
         Ok(text) => text,
         Err(error) => {
-            eprintln!("манифест {manifest_path}: {error}");
+            eprintln!("manifest {manifest_path}: {error}");
             return;
         }
     };
@@ -25,7 +25,7 @@ fn main() {
         }
     };
     let Some(entry) = manifest.model.iter().find(|model| model.variant == variant) else {
-        eprintln!("в манифесте нет величины {variant}");
+        eprintln!("the manifest has no {variant} variant");
         return;
     };
     println!(
@@ -35,12 +35,12 @@ fn main() {
     let store = dj_models::Store::new(&root);
     match dj_models::install(entry, &store) {
         Ok(path) => {
-            println!("установлено: {}", path.display());
+            println!("installed: {}", path.display());
             match store.verify(entry) {
-                Ok(()) => println!("сверено: sha256 совпал"),
-                Err(error) => eprintln!("сверка: {error}"),
+                Ok(()) => println!("verified: sha256 matches"),
+                Err(error) => eprintln!("verify: {error}"),
             }
         }
-        Err(error) => eprintln!("загрузка: {error}"),
+        Err(error) => eprintln!("download: {error}"),
     }
 }
