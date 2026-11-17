@@ -216,6 +216,10 @@ int main(int argc, char *argv[])
     const QCommandLineOption pageCheckOption(
         QStringLiteral("collection-page-check"),
         QStringLiteral("Compare the index page with the walk over the collection, field by field."));
+    const QCommandLineOption analyzeBatchCheckOption(
+        QStringLiteral("analyze-batch-check"),
+        QStringLiteral("A batch over the collection: the list stands still while it runs and Cancel stops it "
+                       "(needs --collection-root)."));
     const QCommandLineOption wholeListCheckOption(
         QStringLiteral("whole-list-check"),
         QStringLiteral("The list is read whole: every row of a four-hundred-row collection arrives without a "
@@ -523,6 +527,7 @@ int main(int argc, char *argv[])
     parser.addOption(curveCheckOption);
     parser.addOption(masterCheckOption);
     parser.addOption(pageCheckOption);
+    parser.addOption(analyzeBatchCheckOption);
     parser.addOption(wholeListCheckOption);
     parser.addOption(selectionCheckOption);
     parser.addOption(layoutMenuCheckOption);
@@ -2170,6 +2175,12 @@ int main(int argc, char *argv[])
     if (parser.isSet(endCheckOption)) {
         bridge->connectToEngine(parser.value(connectOption));
         return runEndCheck(engine, *bridge, parser.value(loadOption));
+    }
+
+    if (parser.isSet(analyzeBatchCheckOption)) {
+        bridge->connectToEngine(parser.value(connectOption));
+        return runAnalyzeBatchCheck(engine, browser, layout, *bridge, parser.value(importFixtureOption),
+                                    parser.values(collectionRootOption).value(0));
     }
 
     if (parser.isSet(wholeListCheckOption)) {

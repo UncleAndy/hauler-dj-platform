@@ -2050,7 +2050,12 @@ int BridgeClient::analyzePaths(const QStringList &paths, bool parallel)
 
 int BridgeClient::cancelAnalysis()
 {
-    return sendUnit(QStringLiteral("AnalyzeCancel"));
+    const int id = sendUnit(QStringLiteral("AnalyzeCancel"));
+    // The stop is heard at once and honest about what it can promise: the files already being decoded are
+    // finished and written, and nothing new starts. A window that keeps counting without a word looks like a
+    // button that does nothing, which is how "Cancel does not cancel" is reported.
+    setStatus(QStringLiteral("stopping the analysis"));
+    return id;
 }
 
 int BridgeClient::load(const QString &deck, const QString &path)

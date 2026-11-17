@@ -232,4 +232,7 @@ int runSelectionCheck(QQmlApplicationEngine& engine, FileBrowser& browser, Bridg
 int runWholeListCheck(QQmlApplicationEngine& engine, FileBrowser& browser, BridgeClient& bridge,
                       const QString& collectionRoot, const QString& fixture);
 
+int runAnalyzeBatchCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutSettings& layout,
+                         BridgeClient& bridge, const QString& fixture, const QString& collectionRoot);
+
 } // namespace checks

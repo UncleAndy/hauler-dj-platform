@@ -394,6 +394,25 @@ case "${1:-}" in
         --import-fixture "$fixture" --layout-file "$run_dir/whole-layout.json"
     kill "$whole_pid" 2>/dev/null || true
     wait "$whole_pid" 2>/dev/null || true
+
+    # The analysis batch: the list must stand still while it runs, and Cancel must stop it. Its own engine and
+    # its own data directory, pinned to one core — so the parallel path is taken, the batch outlasts a look at
+    # the window, and the stop has files that were never started to save.
+    analyze_batch_socket="$run_dir/engine-analyze-batch.sock"
+    mkdir -p "$run_dir/batch-data" "$run_dir/batch-config"
+    XDG_DATA_HOME="$run_dir/batch-data" XDG_CONFIG_HOME="$run_dir/batch-config" \
+        taskset -c 0 "$engine_bin" --null-sink --socket "$analyze_batch_socket" --block 256 &
+    batch_pid=$!
+    for _ in $(seq 1 100); do
+      [ -S "$analyze_batch_socket" ] && break
+      sleep 0.05
+    done
+    XDG_DATA_HOME="$run_dir/batch-data" XDG_CONFIG_HOME="$run_dir/batch-config" \
+        QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$analyze_batch_socket" \
+        --collection-root "$run_dir/batch-collection" --analyze-batch-check \
+        --layout-file "$run_dir/batch-layout.json"
+    kill "$batch_pid" 2>/dev/null || true
+    wait "$batch_pid" 2>/dev/null || true
     # The playlists (DJP-MEDIA-004): made in a folder, filled with three rows, the dups taken out, a row
     # dragged, the name changed, the playlist carried to the root and deleted — the tree, the rows on the
     # right and the file in the mirror are all read back at every step. Two different tracks, because a

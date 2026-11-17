@@ -1092,4 +1092,177 @@ int runLayoutNumbersCheck(LayoutSettings& layout, const QString& file) {
     return 0;
 }
 
+/// A batch over the whole collection: the list stands still while it runs, and Cancel stops it.
+///
+/// The DJ's complaint had two halves. The rows jerked, because the panel asked the engine for the page
+/// again on every tick of the batch — a page answer replaces every row, and a replaced row is a list that
+/// jumps under the eye. And Cancel did nothing, which turned a batch he could stop into one he had to
+/// outlast.
+int runAnalyzeBatchCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutSettings& layout,
+                         BridgeClient& bridge, const QString& fixture, const QString& collectionRoot) {
+    Q_UNUSED(layout);
+    Q_UNUSED(fixture);
+    if (collectionRoot.isEmpty()) {
+        std::fprintf(stderr, "dj-ui: --analyze-batch-check needs --collection-root\n");
+        return 1;
+    }
+    QDir root(collectionRoot);
+    if (!root.mkpath(QStringLiteral("."))) {
+        std::fprintf(stderr, "dj-ui: cannot make %s\n", qPrintable(collectionRoot));
+        return 1;
+    }
+    // Six hundred tracks, more than the engine has workers — the gate pins it to one core, so the parallel path
+    // is taken and the batch still lasts long enough for a hand to reach it: a stop has files that were never
+    // started to save, and a stop that only finds every file already in flight saves nothing and reads as a dead
+    // button. Short files, a beat apart: long ones of nearly the same tempo are one recording as far as the
+    // fingerprint is concerned, and an import sets half of them aside as duplicates.
+    const int wanted = 600;
+    QTemporaryDir incoming;
+    if (!incoming.isValid()) {
+        std::fprintf(stderr, "dj-ui: cannot make a temporary folder\n");
+        return 1;
+    }
+    QStringList staged;
+    for (int index = 0; index < wanted; ++index) {
+        const QString source = incoming.filePath(QStringLiteral("Batch %1.wav").arg(index));
+        if (!writeClickTrack(source, 120.0 + index * 0.5, 0.4)) {
+            std::fprintf(stderr, "dj-ui: cannot write %s\n", qPrintable(source));
+            return 1;
+        }
+        staged.append(source);
+    }
+    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().value(0));
+    if (window == nullptr) {
+        std::fprintf(stderr, "dj-ui: no shell window\n");
+        return 1;
+    }
+    auto* panel = findItem(window->contentItem(), QStringLiteral("browserPanel"));
+    if (panel == nullptr) {
+        std::fprintf(stderr, "dj-ui: the shell has no browser\n");
+        return 1;
+    }
+    const auto waitFor = [](const std::function<bool()>& ready, int budget) {
+        QElapsedTimer clock;
+        clock.start();
+        while (clock.elapsed() < budget) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            if (ready()) {
+                return true;
+            }
+            QThread::msleep(20);
+        }
+        return ready();
+    };
+    const auto analysis = [&]() { return panel->property("analysisState").toMap(); };
+    const auto running = [&]() {
+        const QVariantMap state = analysis();
+        return state.value(QStringLiteral("running")).toBool();
+    };
+    const auto done = [&]() { return analysis().value(QStringLiteral("done")).toInt(); };
+    const auto total = [&]() { return analysis().value(QStringLiteral("total")).toInt(); };
+
+    bridge.importPaths(staged, collectionRoot, false);
+    if (!waitFor(
+            [&]() {
+                const QVariantMap state = panel->property("importState").toMap();
+                return state.value(QStringLiteral("total")).toInt() >= wanted &&
+                       !state.value(QStringLiteral("running")).toBool();
+            },
+            420000)) {
+        std::fprintf(stderr, "dj-ui: the import never finished\n");
+        return 1;
+    }
+    browser.openCollection({collectionRoot});
+    if (!waitFor([&]() { return browser.entries().size() >= wanted; }, 60000)) {
+        std::fprintf(stderr, "dj-ui: the collection lists %d rows\n",
+                     static_cast<int>(browser.entries().size()));
+        return 1;
+    }
+
+    // The whole collection, measured in one batch.
+    QStringList chosen;
+    for (const QVariant& entry : browser.entries()) {
+        chosen.append(entry.toMap().value(QStringLiteral("path")).toString());
+    }
+    // Parallel, the way the dialog's box is ticked by default: many workers are in flight at once, and a stop
+    // has to reach every one of them rather than the queue alone.
+    bridge.analyzePaths(chosen, true);
+    if (!waitFor([&]() { return running() && done() >= 1; }, 30000)) {
+        std::fprintf(stderr, "dj-ui: the batch never got going (running %d, done %d of %d)\n",
+                     running() ? 1 : 0, done(), total());
+        return 1;
+    }
+    // The list under a running batch: a page asked for again replaces every row, and the number says so.
+    const int quietGeneration = browser.pageGeneration();
+    const int quietRows = static_cast<int>(browser.entries().size());
+    (void)waitFor([]() { return false; }, 1500);
+    if (browser.pageGeneration() != quietGeneration) {
+        std::fprintf(stderr, "dj-ui: the list was replaced %d times while the batch ran (done %d of %d)\n",
+                     browser.pageGeneration() - quietGeneration, done(), total());
+        return 1;
+    }
+    if (static_cast<int>(browser.entries().size()) != quietRows) {
+        std::fprintf(stderr, "dj-ui: the list went from %d rows to %d while the batch ran\n", quietRows,
+                     static_cast<int>(browser.entries().size()));
+        return 1;
+    }
+    std::fprintf(stdout,
+                 "dj-ui: the list stood still through the running batch (generation %d, %d rows, done %d "
+                 "of %d)\n",
+                 quietGeneration, quietRows, done(), total());
+    if (!running()) {
+        std::fprintf(stderr, "dj-ui: the batch ended before Cancel could be pressed\n");
+        return 1;
+    }
+
+    // Cancel: the DJ's own button on the progress window, pressed the way he presses it — a window that
+    // answers the bridge but not the button is a window that does nothing.
+    const int atCancel = done();
+    auto* stopButton = findItem(window->contentItem(), QStringLiteral("analyzeStop"));
+    if (stopButton == nullptr) {
+        std::fprintf(stderr, "dj-ui: the progress window has no Cancel button on it\n");
+        return 1;
+    }
+    if (!stopButton->isVisible()) {
+        std::fprintf(stderr, "dj-ui: the Cancel button is not on screen while the batch runs\n");
+        return 1;
+    }
+    // A real press at the button's centre, not a signal called by name: a window whose button only answers a
+    // programmatic click is a window whose button does nothing under the DJ's finger.
+    const QPointF stopCentre =
+        stopButton->mapToScene(QPointF(stopButton->width() / 2.0, stopButton->height() / 2.0));
+    for (const QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+        QMouseEvent event(type, stopCentre, window->mapToGlobal(stopCentre.toPoint()), Qt::LeftButton,
+                          Qt::LeftButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(window, &event);
+    }
+    QCoreApplication::processEvents();
+    if (!waitFor([&]() { return !running(); }, 5000)) {
+        std::fprintf(stderr, "dj-ui: cancel did not stop the batch (done %d of %d)\n", done(), total());
+        return 1;
+    }
+    // Nothing is claimed about a label here: the progress window goes with the last file being measured, and a
+    // word that lives for fifty milliseconds is not a witness. What the DJ asked for is the effect — nothing new
+    // is measured once he has pressed Cancel.
+    const int stoppedAt = done();
+    if (stoppedAt >= total()) {
+        std::fprintf(stderr, "dj-ui: the batch ran to its end instead of stopping (done %d of %d)\n",
+                     stoppedAt, total());
+        return 1;
+    }
+    // A stop is honest about what it can promise: the files already being decoded are finished and written,
+    // and nothing new starts. So a few more rows than the ones counted at the press are expected — the number
+    // of workers, at most — and the rest of the batch is not measured.
+    const int inFlight = qMax(1, QThread::idealThreadCount());
+    if (stoppedAt > atCancel + inFlight) {
+        std::fprintf(stderr, "dj-ui: the batch went on measuring after cancel (%d -> %d of %d, %d in flight)\n",
+                     atCancel, stoppedAt, total(), inFlight);
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: cancel stopped the batch at %d of %d (asked at %d)\n", stoppedAt, total(),
+                 atCancel);
+    (void)waitFor([&]() { return false; }, 600);
+    return 0;
+}
+
 } // namespace checks

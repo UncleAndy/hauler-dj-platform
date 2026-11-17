@@ -1105,13 +1105,25 @@ Pane {
         onTriggered: Browser.refreshCollection()
     }
 
-    Timer {
-        id: analyzePoll
-        objectName: "analyzePoll"
-        interval: 900
-        repeat: true
-        running: browser.analysisState !== null && browser.analysisState.running === true
-        onTriggered: Browser.refreshCollection()
+    // The batch writes the files, and the numbers reach the rows when it is done. Asking the engine for the
+    // page under the running batch was the jerk the DJ saw: every answer replaces every row, and a replaced
+    // row is a list that jumps under the eye three times a second. So the list is read again once — when the
+    // batch has stopped, however it stopped.
+    readonly property bool batchRunning: browser.analysisState !== null
+                                         && browser.analysisState.running === true
+    /// The DJ's Cancel was heard and the batch is winding down: the files already being decoded finish and
+    /// nothing new starts, which takes as long as the slowest file in flight. The window says so instead of
+    /// counting on as though the press had been lost.
+    property bool batchStopping: false
+    onBatchRunningChanged: {
+        if (browser.batchRunning) {
+            browser.batchStopping = false;
+        } else {
+            browser.batchStopping = false;
+            if (browser.section === "collection") {
+                Browser.refreshCollection();
+            }
+        }
     }
 
     // The collection's batch: how many tracks, and whether to measure them at once. A single track
@@ -1180,9 +1192,11 @@ Pane {
             spacing: 8
             Label {
                 objectName: "analyzeProgressText"
-                text: qsTr("%1 of %2 measured")
-                      .arg(browser.analysisState !== null ? browser.analysisState.done : 0)
-                      .arg(browser.analysisState !== null ? browser.analysisState.total : 0)
+                text: browser.batchStopping
+                      ? qsTr("Stopping: the files being measured now are finished, nothing new starts")
+                      : qsTr("%1 of %2 measured")
+                            .arg(browser.analysisState !== null ? browser.analysisState.done : 0)
+                            .arg(browser.analysisState !== null ? browser.analysisState.total : 0)
                 color: UiSettings.themeText
                 font.pixelSize: browser.listFont
             }
@@ -1207,9 +1221,13 @@ Pane {
             Item { Layout.fillWidth: true }
             Button {
                 objectName: "analyzeStop"
-                text: qsTr("Отменить")
+                text: browser.batchStopping ? qsTr("Останавливаю…") : qsTr("Отменить")
+                enabled: !browser.batchStopping
                 font.pixelSize: browser.listFont
-                onClicked: Bridge.cancelAnalysis()
+                onClicked: {
+                    browser.batchStopping = true;
+                    Bridge.cancelAnalysis();
+                }
             }
         }
     }
