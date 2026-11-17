@@ -1929,7 +1929,31 @@ impl Deck {
             }
             done += take;
         }
+        self.wrap_hand_position();
         self.position = self.hand_pos.max(0.0).round() as u64;
+    }
+
+    /// A hand inside a loop cannot be outside it: the position is taken back into the loop the way the motor
+    /// takes it, and the sound stays continuous because the window is the loop's own extension.
+    fn wrap_hand_position(&mut self) {
+        let Some((loop_start, loop_end)) = self.hand_wrap_region() else {
+            return;
+        };
+        let length = (loop_end - loop_start) as f64;
+        let start = loop_start as f64;
+        if self.hand_pos < start {
+            let back = ((start - self.hand_pos) / length).ceil();
+            self.hand_pos += back * length;
+        } else if self.hand_pos >= start + length {
+            let forward = ((self.hand_pos - start) / length).floor();
+            self.hand_pos -= forward * length;
+        }
+        if self.hand_pos < start {
+            self.hand_pos = start;
+        }
+        if self.hand_pos >= start + length {
+            self.hand_pos = start;
+        }
     }
 
     /// One piece of the hand's block: read the material around it, sample it, move the head.
@@ -1996,11 +2020,63 @@ impl Deck {
     ///
     /// A cache answers a seek with an index assignment, so this is a read and not a wait; what the file
     /// does not hold is silence, and the hand walking past the end of the record hears exactly that.
+    /// The loop the hand has to stay inside, if there is one: a record inside a loop runs out at the loop's
+    /// edge and comes back in from the other side, and a hand is no exception.
+    fn hand_wrap_region(&self) -> Option<(u64, u64)> {
+        if !self.loop_mode {
+            return None;
+        }
+        let region = self.loop_region()?;
+        let start = region.start.0;
+        let end = region.end.0;
+        (end > start).then_some((start, end))
+    }
+
     fn fill_hand_window(&mut self, start: u64, frames: usize) {
+        // Read before the source is borrowed: the loop is the deck's own state.
+        let wrap = self.hand_wrap_region();
         let Some(source) = self.source.as_mut() else {
             self.hand_window.fill(0.0);
             return;
         };
+        // Inside a loop the material is the loop's own content, repeated: the hand runs out at the edge and
+        // comes back in from the other side, exactly as the motor does, and the window it reads is that
+        // periodic extension rather than the file.
+        if let Some((loop_start, loop_end)) = wrap {
+            let length = loop_end - loop_start;
+            let mut written = 0usize;
+            while written < frames {
+                let offset = start
+                    .saturating_add(written as u64)
+                    .saturating_sub(loop_start)
+                    % length;
+                let from = loop_start + offset;
+                let take = usize::try_from(length - offset)
+                    .unwrap_or(0)
+                    .min(frames - written);
+                if take == 0 {
+                    break;
+                }
+                let _ = source.seek(from);
+                let mut got = 0usize;
+                while got < take {
+                    match source
+                        .read(&mut self.hand_window[(written + got) * 2..(written + take) * 2])
+                    {
+                        Ok(0) => break,
+                        Ok(taken) => got += taken,
+                        Err(_) => break,
+                    }
+                }
+                if got < take {
+                    for sample in &mut self.hand_window[(written + got) * 2..(written + take) * 2] {
+                        *sample = 0.0;
+                    }
+                }
+                written += take;
+            }
+            return;
+        }
         let _ = source.seek(start);
         let mut got = 0usize;
         while got < frames {
