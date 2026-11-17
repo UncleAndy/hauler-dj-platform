@@ -9,6 +9,7 @@
 
 #pragma once
 
+#include <QHash>
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -20,6 +21,11 @@ class LayoutSettings : public QObject
     // Readable and writable: a dragged splitter leaves the named presets behind, and the shell
     // says so instead of pretending the arrangement is still "traktor".
     Q_PROPERTY(QString preset READ preset WRITE setPreset NOTIFY changed)
+    // The arrangement is what the shell builds out of its regions, not just how much room each one
+    // gets: which decks stand where, and which edge the mixer sits on. The numbers come per
+    // arrangement, or a custom size in one layout would spoil another.
+    Q_PROPERTY(QString arrangement READ arrangement NOTIFY changed)
+    Q_PROPERTY(QString mixerEdge READ mixerEdge NOTIFY changed)
     Q_PROPERTY(int deckRows READ deckRows WRITE setDeckRows NOTIFY changed)
     Q_PROPERTY(double globalPercent READ globalPercent WRITE setGlobalPercent NOTIFY changed)
     // Derived: the deck rows take whatever the global strip and the browser leave. Setting an
@@ -55,7 +61,13 @@ public:
 
     /// Presets, measured from the reference screenshots (see docs/qa/evidence/A07/layout.md).
     Q_INVOKABLE bool applyPreset(const QString &name);
+    /// Choose a layout by name: `classic`, `duo`, `stack-left`, `stack-right`, `stack-duo-left`,
+    /// `stack-duo-right`, `studio-left`, `studio-right`, or `custom` (the numbers stay as they are).
+    /// Old names `traktor` and `two-deck` are read as `classic` and `duo`.
+    Q_INVOKABLE bool setLayout(const QString &name);
     QString preset() const { return m_preset; }
+    QString arrangement() const { return m_arrangement; }
+    QString mixerEdge() const { return m_mixerEdge; }
     // Only the name changes: "custom" keeps whatever numbers the hand produced.
     void setPreset(const QString &name);
 
@@ -123,6 +135,27 @@ private:
 
     // A dragged splitter emits a value per mouse move: the file is written once the hand stops.
     void scheduleSave();
+
+    /// One layout's numbers: what the regions take and how many deck rows it shows.
+    struct Numbers {
+        int deckRows = 2;
+        double globalPercent = 8.0;
+        double browserPercent = 28.5;
+        double mixerPercent = 14.5;
+    };
+    /// Where a preset name points: the arrangement it builds and the edge its mixer sits on.
+    static bool parseLayout(const QString &name, QString *arrangement, QString *edge);
+    /// The name this build writes for that arrangement and edge: `traktor` is read, but never stored.
+    static QString canonicalName(const QString &arrangement, const QString &edge);
+    /// The numbers a layout starts with before the DJ drags anything in it.
+    static Numbers defaultsFor(const QString &arrangement);
+    /// Keep the numbers of the layout being left, then take the ones of the layout being entered.
+    void storeNumbers();
+    void takeNumbers(const QString &arrangement);
+    /// The numbers of every layout, by arrangement; the active one is written back on every switch.
+    QHash<QString, Numbers> m_numbers;
+    QString m_arrangement = QStringLiteral("classic");
+    QString m_mixerEdge = QStringLiteral("centre");
 
     QString m_preset = QStringLiteral("traktor");
     int m_deckRows = 2;

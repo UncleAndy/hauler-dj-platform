@@ -4,6 +4,8 @@
 
 #include "Checks.h"
 
+#include <QFile>
+
 namespace checks {
 
 int runAnalyzeCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutSettings& layout,
@@ -989,5 +991,105 @@ int runImportCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutSe
 // and each step is checked twice: in the tree the panel draws, and in the mirror file on disk. The
 // database is what a session works from; the file is what survives it, and a check that saw only
 // one of them would miss the half that fails.
+
+/// The layout's numbers live per arrangement, and an old file still opens.
+///
+/// A file written before the arrangements existed has one set of numbers and one name; it has to keep
+/// both. A file written now has a set per layout, so a custom size in one does not spoil another.
+int runLayoutNumbersCheck(LayoutSettings& layout, const QString& file) {
+    if (file.isEmpty()) {
+        std::fprintf(stderr, "dj-ui: --layout-numbers-check needs --layout-file\n");
+        return 1;
+    }
+    const QString oldFile = file + QStringLiteral(".v1");
+    {
+        QFile written(oldFile);
+        if (!written.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            std::fprintf(stderr, "dj-ui: cannot write %s\n", qPrintable(oldFile));
+            return 1;
+        }
+        // Exactly what the previous build wrote: one name, one set of numbers, no arrangements.
+        written.write(R"({"preset":"two-deck","deck_rows":1,"global_percent":9.0,)"
+                      R"("browser_percent":31.0,"mixer_percent":17.0})");
+    }
+    const auto near = [](double actual, double wanted) { return std::abs(actual - wanted) < 0.01; };
+
+    layout.setFile(oldFile);
+    if (!layout.load()) {
+        std::fprintf(stderr, "dj-ui: the old layout file did not load\n");
+        return 1;
+    }
+    if (layout.preset() != QStringLiteral("duo") || layout.arrangement() != QStringLiteral("duo")
+        || layout.mixerEdge() != QStringLiteral("centre")) {
+        std::fprintf(stderr, "dj-ui: the old name did not become duo (%s of %s, mixer %s)\n",
+                     qPrintable(layout.preset()), qPrintable(layout.arrangement()),
+                     qPrintable(layout.mixerEdge()));
+        return 1;
+    }
+    if (!near(layout.browserPercent(), 31.0) || !near(layout.mixerPercent(), 17.0)
+        || layout.deckRows() != 1) {
+        std::fprintf(stderr, "dj-ui: the old numbers did not survive (browser %.1f, mixer %.1f, rows %d)\n",
+                     layout.browserPercent(), layout.mixerPercent(), layout.deckRows());
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: the old file opens as duo with its numbers (browser %.1f, mixer %.1f)\n",
+                 layout.browserPercent(), layout.mixerPercent());
+
+    if (!layout.setLayout(QStringLiteral("stack-left"))) {
+        std::fprintf(stderr, "dj-ui: stack-left is not a known layout\n");
+        return 1;
+    }
+    if (layout.arrangement() != QStringLiteral("stack") || layout.mixerEdge() != QStringLiteral("left")
+        || !near(layout.browserPercent(), 24.0)) {
+        std::fprintf(stderr, "dj-ui: stack-left took the wrong shape (%s/%s, browser %.1f)\n",
+                     qPrintable(layout.arrangement()), qPrintable(layout.mixerEdge()),
+                     layout.browserPercent());
+        return 1;
+    }
+    if (layout.setLayout(QStringLiteral("nothing-of-the-kind"))) {
+        std::fprintf(stderr, "dj-ui: an unknown layout was accepted\n");
+        return 1;
+    }
+    if (!layout.save()) {
+        std::fprintf(stderr, "dj-ui: the layout was not written\n");
+        return 1;
+    }
+
+    LayoutSettings reopened;
+    reopened.setFile(oldFile);
+    if (!reopened.load()) {
+        std::fprintf(stderr, "dj-ui: the written layout file did not read back\n");
+        return 1;
+    }
+    if (reopened.arrangement() != QStringLiteral("stack")
+        || reopened.mixerEdge() != QStringLiteral("left")
+        || reopened.preset() != QStringLiteral("stack-left") || !near(reopened.browserPercent(), 24.0)) {
+        std::fprintf(stderr, "dj-ui: the layout did not come back (%s/%s, browser %.1f)\n",
+                     qPrintable(reopened.arrangement()), qPrintable(reopened.mixerEdge()),
+                     reopened.browserPercent());
+        return 1;
+    }
+    // The numbers the old file carried belong to `duo`, and only to it: switching to `classic` must
+    // bring classic's own, not duo's.
+    if (!reopened.setLayout(QStringLiteral("duo")) || !near(reopened.browserPercent(), 31.0)) {
+        std::fprintf(stderr, "dj-ui: the numbers of another layout were lost (duo browser %.1f)\n",
+                     reopened.browserPercent());
+        return 1;
+    }
+    if (!reopened.setLayout(QStringLiteral("classic")) || !near(reopened.browserPercent(), 28.5)) {
+        std::fprintf(stderr, "dj-ui: classic borrowed another layout's numbers (browser %.1f)\n",
+                     reopened.browserPercent());
+        return 1;
+    }
+    if (!reopened.setLayout(QStringLiteral("traktor"))
+        || reopened.arrangement() != QStringLiteral("classic")) {
+        std::fprintf(stderr, "dj-ui: the old name traktor is not classic any more\n");
+        return 1;
+    }
+    std::fprintf(stdout,
+                 "dj-ui: the numbers survive a round trip, every layout keeps its own, old files and old "
+                 "names still open\n");
+    return 0;
+}
 
 } // namespace checks

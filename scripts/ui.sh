@@ -76,6 +76,10 @@ case "${1:-}" in
     # ignores is worse than none.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --layout traktor \
         --layout-file "${TMPDIR:-/tmp}/dj-layout-check.json" --layout-check
+    # Every layout keeps its own numbers, and a file written before the arrangements existed still
+    # opens: a DJ who set his browser to 31 % must not find 28.5 % after an update.
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --layout-numbers-check \
+        --layout-file "${TMPDIR:-/tmp}/dj-layout-numbers.json"
     # A light panel means the palette was lost; the shell has to stay dark for a booth.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --ui-theme-check
     # A non-default colour exercises the binding from the command line through QML: a misspelled

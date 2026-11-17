@@ -221,4 +221,6 @@ int runScenario(QQmlApplicationEngine& engine, BridgeClient* bridge, QCommandLin
                 const QCommandLineOption& loadOption, const QCommandLineOption& connectOption);
 ;
 
+int runLayoutNumbersCheck(LayoutSettings& layout, const QString& file);
+
 } // namespace checks

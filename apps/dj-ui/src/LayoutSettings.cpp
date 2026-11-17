@@ -28,44 +28,130 @@ QString LayoutSettings::defaultFile()
     return directory + QStringLiteral("/hauler-dj/layout.json");
 }
 
-bool LayoutSettings::applyPreset(const QString &name)
+bool LayoutSettings::parseLayout(const QString &name, QString *arrangement, QString *edge)
 {
-    const QString normalised = name.trimmed().toLower();
-    if (normalised == QStringLiteral("traktor")) {
-        // Measured on the reference screenshots: a global strip across the top, two rows of decks
-        // with the mixer between them, and the browser along the bottom.
-        m_preset = normalised;
-        m_deckRows = 2;
-        m_globalPercent = 8.0;
-        m_browserPercent = 28.5;
-        m_mixerPercent = 14.5;
-        normalise();
-    } else if (normalised == QStringLiteral("two-deck")) {
-        m_preset = normalised;
-        m_deckRows = 1;
-        m_globalPercent = 8.0;
-        m_browserPercent = 34.0;
-        m_mixerPercent = 16.0;
-        normalise();
-    } else {
+    // `traktor` and `two-deck` are the names the first releases wrote; a file from them still opens.
+    static const QHash<QString, QPair<QString, QString>> known = {
+        {QStringLiteral("classic"), {QStringLiteral("classic"), QStringLiteral("centre")}},
+        {QStringLiteral("traktor"), {QStringLiteral("classic"), QStringLiteral("centre")}},
+        {QStringLiteral("duo"), {QStringLiteral("duo"), QStringLiteral("centre")}},
+        {QStringLiteral("two-deck"), {QStringLiteral("duo"), QStringLiteral("centre")}},
+        {QStringLiteral("stack-left"), {QStringLiteral("stack"), QStringLiteral("left")}},
+        {QStringLiteral("stack-right"), {QStringLiteral("stack"), QStringLiteral("right")}},
+        {QStringLiteral("stack-duo-left"), {QStringLiteral("stack-duo"), QStringLiteral("left")}},
+        {QStringLiteral("stack-duo-right"), {QStringLiteral("stack-duo"), QStringLiteral("right")}},
+        {QStringLiteral("studio-left"), {QStringLiteral("studio"), QStringLiteral("left")}},
+        {QStringLiteral("studio-right"), {QStringLiteral("studio"), QStringLiteral("right")}},
+    };
+    const auto found = known.constFind(name.trimmed().toLower());
+    if (found == known.constEnd()) {
         return false;
     }
-    emit changed();
+    *arrangement = found->first;
+    *edge = found->second;
     return true;
+}
+
+QString LayoutSettings::canonicalName(const QString &arrangement, const QString &edge)
+{
+    if (arrangement == QStringLiteral("classic") || arrangement == QStringLiteral("duo")) {
+        return arrangement;
+    }
+    return arrangement + QLatin1Char('-') + edge;
+}
+
+LayoutSettings::Numbers LayoutSettings::defaultsFor(const QString &arrangement)
+{
+    // Measured from the reference screenshots where there was one; the new arrangements start from
+    // the same global strip and a browser that leaves the decks room for four (or two) instruments.
+    Numbers numbers;
+    if (arrangement == QStringLiteral("duo")) {
+        numbers.deckRows = 1;
+        numbers.browserPercent = 34.0;
+        numbers.mixerPercent = 16.0;
+    } else if (arrangement == QStringLiteral("stack")) {
+        numbers.deckRows = 2;
+        numbers.browserPercent = 24.0;
+        numbers.mixerPercent = 13.0;
+    } else if (arrangement == QStringLiteral("stack-duo")) {
+        numbers.deckRows = 1;
+        numbers.browserPercent = 28.0;
+        numbers.mixerPercent = 15.0;
+    } else if (arrangement == QStringLiteral("studio")) {
+        numbers.deckRows = 1;
+        numbers.browserPercent = 30.0;
+        numbers.mixerPercent = 16.0;
+    }
+    return numbers;
+}
+
+void LayoutSettings::storeNumbers()
+{
+    m_numbers.insert(m_arrangement,
+                     Numbers{m_deckRows, m_globalPercent, m_browserPercent, m_mixerPercent});
+}
+
+void LayoutSettings::takeNumbers(const QString &arrangement)
+{
+    const Numbers numbers = m_numbers.contains(arrangement) ? m_numbers.value(arrangement)
+                                                            : defaultsFor(arrangement);
+    m_deckRows = numbers.deckRows;
+    m_globalPercent = numbers.globalPercent;
+    m_browserPercent = numbers.browserPercent;
+    m_mixerPercent = numbers.mixerPercent;
+}
+
+bool LayoutSettings::setLayout(const QString &name)
+{
+    const QString normalised = name.trimmed().toLower();
+    if (normalised == QStringLiteral("custom")) {
+        // Not a choice of layout but a state of the numbers: the arrangement stays, the name says the
+        // DJ has moved a splitter in it.
+        if (m_preset == normalised) {
+            return true;
+        }
+        m_preset = normalised;
+        emit changed();
+        return true;
+    }
+    QString arrangement;
+    QString edge;
+    if (!parseLayout(normalised, &arrangement, &edge)) {
+        return false;
+    }
+    // The layout being left keeps its numbers, dragged or not.
+    storeNumbers();
+    m_arrangement = arrangement;
+    m_mixerEdge = edge;
+    takeNumbers(arrangement);
+    m_preset = canonicalName(arrangement, edge);
+    normalise();
+    emit changed();
+    scheduleSave();
+    return true;
+}
+
+bool LayoutSettings::applyPreset(const QString &name)
+{
+    return setLayout(name);
 }
 
 void LayoutSettings::setPreset(const QString &name)
 {
+    // The shell writes `custom` here when a splitter is dropped; a name from the menu goes through
+    // setLayout, so the numbers of the layout being entered are taken along with the name.
     const QString normalised = name.trimmed().toLower();
-    if (normalised != QStringLiteral("traktor") && normalised != QStringLiteral("two-deck")
-        && normalised != QStringLiteral("custom")) {
+    if (normalised == QStringLiteral("custom")) {
+        if (normalised != m_preset) {
+            m_preset = normalised;
+            emit changed();
+        }
         return;
     }
     if (normalised == m_preset) {
         return;
     }
-    m_preset = normalised;
-    emit changed();
+    (void)setLayout(normalised);
 }
 
 void LayoutSettings::setDeckRows(int rows)
@@ -414,6 +500,45 @@ bool LayoutSettings::load()
     m_globalPercent = root.value(QStringLiteral("global_percent")).toDouble(m_globalPercent);
     m_browserPercent = root.value(QStringLiteral("browser_percent")).toDouble(m_browserPercent);
     m_mixerPercent = root.value(QStringLiteral("mixer_percent")).toDouble(m_mixerPercent);
+    // The numbers of every layout, written by this build; a file without them keeps the single set
+    // it has, and that set belongs to the layout the file names.
+    m_numbers.clear();
+    const QJsonObject storedNumbers = root.value(QStringLiteral("numbers")).toObject();
+    for (auto entry = storedNumbers.begin(); entry != storedNumbers.end(); ++entry) {
+        const QJsonObject numbers = entry.value().toObject();
+        Numbers read;
+        read.deckRows = std::clamp(numbers.value(QStringLiteral("deck_rows")).toInt(2), 1, 2);
+        read.globalPercent = numbers.value(QStringLiteral("global_percent")).toDouble(8.0);
+        read.browserPercent = numbers.value(QStringLiteral("browser_percent")).toDouble(28.5);
+        read.mixerPercent = numbers.value(QStringLiteral("mixer_percent")).toDouble(14.5);
+        m_numbers.insert(entry.key(), read);
+    }
+    {
+        QString arrangement;
+        QString edge;
+        const QString storedEdge = root.value(QStringLiteral("mixer_edge")).toString();
+        if (parseLayout(m_preset, &arrangement, &edge)) {
+            m_arrangement = arrangement;
+            m_mixerEdge = storedEdge.isEmpty() ? edge : storedEdge;
+            // A file from the previous build names the layout `two-deck`; it reads, but the shell and
+            // the menu speak the current names.
+            m_preset = canonicalName(arrangement, m_mixerEdge);
+        } else if (root.contains(QStringLiteral("arrangement"))) {
+            // A name this build does not know but an arrangement it does: keep the arrangement.
+            m_arrangement = root.value(QStringLiteral("arrangement")).toString(m_arrangement);
+            m_mixerEdge = storedEdge.isEmpty() ? m_mixerEdge : storedEdge;
+        }
+        if (m_numbers.isEmpty() || !m_numbers.contains(m_arrangement)) {
+            m_numbers.insert(m_arrangement,
+                             Numbers{m_deckRows, m_globalPercent, m_browserPercent, m_mixerPercent});
+        }
+        const auto parsed = parseLayout(m_preset, &arrangement, &edge);
+        if (!parsed && m_preset != QStringLiteral("custom")) {
+            // A file from a build that had other names, or a hand-edited one: fall back rather than
+            // open a shell with numbers no layout owns.
+            m_preset = QStringLiteral("custom");
+        }
+    }
     m_browserFont = std::clamp(root.value(QStringLiteral("browser_font")).toInt(m_browserFont), 8, 20);
     m_browserRailWidth =
         std::clamp(root.value(QStringLiteral("browser_rail_width")).toInt(m_browserRailWidth), 72, 260);
@@ -475,6 +600,23 @@ bool LayoutSettings::save() const
     }
     QJsonObject root;
     root.insert(QStringLiteral("preset"), m_preset);
+    root.insert(QStringLiteral("arrangement"), m_arrangement);
+    root.insert(QStringLiteral("mixer_edge"), m_mixerEdge);
+    // Every layout keeps its own numbers; the active one is written twice — inside the map and in the
+    // flat keys, so a build that only knows the flat keys still opens the shell as the DJ left it.
+    QHash<QString, Numbers> numbers = m_numbers;
+    numbers.insert(m_arrangement,
+                   Numbers{m_deckRows, m_globalPercent, m_browserPercent, m_mixerPercent});
+    QJsonObject storedNumbers;
+    for (auto entry = numbers.begin(); entry != numbers.end(); ++entry) {
+        QJsonObject one;
+        one.insert(QStringLiteral("deck_rows"), entry->deckRows);
+        one.insert(QStringLiteral("global_percent"), entry->globalPercent);
+        one.insert(QStringLiteral("browser_percent"), entry->browserPercent);
+        one.insert(QStringLiteral("mixer_percent"), entry->mixerPercent);
+        storedNumbers.insert(entry.key(), one);
+    }
+    root.insert(QStringLiteral("numbers"), storedNumbers);
     root.insert(QStringLiteral("deck_rows"), m_deckRows);
     root.insert(QStringLiteral("global_percent"), m_globalPercent);
 
