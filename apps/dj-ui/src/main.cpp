@@ -14198,6 +14198,20 @@ int main(int argc, char *argv[])
             bridge->play(QStringLiteral("A"), true);
             // A deck that is still loading accepts Play and does nothing; wait for material to move
             // rather than measuring the load.
+            // From a known place, far enough from the end: a deck that runs out of clip half way through
+            // the window stops dead, and the average then reads exactly like a deck running slow. Left
+            // over from an earlier check, a short clip can be a second from its end.
+            double remaining = 0.0;
+            for (const QVariant &entry : bridge->snapshot().value(QStringLiteral("decks")).toList()) {
+                const QVariantMap map = entry.toMap();
+                if (map.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                    remaining = map.value(QStringLiteral("remaining_frames")).toDouble();
+                }
+            }
+            if (remaining < 48000.0 * 4) {
+                bridge->seek(QStringLiteral("A"), 0);
+                pump(40);
+            }
             const double before = frameOf();
             QElapsedTimer start;
             start.start();
@@ -14225,8 +14239,14 @@ int main(int argc, char *argv[])
             QElapsedTimer window;
             window.start();
             const double from = frameOf();
-            // Long enough that the snapshot's 20 Hz publishing is a small part of the window.
-            pump(240);
+            // Long enough that the snapshot's 20 Hz publishing is a small part of the window. Sampled in
+            // slices: a deck that stalls for part of the window and a deck that runs slow show the same
+            // average, and only the series tells them apart.
+            QVector<double> series;
+            for (int slice = 0; slice < 12; ++slice) {
+                pump(20);
+                series.append(frameOf());
+            }
             const double elapsed = window.elapsed() / 1000.0;
             const double to = frameOf();
             bridge->play(QStringLiteral("A"), false);
@@ -14251,6 +14271,11 @@ int main(int argc, char *argv[])
                          elapsed,
                          static_cast<long long>(meterRate));
             if (elapsed < 0.5 || std::abs(heard - playing) > 0.06) {
+                QString walked;
+                for (const double sample : series) {
+                    walked += QStringLiteral("%1 ").arg(sample - from, 0, 'f', 0);
+                }
+                std::fprintf(stderr, "dj-ui: the window walked %s\n", qPrintable(walked));
                 std::fprintf(stderr,
                              "dj-ui: the fader says %.3f but the material moved at %.3f "
                              "(elapsed %.3f s, source rate %lld, %lld frames)\n",
