@@ -4,6 +4,8 @@
 
 #include "Checks.h"
 
+#include <QHash>
+
 namespace checks {
 
 int runBrowserCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutSettings& layout,
@@ -1977,6 +1979,130 @@ int runCollectionPageCheck(QQmlApplicationEngine& engine, FileBrowser& browser,
     if (const int verdict = measureCollectionHeader(panel); verdict != 0) {
         return verdict;
     }
+    return 0;
+}
+
+/// The layout is chosen from the strip, and choosing it does not ask the engine for anything.
+///
+/// Eight arrangements in one list, a label that follows the choice, `Custom` when the DJ has moved a
+/// splitter — and not one page asked again: switching the arrangement is a rebuild of the shell, not a
+/// command to the engine.
+int runLayoutMenuCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutSettings& layout) {
+    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
+    if (window == nullptr) {
+        std::fprintf(stderr, "dj-ui: the root object is not a window\n");
+        return 1;
+    }
+    QEventLoop settle;
+    QTimer::singleShot(700, &settle, &QEventLoop::quit);
+    settle.exec();
+    auto* content = window->contentItem();
+    auto* button = findItem(content, QStringLiteral("layoutButton"));
+    if (button == nullptr) {
+        std::fprintf(stderr, "dj-ui: the strip has no layout button\n");
+        return 1;
+    }
+    // A Menu is a popup: it is a QObject child of the strip, not an item in the visual tree, so it is
+    // looked up as an object — and its entries exist only once it has been opened.
+    QObject* menu = button->parentItem() != nullptr
+                        ? button->parentItem()->findChild<QObject*>(QStringLiteral("layoutMenu"))
+                        : nullptr;
+    if (menu == nullptr) {
+        menu = window->findChild<QObject*>(QStringLiteral("layoutMenu"));
+    }
+    if (menu == nullptr) {
+        std::fprintf(stderr, "dj-ui: the strip has no layout menu\n");
+        return 1;
+    }
+    const auto waitFor = [](const std::function<bool()>& ready, int budget) {
+        QElapsedTimer clock;
+        clock.start();
+        while (clock.elapsed() < budget) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            if (ready()) {
+                return true;
+            }
+            QThread::msleep(20);
+        }
+        return ready();
+    };
+    const auto label = [&]() { return button->property("text").toString(); };
+    const auto shown = [&](const QString& deckId) {
+        auto* panel = findItem(content, QStringLiteral("deckPanel_") + deckId);
+        return panel != nullptr && panel->isVisible();
+    };
+    const int pageBefore = browser.property("pageGeneration").toInt();
+
+    const QStringList names = {"classic", "duo", "stack-left", "stack-right",
+                              "stack-duo-left", "stack-duo-right", "studio-left", "studio-right"};
+    // What each arrangement must put on the screen, in deck letters: the menu and the shell have to
+    // agree, or the DJ picks a layout and the decks do something else.
+    const QHash<QString, QStringList> expected = {
+        {QStringLiteral("classic"), {QStringLiteral("A"), QStringLiteral("B"), QStringLiteral("C"),
+                                     QStringLiteral("D")}},
+        {QStringLiteral("duo"), {QStringLiteral("A"), QStringLiteral("B")}},
+        {QStringLiteral("stack-left"), {QStringLiteral("A"), QStringLiteral("B"), QStringLiteral("C"),
+                                        QStringLiteral("D")}},
+        {QStringLiteral("stack-right"), {QStringLiteral("A"), QStringLiteral("B"), QStringLiteral("C"),
+                                         QStringLiteral("D")}},
+        {QStringLiteral("stack-duo-left"), {QStringLiteral("A"), QStringLiteral("B")}},
+        {QStringLiteral("stack-duo-right"), {QStringLiteral("A"), QStringLiteral("B")}},
+        {QStringLiteral("studio-left"), {QStringLiteral("A")}},
+        {QStringLiteral("studio-right"), {QStringLiteral("A")}},
+    };
+
+    for (const QString& name : names) {
+        QMetaObject::invokeMethod(menu, "open");
+        QCoreApplication::processEvents();
+        auto* item = menu->findChild<QObject*>(QStringLiteral("layoutChoice_") + name);
+        if (item == nullptr) {
+            std::fprintf(stderr, "dj-ui: the list has no entry for %s\n", qPrintable(name));
+            return 1;
+        }
+        if (item->property("text").toString().isEmpty()) {
+            std::fprintf(stderr, "dj-ui: the entry for %s has no words\n", qPrintable(name));
+            return 1;
+        }
+        QMetaObject::invokeMethod(item, "triggered");
+        QMetaObject::invokeMethod(menu, "close");
+        if (!waitFor([&]() { return layout.preset() == name; }, 5000)) {
+            std::fprintf(stderr, "dj-ui: %s was chosen but the layout says %s\n", qPrintable(name),
+                         qPrintable(layout.preset()));
+            return 1;
+        }
+        (void)waitFor([&]() { return false; }, 250);
+        const QStringList want = expected.value(name);
+        for (const QString& deckId : {QStringLiteral("A"), QStringLiteral("B"), QStringLiteral("C"),
+                                      QStringLiteral("D")}) {
+            const bool shouldShow = want.contains(deckId);
+            if (shown(deckId) != shouldShow) {
+                std::fprintf(stderr, "dj-ui: %s puts deck %s %s\n", qPrintable(name),
+                             qPrintable(deckId), shown(deckId) ? "on the screen" : "away");
+                return 1;
+            }
+        }
+        if (!label().startsWith(QStringLiteral("Layout: ")) || label() == QStringLiteral("Layout: ")) {
+            std::fprintf(stderr, "dj-ui: the button does not name a layout after %s (%s)\n",
+                         qPrintable(name), qPrintable(label()));
+            return 1;
+        }
+    }
+    // A moved splitter is a state, not a choice: the button says so, and the list offers the name.
+    layout.setPreset(QStringLiteral("custom"));
+    if (!waitFor([&]() { return label().contains(QStringLiteral("Custom")); }, 3000)) {
+        std::fprintf(stderr, "dj-ui: the button does not say Custom after a drag (%s)\n",
+                     qPrintable(label()));
+        return 1;
+    }
+    const int pageAfter = browser.property("pageGeneration").toInt();
+    if (pageAfter != pageBefore) {
+        std::fprintf(stderr, "dj-ui: choosing a layout asked for the page again (%d -> %d)\n", pageBefore,
+                     pageAfter);
+        return 1;
+    }
+    std::fprintf(stdout,
+                 "dj-ui: eight layouts from one list, the label follows, custom after a drag, no page "
+                 "asked\n");
     return 0;
 }
 

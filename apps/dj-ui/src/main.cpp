@@ -216,6 +216,10 @@ int main(int argc, char *argv[])
     const QCommandLineOption pageCheckOption(
         QStringLiteral("collection-page-check"),
         QStringLiteral("Compare the index page with the walk over the collection, field by field."));
+    const QCommandLineOption layoutMenuCheckOption(
+        QStringLiteral("layout-menu-check"),
+        QStringLiteral("The layout is chosen from the strip's list, the label follows, and no page is "
+                       "asked again."));
     const QCommandLineOption layoutNumbersCheckOption(
         QStringLiteral("layout-numbers-check"),
         QStringLiteral("Every layout keeps its own numbers, and a file from the previous build still "
@@ -511,6 +515,7 @@ int main(int argc, char *argv[])
     parser.addOption(curveCheckOption);
     parser.addOption(masterCheckOption);
     parser.addOption(pageCheckOption);
+    parser.addOption(layoutMenuCheckOption);
     parser.addOption(layoutNumbersCheckOption);
     parser.addOption(scrollCheckOption);
     parser.addOption(importCheckOption);
@@ -2155,6 +2160,10 @@ int main(int argc, char *argv[])
     if (parser.isSet(endCheckOption)) {
         bridge->connectToEngine(parser.value(connectOption));
         return runEndCheck(engine, *bridge, parser.value(loadOption));
+    }
+
+    if (parser.isSet(layoutMenuCheckOption)) {
+        return runLayoutMenuCheck(engine, browser, layout);
     }
 
     if (parser.isSet(layoutNumbersCheckOption)) {

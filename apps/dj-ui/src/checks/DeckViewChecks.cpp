@@ -2356,6 +2356,20 @@ int runLayoutCheck(QQmlApplicationEngine& engine, LayoutSettings& layout, UiSett
         }
         std::fprintf(stdout, "dj-ui: at 1500x700 every deck folded its rows and kept its wave\n");
     }
+    // Preparation: one deck, and it owns the width. A "wide" deck that takes half the room would leave
+    // the DJ preparing in a panel the size of a mixing deck.
+    if (arrangement == QStringLiteral("studio")) {
+        auto* deck = findItem(content, QStringLiteral("deckPanel_A"));
+        const QRectF area = deckArea->mapRectToScene(QRectF(0, 0, deckArea->width(), deckArea->height()));
+        const double share = deck->width() / area.width() * 100.0;
+        if (share < 60.0) {
+            std::fprintf(stderr, "dj-ui: the single deck takes %.0f%% of the deck area, not the room\n",
+                         share);
+            return 1;
+        }
+        std::fprintf(stdout, "dj-ui: %s gives deck A %.0f%% of the deck area\n",
+                     qPrintable(layout.preset()), share);
+    }
     std::fprintf(stdout, "dj-ui: the layout in force is %s (%s, mixer %s): decks %s\n",
                  qPrintable(layout.preset()), qPrintable(arrangement), qPrintable(edge),
                  qPrintable(onScreen.join(QStringLiteral(", "))));

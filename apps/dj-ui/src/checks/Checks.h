@@ -223,4 +223,6 @@ int runScenario(QQmlApplicationEngine& engine, BridgeClient* bridge, QCommandLin
 
 int runLayoutNumbersCheck(LayoutSettings& layout, const QString& file);
 
+int runLayoutMenuCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutSettings& layout);
+
 } // namespace checks
