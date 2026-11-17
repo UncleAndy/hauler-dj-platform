@@ -11,6 +11,9 @@ Canvas {
     id: glyph
 
     property string law: "constant_power"
+    // Where a cut-in law opens, in percent of the travel: the picture has to show the same place the engine
+    // opens at, or the button promises something the fader does not do.
+    property int cutIn: 5
     // The side that is open at the left of the crossfader.
     property color open: "#5090f0"
     // The side that closes there.
@@ -34,6 +37,14 @@ Canvas {
             return p * p * (3.0 - 2.0 * p);
         case "sharp":
             return Math.min(1.0, p / 0.25);
+        case "cut":
+        {
+            // Closed until the cut, then a ramp in decibels from -60 to 0 over two percent of the travel:
+            // the engine's own law (dj-mixer::side_gain), drawn.
+            const cut = cutIn / 100.0;
+            const t = Math.max(0.0, Math.min(1.0, (p - (cut - 0.01)) / 0.02));
+            return t <= 0.0 ? 0.0 : Math.pow(10.0, (-60.0 + 60.0 * t) / 20.0);
+        }
         default:
             return Math.sin(p * Math.PI / 2.0);
         }

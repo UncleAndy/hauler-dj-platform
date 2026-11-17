@@ -234,15 +234,23 @@ Pane {
             Layout.preferredHeight: 32
             spacing: 4
 
-            readonly property string current: Bridge.snapshot.crossfader_curve !== undefined
-                                                ? Bridge.snapshot.crossfader_curve : "constant_power"
+            // The law in force. A cut-in law travels as an object (its own number rides with it), so the row
+            // reads the object's name and its number, and a plain name stays a name.
+            readonly property var raw: Bridge.snapshot.crossfader_curve
+            readonly property string current: raw === undefined
+                                              ? "constant_power"
+                                              : (typeof raw === "object" && raw !== null
+                                                 ? Object.keys(raw)[0] : raw)
+            readonly property int cutIn: (typeof raw === "object" && raw !== null && raw.cut !== undefined)
+                                          ? raw.cut.cut_in : 5
 
             Repeater {
                 model: [
                     { law: "constant_power", hint: qsTr("Constant power: the energy sum stays at unity") },
                     { law: "linear", hint: qsTr("Linear: each side falls by the same step") },
                     { law: "smooth", hint: qsTr("Smooth: holds its level, then falls through the middle") },
-                    { law: "sharp", hint: qsTr("Sharp: a cut — both sides open across the middle") }
+                    { law: "sharp", hint: qsTr("Sharp: a cut — both sides open across the middle") },
+                    { law: "cut", hint: qsTr("Cut-in: closed until it opens, like a scratch mixer's fader") }
                 ]
 
                 delegate: Rectangle {
@@ -261,6 +269,7 @@ Pane {
                         anchors.fill: parent
                         anchors.margins: 3
                         law: parent.modelData.law
+                        cutIn: curveRow.cutIn
                         open: parent.lit ? UiSettings.themeAccent : UiSettings.themeText
                         closed: UiSettings.themeTextDim
                         guide: UiSettings.themeBorder
@@ -270,11 +279,88 @@ Pane {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: Bridge.setCrossfaderCurve(parent.modelData.law)
+                        onClicked: Bridge.setCrossfaderCurve(
+                                       parent.modelData.law === "cut"
+                                       ? "cut:" + curveRow.cutIn
+                                       : parent.modelData.law)
                         ToolTip.visible: containsMouse
                         ToolTip.text: parent.modelData.hint
                     }
                 }
+            }
+            // Where the cut opens, in percent of the travel: two steps, because a fader opening is a
+            // decision about feel, not a measurement. Visible only while the cut-in law is in force.
+            RowLayout {
+                objectName: "cutInRow"
+                Layout.fillWidth: true
+                Layout.preferredHeight: visible ? 24 : 0
+                spacing: 4
+                visible: curveRow.current === "cut"
+
+                Text {
+                    text: qsTr("Cut-in")
+                    color: UiSettings.themeTextDim
+                    font.pixelSize: 9
+                    Layout.alignment: Qt.AlignVCenter
+                }
+
+                Rectangle {
+                    objectName: "cutInDown"
+                    Layout.preferredWidth: 22
+                    Layout.preferredHeight: 20
+                    color: UiSettings.themeSurface
+                    border.width: 1
+                    border.color: UiSettings.themeBorder
+                    radius: 2
+                    Text {
+                        anchors.centerIn: parent
+                        text: "\u2212"
+                        color: UiSettings.themeText
+                        font.pixelSize: 9
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            const next = Math.max(0, curveRow.cutIn - 1);
+                            Bridge.setCrossfaderCurve("cut:" + next);
+                        }
+                    }
+                }
+
+                Text {
+                    objectName: "cutInValue"
+                    text: curveRow.cutIn + qsTr(" %")
+                    color: UiSettings.themeText
+                    font.pixelSize: 9
+                    Layout.alignment: Qt.AlignVCenter
+                }
+
+                Rectangle {
+                    objectName: "cutInUp"
+                    Layout.preferredWidth: 22
+                    Layout.preferredHeight: 20
+                    color: UiSettings.themeSurface
+                    border.width: 1
+                    border.color: UiSettings.themeBorder
+                    radius: 2
+                    Text {
+                        anchors.centerIn: parent
+                        text: "+"
+                        color: UiSettings.themeText
+                        font.pixelSize: 9
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            const next = Math.min(50, curveRow.cutIn + 1);
+                            Bridge.setCrossfaderCurve("cut:" + next);
+                        }
+                    }
+                }
+
+                Item { Layout.fillWidth: true }
             }
         }
     }
