@@ -136,3 +136,8 @@ DJP-UI-005,ui,P1,R1,DJP-SRS-001 §5,,,unverified,,,
 DJP-UI-006,ui,P2,R2,DJP-SRS-001 §5,,,unverified,,,
 DJP-UI-007,ui,P2,R2,DJP-SRS-001 §5,,,unverified,,,
 DJP-UI-008,ui,P2,R3,DJP-SRS-001 §5,,,unverified,,,
+DJP-SCR-001,audio-core,P1,R1,DJP-SRS-001 §4,crates/dj-deck/src/lib.rs; apps/dj-engine/src/lib.rs (DjCommand::Hand),scratch::a_hand_moves_the_head_by_its_own_integral,passing,docs/qa/evidence/SCR/summary.md,,2026-11-17
+DJP-SCR-002,audio-core,P1,R1,DJP-SRS-001 §4,crates/dj-deck/src/lib.rs (grab; hand_resume; HAND_SILENCE_SECONDS),scratch::releasing_the_record_gives_it_back_to_the_motor,passing,docs/qa/evidence/SCR/summary.md,,2026-11-17
+DJP-SCR-003,audio-core,P1,R1,DJP-SRS-001 §4,crates/dj-deck/src/lib.rs (prime_keylock; HAND_RELEASE_FADE_SECONDS),scratch_sound::the_hand_arrives_and_leaves_without_a_click,passing,docs/qa/evidence/SCR/summary.md,,2026-11-17
+DJP-SCR-004,audio-core,P1,R1,DJP-SRS-001 §4,crates/dj-deck/src/lib.rs (hand_wrap_region; wrap_hand_position),loop_scratch::the_hand_wraps_at_the_loop_and_does_not_leave_it,passing,docs/qa/evidence/SCR/summary.md,,2026-11-17
+DJP-SCR-005,audio-core,P1,R1,DJP-SRS-001 §4,crates/dj-deck/src/lib.rs (set_reversal_click; REVERSAL_CLICK_SECONDS),scratch_sound::the_reversal_click_is_an_option_and_it_is_off_by_default,passing,docs/qa/evidence/SCR/summary.md,,2026-11-17
