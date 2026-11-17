@@ -212,7 +212,8 @@ impl Engine {
             )),
             // This renderer holds one tone and no record: a hand on the platter has nothing to move here.
             DjCommand::Hand { .. } => Some(Ack::rejected(command_id, RejectReason::NotSupported)),
-            DjCommand::SetCrossfaderCurve { .. }
+            DjCommand::SetHamster { .. }
+            | DjCommand::SetCrossfaderCurve { .. }
             | DjCommand::SetMasterGain { .. }
             | DjCommand::SetChannelEq { .. }
             | DjCommand::SetChannelFader { .. } => {
@@ -284,6 +285,7 @@ impl Engine {
     /// audio callback.
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
+            hamster: false,
             model: Default::default(),
             import: None,
             analysis: None,

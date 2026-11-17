@@ -467,6 +467,8 @@ public:
 
     // Pick the crossfader law by its wire name: constant_power, linear, smooth, sharp.
     Q_INVOKABLE int setCrossfaderCurve(const QString &curve);
+    /// Turn the crossfader round (hamster switch): the handle on the left opens the other side.
+    Q_INVOKABLE int setHamster(bool on);
 
 signals:
     void connectedChanged();

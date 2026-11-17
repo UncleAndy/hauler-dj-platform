@@ -2304,6 +2304,15 @@ int BridgeClient::setCrossfaderCurve(const QString &curve)
     return sendCommand(QStringLiteral("mixer"), command);
 }
 
+int BridgeClient::setHamster(bool on)
+{
+    QJsonObject options;
+    options.insert(QStringLiteral("on"), on);
+    QJsonObject command;
+    command.insert(QStringLiteral("SetHamster"), options);
+    return sendCommand(QStringLiteral("mixer"), command);
+}
+
 int BridgeClient::setChannelGain(const QString &deck, double gain)
 {
     QJsonObject options;

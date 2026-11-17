@@ -301,6 +301,10 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
             mixer.set_curve(*curve);
             Ack::applied(id, at)
         }
+        DjCommand::SetHamster { on } => {
+            mixer.set_hamster(*on);
+            Ack::applied(id, at)
+        }
         DjCommand::SetMasterGain { linear_gain } => {
             mixer.set_master_gain(*linear_gain);
             Ack::applied(id, at)
@@ -412,6 +416,7 @@ pub fn snapshot(
         sample_rate: rate,
         crossfader: mixer.crossfader(),
         crossfader_curve: mixer.curve(),
+        hamster: mixer.hamster(),
         master: dj_domain::Levels {
             peak_left: mixer.meters().master.peak,
             peak_right: mixer.meters().master.peak,
@@ -961,6 +966,8 @@ pub struct StateCells {
     clock: AtomicU64,
     crossfader: AtomicU32,
     curve: AtomicU8,
+    /// Whether the crossfader is reversed: published so the shell can show the switch as the engine has it.
+    hamster: AtomicBool,
     master_peak: AtomicU32,
     /// Beats in the bar of the music that leads; four until a deck says otherwise.
     beats_per_bar: AtomicU8,
@@ -1216,6 +1223,7 @@ impl StateCells {
             clock: AtomicU64::new(0),
             crossfader: AtomicU32::new(0.5f32.to_bits()),
             curve: AtomicU8::new(curve_index(CrossfaderCurve::default())),
+            hamster: AtomicBool::new(false),
             master_peak: AtomicU32::new(0),
             beats_per_bar: AtomicU8::new(4),
             master_held: AtomicU32::new(0),
@@ -1291,6 +1299,7 @@ impl StateCells {
             .store(mixer.crossfader().to_bits(), Ordering::Relaxed);
         self.curve
             .store(curve_index(mixer.curve()), Ordering::Relaxed);
+        self.hamster.store(mixer.hamster(), Ordering::Relaxed);
         self.master_held
             .store(mixer.meters().master.held.to_bits(), Ordering::Relaxed);
         self.master_latency
@@ -1563,6 +1572,7 @@ impl StateCells {
             sample_rate: rate,
             crossfader: f32::from_bits(self.crossfader.load(Ordering::Relaxed)),
             crossfader_curve: curve_at(self.curve.load(Ordering::Relaxed)),
+            hamster: self.hamster.load(Ordering::Relaxed),
             master: dj_domain::Levels {
                 peak_left: f32::from_bits(self.master_peak.load(Ordering::Relaxed)),
                 peak_right: f32::from_bits(self.master_peak.load(Ordering::Relaxed)),

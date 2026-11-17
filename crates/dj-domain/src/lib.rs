@@ -734,6 +734,14 @@ pub enum DjCommand {
         /// The law to use from the next block on.
         curve: CrossfaderCurve,
     },
+    /// Turn the crossfader round: the handle on the left opens the other side.
+    ///
+    /// A scratch DJ holds the fader in whichever hand the routine needs, so the direction is a decision about
+    /// the instrument, not about the track.
+    SetHamster {
+        /// True when the fader is reversed.
+        on: bool,
+    },
     /// Master output gain in linear units (1.0 = unity); the knob at the top of the mixer.
     SetMasterGain {
         /// Linear gain.
@@ -852,6 +860,7 @@ impl DjCommand {
             | DjCommand::SetChannelFader { .. }
             | DjCommand::SetChannelEq { .. }
             | DjCommand::SetCrossfader { .. }
+            | DjCommand::SetHamster { .. }
             | DjCommand::SetCrossfaderCurve { .. }
             | DjCommand::SetMasterGain { .. } => false,
         }
@@ -1780,6 +1789,9 @@ pub struct Snapshot {
     /// Crossfader law in force at the moment of publication.
     #[serde(default)]
     pub crossfader_curve: CrossfaderCurve,
+    /// True when the crossfader is reversed: the shell shows the switch in the state the engine has.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub hamster: bool,
     /// Master output peak since the previous snapshot, after gain and the limiter.
     #[serde(default)]
     pub master: Levels,
