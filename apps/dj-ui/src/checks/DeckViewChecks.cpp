@@ -2216,9 +2216,30 @@ int runLayoutCheck(QQmlApplicationEngine& engine, LayoutSettings& layout, UiSett
                          overview != nullptr ? "found" : "missing");
             return 1;
         }
-        std::fprintf(stdout, "dj-ui: deck %s %.0f px tall, strip %.0f px, overview %.0f px\n", id,
-                     deck->height(), detail->height(), overview->height());
+        // The rows above and below the wave, measured: the four decks in a column have to know what
+        // the panel costs before anybody argues about a threshold.
+        const auto rowHeight = [&](const QString& name) {
+            QQuickItem* item = findItem(content, name);
+            if (item == nullptr) {
+                return QStringLiteral("absent");
+            }
+            if (!item->isVisible()) {
+                return QStringLiteral("hidden");
+            }
+            return QStringLiteral("%1").arg(item->height(), 0, 'f', 0);
+        };
+        const QString deckId = QString::fromLatin1(id);
+        std::fprintf(stdout,
+                     "dj-ui: deck %s %.0f px tall, strip %.0f px, overview %.0f px; rows: header %s, "
+                     "wave %s, transport %s, loop %s, grid %s\n",
+                     id, deck->height(), detail->height(), overview->height(),
+                     qPrintable(rowHeight(QStringLiteral("header_") + deckId)),
+                     qPrintable(rowHeight(QStringLiteral("wave_") + deckId)),
+                     qPrintable(rowHeight(QStringLiteral("transport_") + deckId)),
+                     qPrintable(rowHeight(QStringLiteral("loopsize_") + deckId)),
+                     qPrintable(rowHeight(QStringLiteral("gridedit_") + deckId)));
     }
+    std::fprintf(stdout, "dj-ui: the layout in force is %s\n", qPrintable(layout.preset()));
     // At rest nothing plays, so every deck button in the browser must look the same: a button
     // that wears a selection colour just because it is the first in the row says nothing true.
     {

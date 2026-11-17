@@ -705,6 +705,7 @@ Pane {
 
         // One line: which deck it is, what is loaded, where the playhead is in the track.
         RowLayout {
+            objectName: "header_" + panel.deckId
             Layout.fillWidth: true
             spacing: 6
 
@@ -897,6 +898,7 @@ Pane {
         // The sticks and the fader in one row: the tempo belongs to the deck, and a hand riding the
         // fader has to see the playhead at the same time.
         RowLayout {
+            objectName: "wave_" + panel.deckId
             Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: 4
