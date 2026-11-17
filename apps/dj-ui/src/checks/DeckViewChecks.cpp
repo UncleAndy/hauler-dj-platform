@@ -2182,7 +2182,17 @@ int runLayoutCheck(QQmlApplicationEngine& engine, LayoutSettings& layout, UiSett
     const double globalShare = globalBar->height() / height * 100.0;
     const double deckShare = deckArea->height() / height * 100.0;
     const double browserShare = browser->height() / height * 100.0;
-    const double mixerShare = mixer->width() / width * 100.0;
+    const bool noMixer = layout.mixerEdge() == QStringLiteral("none");
+    if (noMixer && mixer->isVisible()) {
+        std::fprintf(stderr, "dj-ui: %s says no mixer, and the mixer is on the screen\n",
+                     qPrintable(layout.preset()));
+        return 1;
+    }
+    if (!noMixer && !mixer->isVisible()) {
+        std::fprintf(stderr, "dj-ui: %s has no mixer on the screen\n", qPrintable(layout.preset()));
+        return 1;
+    }
+    const double mixerShare = noMixer ? 0.0 : mixer->width() / width * 100.0;
 
     const auto report = [&](const char* name, double actual, double wanted) {
         std::fprintf(stdout, "dj-ui: layout %-8s %5.1f%% (wanted %4.1f%%)\n", name, actual, wanted);
@@ -2190,10 +2200,13 @@ int runLayoutCheck(QQmlApplicationEngine& engine, LayoutSettings& layout, UiSett
     report("global", globalShare, layout.globalPercent());
     report("decks", deckShare, layout.deckRowsPercent());
     report("browser", browserShare, layout.browserPercent());
-    report("mixer", mixerShare, layout.mixerPercent());
+    if (!noMixer) {
+        report("mixer", mixerShare, layout.mixerPercent());
+    }
 
     const auto off = [](double actual, double wanted) { return std::abs(actual - wanted) > 2.0; };
-    if (off(globalShare, layout.globalPercent()) || off(mixerShare, layout.mixerPercent())) {
+    if (off(globalShare, layout.globalPercent())
+        || (!noMixer && off(mixerShare, layout.mixerPercent()))) {
         std::fprintf(stderr, "dj-ui: the layout does not match its settings\n");
         return 1;
     }
@@ -2420,6 +2433,14 @@ int runLayoutCheck(QQmlApplicationEngine& engine, LayoutSettings& layout, UiSett
             std::fprintf(stderr, "dj-ui: the deck does not open at the zoom setting\n");
             return 1;
         }
+    }
+
+    // A layout without a mixer stops here: the strips, the laws and the crossfader are not on the screen,
+    // and a check that looks for them would report the arrangement as broken.
+    if (noMixer) {
+        std::fprintf(stdout, "dj-ui: %s folds the mixer away; the decks own the row\n",
+                     qPrintable(layout.preset()));
+        return 0;
     }
 
     // The mixer, measured: the strips in the order the setting names, and the crossfader handle

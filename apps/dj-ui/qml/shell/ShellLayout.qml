@@ -40,16 +40,18 @@ Item {
         if (name === "duo") {
             return { left: ["A"], right: ["B"] };
         }
-        if (name === "stack" || name === "stack-duo") {
-            // One column of decks with the mixer at an edge: the empty column is not drawn at all, so
-            // the mixer stands where it was asked to stand.
-            const decks = name === "stack" ? ["A", "B", "C", "D"] : ["A", "B"];
-            return LayoutState.mixerEdge === "right" ? { left: decks, right: [] }
-                                                     : { left: [], right: decks };
-        }
-        if (name === "studio") {
-            return LayoutState.mixerEdge === "right" ? { left: ["A"], right: [] }
-                                                     : { left: [], right: ["A"] };
+        if (name === "stack" || name === "stack-duo" || name === "studio") {
+            // One column of decks with the mixer at an edge — or with no mixer at all, where the decks
+            // take its room. The empty column is not drawn, so the mixer stands where it was asked to.
+            const decks = name === "stack" ? ["A", "B", "C", "D"]
+                                          : (name === "stack-duo" ? ["A", "B"] : ["A"]);
+            if (LayoutState.mixerEdge === "right") {
+                return { left: decks, right: [] };
+            }
+            if (LayoutState.mixerEdge === "none") {
+                return { left: decks, right: [] };
+            }
+            return { left: [], right: decks };
         }
         return { left: [], right: [] };
     }
@@ -74,7 +76,16 @@ Item {
         }
     }
 
+    // The arrangement and the mixer's edge both decide where the decks stand: switching from
+    // `stack-left` to `stack-right` keeps the arrangement and moves the mixer, and a handler bound to the
+    // arrangement alone would leave the shell as it was (owner's report, 2026-11-19).
     onArrangementChanged: applyArrangement()
+    Connections {
+        target: LayoutState
+        function onMixerEdgeChanged() {
+            shell.applyArrangement();
+        }
+    }
     Component.onCompleted: applyArrangement()
 
     Shortcut {
@@ -102,6 +113,10 @@ Item {
     function publishColumnSizes(remember) {
         const total = columns.width;
         if (total <= 0) {
+            return;
+        }
+        // A layout without a mixer has no share to write; the decks own the whole row.
+        if (!columns.mixerItem.visible || total <= 0) {
             return;
         }
         LayoutState.mixerPercent = columns.mixerItem.width / total * 100.0;
@@ -162,6 +177,9 @@ Item {
             MixerPanel {
                 id: mixerPanel
                 objectName: "mixer"
+                // A layout without a mixer gives its room to the decks: a hidden item takes no space in
+                // a SplitView, and the crossfader is the one control preparation never touches.
+                visible: LayoutState.mixerEdge !== "none"
                 SplitView.preferredWidth: columns.width * LayoutState.mixerPercent / 100.0
                 SplitView.minimumWidth: 120
             }

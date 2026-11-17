@@ -709,7 +709,10 @@ dj-ui: the global switches stand 0,0 px off the master's axis, 6,0 px under its 
 | `stack-duo-right` | Stack Duo · mixer right | то же, микшер справа |
 | `studio-left` | Studio · mixer left | одна широкая дека A, микшер слева |
 | `studio-right` | Studio · mixer right | то же, микшер справа |
-| `custom` | Custom | любая из восьми, но числа свои (потянули разделитель) |
+| `stack-nomixer` | Stack · no mixer | A, B, C, D друг над другом, микшера нет — его место у деков |
+| `stack-duo-nomixer` | Stack Duo · no mixer | A и B друг над другом, микшера нет |
+| `studio-nomixer` | Studio · no mixer | одна широкая дека A на всю ширину |
+| `custom` | Custom | любая из одиннадцати, но числа свои (потянули разделитель) |
 
 Раскладка — это данные: `arrangement` (какие деки и в каком порядке), `mixerEdge` (край микшера) и
 числа, **свои на каждую раскладку** (`numbers` в файле). Числа старых файлов читаются как числа той
@@ -726,6 +729,8 @@ dj-ui: the global switches stand 0,0 px off the master's axis, 6,0 px under its 
 | `stack-*` | 123 px на деку (столбик из 4) | 88 px | 15 %, у названного края |
 | `stack-duo-*` | 237 px на деку (столбик из 2) | 161 px | 15 %, у названного края |
 | `studio-*` | 465 px, 84 % ширины дека-зоны | 389 px | 16 %, у названного края |
+| `*-nomixer` | как у своей схемы, шире на ширину микшера |
+  та же | микшера на экране нет — место отдано декам |
 
 Неснимаемое в панели деки — 76 px (шапка 18, транспорт 24, отступы и поля 16), низ волны — 40 px.
 Когда деке не хватает высоты (`compact: height < 120`), она сворачивает ряд правки сетки и полосу

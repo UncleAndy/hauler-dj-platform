@@ -86,7 +86,8 @@ case "${1:-}" in
         --layout-file "${TMPDIR:-/tmp}/dj-layout-duo.json" --layout-check
     # The column of decks with the mixer at an edge, in four and in two: the decks stand one under
     # another, the wave keeps its floor, and at a smaller window the rows fold before the wave does.
-    for stack_layout in stack-left stack-right stack-duo-left stack-duo-right studio-left studio-right; do
+    for stack_layout in stack-left stack-right stack-duo-left stack-duo-right studio-left studio-right \
+                       stack-nomixer stack-duo-nomixer studio-nomixer; do
       QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --layout "$stack_layout" \
           --layout-file "${TMPDIR:-/tmp}/dj-layout-$stack_layout.json" --layout-check
     done

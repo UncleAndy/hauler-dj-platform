@@ -42,6 +42,11 @@ bool LayoutSettings::parseLayout(const QString &name, QString *arrangement, QStr
         {QStringLiteral("stack-duo-right"), {QStringLiteral("stack-duo"), QStringLiteral("right")}},
         {QStringLiteral("studio-left"), {QStringLiteral("studio"), QStringLiteral("left")}},
         {QStringLiteral("studio-right"), {QStringLiteral("studio"), QStringLiteral("right")}},
+        // The mixer folded away entirely: the decks take its room. For preparing a set, where the
+        // crossfader is the one control nobody is going to touch.
+        {QStringLiteral("stack-nomixer"), {QStringLiteral("stack"), QStringLiteral("none")}},
+        {QStringLiteral("stack-duo-nomixer"), {QStringLiteral("stack-duo"), QStringLiteral("none")}},
+        {QStringLiteral("studio-nomixer"), {QStringLiteral("studio"), QStringLiteral("none")}},
     };
     const auto found = known.constFind(name.trimmed().toLower());
     if (found == known.constEnd()) {
@@ -57,7 +62,10 @@ QString LayoutSettings::canonicalName(const QString &arrangement, const QString 
     if (arrangement == QStringLiteral("classic") || arrangement == QStringLiteral("duo")) {
         return arrangement;
     }
-    return arrangement + QLatin1Char('-') + edge;
+    // `none` is written as `nomixer`: the stored name is what the menu compares against, and `stack-none`
+    // would leave the tick on no entry at all.
+    return arrangement + (edge == QStringLiteral("none") ? QStringLiteral("-nomixer")
+                                                         : QLatin1Char('-') + edge);
 }
 
 LayoutSettings::Numbers LayoutSettings::defaultsFor(const QString &arrangement)

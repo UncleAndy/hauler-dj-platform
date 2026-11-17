@@ -28,6 +28,12 @@ Pane {
             return qsTr("Studio \u00b7 mixer left");
         case "studio-right":
             return qsTr("Studio \u00b7 mixer right");
+        case "stack-nomixer":
+            return qsTr("Stack \u00b7 no mixer");
+        case "stack-duo-nomixer":
+            return qsTr("Stack Duo \u00b7 no mixer");
+        case "studio-nomixer":
+            return qsTr("Studio \u00b7 no mixer");
         case "custom":
             return qsTr("Custom");
         }
@@ -150,6 +156,28 @@ Pane {
             checkable: true
             checked: LayoutState.preset === "studio-right"
             onTriggered: LayoutState.setLayout("studio-right")
+        }
+        MenuSeparator {}
+        MenuItem {
+            objectName: "layoutChoice_stack-nomixer"
+            text: bar.labelFor("stack-nomixer")
+            checkable: true
+            checked: LayoutState.preset === "stack-nomixer"
+            onTriggered: LayoutState.setLayout("stack-nomixer")
+        }
+        MenuItem {
+            objectName: "layoutChoice_stack-duo-nomixer"
+            text: bar.labelFor("stack-duo-nomixer")
+            checkable: true
+            checked: LayoutState.preset === "stack-duo-nomixer"
+            onTriggered: LayoutState.setLayout("stack-duo-nomixer")
+        }
+        MenuItem {
+            objectName: "layoutChoice_studio-nomixer"
+            text: bar.labelFor("studio-nomixer")
+            checkable: true
+            checked: LayoutState.preset === "studio-nomixer"
+            onTriggered: LayoutState.setLayout("studio-nomixer")
         }
         MenuSeparator {}
         // Not a choice but a state: the numbers were moved in the layout the DJ is in.

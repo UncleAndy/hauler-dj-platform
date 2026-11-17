@@ -2033,8 +2033,17 @@ int runLayoutMenuCheck(QQmlApplicationEngine& engine, FileBrowser& browser, Layo
     };
     const int pageBefore = browser.property("pageGeneration").toInt();
 
-    const QStringList names = {"classic", "duo", "stack-left", "stack-right",
-                              "stack-duo-left", "stack-duo-right", "studio-left", "studio-right"};
+    const QStringList names = {"classic",
+                              "duo",
+                              "stack-left",
+                              "stack-right",
+                              "stack-duo-left",
+                              "stack-duo-right",
+                              "studio-left",
+                              "studio-right",
+                              "stack-nomixer",
+                              "stack-duo-nomixer",
+                              "studio-nomixer"};
     // What each arrangement must put on the screen, in deck letters: the menu and the shell have to
     // agree, or the DJ picks a layout and the decks do something else.
     const QHash<QString, QStringList> expected = {
@@ -2049,6 +2058,10 @@ int runLayoutMenuCheck(QQmlApplicationEngine& engine, FileBrowser& browser, Layo
         {QStringLiteral("stack-duo-right"), {QStringLiteral("A"), QStringLiteral("B")}},
         {QStringLiteral("studio-left"), {QStringLiteral("A")}},
         {QStringLiteral("studio-right"), {QStringLiteral("A")}},
+        {QStringLiteral("stack-nomixer"), {QStringLiteral("A"), QStringLiteral("B"), QStringLiteral("C"),
+                                           QStringLiteral("D")}},
+        {QStringLiteral("stack-duo-nomixer"), {QStringLiteral("A"), QStringLiteral("B")}},
+        {QStringLiteral("studio-nomixer"), {QStringLiteral("A")}},
     };
 
     for (const QString& name : names) {
@@ -2081,6 +2094,38 @@ int runLayoutMenuCheck(QQmlApplicationEngine& engine, FileBrowser& browser, Layo
                 return 1;
             }
         }
+        // Where the mixer stands: the edge the name promises, or nowhere at all. This is the witness for
+        // the report that `stack-duo-left` → `stack-duo-right` left the mixer where it was: the name
+        // changed, and nothing on the screen moved.
+        auto* mixer = findItem(content, QStringLiteral("mixer"));
+        auto* deckArea = findItem(content, QStringLiteral("deckArea"));
+        if (mixer != nullptr && deckArea != nullptr) {
+            const QRectF area = deckArea->mapRectToScene(QRectF(0, 0, deckArea->width(), deckArea->height()));
+            const QRectF mixerRect =
+                mixer->mapRectToScene(QRectF(0, 0, mixer->width(), mixer->height()));
+            if (name.endsWith(QStringLiteral("-nomixer"))) {
+                if (mixer->isVisible()) {
+                    std::fprintf(stderr, "dj-ui: %s keeps a mixer on the screen\n", qPrintable(name));
+                    return 1;
+                }
+            } else if (name.endsWith(QStringLiteral("-left"))) {
+                if (!mixer->isVisible() || std::abs(mixerRect.left() - area.left()) > 2.0) {
+                    std::fprintf(stderr, "dj-ui: %s puts the mixer %.0f px from the left edge\n",
+                                 qPrintable(name), mixerRect.left() - area.left());
+                    return 1;
+                }
+            } else if (name.endsWith(QStringLiteral("-right"))) {
+                if (!mixer->isVisible() || std::abs(mixerRect.right() - area.right()) > 2.0) {
+                    std::fprintf(stderr, "dj-ui: %s puts the mixer %.0f px from the right edge\n",
+                                 qPrintable(name), area.right() - mixerRect.right());
+                    return 1;
+                }
+            } else if (!mixer->isVisible() || mixerRect.left() < area.left()
+                       || mixerRect.right() > area.right()) {
+                std::fprintf(stderr, "dj-ui: %s has no mixer between the columns\n", qPrintable(name));
+                return 1;
+            }
+        }
         if (!label().startsWith(QStringLiteral("Layout: ")) || label() == QStringLiteral("Layout: ")) {
             std::fprintf(stderr, "dj-ui: the button does not name a layout after %s (%s)\n",
                          qPrintable(name), qPrintable(label()));
@@ -2101,8 +2146,8 @@ int runLayoutMenuCheck(QQmlApplicationEngine& engine, FileBrowser& browser, Layo
         return 1;
     }
     std::fprintf(stdout,
-                 "dj-ui: eight layouts from one list, the label follows, custom after a drag, no page "
-                 "asked\n");
+                 "dj-ui: eleven layouts from one list, the mixer follows its edge, the label follows, "
+                 "custom after a drag, no page asked\n");
     return 0;
 }
 
