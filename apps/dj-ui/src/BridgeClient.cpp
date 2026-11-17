@@ -234,6 +234,7 @@ void FileBrowser::openCollection(const QStringList &roots)
     // Same folders, same list: a refresh after an analysis must not blank the list while the answer is
     // on its way — the DJ sees his collection vanish and come back for no reason.
     const bool sameRoots = listed == m_roots;
+    m_replacingInPlace = sameRoots;
     m_roots = listed;
     m_folder = listed.join(QStringLiteral(" | "));
     m_mode = QStringLiteral("collection");
@@ -587,6 +588,12 @@ void FileBrowser::takePage()
         m_pageOffset = tracks.size();
         m_pageTotal = total;
         m_total = total;
+        // The whole list was replaced, and a view handed a new model starts at the top: the count says so, and
+        // the shell puts the DJ's place back. Only a refresh of the section already on screen has a place to
+        // put back — a section being opened puts its remembered row in the middle instead.
+        if (m_replacingInPlace) {
+            ++m_pageGeneration;
+        }
     } else {
         if (tracks.isEmpty()) {
             m_pageTotal = m_pageOffset;
@@ -780,6 +787,8 @@ void FileBrowser::takePlaylists()
         m_playlistRows = tracks;
         m_playlistTotal = total;
         emit playlistPageChanged();
+        // A playlist page is always the one already open: the DJ's place in it is his.
+        ++m_pageGeneration;
     }
 }
 

@@ -27,6 +27,11 @@ class FileBrowser : public QObject
     Q_OBJECT
     Q_PROPERTY(QString folder READ folder NOTIFY changed)
     Q_PROPERTY(QVariantList entries READ entries NOTIFY changed)
+    /// How many times the rows were replaced rather than appended.
+    ///
+    /// A view handed a new model starts at the top, and the DJ's place has to be put back; the count is how
+    /// the shell tells a replacement from an append, on the same `changed` signal it already listens to.
+    Q_PROPERTY(int pageGeneration READ pageGeneration NOTIFY changed)
     Q_PROPERTY(QString error READ error NOTIFY changed)
     // "files" while the list is one folder, "collection" while it is the collection under its root.
     Q_PROPERTY(QString mode READ mode NOTIFY changed)
@@ -46,6 +51,7 @@ public:
 
     QString folder() const { return m_folder; }
     QVariantList entries() const { return m_entries; }
+    int pageGeneration() const { return m_pageGeneration; }
     QString error() const { return m_error; }
     QString mode() const { return m_mode; }
     QString filter() const { return m_filter; }
@@ -276,6 +282,11 @@ private:
     /// The genres the collection is narrowed to. Empty is the whole collection.
     QStringList m_genres;
     int m_total = 0;
+    /// Bumped every time the rows are replaced as a whole, not appended.
+    int m_pageGeneration = 0;
+    /// True when the page being asked replaces the rows of the section already on screen (a lock, an
+    /// analysis) rather than opening a section: only then does the shell have a place to put back.
+    bool m_replacingInPlace = false;
     // The collection's tracks before the filter, and the folder the file list was showing.
     QVariantList m_all;
     // The roots the collection section was opened with: a refresh reads the same disks.

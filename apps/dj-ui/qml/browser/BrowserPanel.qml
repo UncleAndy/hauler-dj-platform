@@ -426,6 +426,63 @@ Pane {
     // remembered row coming back with its section, a list rebuilt under it — centres the row.
     property bool keepScrollOnCursor: false
 
+    /// The scroll the DJ left the list at, and the place to put it back.
+    ///
+    /// A page answer replaces the whole list: a view handed a new model resets to the top, and the DJ who
+    /// pressed the lock on a track in the middle of a collection finds the list at its beginning and the
+    /// cursor somewhere off screen. The offset is remembered as the list moves, and put back — exactly, not
+    /// centred — when the rows are replaced. `scrollingBack` keeps the restore from being remembered as a
+    /// scroll of its own.
+    property real keptScrollY: 0
+    property bool scrollingBack: false
+    /// The page count the list has already taken into account.
+    property int seenGeneration: 0
+
+    function rememberScroll() {
+        if (!browser.scrollingBack) {
+            browser.keptScrollY = list.contentY;
+        }
+    }
+
+    function restoreScroll() {
+        // Two different arrivals wear the same clothes. A page replaced under the DJ's eyes (the lock asks
+        // the collection again) must leave the window exactly where he had it; a section opened with a
+        // remembered row must put that row in the middle, which is what the DJ expects of a list he is
+        // returning to. The row being visible in the window he left is what tells them apart.
+        const row = Browser.rowOf(Browser.cursor);
+        const top = row * rowHeight;
+        const height = list.height;
+        const seen = row >= 0 && height > 0 && top + rowHeight > browser.keptScrollY &&
+                     top < browser.keptScrollY + height;
+        if (!seen) {
+            browser.scrollingBack = false;
+            browser.centreOnCursor();
+            return;
+        }
+        // The offset can only be put back once the rows are laid out: until then `contentHeight` is the height
+        // of a list that has not been built, and clamping to it sets the view short. So the restore is asked
+        // again on the next turns — the same remedy the centring uses — until the view holds the offset the
+        // DJ left or the budget runs out.
+        browser.restoreScrollTo(browser.keptScrollY, 0);
+    }
+
+    function restoreScrollTo(wanted, attempt) {
+        const tries = attempt === undefined ? 0 : attempt;
+        const most = Math.max(0, list.contentHeight - list.height);
+        const target = Math.max(0, Math.min(wanted, most));
+        browser.scrollingBack = true;
+        list.contentY = target;
+        browser.scrollingBack = false;
+        if (Math.abs(list.contentY - target) <= 0.5 || tries >= 12) {
+            // The list may have shrunk under the cursor: then the offset has to give way to the row.
+            browser.centreIfLost();
+            return;
+        }
+        Qt.callLater(function () {
+            browser.restoreScrollTo(wanted, tries + 1);
+        });
+    }
+
     /// Does this snapshot value, anywhere inside it, name the file?
     function snapshotHas(value, name) {
         if (value === null || value === undefined) {
@@ -481,6 +538,15 @@ Pane {
             }
         }
         function onChanged() {
+            // A page answer replaces every row (the lock asks the collection again), and a view handed a new
+            // model starts at the top: the DJ's place goes back before anything else is asked of the list.
+            if (Browser.pageGeneration !== browser.seenGeneration) {
+                browser.seenGeneration = Browser.pageGeneration;
+                // The list was replaced under the DJ: his offset goes back, and the cursor is not centred —
+                // centring would move the window he is looking at, which is the report this answers.
+                browser.restoreScroll();
+                return;
+            }
             // The rows can arrive after the cursor, and Qt then scrolls the row to the nearest edge —
             // which makes it «visible» and would keep it out of the middle. With the wheel moving the
             // cursor, the middle is where the DJ put it, so the request is unconditional here too.
@@ -2016,6 +2082,8 @@ Pane {
                 // The window is laid out after the list: a height that arrives late must not leave the
                 // cursor outside the new window.
                 onHeightChanged: browser.centreIfLost()
+                // The DJ's place is remembered as he moves, so a replaced page can be put back exactly.
+                onContentYChanged: browser.rememberScroll()
                 // Arrow keys move the cursor and say so. Deliberately not `onCurrentIndexChanged`:
                 // a view handed a new model resets its index to the first row, and that reset would
                 // be remembered as the DJ's choice, wiping the place he actually left.

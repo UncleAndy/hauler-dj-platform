@@ -323,6 +323,21 @@ case "${1:-}" in
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --collection-root "$run_dir/lock-collection" --lock-check \
         --import-fixture "$analyze_track" --layout-file "$run_dir/lock-layout.json"
+    # The lock asks the collection again, and the answer replaces every row: the list must keep the DJ's
+    # place, not jump to its beginning. Its own engine: the check imports forty tracks and scrolls the
+    # collection, and the checks after it would inherit both.
+    scroll_socket="$run_dir/engine-scroll.sock"
+    "$engine_bin" --null-sink --socket "$scroll_socket" --block 256 &
+    scroll_pid=$!
+    for _ in $(seq 1 100); do
+      [ -S "$scroll_socket" ] && break
+      sleep 0.05
+    done
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$scroll_socket" \
+        --collection-root "$run_dir/scroll-collection" --scroll-check \
+        --layout-file "$run_dir/scroll-layout.json"
+    kill "$scroll_pid" 2>/dev/null || true
+    wait "$scroll_pid" 2>/dev/null || true
     # The playlists (DJP-MEDIA-004): made in a folder, filled with three rows, the dups taken out, a row
     # dragged, the name changed, the playlist carried to the root and deleted — the tree, the rows on the
     # right and the file in the mirror are all read back at every step. Two different tracks, because a

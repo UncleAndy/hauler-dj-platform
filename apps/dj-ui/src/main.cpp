@@ -7542,6 +7542,154 @@ static int runPlaylistCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     return 0;
 }
 
+/// A short mono WAV, `length` seconds long.
+///
+/// Written rather than copied: forty copies of one file are forty answers with the same fingerprint, and the
+/// import asks about duplicates. Forty lengths are forty tracks.
+static bool writeShortWav(const QString &path, double seconds)
+{
+    const int rate = 48'000;
+    const int frames = static_cast<int>(seconds * rate);
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) {
+        return false;
+    }
+    QDataStream out(&file);
+    out.setByteOrder(QDataStream::LittleEndian);
+    const auto u32 = [&](quint32 value) { out << value; };
+    const auto u16 = [&](quint16 value) { out << value; };
+    file.write("RIFF");
+    u32(static_cast<quint32>(36 + frames * 2));
+    file.write("WAVEfmt ");
+    u32(16);
+    u16(1);
+    u16(1);
+    u32(static_cast<quint32>(rate));
+    u32(static_cast<quint32>(rate * 2));
+    u16(2);
+    u16(16);
+    file.write("data");
+    u32(static_cast<quint32>(frames * 2));
+    for (int index = 0; index < frames; ++index) {
+        const double phase = 6.283185307179586 * 220.0 * index / rate;
+        const auto sample = static_cast<qint16>(std::sin(phase) * 12000.0);
+        out << sample;
+    }
+    return true;
+}
+
+/// The list keeps the DJ's place when the page under it is replaced.
+///
+/// The lock asks the collection again (the row wears the flag at once), and the answer replaces every row:
+/// a view handed a new model starts at the top, so the DJ who pressed the lock on a track in the middle of
+/// his collection found the list at its beginning. The refresh here is the call the lock makes, without a
+/// deck in the way.
+static int runScrollCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient &bridge,
+                          const QString &collectionRoot)
+{
+    if (collectionRoot.isEmpty()) {
+        std::fprintf(stderr, "dj-ui: --scroll-check needs --collection-root\n");
+        return 1;
+    }
+    QDir root(collectionRoot);
+    if (!root.mkpath(QStringLiteral("."))) {
+        std::fprintf(stderr, "dj-ui: cannot make %s\n", qPrintable(collectionRoot));
+        return 1;
+    }
+    // Forty files of forty lengths: the list has to be longer than the window for a scroll to exist at all.
+    QStringList fillers;
+    for (int index = 0; index < 40; ++index) {
+        const QString filler =
+            root.filePath(QStringLiteral("Scroll %1.wav").arg(index + 1, 2, 10, QLatin1Char('0')));
+        QFile::remove(filler);
+        if (!writeShortWav(filler, 0.6 + 0.01 * index)) {
+            std::fprintf(stderr, "dj-ui: cannot write %s\n", qPrintable(filler));
+            return 1;
+        }
+        fillers.append(filler);
+    }
+
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().value(0));
+    if (window == nullptr) {
+        std::fprintf(stderr, "dj-ui: no shell window\n");
+        return 1;
+    }
+    auto *panel = findItem(window->contentItem(), QStringLiteral("browserPanel"));
+    auto *list = findItem(window->contentItem(), QStringLiteral("browserList"));
+    if (panel == nullptr || list == nullptr) {
+        std::fprintf(stderr, "dj-ui: the shell has no browser\n");
+        return 1;
+    }
+    const auto waitFor = [](const std::function<bool()> &ready, int budget) {
+        QElapsedTimer clock;
+        clock.start();
+        while (clock.elapsed() < budget) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            if (ready()) {
+                return true;
+            }
+            QThread::msleep(20);
+        }
+        return ready();
+    };
+    const auto importState = [&]() { return panel->property("importState").toMap(); };
+
+    bridge.importPaths(fillers, collectionRoot, false);
+    const bool imported = waitFor(
+        [&]() {
+            const QVariantMap state = importState();
+            return state.value(QStringLiteral("total")).toInt() >= 40 &&
+                   state.value(QStringLiteral("running")).toBool() == false;
+        },
+        120000);
+    if (!imported) {
+        std::fprintf(stderr, "dj-ui: the import never finished\n");
+        return 1;
+    }
+    browser.openCollection({collectionRoot});
+    if (!waitFor([&]() { return browser.entries().size() >= 40; }, 30000)) {
+        std::fprintf(stderr, "dj-ui: the collection lists %d rows\n", static_cast<int>(browser.entries().size()));
+        return 1;
+    }
+    const double rowHeight = panel->property("rowHeight").toDouble();
+    if (rowHeight <= 0.0) {
+        std::fprintf(stderr, "dj-ui: the list has no row height\n");
+        return 1;
+    }
+    const int rows = browser.entries().size();
+    const int aimed = rows / 2;
+    browser.setCursor(browser.entries().value(aimed).toMap().value(QStringLiteral("path")).toString());
+    list->setProperty("contentY", aimed * rowHeight);
+    // The cursor centring may move the list a moment later: the place that has to survive is the one the DJ
+    // is left with, so the reading is taken after everything has settled.
+    (void)waitFor([&]() { return list->property("contentY").toDouble() > rowHeight; }, 5000);
+    (void)waitFor([&]() { return false; }, 500);
+    const double before = list->property("contentY").toDouble();
+    if (before <= rowHeight * 2) {
+        std::fprintf(stderr, "dj-ui: the list never scrolled (%.0f px)\n", before);
+        return 1;
+    }
+
+    QMetaObject::invokeMethod(&browser, "refreshCollection");
+    (void)waitFor([&]() { return false; }, 600);
+    const double after = list->property("contentY").toDouble();
+    std::fprintf(stdout, "dj-ui: the list stood at %.0f px of %d rows and the refresh left it at %.0f px\n",
+                 before, rows, after);
+    // The complaint is the jump to the very beginning, and the row the DJ is on must stay in the window he
+    // can see. A pixel-exact offset is not the promise: the view centres the cursor on its own, and a list
+    // that glides a few rows and still shows that row has done what was asked.
+    const double windowHeight = list->height();
+    const double rowTop = aimed * rowHeight;
+    const bool rowOnScreen = rowTop + rowHeight > after && rowTop < after + windowHeight;
+    if (after <= rowHeight || !rowOnScreen) {
+        std::fprintf(stderr,
+                     "dj-ui: the refresh left the list at %.0f px of %.0f and row %d at %.0f %s the window\n",
+                     after, before, aimed, rowTop, rowOnScreen ? "inside" : "outside");
+        return 1;
+    }
+    return 0;
+}
+
 static int runLockCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient &bridge,
                         const QString &fixture, const QString &collectionRoot)
 {
@@ -8806,6 +8954,9 @@ int main(int argc, char *argv[])
     const QCommandLineOption pageCheckOption(
         QStringLiteral("collection-page-check"),
         QStringLiteral("Compare the index page with the walk over the collection, field by field."));
+    const QCommandLineOption scrollCheckOption(
+        QStringLiteral("scroll-check"),
+        QStringLiteral("The list keeps its place when the page is replaced (needs --collection-root)."));
     const QCommandLineOption importCheckOption(
         QStringLiteral("import-check"),
         QStringLiteral("With --connect: pick two rows in the browser, add them to the collection, "
@@ -9094,6 +9245,7 @@ int main(int argc, char *argv[])
     parser.addOption(curveCheckOption);
     parser.addOption(masterCheckOption);
     parser.addOption(pageCheckOption);
+    parser.addOption(scrollCheckOption);
     parser.addOption(importCheckOption);
     parser.addOption(analyzeCheckOption);
     parser.addOption(sortCheckOption);
@@ -15168,6 +15320,11 @@ int main(int argc, char *argv[])
     if (parser.isSet(endCheckOption)) {
         bridge->connectToEngine(parser.value(connectOption));
         return runEndCheck(engine, *bridge, parser.value(loadOption));
+    }
+
+    if (parser.isSet(scrollCheckOption)) {
+        bridge->connectToEngine(parser.value(connectOption));
+        return runScrollCheck(engine, browser, *bridge, parser.value(collectionRootOption));
     }
 
     if (parser.isSet(lockCheckOption)) {
