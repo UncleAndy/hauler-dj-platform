@@ -403,6 +403,9 @@ public:
     /// A hand on the record: `held` is the touch, `speed` is the material's speed in source frames per
     /// second, signed. Coalesced — a mouse emits far more moves than the engine has blocks.
     Q_INVOKABLE int putHandOn(const QString &deck, bool held);
+    /// Say the hand is still on the record at the speed it last had: the heartbeat that keeps a deck from
+    /// deciding the hand was taken away. Coalescing does not apply — this is the message that must arrive.
+    Q_INVOKABLE int keepHand(const QString &deck);
     /// The speed of the hand while it holds the record: source frames per second, signed.
     Q_INVOKABLE int setHandSpeed(const QString &deck, double speed);
     /// Count `beats` beats to the bar: the DJ's fix for a bar the measurement counted in four.

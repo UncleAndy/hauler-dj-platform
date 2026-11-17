@@ -203,6 +203,16 @@ Item {
     // A hand that stops moving stops making sound: the record stands still and the needle sits in a groove
     // that is not moving. Forty milliseconds is shorter than the gap between two moves of a deliberate
     // drag, so the deck only ever plays what the hand passes over.
+    // The hand keeps saying it is still there: the deck treats a quarter of a second of silence as the
+    // hand being taken away, and a DJ holds the record still for longer than that all the time.
+    Timer {
+        id: handBeat
+        interval: 100
+        repeat: true
+        running: view.scrubHeld && view.deckId.length > 0
+        onTriggered: Bridge.keepHand(view.deckId)
+    }
+
     Timer {
         id: scrubIdle
         interval: 20

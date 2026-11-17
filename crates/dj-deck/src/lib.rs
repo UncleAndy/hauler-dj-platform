@@ -79,6 +79,14 @@ const MAX_TEMPO_BLOCK_FRAMES: usize = 8192;
 /// fixed size: a block at this rate asks for four times its own length of material, no more.
 pub const MAX_HAND_RATE: f64 = 4.0;
 
+/// How long a hand may go without saying anything before the deck decides it is gone.
+///
+/// The shell speaks to the hand while it holds the record — the same speed again every hundred
+/// milliseconds — so silence means the messages stopped, not that the hand is still. A quarter of a
+/// second is longer than any gap between two mouse moves and shorter than a DJ's pause: a lost release
+/// then costs a moment of motor, not a deck that never comes back.
+pub const HAND_SILENCE_SECONDS: f64 = 0.25;
+
 /// Material the hand's window holds, in frames.
 ///
 /// The window is read with one seek per block, so it only has to hold the span of a block at the fastest
@@ -421,6 +429,9 @@ pub struct Deck {
     hand_pos: f64,
     /// True while a hand holds the record.
     hand_engaged: bool,
+    /// Deck frames rendered since the hand last said anything. A hand that has said nothing for
+    /// [`HAND_SILENCE_SECONDS`] is not on the record any more.
+    hand_silence_frames: u64,
     /// Whether the transport was running when the hand took the record: letting go gives it back.
     ///
     /// The rule that a touch stops the motor belongs to the instrument, not to the shell: a shell that had
@@ -523,6 +534,7 @@ impl Deck {
             hand_pos: 0.0,
             hand_engaged: false,
             hand_resume: false,
+            hand_silence_frames: 0,
             // Emptiness is the ordinary state: the window is made when a hand first takes the record, so a
             // deck that is only ever played through pays nothing for a scratch it never does.
             hand_window: Vec::new(),
@@ -720,6 +732,7 @@ impl Deck {
         }
         self.hand_engaged = on;
         self.hand_rate = 0.0;
+        self.hand_silence_frames = 0;
         if on {
             // A hand on a turning record stops the motor; the record's speed is the hand's from here on.
             if self.playing {
@@ -733,7 +746,11 @@ impl Deck {
             // The head the ear hears is the one the hand takes. The read head sits ahead of it by the
             // stretcher's delay, and by the material the tempo stage has already pulled in: the hand
             // must take the frame under the needle, not the frame the deck is preparing.
-            self.hand_pos = self.heard_at(self.position) as f64;
+            let heard = self.heard_at(self.position);
+            self.hand_pos = heard as f64;
+            // The deck's own head becomes the hand's: while the hand is on the record, the position that is
+            // reported is the one under the needle, not the one the motor's path had read ahead.
+            self.position = heard;
             self.scratch_frames = 0;
             self.phase = 0.0;
             // The stretcher is the motor's answer to speed; with a hand on the record it has nothing to
@@ -768,6 +785,8 @@ impl Deck {
             return;
         }
         self.hand_rate = rate.clamp(-MAX_HAND_RATE, MAX_HAND_RATE);
+        // Speaking is holding: a hand that keeps saying the same speed is still on the record.
+        self.hand_silence_frames = 0;
     }
 
     /// Drop the frames carried for the tempo stage: the playhead is about to move or stop.
@@ -1717,6 +1736,17 @@ impl Deck {
         if !self.hand_engaged && self.keylock_engaged {
             // Only the stretcher cares: the resampling stage is sample-continuous and takes a jump.
             self.glide_tempo(out.len() / 2);
+        }
+        // A hand that says nothing for a while is not on the record: a lost release, a window closed
+        // mid-gesture, a shell that crashed. The deck gives the record back to the motor rather than
+        // playing on at the last speed it heard.
+        if self.hand_engaged {
+            let frames = out.len() as u64 / 2;
+            self.hand_silence_frames = self.hand_silence_frames.saturating_add(frames);
+            let limit = (HAND_SILENCE_SECONDS * f64::from(self.output_rate)) as u64;
+            if self.hand_silence_frames > limit {
+                self.grab(false);
+            }
         }
         // The motor's speed and the record's speed are two different things while a hand is on the
         // record: the motor keeps turning under the slipmat, the record goes where the hand takes it.

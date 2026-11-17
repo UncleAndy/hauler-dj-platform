@@ -2047,6 +2047,20 @@ int BridgeClient::putHandOn(const QString &deck, bool held)
     return sendCommand(deck, command);
 }
 
+int BridgeClient::keepHand(const QString &deck)
+{
+    if (!handHeld_.value(deck, false)) {
+        return -1;
+    }
+    QJsonObject options;
+    options.insert(QStringLiteral("deck"), deck);
+    options.insert(QStringLiteral("speed"), handSpeed_.value(deck, 0.0));
+    options.insert(QStringLiteral("held"), true);
+    QJsonObject command;
+    command.insert(QStringLiteral("Hand"), options);
+    return sendCommand(deck, command);
+}
+
 int BridgeClient::setHandSpeed(const QString &deck, double speed)
 {
     // A mouse emits hundreds of moves a second and the engine has one block every five milliseconds: an

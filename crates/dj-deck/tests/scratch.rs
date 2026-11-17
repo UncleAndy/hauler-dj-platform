@@ -277,3 +277,63 @@ fn releasing_the_record_gives_it_back_to_the_motor() {
         "the motor carried the record from {left_at} to {carried}"
     );
 }
+
+/// A hand that says nothing for a quarter of a second is not on the record: the motor takes it back.
+///
+/// The shell speaks to the hand while it holds the record, so silence means the messages stopped — a lost
+/// release, a window closed mid-gesture. Playing on at the last speed it heard would leave the deck
+/// scratching by itself.
+#[test]
+fn a_hand_that_stops_speaking_is_released() {
+    let mut deck = code_deck(480_000);
+    deck.seek(200_000);
+    start(&mut deck);
+    deck.grab(true);
+    deck.set_hand_rate(0.5);
+
+    let mut out = vec![0.0f32; 256 * 2];
+    // Ten blocks: fifty-three milliseconds, well inside the hand's patience.
+    for _ in 0..10 {
+        deck.render(&mut out);
+    }
+    assert!(deck.hand_engaged(), "the hand was let go far too early");
+    // Then the messages stop: a second of blocks with nothing said.
+    for _ in 0..200 {
+        deck.render(&mut out);
+    }
+    assert!(
+        !deck.hand_engaged(),
+        "a hand that says nothing for a second is still holding the record"
+    );
+    assert!(deck.is_playing(), "the motor did not take the record back");
+}
+
+/// A hand that keeps saying it is there holds the record still — and still means silence.
+#[test]
+fn a_held_record_that_keeps_speaking_stays_still() {
+    let mut deck = code_deck(480_000);
+    deck.seek(200_000);
+    start(&mut deck);
+    deck.grab(true);
+
+    let mut out = vec![0.0f32; 256 * 2];
+    let mut moved = 0i64;
+    let before = deck.position() as i64;
+    // One second of holding still, with the shell's heartbeat every hundred milliseconds.
+    for block in 0..188 {
+        if block % 19 == 0 {
+            deck.set_hand_rate(0.0);
+        }
+        deck.render(&mut out);
+        assert!(
+            out.iter().all(|sample| *sample == 0.0),
+            "a record that is held still made a sound at block {block}"
+        );
+    }
+    moved += deck.position() as i64 - before;
+    assert!(
+        deck.hand_engaged(),
+        "the heartbeat did not keep the hand on the record"
+    );
+    assert_eq!(moved, 0, "a record held still moved {moved} frames");
+}
