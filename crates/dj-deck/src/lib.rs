@@ -79,6 +79,10 @@ const MAX_TEMPO_BLOCK_FRAMES: usize = 8192;
 /// fixed size: a block at this rate asks for four times its own length of material, no more.
 pub const MAX_HAND_RATE: f64 = 4.0;
 
+/// How long the needle's click lasts when the DJ asks for it: short enough to read as a tick, long enough
+/// not to be a single-sample step.
+pub const REVERSAL_CLICK_SECONDS: f64 = 0.002;
+
 /// How long the record takes to change hands: the hand's own reading fades out while the stretcher's
 /// fades in.
 ///
@@ -453,6 +457,14 @@ pub struct Deck {
     /// Deck frames rendered since the hand last said anything. A hand that has said nothing for
     /// [`HAND_SILENCE_SECONDS`] is not on the record any more.
     hand_silence_frames: u64,
+    /// The needle's click at every change of direction, if the DJ asked for it: off by default, because a
+    /// clean instrument is the better default and the click is a taste (owner's decision, 2026-11-16).
+    reversal_click: bool,
+    /// Frames of click left, and the noise generator's state.
+    click_left: usize,
+    click_noise: u32,
+    /// The direction the hand was moving in the last block that spoke: a change is what makes the click.
+    last_hand_sign: f64,
     /// Whether the listener was hearing the stretcher when the hand took the record: that is the path
     /// the record goes back to on release, and the one whose phase has to be hidden.
     hand_keylocked: bool,
@@ -566,6 +578,10 @@ impl Deck {
             hand_engaged: false,
             hand_resume: false,
             hand_keylocked: false,
+            reversal_click: false,
+            click_left: 0,
+            click_noise: 0x2545_f491,
+            last_hand_sign: 0.0,
             hand_silence_frames: 0,
             // Emptiness is the ordinary state: the window is made when a hand first takes the record, so a
             // deck that is only ever played through pays nothing for a scratch it never does.
@@ -799,6 +815,19 @@ impl Deck {
             self.playing = true;
             self.start_release_fade();
         }
+    }
+
+    /// The needle's click at every change of direction under the hand.
+    ///
+    /// Off by default: a clean instrument is the better default, and the tick is a taste — a DJ who wants the
+    /// record to sound like a record turns it on (owner's decision, 2026-11-16).
+    pub fn set_reversal_click(&mut self, on: bool) {
+        self.reversal_click = on;
+    }
+
+    /// Whether the needle clicks when the hand turns the record round.
+    pub fn reversal_click(&self) -> bool {
+        self.reversal_click
     }
 
     /// The rate this deck renders at: output frames per second, the unit a hand's speed is measured
@@ -1912,6 +1941,13 @@ impl Deck {
             return;
         }
 
+        // A change of direction is where the needle would tick: the option is off unless the DJ asked.
+        let sign = if step > 0.0 { 1.0 } else { -1.0 };
+        if self.reversal_click && self.last_hand_sign != 0.0 && sign != self.last_hand_sign {
+            self.click_left = (REVERSAL_CLICK_SECONDS * f64::from(self.output_rate)) as usize;
+        }
+        self.last_hand_sign = sign;
+
         let (taps, history) = self.resampler.interpolation().geometry();
         // Room for the kernel on both sides of the material the block asks for: the window is a view of
         // the record, and the interpolation reads past both ends of what it plays.
@@ -1931,6 +1967,29 @@ impl Deck {
         }
         self.wrap_hand_position();
         self.position = self.hand_pos.max(0.0).round() as u64;
+        self.add_reversal_click(out);
+    }
+
+    /// The tick itself: two milliseconds of decaying noise, added over the material the hand just played.
+    fn add_reversal_click(&mut self, out: &mut [f32]) {
+        if self.click_left == 0 {
+            return;
+        }
+        let frames = (out.len() / 2).min(self.click_left);
+        for index in 0..frames {
+            // A linear congruential step: deterministic, so a witness can say what the click is.
+            self.click_noise = self
+                .click_noise
+                .wrapping_mul(1_664_525)
+                .wrapping_add(1_013_904_223);
+            let noise = f64::from(self.click_noise >> 16) as f32 / 32_768.0 - 1.0;
+            // It fades over its two milliseconds, so it reads as a tick rather than a burst.
+            let taper = 1.0 - index as f32 / frames.max(1) as f32;
+            let tick = noise * taper * 0.25;
+            out[index * 2] += tick;
+            out[index * 2 + 1] += tick;
+        }
+        self.click_left -= frames;
     }
 
     /// A hand inside a loop cannot be outside it: the position is taken back into the loop the way the motor

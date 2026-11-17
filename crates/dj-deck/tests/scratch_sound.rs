@@ -204,3 +204,47 @@ fn key_lock_does_not_slow_the_hand() {
         "a hand at half speed moved {ratio:.3} of what it asked for at 1,1 with key lock on"
     );
 }
+
+/// The needle's click at a reversal is an option, and it is off unless the DJ asks for it.
+///
+/// A DJ who wants the record to sound like a record turns it on; everyone else keeps the clean instrument.
+/// The witness drives the same gesture twice and only the option differs, so the difference it measures is
+/// the option's and nothing else.
+#[test]
+fn the_reversal_click_is_an_option_and_it_is_off_by_default() {
+    let speed = 1.05;
+    let bar = hand_step(speed);
+
+    let gesture = |click: bool| {
+        let mut deck = deck();
+        deck.seek(48_000);
+        deck.set_reversal_click(click);
+        deck.play();
+        deck.grab(true);
+        deck.set_hand_rate(speed);
+        let mut out = vec![0.0f32; 256 * 2];
+        deck.render(&mut out);
+        let mut heard = Vec::new();
+        for _ in 0..2 {
+            deck.render(&mut out);
+            heard.extend(out.iter().step_by(2).copied());
+        }
+        deck.set_hand_rate(-speed);
+        for _ in 0..3 {
+            deck.render(&mut out);
+            heard.extend(out.iter().step_by(2).copied());
+        }
+        largest_step(&heard)
+    };
+
+    let clean = gesture(false);
+    let clicked = gesture(true);
+    assert!(
+        clean <= bar * 2.5,
+        "with the option off the reversal stepped by {clean:.4} against {bar:.4} for a steady hand"
+    );
+    assert!(
+        clicked > clean * 2.0,
+        "with the option on the reversal stepped by {clicked:.4}, no more than the clean {clean:.4}: no click"
+    );
+}
