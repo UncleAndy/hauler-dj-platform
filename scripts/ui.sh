@@ -80,6 +80,12 @@ case "${1:-}" in
     # show — a deck that exists but is hidden would answer to the same name as the one on the screen.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --layout duo \
         --layout-file "${TMPDIR:-/tmp}/dj-layout-duo.json" --layout-check
+    # The column of decks with the mixer at an edge, in four and in two: the decks stand one under
+    # another, the wave keeps its floor, and at a smaller window the rows fold before the wave does.
+    for stack_layout in stack-left stack-right stack-duo-left stack-duo-right; do
+      QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --layout "$stack_layout" \
+          --layout-file "${TMPDIR:-/tmp}/dj-layout-$stack_layout.json" --layout-check
+    done
     # Every layout keeps its own numbers, and a file written before the arrangements existed still
     # opens: a DJ who set his browser to 31 % must not find 28.5 % after an update.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --layout-numbers-check \

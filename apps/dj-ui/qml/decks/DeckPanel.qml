@@ -31,6 +31,10 @@ Pane {
 
     required property string deckId
     required property string deckLabel
+    // A deck with less room than its rows need folds the rows a hand can live without — the grid editor
+    // and the loop strip — and never the wave. The floor is measured, not guessed: header, transport and
+    // margins cost 76 px, and the wave needs 40 px of its own (`--layout-check`, 2026-11-19).
+    readonly property bool compact: height < 120
     // The deck the browser will load into; the panel shows it instead of leaving the user to guess.
     property bool targeted: false
     signal chosen()
@@ -1144,7 +1148,7 @@ Pane {
             objectName: "loopsize_" + panel.deckId
             Layout.fillWidth: true
             // Folded there is no row at all; a track without a grid has no sizes to offer either.
-            visible: panel.gridReady && panel.stripOpen
+            visible: panel.gridReady && panel.stripOpen && !panel.compact
             spacing: 3
             Label {
                 objectName: "stripLabel_" + panel.deckId
@@ -1236,7 +1240,7 @@ Pane {
             // and taking them away leaves nothing to measure with; the tools that only read a grid are
             // greyed instead (DJP-MEDIA-006). Under the lock the row is gone entirely — there is nothing
             // to edit, and thirteen dead buttons cost the wave a row (owner's decision, 14.11).
-            visible: panel.track !== null && !panel.analysisLock
+            visible: panel.track !== null && !panel.analysisLock && !panel.compact
             Item { Layout.fillWidth: true }
             // The tools of the grid, centred on the deck: the row is a full-width one, and a block of
             // buttons pushed to the left edge leaves the middle of the panel empty (owner's decision).

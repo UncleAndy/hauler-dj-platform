@@ -40,6 +40,17 @@ Item {
         if (name === "duo") {
             return { left: ["A"], right: ["B"] };
         }
+        if (name === "stack" || name === "stack-duo") {
+            // One column of decks with the mixer at an edge: the empty column is not drawn at all, so
+            // the mixer stands where it was asked to stand.
+            const decks = name === "stack" ? ["A", "B", "C", "D"] : ["A", "B"];
+            return LayoutState.mixerEdge === "right" ? { left: decks, right: [] }
+                                                     : { left: [], right: decks };
+        }
+        if (name === "studio") {
+            return LayoutState.mixerEdge === "right" ? { left: ["A"], right: [] }
+                                                     : { left: [], right: ["A"] };
+        }
         return { left: [], right: [] };
     }
 

@@ -2298,6 +2298,64 @@ int runLayoutCheck(QQmlApplicationEngine& engine, LayoutSettings& layout, UiSett
             return 1;
         }
     }
+    // A column of decks: same left edge, same width, each one below the previous. That is what "deck
+    // under deck" means, and it is what Stack and Stack Duo promise.
+    if (arrangement == QStringLiteral("stack") || arrangement == QStringLiteral("stack-duo")) {
+        QRectF previous;
+        for (const QString& deckId : onScreen) {
+            auto* deck = findItem(content, QStringLiteral("deckPanel_") + deckId);
+            const QRectF rect = deck->mapRectToScene(QRectF(0, 0, deck->width(), deck->height()));
+            if (!previous.isNull()) {
+                if (std::abs(rect.left() - previous.left()) > 2.0
+                    || std::abs(rect.width() - previous.width()) > 2.0) {
+                    std::fprintf(stderr,
+                                 "dj-ui: deck %s stands at %.0f..%.0f, the one above at %.0f..%.0f\n",
+                                 qPrintable(deckId), rect.left(), rect.right(), previous.left(),
+                                 previous.right());
+                    return 1;
+                }
+                if (rect.top() <= previous.top()) {
+                    std::fprintf(stderr, "dj-ui: deck %s is not under the deck above it (%.0f vs %.0f)\n",
+                                 qPrintable(deckId), rect.top(), previous.top());
+                    return 1;
+                }
+            }
+            previous = rect;
+            auto* wave = findItem(content, QStringLiteral("deckDetail_") + deckId);
+            if (wave == nullptr || wave->height() < 40.0) {
+                std::fprintf(stderr, "dj-ui: deck %s has a wave of %.0f px, under its floor\n",
+                             qPrintable(deckId), wave == nullptr ? 0.0 : wave->height());
+                return 1;
+            }
+        }
+        std::fprintf(stdout, "dj-ui: %s stands in one column of %d decks, each wave at least 40 px\n",
+                     qPrintable(layout.preset()), static_cast<int>(onScreen.size()));
+        // The fold is the promise for a smaller window: shrink it and the rows a hand can live without
+        // must go before the wave does.
+        window->resize(1500, 700);
+        QElapsedTimer shrinking;
+        shrinking.start();
+        while (shrinking.elapsed() < 600) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QThread::msleep(10);
+        }
+        for (const QString& deckId : onScreen) {
+            auto* wave = findItem(content, QStringLiteral("deckDetail_") + deckId);
+            auto* gridRow = findItem(content, QStringLiteral("gridedit_") + deckId);
+            if (wave == nullptr || wave->height() < 39.0) {
+                std::fprintf(stderr,
+                             "dj-ui: at 1500x700 deck %s leaves the wave %.0f px, under its floor\n",
+                             qPrintable(deckId), wave == nullptr ? 0.0 : wave->height());
+                return 1;
+            }
+            if (gridRow != nullptr && gridRow->isVisible()) {
+                std::fprintf(stderr, "dj-ui: at 1500x700 deck %s keeps a row it cannot afford\n",
+                             qPrintable(deckId));
+                return 1;
+            }
+        }
+        std::fprintf(stdout, "dj-ui: at 1500x700 every deck folded its rows and kept its wave\n");
+    }
     std::fprintf(stdout, "dj-ui: the layout in force is %s (%s, mixer %s): decks %s\n",
                  qPrintable(layout.preset()), qPrintable(arrangement), qPrintable(edge),
                  qPrintable(onScreen.join(QStringLiteral(", "))));

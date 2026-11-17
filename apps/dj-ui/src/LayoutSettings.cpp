@@ -72,7 +72,9 @@ LayoutSettings::Numbers LayoutSettings::defaultsFor(const QString &arrangement)
     } else if (arrangement == QStringLiteral("stack")) {
         numbers.deckRows = 2;
         numbers.browserPercent = 24.0;
-        numbers.mixerPercent = 13.0;
+        // The mixer has to hold four law buttons of a readable width: at 13 % the row came out 116 px
+        // and the narrowest button 26 px, under the 28 px the check calls a button (Э3, 2026-11-19).
+        numbers.mixerPercent = 15.0;
     } else if (arrangement == QStringLiteral("stack-duo")) {
         numbers.deckRows = 1;
         numbers.browserPercent = 28.0;
