@@ -2348,6 +2348,27 @@ int runSelectionCheck(QQmlApplicationEngine& engine, FileBrowser& browser, Bridg
     }
     std::fprintf(stdout, "dj-ui: shift-home and shift-end take the list from the anchor to its end\n");
 
+    // Without Shift the same two keys jump the cursor and leave the selection as it was, the way an arrow
+    // does: the DJ keeps what he picked while he looks at the other end of the list.
+    press(Qt::Key_End, Qt::NoModifier);
+    if (cursorRow() != static_cast<int>(rows().size()) - 1) {
+        std::fprintf(stderr, "dj-ui: home/end: the cursor stands on row %d, not the last one\n",
+                     cursorRow());
+        return 1;
+    }
+    if (!expectRun(0, afterPage, QStringLiteral("end, selection untouched"))) {
+        return 1;
+    }
+    press(Qt::Key_Home, Qt::NoModifier);
+    if (cursorRow() != 0) {
+        std::fprintf(stderr, "dj-ui: home/end: home left the cursor on row %d\n", cursorRow());
+        return 1;
+    }
+    if (!expectRun(0, afterPage, QStringLiteral("home, selection untouched"))) {
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: home and end jump the cursor to the ends and leave the run alone\n");
+
     // The playlist is the same list with another set of rows: one run and one page are enough to know
     // the keys follow the list the DJ is looking at, not the collection specifically.
     panel->setProperty("selection", QStringList{});

@@ -2217,15 +2217,15 @@ Pane {
                         event.accepted = true;
                         return;
                     }
-                    // Shift+Home and Shift+End: the whole list from where the run started. Letting the
-                    // selection fall back to a single row when the anchor is the cursor itself.
-                    if (!control && shift && event.key === Qt.Key_Home) {
-                        browser.moveCursorRow(0, true);
+                    // Home and End are the same jump with and without Shift: the cursor goes to the first
+                    // (last) row, and with Shift the run goes with it from the anchor.
+                    if (!control && event.key === Qt.Key_Home) {
+                        browser.moveCursorRow(0, shift);
                         event.accepted = true;
                         return;
                     }
-                    if (!control && shift && event.key === Qt.Key_End) {
-                        browser.moveCursorRow(browser.showingRows.length - 1, true);
+                    if (!control && event.key === Qt.Key_End) {
+                        browser.moveCursorRow(browser.showingRows.length - 1, shift);
                         event.accepted = true;
                         return;
                     }
