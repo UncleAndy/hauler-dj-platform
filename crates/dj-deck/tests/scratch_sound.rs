@@ -169,3 +169,38 @@ fn the_hand_arrives_and_leaves_without_a_click() {
         "the hand made a jump of {step:.4} arriving or leaving, while a hand going forward makes {bar:.4}"
     );
 }
+
+/// Key lock answers the tempo; it does not fight the hand.
+///
+/// The audible half of a scratch is the glissando — the pitch follows the speed of the hand — and a
+/// stretcher left in the path would flatten it back. The witness reads the rate the head is taken at rather
+/// than the pitch of the output: a phase vocoder's artifacts defeat both zero crossings and autocorrelation
+/// on a short window (a 220 Hz tone measured 4312 Hz and then 2000 Hz), while the rate is the thing that
+/// decides the pitch in the first place.
+#[test]
+fn key_lock_does_not_slow_the_hand() {
+    let mut deck = deck();
+    deck.seek(48_000);
+    deck.set_keylock(true);
+    deck.set_tempo(1.1);
+    deck.play();
+    let mut out = vec![0.0f32; 256 * 2];
+    // Into the stretcher: the motor path is the one that would answer a hand with a correction.
+    for _ in 0..6 {
+        deck.render(&mut out);
+    }
+    deck.grab(true);
+    deck.set_hand_rate(0.5);
+    let mut moved = 0i64;
+    for _ in 0..4 {
+        let before = deck.position() as i64;
+        deck.render(&mut out);
+        moved += deck.position() as i64 - before;
+    }
+    let expected = 0.5 * 4.0 * 256.0;
+    let ratio = moved as f64 / expected;
+    assert!(
+        (ratio - 1.0).abs() < 0.05,
+        "a hand at half speed moved {ratio:.3} of what it asked for at 1,1 with key lock on"
+    );
+}
