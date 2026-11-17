@@ -54,6 +54,7 @@ Pane {
         // The layout lives here, where the old build only printed its name. One button, one list: the
         // arrangements are not a mode the DJ has to remember a flag for.
         Button {
+            id: layoutButton
             objectName: "layoutButton"
             Layout.preferredWidth: 176
             text: qsTr("Layout: %1").arg(bar.labelFor(LayoutState.preset))
@@ -61,7 +62,16 @@ Pane {
             padding: 4
             ToolTip.text: qsTr("Arrange the shell")
             ToolTip.visible: hovered
-            onClicked: layoutMenu.open()
+            // The list opens under the button, not at a fixed corner: a menu that appears far from the
+            // hand that asked for it reads as a menu from another window (owner's report, 2026-11-19).
+            onClicked: {
+                // In the popup's own parent (the overlay), not in the strip: a popup is placed in the
+                // window's coordinates, and a corner taken from the strip lands a few pixels off.
+                const at = layoutButton.mapToItem(layoutMenu.parent, 0, 0);
+                layoutMenu.x = at.x;
+                layoutMenu.y = at.y + layoutButton.height;
+                layoutMenu.open();
+            }
         }
         Item { Layout.fillWidth: true }
         Label {
@@ -93,10 +103,11 @@ Pane {
     Menu {
         id: layoutMenu
         objectName: "layoutMenu"
-        // Under the button, not at the pointer: a list that opens where the mouse happened to be is a
-        // list the DJ has to look for.
-        x: bar.width - width - 8
-        y: bar.height
+        // The place is set when the list is asked for: under the button that asked. These are only the
+        // numbers before the first open. No style margins: the frame sits exactly where it was put.
+        x: 0
+        y: 0
+        margins: 0
 
         MenuItem {
             objectName: "layoutChoice_classic"

@@ -2065,8 +2065,31 @@ int runLayoutMenuCheck(QQmlApplicationEngine& engine, FileBrowser& browser, Layo
     };
 
     for (const QString& name : names) {
-        QMetaObject::invokeMethod(menu, "open");
+        // The same call the button makes: the list is placed under it before it opens.
+        QMetaObject::invokeMethod(button, "clicked");
         QCoreApplication::processEvents();
+        if (!menu->property("visible").toBool()) {
+            std::fprintf(stderr, "dj-ui: the layout list did not open\n");
+            return 1;
+        }
+        // Under the button: same left edge, its top at the button's bottom. The menu's parent is the
+        // strip, so the wanted place is the button's corner in the strip's coordinates.
+        QQuickItem* strip = menu->property("parentItem").value<QQuickItem*>();
+        if (strip == nullptr) {
+            strip = button->parentItem();
+        }
+        const QPointF corner = strip != nullptr ? button->mapToItem(strip, QPointF(0, button->height()))
+                                                : QPointF(0, 0);
+        const double menuLeft = menu->property("x").toDouble();
+        const double menuTop = menu->property("y").toDouble();
+        // Qt insets a Menu's content by its own padding (8 px here), so the left edge is compared with a
+        // finger's width and the top exactly: the list has to hang under the button, not line up with a
+        // pixel that the style owns.
+        if (std::abs(menuLeft - corner.x()) > 12.0 || std::abs(menuTop - corner.y()) > 2.0) {
+            std::fprintf(stderr, "dj-ui: the list opens at %.0f,%.0f, the button ends at %.0f,%.0f\n",
+                         menuLeft, menuTop, corner.x(), corner.y());
+            return 1;
+        }
         auto* item = menu->findChild<QObject*>(QStringLiteral("layoutChoice_") + name);
         if (item == nullptr) {
             std::fprintf(stderr, "dj-ui: the list has no entry for %s\n", qPrintable(name));
