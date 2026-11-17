@@ -609,6 +609,7 @@ void FileBrowser::takePage()
         m_genreFallback = censusFromRows();
     }
     applyFilter();
+    refreshLocked();
     if (!at.isEmpty() && rowOf(at) >= 0) {
         setCursor(at);
     }
@@ -786,6 +787,7 @@ void FileBrowser::takePlaylists()
     if (tracks != m_playlistRows || total != m_playlistTotal) {
         m_playlistRows = tracks;
         m_playlistTotal = total;
+        refreshLocked();
         emit playlistPageChanged();
         // A playlist page is always the one already open: the DJ's place in it is his.
         ++m_pageGeneration;
@@ -1337,6 +1339,98 @@ void FileBrowser::setGenreFilter(const QStringList &genres)
     if (m_paged) {
         askPage(0);
     }
+}
+
+bool FileBrowser::isLocked(const QString &path) const
+{
+    return m_lockedPaths.contains(path);
+}
+
+void FileBrowser::setLocked(const QString &path, bool on)
+{
+    if (path.isEmpty()) {
+        return;
+    }
+    // The row keeps the value too: the next page answer replaces the flags, and a press that only lives in
+    // this list would be undone by a refresh the DJ did not ask for.
+    const auto patch = [&](QVariantList &rows) {
+        for (QVariant &entry : rows) {
+            QVariantMap row = entry.toMap();
+            if (row.value(QStringLiteral("path")).toString() == path) {
+                row.insert(QStringLiteral("analysis_lock"), on);
+                entry = row;
+            }
+        }
+    };
+    const bool had = m_lockedPaths.contains(path);
+    if (on == had) {
+        return;
+    }
+    if (on) {
+        m_lockedPaths.append(path);
+        m_pressedLocked.append(path);
+    } else {
+        m_lockedPaths.removeAll(path);
+        m_pressedLocked.removeAll(path);
+    }
+    // The rows in hand too, and without `changed`: the shell draws the flag from `lockedPaths`, so the list
+    // keeps its identity and the DJ's window stays where it is. Only the page keeps the value for the next
+    // rebuild.
+    patch(m_all);
+    patch(m_entries);
+    patch(m_playlistRows);
+    emit lockChanged();
+}
+
+void FileBrowser::refreshLocked()
+{
+    QStringList found;
+    const auto collect = [&](const QVariantList &rows) {
+        for (const QVariant &entry : rows) {
+            const QVariantMap row = entry.toMap();
+            if (row.value(QStringLiteral("analysis_lock")).toBool()) {
+                const QString path = row.value(QStringLiteral("path")).toString();
+                if (!found.contains(path)) {
+                    found.append(path);
+                }
+            }
+        }
+    };
+    collect(m_all);
+    collect(m_playlistRows);
+    // The press outranks an answer that predates it: the row keeps the flag the DJ set, and the index is
+    // believed as soon as it agrees.
+    for (const QString &pressed : m_pressedLocked) {
+        bool said = false;
+        const auto force = [&](QVariantList &rows) {
+            for (QVariant &entry : rows) {
+                QVariantMap row = entry.toMap();
+                if (row.value(QStringLiteral("path")).toString() != pressed) {
+                    continue;
+                }
+                if (row.value(QStringLiteral("analysis_lock")).toBool()) {
+                    said = true;
+                } else {
+                    row.insert(QStringLiteral("analysis_lock"), true);
+                    entry = row;
+                }
+            }
+        };
+        force(m_all);
+        force(m_entries);
+        force(m_playlistRows);
+        if (said) {
+            m_pressedLocked.removeAll(pressed);
+        }
+        if (!found.contains(pressed)) {
+            found.append(pressed);
+        }
+    }
+    if (found == m_lockedPaths) {
+        return;
+    }
+    m_lockedPaths = found;
+    emit lockChanged();
 }
 
 void FileBrowser::applyFilter()

@@ -689,10 +689,10 @@ Pane {
         const landed = (panel.deck !== null && panel.deck.analysis_lock === true) === panel.lockWanted;
         if (panel.lockPending && landed) {
             panel.lockPending = false;
-            Browser.refreshCollection();
-            // The lock is a fact about the track, and the track may be on screen in a playlist: its rows
-            // are asked again as well, or the list keeps the flag the file no longer has.
-            Browser.refreshPlaylist();
+            // The confirmed press is one flag on one track, and both are known here: the list takes the flag
+            // itself instead of asking the index for a whole page. A re-asked page replaces every row, and
+            // the list jerks for a change the DJ made with his own hand.
+            Browser.setLocked(held, panel.lockWanted);
         }
         reload();
     }

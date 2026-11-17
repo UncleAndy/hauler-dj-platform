@@ -124,6 +124,20 @@ public:
     /// True when `path` is a file rather than a folder: a batch of one file needs no confirmation.
     Q_INVOKABLE bool entryIsFile(const QString &path) const;
 
+    // --- The lock as the list wears it ---
+    //
+    // A lock press is one flag on one track, and the shell knows both the track and the flag the moment the
+    // engine confirms them. Asking the whole page again for that flag replaces every row, and a view handed a
+    // new model starts at the top: the DJ sees his list jerk for a change he made himself. So the flag lives
+    // here, beside the rows, and the rows are touched only when the index itself answers.
+    Q_PROPERTY(QStringList lockedPaths READ lockedPaths NOTIFY lockChanged)
+    QStringList lockedPaths() const { return m_lockedPaths; }
+    /// Whether the list draws this track as locked. The rows carry the flag from the index; a press made in
+    /// the shell lands here until the index says the same.
+    Q_INVOKABLE bool isLocked(const QString &path) const;
+    /// Take the flag from a confirmed press: the row changes, the page does not.
+    Q_INVOKABLE void setLocked(const QString &path, bool on);
+
     // --- Playlists (DJP-MEDIA-004) ---
     //
     // The tree is a flat list of rows for the panel to draw, `All` first and a folder above what it holds:
@@ -183,6 +197,8 @@ public:
 
 signals:
     void changed();
+    /// The lock flags moved: the rows keep their identity, so only the cells that wear the flag repaint.
+    void lockChanged();
     /// The folders or the playlists moved: the panel redraws the tree.
     void playlistsChanged();
     /// The open playlist has new rows.
@@ -213,6 +229,15 @@ private:
 
     QVariantList m_playlistTree;
     QVariantList m_playlistRows;
+    /// The tracks the list draws as locked: rebuilt from the rows whenever the index answers, and patched by
+    /// a press until then.
+    QStringList m_lockedPaths;
+    /// The flags the shell set itself: a page answer that was already on its way when the DJ pressed says
+    /// nothing about that press, and must not undo it. A path leaves this list as soon as the index says
+    /// the same thing.
+    QStringList m_pressedLocked;
+    /// Keep the flags in step with the rows in hand.
+    void refreshLocked();
     int m_playlistTotal = 0;
     qint64 m_playlistId = 0;
     QString m_playlistName;

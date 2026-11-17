@@ -213,13 +213,13 @@ Pane {
     /// The chosen tracks whose grid is locked. A locked grid is the DJ's decision, so the analysis stands
     /// down for these: the collection cannot rewrite what the lock protects.
     readonly property var lockedSelection: {
+        // The flags come from their own list: a press changes a flag, not the page, so the rows keep their
+        // identity and the list does not move under the DJ.
         const locked = [];
+        const flags = Browser.lockedPaths;
         for (const path of browser.selection) {
-            for (const entry of Browser.entries) {
-                if (entry.path === path && entry.analysis_lock === true) {
-                    locked.push(path);
-                    break;
-                }
+            if (flags.indexOf(path) >= 0) {
+                locked.push(path);
             }
         }
         return locked;
@@ -2226,7 +2226,8 @@ Pane {
                             x: browser.numberWidth
                             width: browser.lockWidth
                             anchors.verticalCenter: parent.verticalCenter
-                            text: row.modelData.analysis_lock ? "\uD83D\uDD12" : ""
+                            text: Browser.lockedPaths.indexOf(row.modelData.path) >= 0
+                                  ? "\uD83D\uDD12" : ""
                             horizontalAlignment: Text.AlignHCenter
                             font: browser.listFace
                             color: browser.rowTextColour(row.chosen, row.current,

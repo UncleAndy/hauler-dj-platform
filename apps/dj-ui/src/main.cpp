@@ -8249,6 +8249,28 @@ static int runLockCheck(QQmlApplicationEngine &engine, FileBrowser &browser, Bri
     QKeyEvent leave(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
     QCoreApplication::sendEvent(window, &leave);
     QCoreApplication::processEvents();
+    // A press is one flag on one track, and the list must take it without asking the index for the page
+    // again: a replaced page means a view handed a new model, and a list that jerks under the hand that
+    // pressed the lock. The page number is the evidence — it grows only when rows are replaced.
+    const int generationBefore = browser.property("pageGeneration").toInt();
+    QMetaObject::invokeMethod(lock, "clicked");
+    QCoreApplication::processEvents();
+    if (!waitFor([&]() { return browser.isLocked(listed); }, 10000)) {
+        std::fprintf(stderr, "dj-ui: the third press did not light the row\n");
+        return 1;
+    }
+    // A beat for anything the shell might still be doing, so a late replacement is caught too.
+    (void)waitFor([&]() { return false; }, 400);
+    const int generationAfter = browser.property("pageGeneration").toInt();
+    if (generationAfter != generationBefore) {
+        std::fprintf(stderr,
+                     "dj-ui: the lock replaced the page (generation %d -> %d): the list moves under the "
+                     "press\n",
+                     generationBefore, generationAfter);
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: the lock lit the row without asking the page again (generation %d)\n",
+                 generationAfter);
     // The deck is left standing, as every check leaves it.
     bridge.play(QStringLiteral("A"), false);
     std::fprintf(stdout, "dj-ui: lock check done\n");
