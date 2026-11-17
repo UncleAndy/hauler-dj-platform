@@ -155,6 +155,7 @@ int runScrollCheck(QQmlApplicationEngine& engine, FileBrowser& browser, BridgeCl
 }
 
 int runLockCheck(QQmlApplicationEngine& engine, FileBrowser& browser, BridgeClient& bridge,
+                 const QString& socketPath,
                  const QString& fixture, const QString& collectionRoot) {
     if (fixture.isEmpty() || collectionRoot.isEmpty()) {
         std::fprintf(stderr, "dj-ui: --lock-check needs --import-fixture and --collection-root\n");
@@ -743,6 +744,44 @@ int runLockCheck(QQmlApplicationEngine& engine, FileBrowser& browser, BridgeClie
     // page again: a replaced page means a view handed a new model, and a list that jerks under the
     // hand that pressed the lock. The page number is the evidence — it grows only when rows are
     // replaced.
+    // A client that never loaded anything: the engine still holds its tracks, and a UI restarted
+    // against it has no path of its own. Without one the lock went out with an empty path and the
+    // engine refused it ("No such file or directory") — the button looked dead (owner's report,
+    // 2026-11-19). Here a second client connects, learns the deck's file from a snapshot, and locks
+    // the grid for real.
+    {
+        BridgeClient late;
+        late.connectToEngine(socketPath);
+        if (!waitFor([&]() { return !late.deckFile(QStringLiteral("A")).isEmpty(); }, 15000)) {
+            std::fprintf(stderr, "dj-ui: a reconnected client does not learn the deck's file\n");
+            return 1;
+        }
+        if (late.deckFile(QStringLiteral("A")) != listed) {
+            std::fprintf(stderr, "dj-ui: the reconnected client names %s, the deck holds %s\n",
+                         qPrintable(late.deckFile(QStringLiteral("A"))), qPrintable(listed));
+            return 1;
+        }
+        if (deckLock().toBool()) {
+            std::fprintf(stderr, "dj-ui: the deck is locked before the late client pressed\n");
+            return 1;
+        }
+        late.setAnalysisLock(QStringLiteral("A"), true);
+        if (!waitFor([&]() { return deckLock().toBool(); }, 15000)) {
+            std::fprintf(stderr,
+                         "dj-ui: a reconnected client cannot lock the grid (the engine refused the "
+                         "path)\n");
+            return 1;
+        }
+        std::fprintf(stdout, "dj-ui: a client that loaded nothing locks the deck it found (%s)\n",
+                     qPrintable(late.deckFile(QStringLiteral("A"))));
+        // Left as it was found: the steps below press the lock themselves.
+        late.setAnalysisLock(QStringLiteral("A"), false);
+        if (!waitFor([&]() { return !deckLock().toBool(); }, 15000)) {
+            std::fprintf(stderr, "dj-ui: the late client could not unlock the deck again\n");
+            return 1;
+        }
+    }
+
     const int generationBefore = browser.property("pageGeneration").toInt();
     QMetaObject::invokeMethod(lock, "clicked");
     QCoreApplication::processEvents();

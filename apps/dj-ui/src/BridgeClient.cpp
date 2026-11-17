@@ -1784,6 +1784,19 @@ void BridgeClient::handleMessage(const QJsonObject &message)
 
     if (message.contains(QStringLiteral("Snapshot"))) {
         m_snapshot = message.value(QStringLiteral("Snapshot")).toObject().toVariantMap();
+        // The snapshot says which file each deck holds, and the engine is the one that knows. A client
+        // that was started against a running engine (or restarted while the decks keep their tracks)
+        // has no path of its own; without this the lock and the grid edits went out with an empty path
+        // and the engine refused them with "No such file or directory" (owner's report, 2026-11-19).
+        const QVariantList decks = m_snapshot.value(QStringLiteral("decks")).toList();
+        for (const QVariant &entry : decks) {
+            const QVariantMap deck = entry.toMap();
+            const QString id = deck.value(QStringLiteral("deck")).toString();
+            const QString path = deck.value(QStringLiteral("path")).toString();
+            if (!id.isEmpty() && !path.isEmpty()) {
+                m_deckPaths.insert(id, path);
+            }
+        }
         emit snapshotChanged();
         return;
     }

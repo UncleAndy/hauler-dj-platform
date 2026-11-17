@@ -110,6 +110,7 @@ bool writeShortWav(const QString& path, double seconds);
 int runScrollCheck(QQmlApplicationEngine& engine, FileBrowser& browser, BridgeClient& bridge,
                    const QString& collectionRoot);
 int runLockCheck(QQmlApplicationEngine& engine, FileBrowser& browser, BridgeClient& bridge,
+                 const QString& socketPath,
                  const QString& fixture, const QString& collectionRoot);
 int runEndCheck(QQmlApplicationEngine& engine, BridgeClient& bridge, const QString& fixture);
 int runGenreCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutSettings& layout,

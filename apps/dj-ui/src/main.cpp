@@ -2177,7 +2177,8 @@ int main(int argc, char *argv[])
 
     if (parser.isSet(lockCheckOption)) {
         bridge->connectToEngine(parser.value(connectOption));
-        return runLockCheck(engine, browser, *bridge, parser.value(importFixtureOption),
+        return runLockCheck(engine, browser, *bridge, parser.value(connectOption),
+                            parser.value(importFixtureOption),
                             parser.values(collectionRootOption).value(0));
     }
 

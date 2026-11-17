@@ -457,6 +457,10 @@ public:
     Q_INVOKABLE int halveGrid(const QString &deck);
     /// Lock or unlock the grid of the track this deck holds: a decision written into the file.
     Q_INVOKABLE int setAnalysisLock(const QString &deck, bool enabled);
+    /// The file this client believes the deck holds. It is filled from the snapshots as well as from a
+    /// load, because the engine is the one that knows: a client that reconnected to a running engine
+    /// never loaded anything, and a command carrying an empty path is a command the engine must refuse.
+    Q_INVOKABLE QString deckFile(const QString &deck) const { return m_deckPaths.value(deck); }
     Q_INVOKABLE int seek(const QString &deck, qulonglong frame);
     Q_INVOKABLE int setLoop(const QString &deck, bool enabled, qulonglong start, qulonglong end);
     /// A loop of `beats` beats on the deck's grid (DJP-DECK-005).
