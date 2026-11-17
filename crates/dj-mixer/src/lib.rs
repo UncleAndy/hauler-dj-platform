@@ -106,6 +106,8 @@ pub struct Mixer {
     cue: Vec<f32>,
     reference: Vec<f32>,
     crossfader: f32,
+    /// Whether the crossfader is reversed (hamster switch).
+    hamster: bool,
     curve: CrossfaderCurve,
     master_gain: f32,
     cue_gain: f32,
@@ -146,6 +148,7 @@ impl Mixer {
             reference: Vec::new(),
             crossfader: 0.5,
             curve: CrossfaderCurve::ConstantPower,
+            hamster: false,
             master_gain: 1.0,
             cue_gain: 1.0,
             limiter: LookaheadLimiter::new(2, 256, 48_000, LIMITER_THRESHOLD),
@@ -429,11 +432,28 @@ impl Mixer {
 
     /// Crossfader gain for one side, following the configured law.
     pub fn crossfader_gain(&self, assign: CrossAssign) -> f32 {
+        // Hamster turns the fader round: the handle on the left opens the other side. A scratch DJ
+        // holds the crossfader in whichever hand the routine needs, and the fader must not care.
+        let position = if self.hamster {
+            1.0 - self.crossfader
+        } else {
+            self.crossfader
+        };
         match assign {
             CrossAssign::Thru => 1.0,
-            CrossAssign::A => self.side_gain(1.0 - self.crossfader),
-            CrossAssign::B => self.side_gain(self.crossfader),
+            CrossAssign::A => self.side_gain(1.0 - position),
+            CrossAssign::B => self.side_gain(position),
         }
+    }
+
+    /// Whether the crossfader is reversed (hamster switch).
+    pub fn hamster(&self) -> bool {
+        self.hamster
+    }
+
+    /// Turn the crossfader round, or back.
+    pub fn set_hamster(&mut self, on: bool) {
+        self.hamster = on;
     }
 
     fn side_gain(&self, position: f32) -> f32 {
@@ -450,6 +470,16 @@ impl Mixer {
             // Cut: full until a quarter from the edge, then a hard cut. Both channels stay open
             // across the middle, which is what scratching wants.
             CrossfaderCurve::Sharp => (p / 0.25).clamp(0.0, 1.0),
+            // Cut-in: nothing until the fader reaches the cut, then a ramp in decibels from -60 to 0
+            // over two percent of the travel. In decibels rather than in amplitude, because that is
+            // what the ear hears as a fader opening: an amplitude ramp spends most of its travel
+            // almost silent and then arrives all at once.
+            CrossfaderCurve::Cut { cut_in } => {
+                let cut = f32::from(cut_in.min(100)) / 100.0;
+                let half = 0.01;
+                let t = ((p - (cut - half)) / (2.0 * half)).clamp(0.0, 1.0);
+                db_to_gain(-60.0 + 60.0 * t)
+            }
         }
     }
 

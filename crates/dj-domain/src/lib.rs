@@ -229,11 +229,32 @@ pub enum CrossfaderCurve {
     /// Cut: full until a quarter from the edge, then a hard cut, so both channels stay open across
     /// the middle. The scratch setting.
     Sharp,
+    /// Cut-in: closed until `cut_in` percent of the travel, then open over a two-percent ramp in
+    /// decibels. A scratch mixer's fader, where the open channel is a decision made at one end of the
+    /// travel rather than a balance across it (DJP-MIX-004).
+    Cut {
+        /// Where the fader opens, in percent of the whole travel.
+        cut_in: u8,
+    },
 }
+
+/// Where a cut-in fader opens by default: five percent of the travel.
+///
+/// Hansen measures the cut-in of a scratch mixer's fader at 2–3 mm of 45 mm, which is 4,4–6,7 %; five
+/// sits in the middle of what he measured.
+pub const DEFAULT_CUT_IN_PERCENT: u8 = 5;
 
 impl CrossfaderCurve {
     /// Every law, in the order a selector shows them.
-    pub const ALL: [Self; 4] = [Self::ConstantPower, Self::Linear, Self::Smooth, Self::Sharp];
+    pub const ALL: [Self; 5] = [
+        Self::ConstantPower,
+        Self::Linear,
+        Self::Smooth,
+        Self::Sharp,
+        Self::Cut {
+            cut_in: DEFAULT_CUT_IN_PERCENT,
+        },
+    ];
 
     /// Name used on the wire and on the command line.
     pub fn as_str(self) -> &'static str {
@@ -242,14 +263,22 @@ impl CrossfaderCurve {
             Self::ConstantPower => "constant_power",
             Self::Smooth => "smooth",
             Self::Sharp => "sharp",
+            Self::Cut { .. } => "cut",
         }
     }
 
     /// Parse a name; `None` for anything unknown, so a typo cannot silently mean the default.
     pub fn parse(name: &str) -> Option<Self> {
+        let wanted = name.trim().to_ascii_lowercase();
         Self::ALL
             .into_iter()
-            .find(|law| law.as_str() == name.trim().to_ascii_lowercase())
+            .find(|law| law.as_str() == wanted)
+            // `cut:7` is the same law with the fader opening at seven percent: the value travels with the
+            // name, so a client can ask for a sharp fader without a second command.
+            .or_else(|| {
+                let percent = wanted.strip_prefix("cut:")?.parse::<u8>().ok()?;
+                Some(Self::Cut { cut_in: percent })
+            })
     }
 }
 

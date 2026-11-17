@@ -924,12 +924,17 @@ pub fn sync_step(decks: &mut [Deck], memory: &mut SyncMemory, seconds: f64) {
 }
 
 /// The law as one byte, so the render thread can publish it without allocating.
+///
+/// A cut-in law carries its own number, so the byte carries it too: four plus the percent. The client has to
+/// know where the fader opens, and a law that publishes without its value would show a fader that opens
+/// somewhere other than where it does.
 fn curve_index(curve: CrossfaderCurve) -> u8 {
     match curve {
         CrossfaderCurve::Linear => 0,
         CrossfaderCurve::ConstantPower => 1,
         CrossfaderCurve::Smooth => 2,
         CrossfaderCurve::Sharp => 3,
+        CrossfaderCurve::Cut { cut_in } => 4u8.saturating_add(cut_in.min(100)),
     }
 }
 
@@ -939,7 +944,10 @@ fn curve_at(index: u8) -> CrossfaderCurve {
         0 => CrossfaderCurve::Linear,
         2 => CrossfaderCurve::Smooth,
         3 => CrossfaderCurve::Sharp,
-        _ => CrossfaderCurve::ConstantPower,
+        1 => CrossfaderCurve::ConstantPower,
+        other => CrossfaderCurve::Cut {
+            cut_in: other.saturating_sub(4).min(100),
+        },
     }
 }
 
