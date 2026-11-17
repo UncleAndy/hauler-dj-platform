@@ -380,6 +380,61 @@ Pane {
         list.positionViewAtIndex(next, ListView.Center);
     }
 
+    /// The row the cursor stands on, or -1 when the list has no cursor yet.
+    function cursorRow() {
+        const row = Browser.rowOf(Browser.cursor);
+        return row < 0 ? -1 : row;
+    }
+
+    /// How many rows a page holds: the window's height in rows, less one so the row that was at the
+    /// bottom is still visible after the jump (a page move that lands two rows past the edge leaves the
+    /// DJ guessing where he came from).
+    function pageRows() {
+        const height = list.height;
+        const step = Math.floor(height / Math.max(1, browser.rowHeight));
+        return Math.max(1, step - 1);
+    }
+
+    /// The run from the anchor to `index`, inclusive: what Shift+arrow means in every file list.
+    ///
+    /// The anchor is where the run started — the cursor the first Shift press found, or the row the DJ
+    /// last clicked. Growing and shrinking both come from it, which is why the anchor is remembered and
+    /// not the previous selection.
+    function extendSelectionTo(index) {
+        const count = browser.showingRows.length;
+        if (count === 0) {
+            return;
+        }
+        const to = Math.max(0, Math.min(count - 1, index));
+        if (browser.anchorIndex < 0) {
+            browser.anchorIndex = Math.max(0, browser.cursorRow());
+        }
+        const from = Math.min(browser.anchorIndex, to);
+        const last = Math.max(browser.anchorIndex, to);
+        const chosen = [];
+        for (let row = from; row <= last; ++row) {
+            chosen.push(browser.showingRows[row].path);
+        }
+        browser.selection = chosen;
+    }
+
+    /// Move the cursor to a row, extending the selection from the anchor when `extend` is set.
+    function moveCursorRow(index, extend) {
+        const count = browser.showingRows.length;
+        if (count === 0) {
+            return;
+        }
+        const to = Math.max(0, Math.min(count - 1, index));
+        if (extend) {
+            browser.extendSelectionTo(to);
+        } else {
+            // A plain move starts a new run: the next Shift press begins where the hand stopped.
+            browser.anchorIndex = to;
+        }
+        Browser.setCursor(browser.showingRows[to].path);
+        list.positionViewAtIndex(to, ListView.Center);
+    }
+
     /// Put the cursor row in the middle of the window.
     ///
     /// A key is not the only way a cursor arrives: a remembered row comes back when the section is
@@ -540,11 +595,23 @@ Pane {
                 centreOnCursor();
             }
         }
+        // Another list under the cursor: a playlist's page, a section being opened. The anchor of a Shift
+        // run counts rows, and rows of the previous list mean other tracks here — a run would cover a
+        // stretch nobody asked for.
+        function onPlaylistPageChanged() {
+            browser.anchorIndex = -1;
+        }
+        function onModeChanged() {
+            browser.anchorIndex = -1;
+        }
         function onChanged() {
             // A page answer replaces every row (the lock asks the collection again), and a view handed a new
             // model starts at the top: the DJ's place goes back before anything else is asked of the list.
             if (Browser.pageGeneration !== browser.seenGeneration) {
                 browser.seenGeneration = Browser.pageGeneration;
+                // New rows mean a new list: an anchor from the previous one points into row numbers that
+                // now hold other tracks, and Shift would select a run nobody asked for.
+                browser.anchorIndex = -1;
                 // The list was replaced under the DJ: his offset goes back, and the cursor is not centred —
                 // centring would move the window he is looking at, which is the report this answers.
                 browser.restoreScroll();
@@ -2098,14 +2165,26 @@ Pane {
                 // Plain arrows move the cursor. With Ctrl held the same keys carry the row itself (the
                 // shortcut below), and a cursor that steps first would leave no row to carry.
                 Keys.onUpPressed: function (event) {
-                    if ((event.modifiers & Qt.ControlModifier) === 0) {
-                        browser.stepCursor(-1);
+                    if ((event.modifiers & Qt.ControlModifier) !== 0) {
+                        return;
                     }
+                    if ((event.modifiers & Qt.ShiftModifier) !== 0) {
+                        browser.moveCursorRow(browser.cursorRow() - 1, true);
+                        return;
+                    }
+                    browser.stepCursor(-1);
+                    browser.anchorIndex = browser.cursorRow();
                 }
                 Keys.onDownPressed: function (event) {
-                    if ((event.modifiers & Qt.ControlModifier) === 0) {
-                        browser.stepCursor(1);
+                    if ((event.modifiers & Qt.ControlModifier) !== 0) {
+                        return;
                     }
+                    if ((event.modifiers & Qt.ShiftModifier) !== 0) {
+                        browser.moveCursorRow(browser.cursorRow() + 1, true);
+                        return;
+                    }
+                    browser.stepCursor(1);
+                    browser.anchorIndex = browser.cursorRow();
                 }
 
                 // The wheel moves the cursor, not only the picture. The row the DJ is on sits in the
@@ -2124,6 +2203,32 @@ Pane {
                 Keys.onReturnPressed: browser.openFolder(list.currentIndex)
                 Keys.onEnterPressed: browser.openFolder(list.currentIndex)
                 Keys.onPressed: function (event) {
+                    // A page moves the cursor, not just the picture: PgUp/PgDown are the same step as an
+                    // arrow, only longer, and with Shift they carry the selection with them.
+                    const shift = (event.modifiers & Qt.ShiftModifier) !== 0;
+                    const control = (event.modifiers & Qt.ControlModifier) !== 0;
+                    if (!control && event.key === Qt.Key_PageUp) {
+                        browser.moveCursorRow(browser.cursorRow() - browser.pageRows(), shift);
+                        event.accepted = true;
+                        return;
+                    }
+                    if (!control && event.key === Qt.Key_PageDown) {
+                        browser.moveCursorRow(browser.cursorRow() + browser.pageRows(), shift);
+                        event.accepted = true;
+                        return;
+                    }
+                    // Shift+Home and Shift+End: the whole list from where the run started. Letting the
+                    // selection fall back to a single row when the anchor is the cursor itself.
+                    if (!control && shift && event.key === Qt.Key_Home) {
+                        browser.moveCursorRow(0, true);
+                        event.accepted = true;
+                        return;
+                    }
+                    if (!control && shift && event.key === Qt.Key_End) {
+                        browser.moveCursorRow(browser.showingRows.length - 1, true);
+                        event.accepted = true;
+                        return;
+                    }
                     const deck = ["1", "2", "3", "4"].indexOf(event.text);
                     if (deck >= 0) {
                         browser.loadInto(browser.deckIds[deck]);

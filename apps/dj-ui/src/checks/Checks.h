@@ -226,4 +226,7 @@ int runLayoutNumbersCheck(LayoutSettings& layout, const QString& file);
 
 int runLayoutMenuCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutSettings& layout);
 
+int runSelectionCheck(QQmlApplicationEngine& engine, FileBrowser& browser, BridgeClient& bridge,
+                      const QString& collectionRoot, const QString& fixture);
+
 } // namespace checks

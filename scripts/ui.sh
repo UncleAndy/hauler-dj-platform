@@ -357,6 +357,25 @@ case "${1:-}" in
         --layout-file "$run_dir/scroll-layout.json"
     kill "$scroll_pid" 2>/dev/null || true
     wait "$scroll_pid" 2>/dev/null || true
+    # The keys a list is read with: Shift+arrows, PgUp/PgDown, Shift+Home/End. Its own engine and its own
+    # collection: the check imports forty tracks to have a list longer than a page.
+    selection_socket="$run_dir/engine-selection.sock"
+    # Its own data directory as well as its own engine: the index is a file, and two engines writing the
+    # same one while the checks beside them run is contention nobody asked for.
+    mkdir -p "$run_dir/selection-data" "$run_dir/selection-config"
+    XDG_DATA_HOME="$run_dir/selection-data" XDG_CONFIG_HOME="$run_dir/selection-config" \
+        "$engine_bin" --null-sink --socket "$selection_socket" --block 256 &
+    selection_pid=$!
+    for _ in $(seq 1 100); do
+      [ -S "$selection_socket" ] && break
+      sleep 0.05
+    done
+    XDG_DATA_HOME="$run_dir/selection-data" XDG_CONFIG_HOME="$run_dir/selection-config" \
+        QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$selection_socket" \
+        --collection-root "$run_dir/selection-collection" --selection-check \
+        --import-fixture "$fixture" --layout-file "$run_dir/selection-layout.json"
+    kill "$selection_pid" 2>/dev/null || true
+    wait "$selection_pid" 2>/dev/null || true
     # The playlists (DJP-MEDIA-004): made in a folder, filled with three rows, the dups taken out, a row
     # dragged, the name changed, the playlist carried to the root and deleted — the tree, the rows on the
     # right and the file in the mirror are all read back at every step. Two different tracks, because a

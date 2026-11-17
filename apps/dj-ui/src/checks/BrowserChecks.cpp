@@ -2174,4 +2174,235 @@ int runLayoutMenuCheck(QQmlApplicationEngine& engine, FileBrowser& browser, Layo
     return 0;
 }
 
+/// The keys a list is read with: Shift+arrows and Shift+PgUp/PgDown take runs, PgUp/PgDown move the
+/// cursor by a page, Shift+Home/End run to the ends. The Files list, the collection and a playlist all
+/// sit on the same view, so the keys are exercised on each shape the list can take.
+int runSelectionCheck(QQmlApplicationEngine& engine, FileBrowser& browser, BridgeClient& bridge,
+                      const QString& collectionRoot, const QString& fixture) {
+    if (collectionRoot.isEmpty() || fixture.isEmpty()) {
+        std::fprintf(stderr, "dj-ui: --selection-check needs --collection-root and --import-fixture\n");
+        return 1;
+    }
+    QDir root(collectionRoot);
+    if (!root.mkpath(QStringLiteral("."))) {
+        std::fprintf(stderr, "dj-ui: cannot make %s\n", qPrintable(collectionRoot));
+        return 1;
+    }
+    // Forty files of forty tempos: the list has to be longer than a page for PgDown to mean anything.
+    QStringList fillers;
+    for (int index = 0; index < 40; ++index) {
+        const QString track =
+            root.filePath(QStringLiteral("Row %1.wav").arg(index + 1, 2, 10, QLatin1Char('0')));
+        QFile::remove(track);
+        if (!writeClickTrack(track, 120.0 + index, 0.4)) {
+            std::fprintf(stderr, "dj-ui: cannot write %s\n", qPrintable(track));
+            return 1;
+        }
+        fillers.append(track);
+    }
+    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().value(0));
+    if (window == nullptr) {
+        std::fprintf(stderr, "dj-ui: no shell window\n");
+        return 1;
+    }
+    auto* panel = findItem(window->contentItem(), QStringLiteral("browserPanel"));
+    if (panel == nullptr) {
+        std::fprintf(stderr, "dj-ui: the shell has no browser\n");
+        return 1;
+    }
+    const auto waitFor = [](const std::function<bool()>& ready, int budget) {
+        QElapsedTimer clock;
+        clock.start();
+        while (clock.elapsed() < budget) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            if (ready()) {
+                return true;
+            }
+            QThread::msleep(20);
+        }
+        return ready();
+    };
+    // The keys reach the list only when it has the focus: a click gives it to the list, and the check
+    // has to do the same before it can be a hand.
+    auto* listItem = findItem(window->contentItem(), QStringLiteral("browserList"));
+    if (listItem == nullptr) {
+        std::fprintf(stderr, "dj-ui: the browser has no list to press keys on\n");
+        return 1;
+    }
+    const auto press = [&](int key, Qt::KeyboardModifiers modifiers) {
+        listItem->forceActiveFocus();
+        QKeyEvent event(QEvent::KeyPress, key, modifiers);
+        QCoreApplication::sendEvent(window, &event);
+        QCoreApplication::processEvents();
+        QThread::msleep(30);
+        QCoreApplication::processEvents();
+    };
+    const auto rows = [&]() { return browser.entries(); };
+    const auto selectedRows = [&]() {
+        QList<int> found;
+        const QStringList chosen = panel->property("selection").toStringList();
+        const QVariantList entries = rows();
+        for (int index = 0; index < entries.size(); ++index) {
+            if (chosen.contains(entries.at(index).toMap().value(QStringLiteral("path")).toString())) {
+                found.append(index);
+            }
+        }
+        return found;
+    };
+    const auto cursorRow = [&]() { return browser.rowOf(browser.cursor()); };
+    const auto expectRun = [&](int from, int to, const QString& what) {
+        const QList<int> found = selectedRows();
+        QList<int> wanted;
+        for (int index = from; index <= to; ++index) {
+            wanted.append(index);
+        }
+        if (found != wanted) {
+            std::fprintf(stderr, "dj-ui: %s selected rows %d..%d, wanted %d..%d\n", qPrintable(what),
+                         found.isEmpty() ? -1 : found.first(), found.isEmpty() ? -1 : found.last(), from,
+                         to);
+            return false;
+        }
+        return true;
+    };
+    const auto pathAt = [&](int row) {
+        return rows().at(row).toMap().value(QStringLiteral("path")).toString();
+    };
+
+    bridge.importPaths(fillers, collectionRoot, false);
+    if (!waitFor(
+            [&]() {
+                const QVariantMap state = panel->property("importState").toMap();
+                return state.value(QStringLiteral("total")).toInt() >= 40 &&
+                       !state.value(QStringLiteral("running")).toBool();
+            },
+            120000)) {
+        std::fprintf(stderr, "dj-ui: the import never finished\n");
+        return 1;
+    }
+    browser.openCollection({collectionRoot});
+    if (!waitFor([&]() { return rows().size() >= 40; }, 30000)) {
+        std::fprintf(stderr, "dj-ui: the collection lists %d rows\n", static_cast<int>(rows().size()));
+        return 1;
+    }
+
+    // Ten rows down: the run has room above it and below it.
+    browser.setCursor(pathAt(10));
+    (void)waitFor([&]() { return false; }, 300);
+    if (cursorRow() != 10) {
+        std::fprintf(stderr, "dj-ui: the cursor stands on row %d, not 10\n", cursorRow());
+        return 1;
+    }
+
+    press(Qt::Key_Down, Qt::ShiftModifier);
+    press(Qt::Key_Down, Qt::ShiftModifier);
+    press(Qt::Key_Down, Qt::ShiftModifier);
+    if (cursorRow() != 13 || !expectRun(10, 13, QStringLiteral("shift-down x3"))) {
+        return 1;
+    }
+    press(Qt::Key_Up, Qt::ShiftModifier);
+    if (cursorRow() != 12 || !expectRun(10, 12, QStringLiteral("shift-up"))) {
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: shift with the arrows takes the run 10..13 and shrinks it to 10..12\n");
+
+    // A page moves the cursor and leaves the selection alone; with Shift the run grows with the cursor.
+    const int before = cursorRow();
+    press(Qt::Key_PageDown, Qt::NoModifier);
+    const int afterPage = cursorRow();
+    if (afterPage <= before) {
+        std::fprintf(stderr, "dj-ui: page-down left the cursor on row %d\n", afterPage);
+        return 1;
+    }
+    if (!expectRun(10, 12, QStringLiteral("page-down, selection untouched"))) {
+        return 1;
+    }
+    press(Qt::Key_PageDown, Qt::ShiftModifier);
+    const int afterShift = cursorRow();
+    if (afterShift <= afterPage) {
+        std::fprintf(stderr, "dj-ui: shift-page-down did not move the cursor (%d)\n", afterShift);
+        return 1;
+    }
+    if (!expectRun(afterPage, afterShift, QStringLiteral("shift-page-down"))) {
+        return 1;
+    }
+    // Coming back the run shrinks to the anchor, which is where the plain page move left the cursor:
+    // that is what Shift means in a list — the anchor and the cursor, nothing in between the two of them
+    // survives on its own.
+    press(Qt::Key_PageUp, Qt::ShiftModifier);
+    if (cursorRow() != afterPage || !expectRun(afterPage, afterPage, QStringLiteral("shift-page-up"))) {
+        return 1;
+    }
+    std::fprintf(stdout,
+                 "dj-ui: a page moves the cursor (%d -> %d -> %d) and shift carries the run with it\n",
+                 before, afterPage, afterShift);
+
+    // The ends of the list: the run goes from the anchor, which the page moves left where it was.
+    press(Qt::Key_End, Qt::ShiftModifier);
+    if (cursorRow() != static_cast<int>(rows().size()) - 1
+        || !expectRun(afterPage, static_cast<int>(rows().size()) - 1, QStringLiteral("shift-end"))) {
+        return 1;
+    }
+    press(Qt::Key_Home, Qt::ShiftModifier);
+    if (cursorRow() != 0 || !expectRun(0, afterPage, QStringLiteral("shift-home"))) {
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: shift-home and shift-end take the list from the anchor to its end\n");
+
+    // The playlist is the same list with another set of rows: one run and one page are enough to know
+    // the keys follow the list the DJ is looking at, not the collection specifically.
+    panel->setProperty("selection", QStringList{});
+    browser.showPlaylists();
+    (void)waitFor([&]() { return !browser.playlistTree().isEmpty(); }, 10000);
+    browser.playlistCreate(QStringLiteral("Key set"), QString());
+    qint64 playlistId = 0;
+    const bool created = waitFor(
+        [&]() {
+            for (const QVariant& entry : browser.playlistTree()) {
+                const QVariantMap row = entry.toMap();
+                if (row.value(QStringLiteral("kind")).toString() == QStringLiteral("playlist") &&
+                    row.value(QStringLiteral("name")).toString() == QStringLiteral("Key set")) {
+                    playlistId = row.value(QStringLiteral("id")).toLongLong();
+                    return true;
+                }
+            }
+            return false;
+        },
+        10000);
+    if (!created) {
+        std::fprintf(stderr, "dj-ui: the playlist never appeared in the tree\n");
+        return 1;
+    }
+    browser.openPlaylist(playlistId, QStringLiteral("Key set"));
+    // The import lays a file out by its tags, so the row's path is the import's answer, not the path
+    // that was handed in: the playlist is filled from the rows the collection shows.
+    QStringList listed;
+    for (const QVariant& entry : rows()) {
+        listed.append(entry.toMap().value(QStringLiteral("path")).toString());
+    }
+    browser.playlistAddTracks(browser.trackRows(listed));
+    if (!waitFor([&]() { return browser.playlistRows().size() >= 40; }, 30000)) {
+        std::fprintf(stderr, "dj-ui: the playlist holds %d rows\n",
+                     static_cast<int>(browser.playlistRows().size()));
+        return 1;
+    }
+    const QString playlistPath =
+        browser.playlistRows().at(2).toMap().value(QStringLiteral("path")).toString();
+    browser.setCursor(playlistPath);
+    (void)waitFor([&]() { return false; }, 300);
+    press(Qt::Key_Down, Qt::ShiftModifier);
+    press(Qt::Key_Down, Qt::ShiftModifier);
+    const QStringList chosen = panel->property("selection").toStringList();
+    if (chosen.size() != 3) {
+        std::fprintf(stderr, "dj-ui: in a playlist shift-down selected %d rows, not 3\n",
+                     static_cast<int>(chosen.size()));
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: the same keys take a run in a playlist (3 rows from the cursor)\n");
+    // The playlist mirror is shared with the checks that run after this one: a set left behind is a row
+    // in their tree that they do not expect.
+    browser.playlistDelete(playlistId);
+    (void)waitFor([&]() { return browser.playlistRows().isEmpty(); }, 10000);
+    return 0;
+}
+
 } // namespace checks
