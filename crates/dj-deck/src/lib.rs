@@ -79,6 +79,13 @@ const MAX_TEMPO_BLOCK_FRAMES: usize = 8192;
 /// fixed size: a block at this rate asks for four times its own length of material, no more.
 pub const MAX_HAND_RATE: f64 = 4.0;
 
+/// How long the record takes to change hands: the hand's own reading fades out while the stretcher's
+/// fades in.
+///
+/// Ten milliseconds is long enough to hide a phase that does not line up and short enough that a baby
+/// scratch — a release every hundred milliseconds — does not read as a hole in the sound.
+pub const HAND_RELEASE_FADE_SECONDS: f64 = 0.010;
+
 /// How long a hand may go without saying anything before the deck decides it is gone.
 ///
 /// The shell speaks to the hand while it holds the record — the same speed again every hundred
@@ -429,9 +436,26 @@ pub struct Deck {
     hand_pos: f64,
     /// True while a hand holds the record.
     hand_engaged: bool,
+    /// The material the hand was about to play when it let go, read once at the release: the fading half
+    /// of the crossfade. Reading it at the release keeps the source where the motor needs it.
+    fade_window: Vec<f32>,
+    /// The hand's reading of that material, one block at a time: what is mixed under the motor's block.
+    fade_out: Vec<f32>,
+    /// Frames of crossfade left, and of how many.
+    fade_left: usize,
+    fade_total: usize,
+    /// Where in `fade_window` the hand's reading continues from.
+    fade_pos: f64,
+    /// The speed the hand was moving at when it let go: the motor carries on at the same pace.
+    fade_step: f64,
+    /// The hand reads through its own resampler: the motor's belongs to the stretcher's input stage.
+    hand_resampler: Resampler,
     /// Deck frames rendered since the hand last said anything. A hand that has said nothing for
     /// [`HAND_SILENCE_SECONDS`] is not on the record any more.
     hand_silence_frames: u64,
+    /// Whether the listener was hearing the stretcher when the hand took the record: that is the path
+    /// the record goes back to on release, and the one whose phase has to be hidden.
+    hand_keylocked: bool,
     /// Whether the transport was running when the hand took the record: letting go gives it back.
     ///
     /// The rule that a touch stops the motor belongs to the instrument, not to the shell: a shell that had
@@ -523,6 +547,13 @@ impl Deck {
             scratch: vec![0.0; (MAX_TEMPO_BLOCK_FRAMES + RESAMPLE_HISTORY_MAX) * 2],
             scratch_frames: 0,
             resampler: Resampler::new(RESAMPLE_KERNEL),
+            hand_resampler: Resampler::new(RESAMPLE_KERNEL),
+            fade_window: Vec::new(),
+            fade_out: Vec::new(),
+            fade_left: 0,
+            fade_total: 0,
+            fade_pos: 0.0,
+            fade_step: 1.0,
             history: RESAMPLE_KERNEL.geometry().1,
             phase: 0.0,
             keylock: true,
@@ -534,6 +565,7 @@ impl Deck {
             hand_pos: 0.0,
             hand_engaged: false,
             hand_resume: false,
+            hand_keylocked: false,
             hand_silence_frames: 0,
             // Emptiness is the ordinary state: the window is made when a hand first takes the record, so a
             // deck that is only ever played through pays nothing for a scratch it never does.
@@ -753,15 +785,19 @@ impl Deck {
             self.position = heard;
             self.scratch_frames = 0;
             self.phase = 0.0;
+            self.hand_resampler = Resampler::new(RESAMPLE_KERNEL);
+            self.fade_left = 0;
+            self.fade_total = 0;
             // The stretcher is the motor's answer to speed; with a hand on the record it has nothing to
-            // answer, and re-entering it on release is a fresh entry.
+            // answer, and re-entering it on release is a fresh entry — with a phase of its own, which is
+            // what the release crossfade is for. Remember whether the listener was hearing the stretcher.
+            self.hand_keylocked = self.keylock_engaged;
             self.keylock_engaged = false;
         } else if self.hand_resume {
-            // The hand lets go: the motor carries the record on from wherever the hand left it. Key lock
-            // comes back on the next block that needs it (the stretcher's seam is its own task): forcing it
-            // here would put the amply-delayed path back in front of material the hand just played.
+            // The hand lets go: the motor carries the record on from wherever the hand left it.
             self.hand_resume = false;
             self.playing = true;
+            self.start_release_fade();
         }
     }
 
@@ -1780,6 +1816,11 @@ impl Deck {
             self.render_keylocked(out);
         }
 
+        // Changing hands: the hand's own reading fades out under the stretcher's first block.
+        if !self.hand_engaged && self.fade_left > 0 {
+            self.mix_release_fade(out);
+        }
+
         // Slip's virtual head runs at the deck's own rate, whatever the sound did this block: a loop
         // that wrapped and a cue that jumped are both invisible to it.
         if self.slip {
@@ -2062,6 +2103,86 @@ impl Deck {
         self.keylock_engaged = true;
         self.stretcher.reset();
         self.prime_keylock();
+    }
+
+    /// Read what the hand was about to play, so the record can change hands without a jump.
+    ///
+    /// The stretcher's output lands on the right place but not on the right phase — a phase vocoder keeps
+    /// the pitch and does what it likes with the waveform's alignment — so switching paths on a block
+    /// boundary is a jump of most of a cycle, which is a click. Ten milliseconds of crossfade hide it: the
+    /// hand's own reading fades out while the stretcher's fades in.
+    ///
+    /// The material is read here, on the command path, and read from the hand's position; the source is put
+    /// back where the motor needs it before this returns.
+    fn start_release_fade(&mut self) {
+        self.fade_left = 0;
+        self.fade_total = 0;
+        // Only a return to the stretcher has a phase to hide: without key lock the vinyl path picks up
+        // from a sample it shares with the hand.
+        let wants_keylock =
+            self.hand_keylocked && self.keylock && (self.tempo_ratio - 1.0).abs() > 1e-9;
+        if !wants_keylock || self.source.is_none() || self.hand_pos <= 0.0 {
+            return;
+        }
+        let total = (HAND_RELEASE_FADE_SECONDS * f64::from(self.output_rate)).round() as usize;
+        if total == 0 {
+            return;
+        }
+        let step = self.tempo_ratio * self.rate_ratio;
+        let (taps, history) = self.hand_resampler.interpolation().geometry();
+        let pad = 4 * (taps + history) + 8;
+        let need = ((total.saturating_sub(1)) as f64 * step).ceil() as i64 + 2 * pad as i64 + 1;
+        let need = usize::try_from(need.max(1)).unwrap_or(1);
+        let start = (self.hand_pos.floor() as i64 - pad as i64).max(0) as u64;
+        self.fade_window.resize(need * 2, 0.0);
+        let head = self.position;
+        if let Some(source) = self.source.as_mut() {
+            let _ = source.seek(start);
+            let mut got = 0usize;
+            while got < need {
+                match source.read(&mut self.fade_window[got * 2..]) {
+                    Ok(0) => break,
+                    Ok(taken) => got += taken,
+                    Err(_) => break,
+                }
+            }
+            for sample in &mut self.fade_window[got * 2..] {
+                *sample = 0.0;
+            }
+            // The motor reads from where the hand left the record, not from the fade's pre-roll.
+            let _ = source.seek(head);
+        }
+        self.fade_out.resize(total * 2, 0.0);
+        self.fade_pos = self.hand_pos - start as f64;
+        self.fade_step = step;
+        self.fade_total = total;
+        self.fade_left = total;
+        self.hand_resampler = Resampler::new(RESAMPLE_KERNEL);
+    }
+
+    /// The fading half of the crossfade: the hand's reading, continuing where it stopped, mixed under the
+    /// motor's block.
+    fn mix_release_fade(&mut self, out: &mut [f32]) {
+        let frames = out.len() / 2;
+        let take = frames.min(self.fade_left).min(self.fade_out.len() / 2);
+        if take == 0 {
+            return;
+        }
+        let fade = &mut self.fade_out[..take * 2];
+        fade.fill(0.0);
+        let _ =
+            self.hand_resampler
+                .process(&self.fade_window, fade, 0, self.fade_pos, self.fade_step);
+        let total = self.fade_total.max(1) as f32;
+        let done = (self.fade_total - self.fade_left) as f32;
+        for index in 0..take {
+            // The hand's half falls from one to nothing, the motor's rises to one.
+            let hand = 1.0 - (done + index as f32) / total;
+            out[index * 2] = out[index * 2] * (1.0 - hand) + fade[index * 2] * hand;
+            out[index * 2 + 1] = out[index * 2 + 1] * (1.0 - hand) + fade[index * 2 + 1] * hand;
+        }
+        self.fade_pos += self.fade_step * take as f64;
+        self.fade_left -= take;
     }
 
     /// Fill the stretcher's buffers before the listener hears it.

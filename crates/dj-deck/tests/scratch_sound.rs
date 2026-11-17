@@ -161,8 +161,11 @@ fn the_hand_arrives_and_leaves_without_a_click() {
         heard.extend(out.iter().step_by(2).copied());
     }
     let step = largest_step(&heard);
+    // Two steps of the same material, not one: the two readings of the groove are half a frame apart, and
+    // half a frame is a step and a bit. A click is tens of them — before the release crossfade this read
+    // 0,4759, thirty times the forward step.
     assert!(
-        step <= bar * 1.5,
+        step <= bar * 2.5,
         "the hand made a jump of {step:.4} arriving or leaving, while a hand going forward makes {bar:.4}"
     );
 }
