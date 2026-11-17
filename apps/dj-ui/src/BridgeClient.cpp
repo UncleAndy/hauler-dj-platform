@@ -2281,7 +2281,24 @@ int BridgeClient::setMasterGain(double gain)
 int BridgeClient::setCrossfaderCurve(const QString &curve)
 {
     QJsonObject options;
-    options.insert(QStringLiteral("curve"), curve);
+    // "cut:7" is the cut-in law with the fader opening at seven percent: the number travels with the law, so
+    // the law is an object on the wire rather than a name. Everything else is its own name.
+    const QString name = curve.trimmed().toLower();
+    if (name.startsWith(QStringLiteral("cut:"))) {
+        bool ok = false;
+        const int percent = name.mid(4).toInt(&ok);
+        if (ok && percent >= 0 && percent <= 100) {
+            QJsonObject cut;
+            cut.insert(QStringLiteral("cut_in"), percent);
+            QJsonObject law;
+            law.insert(QStringLiteral("cut"), cut);
+            options.insert(QStringLiteral("curve"), law);
+            QJsonObject command;
+            command.insert(QStringLiteral("SetCrossfaderCurve"), options);
+            return sendCommand(QStringLiteral("mixer"), command);
+        }
+    }
+    options.insert(QStringLiteral("curve"), name);
     QJsonObject command;
     command.insert(QStringLiteral("SetCrossfaderCurve"), options);
     return sendCommand(QStringLiteral("mixer"), command);
