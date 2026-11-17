@@ -774,6 +774,7 @@ fn run(argv: &[String]) -> Result<(), String> {
             analyses: analysis_requests.clone(),
             grids: grid_edits.clone(),
             locks: Arc::clone(&locks),
+            paths: Arc::clone(&paths),
             published: deck_updates.clone(),
         };
         let stop_handle = Arc::clone(&stop);
@@ -1511,6 +1512,9 @@ struct Workers {
     grids: Sender<GridEditRequest>,
     /// Which decks hold a locked grid: the command handler reads it, the grid worker keeps it current.
     locks: Arc<Mutex<Vec<bool>>>,
+    /// The file each deck holds: a command that names no path is answered with this one, because the
+    /// deck is what plays and a client that reconnected never loaded anything.
+    paths: Arc<Mutex<Vec<Option<String>>>>,
     /// The channel the decks publish on: a lock written here reaches the snapshot through it.
     published: Sender<dj_engine::Published>,
 }
@@ -2049,6 +2053,30 @@ fn serve_client(
                         path,
                         enabled,
                     } => {
+                        // Which file the lock belongs to: the deck's own first, then the path the client
+                        // sent. A client that reconnected to a running engine names nothing, and a lock
+                        // written beside "" was refused with "No such file or directory" (owner's report,
+                        // 2026-11-19).
+                        let deck_path = work
+                            .paths
+                            .lock()
+                            .ok()
+                            .and_then(|held| held.get(deck.index()).cloned().flatten());
+                        let Some(target) =
+                            dj_engine::meta::analysis_lock_target(deck_path.as_deref(), &path)
+                        else {
+                            eprintln!(
+                                "dj-engine: the lock was not written: the deck holds no file and the command named none"
+                            );
+                            let ack = dj_domain::Ack::rejected(
+                                command.id,
+                                dj_domain::RejectReason::InvalidValue,
+                            );
+                            if alerts.send(ServerMessage::Ack(ack)).is_err() {
+                                return;
+                            }
+                            continue;
+                        };
                         // The record beside the track and its mirror first, then the collection: the flag
                         // travels with the file, and the list draws it in its own cell.
                         let store = dj_library::Store::with_default_mirror();
@@ -2056,19 +2084,17 @@ fn serve_client(
                             &store,
                             volume(),
                             root(),
-                            std::path::Path::new(&path),
+                            &target,
                             enabled,
                         );
                         let ack = match written {
                             Ok(_) => {
                                 if let (Ok(loaded), Ok(mut index)) = (
-                                    store.load(volume(), root(), std::path::Path::new(&path)),
+                                    store.load(volume(), root(), &target),
                                     dj_library::Index::open_default(),
                                 ) {
-                                    let _ = index.upsert(&dj_engine::meta::row_of(
-                                        &loaded.meta,
-                                        std::path::Path::new(&path),
-                                    ));
+                                    let _ = index
+                                        .upsert(&dj_engine::meta::row_of(&loaded.meta, &target));
                                 }
                                 let _ = work
                                     .published

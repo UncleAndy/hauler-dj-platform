@@ -247,6 +247,25 @@ pub fn write_beatgrid(
 /// A locked grid is a decision: the measurement must not replace it and the editor must not move it. The flag
 /// travels with the file, so it is written where the rest of the decision lives — the record beside the track
 /// and the mirror of it.
+/// Which file a lock belongs to: the deck's own file first, then the path the client sent.
+///
+/// A client that reconnected to a running engine never loaded anything and carries an empty path; the
+/// engine is the one that knows which file the deck plays. Writing beside `""` made the engine refuse
+/// the lock with "No such file or directory" and the button looked dead (owner's report, 2026-11-19).
+pub fn analysis_lock_target(deck_path: Option<&str>, command_path: &str) -> Option<PathBuf> {
+    if let Some(path) = deck_path
+        && !path.trim().is_empty()
+    {
+        return Some(PathBuf::from(path));
+    }
+    let named = command_path.trim();
+    if named.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(named))
+    }
+}
+
 pub fn set_analysis_lock(
     store: &Store,
     volume: &str,

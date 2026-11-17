@@ -234,3 +234,28 @@ fn a_stale_publication_of_the_same_track_cannot_unlock_the_deck() {
         deck_static(Some("/music/new.wav"), false)
     ));
 }
+
+#[test]
+fn a_lock_without_a_path_uses_the_decks_own_file() {
+    // A client that reconnected to a running engine never loaded anything: the command carries an empty
+    // path, and the deck is the one that knows the file. Writing beside "" made the engine refuse the
+    // lock ("No such file or directory") and the button looked dead (owner's report, 2026-11-19).
+    assert_eq!(
+        dj_engine::meta::analysis_lock_target(Some("/music/a.wav"), "").as_deref(),
+        Some(Path::new("/music/a.wav"))
+    );
+    // Nothing loaded and nothing named: there is no file to write beside, and the engine must say so
+    // rather than try to open "".
+    assert_eq!(dj_engine::meta::analysis_lock_target(None, ""), None);
+    assert_eq!(dj_engine::meta::analysis_lock_target(Some(""), "  "), None);
+    // The deck's file wins over the path the client remembered: the deck is what plays.
+    assert_eq!(
+        dj_engine::meta::analysis_lock_target(Some("/music/a.wav"), "/music/old.wav").as_deref(),
+        Some(Path::new("/music/a.wav"))
+    );
+    // A client that names the file and a deck that holds none: the command is all there is.
+    assert_eq!(
+        dj_engine::meta::analysis_lock_target(None, "/music/b.wav").as_deref(),
+        Some(Path::new("/music/b.wav"))
+    );
+}
