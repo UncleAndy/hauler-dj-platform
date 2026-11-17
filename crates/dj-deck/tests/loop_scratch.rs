@@ -160,3 +160,58 @@ fn the_hand_wraps_without_a_hole_in_the_sound() {
         "the hand produced a flat line at the loop's edge (largest step {largest:.4})"
     );
 }
+
+/// A loop shorter than the window still runs: the hand cycles it instead of falling off its end.
+///
+/// Fifty milliseconds is shorter than the kernel's own window, so the deck cannot simply read around the
+/// head — it has to page the loop, several turns per window, and the sound must still be the loop.
+#[test]
+fn a_short_loop_pages_under_the_hand() {
+    let mut deck = Deck::new(DeckId::A);
+    deck.set_output_rate(RATE);
+    deck.attach(
+        Box::new(Sine {
+            frames: RATE as u64 * 30,
+            position: 0,
+        }),
+        None,
+    );
+    let start = 96_000u64;
+    let end = start + 2_400;
+    assert!(
+        deck.set_loop(Some(FrameRange {
+            start: dj_domain::SourceFrame(start),
+            end: dj_domain::SourceFrame(end),
+        })),
+        "the deck refused a short loop"
+    );
+    deck.set_loop_mode(true);
+    deck.seek(start + 1_200);
+    deck.play();
+    let mut out = vec![0.0f32; 256 * 2];
+    deck.grab(true);
+    // Backwards at speed: many turns of the loop inside one window.
+    deck.set_hand_rate(-2.0);
+    let mut silent = 0usize;
+    for _ in 0..40 {
+        deck.render(&mut out);
+        let position = deck.position();
+        assert!(
+            position >= start && position < end,
+            "the hand left a short loop: {position} is outside {start}..{end}"
+        );
+        let mut run = 0usize;
+        for sample in out.iter().step_by(2) {
+            if sample.abs() < 1e-6 {
+                run += 1;
+                silent = silent.max(run);
+            } else {
+                run = 0;
+            }
+        }
+    }
+    assert!(
+        silent < 8,
+        "a short loop fell silent for {silent} frames under the hand"
+    );
+}
