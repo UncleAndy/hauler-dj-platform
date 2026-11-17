@@ -10241,9 +10241,12 @@ int main(int argc, char *argv[])
                 return 1;
             }
         }
+
+        bridge->setCrossfaderCurve(QStringLiteral("constant_power"));
+
         // The cut-in law carries its own number: the engine must publish the object, the button must light,
-        // and the field must show the number that is in force. A law that travelled without its value would
-        // open somewhere other than the DJ sees.
+        // and the field must show the number in force. A law that travelled without its value would open
+        // somewhere other than the DJ sees.
         const auto cutInPublished = [&]() {
             const QVariant raw = bridge->snapshot().value(QStringLiteral("crossfader_curve"));
             const QVariantMap map = raw.toMap();
@@ -10268,22 +10271,17 @@ int main(int argc, char *argv[])
                 std::fprintf(stderr, "dj-ui: the curve row has no cut button\n");
                 return 1;
             }
-            const QColor fill = button->property("color").value<QColor>();
+            const bool lit = button->property("lit").toBool();
             auto *value = findItem(window->contentItem(), QStringLiteral("cutInValue"));
-            const QString shown = value == nullptr
-                                      ? QStringLiteral("nothing")
-                                      : value->property("text").toString();
-            std::fprintf(stdout,
-                         "dj-ui: cut-in %d -> engine says %d, button %s, field says %s\n",
-                         percent,
-                         seen,
-                         fill == QColor(QStringLiteral("#181818")) ? "lit" : "plain",
-                         qPrintable(shown));
+            const QString shown =
+                value == nullptr ? QStringLiteral("nothing") : value->property("text").toString();
+            std::fprintf(stdout, "dj-ui: cut-in %d -> engine says %d, button %s, field says %s\n",
+                         percent, seen, lit ? "lit" : "plain", qPrintable(shown));
             if (seen != percent) {
                 std::fprintf(stderr, "dj-ui: the engine did not take the cut-in at %d percent\n", percent);
                 return 1;
             }
-            if (fill != QColor(QStringLiteral("#181818"))) {
+            if (!lit) {
                 std::fprintf(stderr, "dj-ui: the cut button does not show the law in force\n");
                 return 1;
             }
@@ -10293,6 +10291,7 @@ int main(int argc, char *argv[])
                 return 1;
             }
         }
+
         // Back to the default, so the next check in the set meets an ordinary law.
         bridge->setCrossfaderCurve(QStringLiteral("constant_power"));
 
