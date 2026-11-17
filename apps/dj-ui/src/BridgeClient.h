@@ -262,7 +262,7 @@ private:
     /// Read the genre answer out of the snapshot and refresh the boxes.
     void takeGenres();
     /// Ask the index for the rows at `offset`: one door for the first page and for the next ones.
-    void askPage(int offset);
+    void askPage(int offset, int limit = 0);
     /// One unfiltered page for the genre boxes alone: the census a restored filter needs.
     void askCensus();
     /// The rows the index answered with, in the shape the list and the columns read.
@@ -301,6 +301,12 @@ private:
     QVariantList m_publishedGenres;
     /// The offset of the question in flight: the answer does not carry it, the question does.
     int m_askedOffset = 0;
+    /// How many rows the question that is out asked for. The first question of a list cannot say, because
+    /// the total is not known until an answer arrives; every later question asks for the whole list.
+    int m_askedLimit = 0;
+    /// The whole list was already asked for under the current question, and asking again would loop on an
+    /// index that keeps growing while the answer is being read.
+    bool m_wholeAsked = false;
     /// The question in flight, as one string: the same question asked again while the answer is on its
     /// way is not a second question — it is a flush of commands the engine has to answer one by one.
     QString m_askedSignature;

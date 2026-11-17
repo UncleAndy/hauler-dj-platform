@@ -418,6 +418,10 @@ Pane {
         browser.selection = chosen;
     }
 
+    /// True while a Shift move is in flight: the cursor changes, and the anchor must not follow it, because
+    /// following is exactly what would turn every run into a single row.
+    property bool extending: false
+
     /// Move the cursor to a row, extending the selection from the anchor when `extend` is set.
     function moveCursorRow(index, extend) {
         const count = browser.showingRows.length;
@@ -431,7 +435,11 @@ Pane {
             // A plain move starts a new run: the next Shift press begins where the hand stopped.
             browser.anchorIndex = to;
         }
+        // The anchor follows every cursor move that is not a Shift move: the wheel, a load, the lock. A DJ
+        // who wheels down the list and then presses Shift+End means from where he is, not from where he was.
+        browser.extending = extend;
         Browser.setCursor(browser.showingRows[to].path);
+        browser.extending = false;
         list.positionViewAtIndex(to, ListView.Center);
     }
 
@@ -591,6 +599,9 @@ Pane {
     Connections {
         target: Browser
         function onCursorChanged() {
+            if (!browser.extending) {
+                browser.anchorIndex = browser.cursorRow();
+            }
             if (!browser.keepScrollOnCursor) {
                 centreOnCursor();
             }

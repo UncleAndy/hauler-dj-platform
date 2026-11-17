@@ -216,6 +216,10 @@ int main(int argc, char *argv[])
     const QCommandLineOption pageCheckOption(
         QStringLiteral("collection-page-check"),
         QStringLiteral("Compare the index page with the walk over the collection, field by field."));
+    const QCommandLineOption wholeListCheckOption(
+        QStringLiteral("whole-list-check"),
+        QStringLiteral("The list is read whole: every row of a four-hundred-row collection arrives without a "
+                       "scroll (needs --collection-root and --import-fixture)."));
     const QCommandLineOption selectionCheckOption(
         QStringLiteral("selection-check"),
         QStringLiteral("Shift+arrows, PgUp/PgDown and Shift+Home/End take runs in the browser's lists "
@@ -519,6 +523,7 @@ int main(int argc, char *argv[])
     parser.addOption(curveCheckOption);
     parser.addOption(masterCheckOption);
     parser.addOption(pageCheckOption);
+    parser.addOption(wholeListCheckOption);
     parser.addOption(selectionCheckOption);
     parser.addOption(layoutMenuCheckOption);
     parser.addOption(layoutNumbersCheckOption);
@@ -2165,6 +2170,12 @@ int main(int argc, char *argv[])
     if (parser.isSet(endCheckOption)) {
         bridge->connectToEngine(parser.value(connectOption));
         return runEndCheck(engine, *bridge, parser.value(loadOption));
+    }
+
+    if (parser.isSet(wholeListCheckOption)) {
+        bridge->connectToEngine(parser.value(connectOption));
+        return runWholeListCheck(engine, browser, *bridge, parser.values(collectionRootOption).value(0),
+                                 parser.value(importFixtureOption));
     }
 
     if (parser.isSet(selectionCheckOption)) {

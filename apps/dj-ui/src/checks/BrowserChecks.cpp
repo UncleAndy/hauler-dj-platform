@@ -2426,4 +2426,116 @@ int runSelectionCheck(QQmlApplicationEngine& engine, FileBrowser& browser, Bridg
     return 0;
 }
 
+/// The list is read whole: a collection of four hundred and fifty tracks arrives complete without a single
+/// scroll, End stands on the true last row, and Shift+End takes every row from the anchor to it.
+int runWholeListCheck(QQmlApplicationEngine& engine, FileBrowser& browser, BridgeClient& bridge,
+                      const QString& collectionRoot, const QString& fixture) {
+    if (collectionRoot.isEmpty() || fixture.isEmpty()) {
+        std::fprintf(stderr, "dj-ui: --whole-list-check needs --collection-root and --import-fixture\n");
+        return 1;
+    }
+    QDir root(collectionRoot);
+    if (!root.mkpath(QStringLiteral("."))) {
+        std::fprintf(stderr, "dj-ui: cannot make %s\n", qPrintable(collectionRoot));
+        return 1;
+    }
+    // Four hundred and fifty rows is more than two pages of two hundred: before the list was read whole, the
+    // twenty-fifth screen was a question the shell had not asked yet.
+    const int wanted = 450;
+    QStringList fillers;
+    for (int index = 0; index < wanted; ++index) {
+        const QString track =
+            root.filePath(QStringLiteral("Whole %1.wav").arg(index + 1, 3, 10, QLatin1Char('0')));
+        QFile::remove(track);
+        if (!writeClickTrack(track, 90.0 + index * 0.1, 0.05)) {
+            std::fprintf(stderr, "dj-ui: cannot write %s\n", qPrintable(track));
+            return 1;
+        }
+        fillers.append(track);
+    }
+    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().value(0));
+    if (window == nullptr) {
+        std::fprintf(stderr, "dj-ui: no shell window\n");
+        return 1;
+    }
+    auto* panel = findItem(window->contentItem(), QStringLiteral("browserPanel"));
+    auto* listItem = findItem(window->contentItem(), QStringLiteral("browserList"));
+    if (panel == nullptr || listItem == nullptr) {
+        std::fprintf(stderr, "dj-ui: the shell has no browser list\n");
+        return 1;
+    }
+    const auto waitFor = [](const std::function<bool()>& ready, int budget) {
+        QElapsedTimer clock;
+        clock.start();
+        while (clock.elapsed() < budget) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            if (ready()) {
+                return true;
+            }
+            QThread::msleep(20);
+        }
+        return ready();
+    };
+    const auto press = [&](int key, Qt::KeyboardModifiers modifiers) {
+        listItem->forceActiveFocus();
+        QKeyEvent event(QEvent::KeyPress, key, modifiers);
+        QCoreApplication::sendEvent(window, &event);
+        QCoreApplication::processEvents();
+        QThread::msleep(30);
+        QCoreApplication::processEvents();
+    };
+
+    bridge.importPaths(fillers, collectionRoot, false);
+    if (!waitFor(
+            [&]() {
+                const QVariantMap state = panel->property("importState").toMap();
+                return state.value(QStringLiteral("total")).toInt() >= wanted &&
+                       !state.value(QStringLiteral("running")).toBool();
+            },
+            300000)) {
+        std::fprintf(stderr, "dj-ui: the import never finished\n");
+        return 1;
+    }
+    browser.openCollection({collectionRoot});
+    // The check never scrolls: whatever the list holds, it holds because the shell asked for it.
+    if (!waitFor([&]() { return browser.total() >= wanted; }, 120000)) {
+        std::fprintf(stderr, "dj-ui: the collection counts %d of %d\n", browser.total(), wanted);
+        return 1;
+    }
+    if (!waitFor([&]() { return browser.entries().size() >= wanted; }, 120000)) {
+        std::fprintf(stderr, "dj-ui: the list holds %d rows of %d without a scroll\n",
+                     static_cast<int>(browser.entries().size()), wanted);
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: the list arrived whole — %d rows of %d, no scroll asked for\n",
+                 static_cast<int>(browser.entries().size()), browser.total());
+
+    const auto pathAt = [&](int row) {
+        return browser.entries().at(row).toMap().value(QStringLiteral("path")).toString();
+    };
+    const int last = static_cast<int>(browser.entries().size()) - 1;
+
+    press(Qt::Key_End, Qt::NoModifier);
+    if (browser.rowOf(browser.cursor()) != last) {
+        std::fprintf(stderr, "dj-ui: end stood on row %d of %d\n", browser.rowOf(browser.cursor()),
+                     last + 1);
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: end stood on row %d of %d, the last row of the collection\n",
+                 browser.rowOf(browser.cursor()) + 1, last + 1);
+
+    browser.setCursor(pathAt(100));
+    (void)waitFor([&]() { return false; }, 300);
+    press(Qt::Key_End, Qt::ShiftModifier);
+    const QStringList chosen = panel->property("selection").toStringList();
+    if (chosen.size() != last - 100 + 1) {
+        std::fprintf(stderr, "dj-ui: shift-end took %d rows, wanted %d\n",
+                     static_cast<int>(chosen.size()), last - 100 + 1);
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: shift-end took %d rows from row 101 to row %d\n",
+                 static_cast<int>(chosen.size()), last + 1);
+    return 0;
+}
+
 } // namespace checks

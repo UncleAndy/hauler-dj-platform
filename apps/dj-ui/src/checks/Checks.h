@@ -229,4 +229,7 @@ int runLayoutMenuCheck(QQmlApplicationEngine& engine, FileBrowser& browser, Layo
 int runSelectionCheck(QQmlApplicationEngine& engine, FileBrowser& browser, BridgeClient& bridge,
                       const QString& collectionRoot, const QString& fixture);
 
+int runWholeListCheck(QQmlApplicationEngine& engine, FileBrowser& browser, BridgeClient& bridge,
+                      const QString& collectionRoot, const QString& fixture);
+
 } // namespace checks

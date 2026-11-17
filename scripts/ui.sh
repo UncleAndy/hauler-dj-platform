@@ -376,6 +376,24 @@ case "${1:-}" in
         --import-fixture "$fixture" --layout-file "$run_dir/selection-layout.json"
     kill "$selection_pid" 2>/dev/null || true
     wait "$selection_pid" 2>/dev/null || true
+
+    # The list is read whole: its own engine and its own data directory, and a collection of four hundred and
+    # fifty rows, so the answer has to cross two page boundaries.
+    whole_socket="$run_dir/engine-whole.sock"
+    mkdir -p "$run_dir/whole-data" "$run_dir/whole-config"
+    XDG_DATA_HOME="$run_dir/whole-data" XDG_CONFIG_HOME="$run_dir/whole-config" \
+        "$engine_bin" --null-sink --socket "$whole_socket" --block 256 &
+    whole_pid=$!
+    for _ in $(seq 1 100); do
+      [ -S "$whole_socket" ] && break
+      sleep 0.05
+    done
+    XDG_DATA_HOME="$run_dir/whole-data" XDG_CONFIG_HOME="$run_dir/whole-config" \
+        QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$whole_socket" \
+        --collection-root "$run_dir/whole-collection" --whole-list-check \
+        --import-fixture "$fixture" --layout-file "$run_dir/whole-layout.json"
+    kill "$whole_pid" 2>/dev/null || true
+    wait "$whole_pid" 2>/dev/null || true
     # The playlists (DJP-MEDIA-004): made in a folder, filled with three rows, the dups taken out, a row
     # dragged, the name changed, the playlist carried to the root and deleted — the tree, the rows on the
     # right and the file in the mirror are all read back at every step. Two different tracks, because a

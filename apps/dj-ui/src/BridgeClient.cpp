@@ -347,15 +347,23 @@ QString wireColumn(const QString &id)
 
 } // namespace
 
-void FileBrowser::askPage(int offset)
+void FileBrowser::askPage(int offset, int limit)
 {
     if (m_bridge == nullptr) {
         return;
     }
+    // The list is read whole. Paging was a courtesy to a library that might never be scrolled, but it cost
+    // the DJ the end of the list: End stopped on the last row that happened to be loaded, and a run taken
+    // with Shift covered only what was in hand. The total is known after the first answer, so the first
+    // question asks for one page and every question after it asks for everything.
+    if (limit <= 0) {
+        limit = offset == 0 ? qMax(m_pageTotal, 200) : 200;
+    }
     // The same question, still unanswered: say nothing. A panel that re-asks on every progress tick
     // floods the engine and makes the status flicker between "waiting for the engine" and ready.
-    QString signature = QString::number(offset) + QLatin1Char('|') + m_filter + QLatin1Char('|')
-        + m_genres.join(QLatin1Char(',')) + QLatin1Char('|');
+    QString signature = QString::number(offset) + QLatin1Char('|') + QString::number(limit)
+        + QLatin1Char('|') + m_filter + QLatin1Char('|') + m_genres.join(QLatin1Char(','))
+        + QLatin1Char('|');
     for (const QVariant &entry : m_sort) {
         const QVariantMap key = entry.toMap();
         signature += key.value(QStringLiteral("column")).toString()
@@ -364,6 +372,11 @@ void FileBrowser::askPage(int offset)
     }
     if (signature == m_askedSignature && m_pageAnsweredFor != m_pageQuery) {
         return;
+    }
+    if (signature != m_askedSignature) {
+        // A new question: the previous one may have asked for the whole list under other filters, and that
+        // says nothing about this one.
+        m_wholeAsked = false;
     }
     m_askedSignature = signature;
     const int id = ++m_pageQuery;
@@ -387,8 +400,9 @@ void FileBrowser::askPage(int offset)
     }
     query.insert(QStringLiteral("roots"), m_roots);
     query.insert(QStringLiteral("offset"), offset);
-    query.insert(QStringLiteral("limit"), 200);
+    query.insert(QStringLiteral("limit"), limit);
     m_askedOffset = offset;
+    m_askedLimit = limit;
     m_bridge->queryCollection(query);
 }
 
@@ -622,6 +636,14 @@ void FileBrowser::takePage()
     if (m_genreList.isEmpty() && m_censusAsked) {
         m_censusAsked = false;
         askCensus();
+    }
+    // The first question of a list asked for one page, because the total was not known when it went out. Now
+    // it is: ask again for all of it, once. A DJ who opens a collection sees every row of it, and End has an
+    // end to stand on.
+    if (offset == 0 && m_pageOffset > 0 && m_pageOffset < m_pageTotal && !m_wholeAsked
+        && m_askedLimit < m_pageTotal) {
+        m_wholeAsked = true;
+        askPage(0, m_pageTotal);
     }
     if (offset == 0 && tracks.isEmpty() && !m_retriedEmpty && !m_roots.isEmpty()) {
         // The index can be empty on the first question because it is being built from the folders at that very
