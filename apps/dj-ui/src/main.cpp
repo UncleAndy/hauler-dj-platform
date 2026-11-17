@@ -1304,13 +1304,11 @@ int main(int argc, char *argv[])
     }
 
     if (parser.isSet(masterCheckOption)) {
-        return runMasterCheck(engine, browser, bridge.get(), layout, settings, parser, loadOption,
-                             loadSecondOption, connectOption);
+        return runMasterCheck(engine, bridge.get(), settings, parser, loadOption, connectOption);
     }
 
     if (parser.isSet(curveCheckOption)) {
-        return runCurveCheck(engine, browser, bridge.get(), layout, settings, parser, loadOption,
-                             loadSecondOption, connectOption);
+        return runCurveCheck(engine, bridge.get(), parser, connectOption);
     }
 
     if (parser.isSet(windowCheckOption)) {
@@ -1470,43 +1468,35 @@ int main(int argc, char *argv[])
     }
 
     if (parser.isSet(wheelCheckOption)) {
-        return runWheelCheck(engine, browser, bridge.get(), layout, settings, parser, loadOption,
-                             loadSecondOption, connectOption);
+        return runWheelCheck(engine, bridge.get(), parser, connectOption);
     }
 
     if (parser.isSet(gainCurveCheckOption)) {
-        return runGainCurveCheck(engine, browser, bridge.get(), layout, settings, parser, loadOption,
-                             loadSecondOption, connectOption);
+        return runGainCurveCheck(engine, settings);
     }
 
     if (parser.isSet(tempoCheckOption)) {
-        return runTempoCheck(engine, browser, bridge.get(), layout, settings, parser, loadOption,
-                             loadSecondOption, connectOption);
+        return runTempoCheck(engine, bridge.get(), parser, loadOption, connectOption);
     }
 
     if (parser.isSet(loopBeatsOption)) {
-        return runLoopBeatsCheck(engine, browser, bridge.get(), layout, settings, parser, loadOption,
-                             loadSecondOption, connectOption);
+        return runLoopBeatsCheck(engine, bridge.get(), parser, loadOption, connectOption);
     }
 
     if (parser.isSet(transportExtrasOption)) {
-        return runTransportExtrasCheck(engine, browser, bridge.get(), layout, settings, parser, loadOption,
-                             loadSecondOption, connectOption);
+        return runTransportExtrasCheck(engine, bridge.get(), parser, loadOption, connectOption);
     }
 
     if (parser.isSet(gridHereOption)) {
-        return runGridHereCheck(engine, browser, bridge.get(), layout, settings, parser, loadOption,
-                             loadSecondOption, connectOption);
+        return runGridHereCheck(engine, bridge.get(), parser, loadOption, connectOption);
     }
 
     if (parser.isSet(tempoRecheckOption)) {
-        return runTempoRecheckCheck(engine, browser, bridge.get(), layout, settings, parser, loadOption,
-                             loadSecondOption, connectOption);
+        return runTempoRecheckCheck(engine, bridge.get(), parser, loadOption, connectOption);
     }
 
     if (parser.isSet(gridReconnectOption)) {
-        return runGridReconnectCheck(engine, browser, bridge.get(), layout, settings, parser, loadOption,
-                             loadSecondOption, connectOption);
+        return runGridReconnectCheck(engine, bridge.get(), parser, connectOption);
     }
 
     if (parser.isSet(tapOption)) {
@@ -1856,13 +1846,11 @@ int main(int argc, char *argv[])
     }
 
     if (parser.isSet(metronomeOption)) {
-        return runMetronomeCheck(engine, browser, bridge.get(), layout, settings, parser, loadOption,
-                             loadSecondOption, connectOption);
+        return runMetronomeCheck(engine, bridge.get(), parser, loadOption, connectOption);
     }
 
     if (parser.isSet(scratchOption)) {
-        return runScratchCheck(engine, browser, bridge.get(), layout, settings, parser, loadOption,
-                             loadSecondOption, connectOption);
+        return runScratchCheck(engine, bridge.get(), parser, loadOption, connectOption);
     }
 
     if (parser.isSet(gridLinesOption)) {
@@ -1870,13 +1858,11 @@ int main(int argc, char *argv[])
     }
 
     if (parser.isSet(gridCreateOption)) {
-        return runGridCreateCheck(engine, browser, bridge.get(), layout, settings, parser, loadOption,
-                             loadSecondOption, connectOption);
+        return runGridCreateCheck(engine, bridge.get(), parser, loadOption, loadSecondOption, connectOption);
     }
 
     if (parser.isSet(gridCheckOption)) {
-        return runGridCheck(engine, browser, bridge.get(), layout, settings, parser, loadOption,
-                             loadSecondOption, connectOption);
+        return runGridCheck(engine, bridge.get(), parser, loadOption, connectOption);
     }
 
     if (parser.isSet(eqCheckOption)) {
@@ -1893,23 +1879,19 @@ int main(int argc, char *argv[])
     }
 
     if (parser.isSet(scenarioOption)) {
-        return runScenario(engine, browser, bridge.get(), layout, settings, parser, loadOption,
-                             loadSecondOption, connectOption);
+        return runScenario(engine, bridge.get(), parser, loadOption, connectOption);
     }
 
     if (parser.isSet(padsOption)) {
-        return runPadsCheck(engine, browser, bridge.get(), layout, settings, parser, loadOption,
-                             loadSecondOption, connectOption);
+        return runPadsCheck(engine, bridge.get(), parser, loadOption, connectOption);
     }
 
     if (parser.isSet(transportOption)) {
-        return runTransportCheck(engine, browser, bridge.get(), layout, settings, parser, loadOption,
-                             loadSecondOption, connectOption);
+        return runTransportCheck(engine, bridge.get(), settings, parser, loadOption, connectOption);
     }
 
     if (parser.isSet(fourDeckOption)) {
-        return runFourDeckCheck(engine, browser, bridge.get(), layout, settings, parser, loadOption,
-                             loadSecondOption, connectOption);
+        return runFourDeckCheck(engine, bridge.get(), parser, loadOption, connectOption);
     }
 
     if (parser.isSet(syncSoakOption)) {
@@ -1921,28 +1903,23 @@ int main(int argc, char *argv[])
     }
 
     if (parser.isSet(pitchOption)) {
-        return runPitchCheck(engine, browser, bridge.get(), layout, settings, parser, loadOption,
-                             loadSecondOption, connectOption);
+        return runPitchCheck(engine, bridge.get(), parser, loadOption, connectOption);
     }
 
     if (parser.isSet(neutralOption)) {
-        return runNeutralCheck(engine, browser, bridge.get(), layout, settings, parser, loadOption,
-                             loadSecondOption, connectOption);
+        return runNeutralCheck(engine, bridge.get(), parser, connectOption);
     }
 
     if (parser.isSet(spaceCheckOption)) {
-        return runSpaceCheck(engine, browser, bridge.get(), layout, settings, parser, loadOption,
-                             loadSecondOption, connectOption);
+        return runSpaceCheck(engine, bridge.get(), parser, loadOption, connectOption);
     }
 
     if (parser.isSet(refusalCheckOption)) {
-        return runRefusalCheck(engine, browser, bridge.get(), layout, settings, parser, loadOption,
-                             loadSecondOption, connectOption);
+        return runRefusalCheck(engine, browser, bridge.get(), settings, parser, loadOption, connectOption);
     }
 
     if (parser.isSet(stripCheckOption)) {
-        return runStripCheck(engine, browser, bridge.get(), layout, settings, parser, loadOption,
-                             loadSecondOption, connectOption);
+        return runStripCheck(engine, bridge.get(), parser, loadOption, connectOption);
     }
 
     if (parser.isSet(keyCheckOption)) {
@@ -2141,8 +2118,7 @@ int main(int argc, char *argv[])
     }
 
     if (parser.isSet(browserRestoreOption)) {
-        return runBrowserRestoreCheck(engine, browser, bridge.get(), layout, settings, parser, loadOption,
-                             loadSecondOption, connectOption);
+        return runBrowserRestoreCheck(engine, layout, settings);
     }
 
     if (parser.isSet(browserCheckOption)) {

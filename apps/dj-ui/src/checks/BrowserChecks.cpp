@@ -6,9 +6,8 @@
 
 namespace checks {
 
-int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
-                          LayoutSettings &layout, UiSettings &settings)
-{
+int runBrowserCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutSettings& layout,
+                    UiSettings& settings) {
     // A list you cannot pick from is a picture of a list, so the check goes through the same
     // function the mouse does: select a track, activate it, read what the panel says happened.
     QTemporaryDir folder;
@@ -27,7 +26,7 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     file.close();
     browser.open(folder.path());
 
-    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
     if (window == nullptr) {
         std::fprintf(stderr, "dj-ui: the root object is not a window\n");
         return 1;
@@ -36,8 +35,8 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     QTimer::singleShot(600, &settle, &QEventLoop::quit);
     settle.exec();
 
-    QQuickItem *panel = findItem(window->contentItem(), QStringLiteral("browserPanel"));
-    QQuickItem *list = findItem(window->contentItem(), QStringLiteral("browserList"));
+    QQuickItem* panel = findItem(window->contentItem(), QStringLiteral("browserPanel"));
+    QQuickItem* list = findItem(window->contentItem(), QStringLiteral("browserList"));
     if (panel == nullptr || list == nullptr) {
         std::fprintf(stderr, "dj-ui: the shell has no browser\n");
         return 1;
@@ -59,7 +58,8 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     }
 
     // The list's index is bound to the remembered cursor: selecting a row is `setCursor`, not an
-    // assignment to the index, which would break the binding and leave the list with no cursor at all.
+    // assignment to the index, which would break the binding and leave the list with no cursor at
+    // all.
     const auto selectRow = [&](int index) {
         const QVariantList rows = browser.entries();
         if (index >= 0 && index < rows.size()) {
@@ -67,20 +67,20 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         }
         QCoreApplication::processEvents();
     };
-    const auto invoke = [&](const char *method, int index) {
+    const auto invoke = [&](const char* method, int index) {
         selectRow(index);
         QVariant returned;
         QMetaObject::invokeMethod(panel, method, Q_RETURN_ARG(QVariant, returned),
                                   Q_ARG(QVariant, index));
         return panel->property("lastAction").toString();
     };
-    const auto loadInto = [&](const QString &deck) {
+    const auto loadInto = [&](const QString& deck) {
         selectRow(fileIndex);
         QVariant returned;
         QMetaObject::invokeMethod(panel, "loadInto", Q_RETURN_ARG(QVariant, returned),
                                   Q_ARG(QVariant, deck));
-        // The deck is the witness: the panel answers "loaded" only once the engine shows the track, so
-        // the answer is waited for instead of read on the next line.
+        // The deck is the witness: the panel answers "loaded" only once the engine shows the track,
+        // so the answer is waited for instead of read on the next line.
         if (!panel->property("lastAction").toString().startsWith(QStringLiteral("loading "))) {
             return panel->property("lastAction").toString();
         }
@@ -90,8 +90,8 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
             QCoreApplication::processEvents();
             QThread::msleep(50);
             const QString now = panel->property("lastAction").toString();
-            if (now.startsWith(QStringLiteral("loaded "))
-                || now.contains(QStringLiteral("did not take"))) {
+            if (now.startsWith(QStringLiteral("loaded ")) ||
+                now.contains(QStringLiteral("did not take"))) {
                 return now;
             }
         }
@@ -101,7 +101,8 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     const QString onTrack = loadInto(QStringLiteral("A"));
     // The path in the answer is the path of the row that was chosen: a load that moves the folder
     // must not make the panel report a row it never sent.
-    const QString chosenPath = entries.at(fileIndex).toMap().value(QStringLiteral("path")).toString();
+    const QString chosenPath =
+        entries.at(fileIndex).toMap().value(QStringLiteral("path")).toString();
     const bool hasEngine = !onTrack.startsWith(QStringLiteral("no engine for "));
     if (!hasEngine) {
         // --smoke runs without an engine: the panel must refuse and say why, not claim a load.
@@ -112,7 +113,8 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         }
         std::fprintf(stdout, "dj-ui: no engine, the load is refused and said so\n");
     } else if (onTrack != QStringLiteral("loaded ") + chosenPath + QStringLiteral(" into A")) {
-        std::fprintf(stderr, "dj-ui: the browser reported a path it did not choose (%s, wanted %s)\n",
+        std::fprintf(stderr,
+                     "dj-ui: the browser reported a path it did not choose (%s, wanted %s)\n",
                      qPrintable(onTrack), qPrintable(chosenPath));
         return 1;
     }
@@ -123,9 +125,8 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     const QString onFolder = invoke("openFolder", folderIndex);
     std::fprintf(stdout, "dj-ui: browser track  -> %s\n", qPrintable(onTrack));
     std::fprintf(stdout, "dj-ui: browser folder -> %s\n", qPrintable(onFolder));
-    if (hasEngine
-        && (!onTrack.startsWith(QStringLiteral("loaded "))
-            || !onTrack.endsWith(QStringLiteral("into A")))) {
+    if (hasEngine && (!onTrack.startsWith(QStringLiteral("loaded ")) ||
+                      !onTrack.endsWith(QStringLiteral("into A")))) {
         std::fprintf(stderr, "dj-ui: a track click did not load into the chosen deck\n");
         return 1;
     }
@@ -142,11 +143,10 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     // proves the panel works, sending the event proves the row is reachable.
     browser.open(folder.path());
     QCoreApplication::processEvents();
-    const QPointF rowPoint =
-        list->mapToScene(QPointF(20.0, fileIndex * 18.0 + 9.0));
+    const QPointF rowPoint = list->mapToScene(QPointF(20.0, fileIndex * 18.0 + 9.0));
     for (const QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
-        QMouseEvent event(type, rowPoint, window->mapToGlobal(rowPoint.toPoint()),
-                          Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QMouseEvent event(type, rowPoint, window->mapToGlobal(rowPoint.toPoint()), Qt::LeftButton,
+                          Qt::LeftButton, Qt::NoModifier);
         QCoreApplication::sendEvent(window, &event);
     }
     QCoreApplication::processEvents();
@@ -180,27 +180,27 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
 
     // A deck button is also a load button when something is chosen.
     selectRow(fileIndex);
-    auto *buttonB = findItem(window->contentItem(), QStringLiteral("deckButton_B"));
+    auto* buttonB = findItem(window->contentItem(), QStringLiteral("deckButton_B"));
     if (buttonB == nullptr) {
         std::fprintf(stderr, "dj-ui: the browser has no deck buttons\n");
         return 1;
     }
     QMetaObject::invokeMethod(buttonB, "clicked");
     QCoreApplication::processEvents();
-    // The button answers "loading" and the deck answers later: wait for the deck's word, not for the
-    // request.
+    // The button answers "loading" and the deck answers later: wait for the deck's word, not for
+    // the request.
     QElapsedTimer deckWait;
     deckWait.start();
-    while (deckWait.elapsed() < 60000
-           && panel->property("lastAction").toString().startsWith(QStringLiteral("loading "))) {
+    while (deckWait.elapsed() < 60000 &&
+           panel->property("lastAction").toString().startsWith(QStringLiteral("loading "))) {
         QCoreApplication::processEvents();
         QThread::msleep(50);
     }
     const QString onDeckButton = panel->property("lastAction").toString();
     std::fprintf(stdout, "dj-ui: browser deck B button -> %s\n", qPrintable(onDeckButton));
     if (hasEngine) {
-        if (!onDeckButton.startsWith(QStringLiteral("loaded "))
-            || !onDeckButton.endsWith(QStringLiteral("into B"))) {
+        if (!onDeckButton.startsWith(QStringLiteral("loaded ")) ||
+            !onDeckButton.endsWith(QStringLiteral("into B"))) {
             std::fprintf(stderr, "dj-ui: a deck button did not load the chosen track\n");
             return 1;
         }
@@ -211,8 +211,8 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     }
     // The way up is a row, not a button: it is first, it is called "..", and it goes up.
     const QVariantList rows = browser.entries();
-    if (rows.isEmpty() || !rows.first().toMap().value(QStringLiteral("parent")).toBool()
-        || rows.first().toMap().value(QStringLiteral("name")).toString() != QStringLiteral("..")) {
+    if (rows.isEmpty() || !rows.first().toMap().value(QStringLiteral("parent")).toBool() ||
+        rows.first().toMap().value(QStringLiteral("name")).toString() != QStringLiteral("..")) {
         std::fprintf(stderr, "dj-ui: the browser has no \"..\" row to go up with\n");
         return 1;
     }
@@ -231,8 +231,8 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
 
     // The text size is a control in the browser, and the row grows with it.
     const int small = panel->property("rowHeight").toInt();
-    QQuickItem *plus = panel->findChild<QQuickItem *>(QStringLiteral("fontPlus"));
-    QQuickItem *minus = panel->findChild<QQuickItem *>(QStringLiteral("fontMinus"));
+    QQuickItem* plus = panel->findChild<QQuickItem*>(QStringLiteral("fontPlus"));
+    QQuickItem* minus = panel->findChild<QQuickItem*>(QStringLiteral("fontMinus"));
     if (plus == nullptr || minus == nullptr) {
         std::fprintf(stderr, "dj-ui: the browser has no text-size control\n");
         return 1;
@@ -249,8 +249,8 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         return 1;
     }
     // The rail's width is adjustable, and the divider is the only thing that adjusts it.
-    QQuickItem *rail = panel->findChild<QQuickItem *>(QStringLiteral("browserSections"));
-    QQuickItem *splitterItem = panel->findChild<QQuickItem *>(QStringLiteral("browserRailSplitter"));
+    QQuickItem* rail = panel->findChild<QQuickItem*>(QStringLiteral("browserSections"));
+    QQuickItem* splitterItem = panel->findChild<QQuickItem*>(QStringLiteral("browserRailSplitter"));
     if (rail == nullptr || splitterItem == nullptr) {
         std::fprintf(stderr, "dj-ui: the browser has no sections rail or no divider\n");
         return 1;
@@ -268,8 +268,8 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         return false;
     };
     // The width to come back to is whatever the layout held, not a number written into the check: a
-    // hand that set 130 px must not turn a red check green, and the check must not go red because the
-    // layout it was handed is not the one a fresh install has.
+    // hand that set 130 px must not turn a red check green, and the check must not go red because
+    // the layout it was handed is not the one a fresh install has.
     const qreal railBefore = rail->width();
     const int railHome = qRound(railBefore);
     panel->setProperty("railWidth", railHome + 40);
@@ -279,8 +279,9 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     const bool shrank = railWidthBecomes(railHome);
     const qreal railBack = rail->width();
     if (!grew || !shrank || !(railAfter > railBefore + 20.0 && qAbs(railBack - railBefore) < 2.0)) {
-        std::fprintf(stderr, "dj-ui: the rail width did not follow the setting (%.0f, %.0f, "
-                             "%.0f)\n",
+        std::fprintf(stderr,
+                     "dj-ui: the rail width did not follow the setting (%.0f, %.0f, "
+                     "%.0f)\n",
                      railBefore, railAfter, railBack);
         return 1;
     }
@@ -290,12 +291,12 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     // Measured on the label the rail actually renders, not on the property that feeds it.
     // Delegates of a Repeater are item children of the rail but not QObject children of the
     // panel, so the search walks the item tree (findItem) instead of findChild.
-    QQuickItem *sectionRow = findItem(panel, QStringLiteral("section_files"));
+    QQuickItem* sectionRow = findItem(panel, QStringLiteral("section_files"));
     if (sectionRow == nullptr || sectionRow->childItems().isEmpty()) {
         std::fprintf(stderr, "dj-ui: the sections rail has no label to measure\n");
         return 1;
     }
-    QQuickItem *sectionLabel = sectionRow->childItems().first();
+    QQuickItem* sectionLabel = sectionRow->childItems().first();
     const int sectionBefore = sectionLabel->property("font").value<QFont>().pixelSize();
     QMetaObject::invokeMethod(plus, "clicked");
     QCoreApplication::processEvents();
@@ -309,16 +310,18 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         return 1;
     }
 
-    // The header is the same browser as the list. Its title, the path, the two text-size buttons and
-    // the deck buttons all follow the type size, and the buttons grow enough to keep their labels
-    // inside: a list that grows under controls too small to hit is a browser only half scaled.
-    QQuickItem *pathLabel = findItem(panel, QStringLiteral("browserPath"));
-    QQuickItem *deckButton = findItem(panel, QStringLiteral("deckButton_A"));
+    // The header is the same browser as the list. Its title, the path, the two text-size buttons
+    // and the deck buttons all follow the type size, and the buttons grow enough to keep their
+    // labels inside: a list that grows under controls too small to hit is a browser only half
+    // scaled.
+    QQuickItem* pathLabel = findItem(panel, QStringLiteral("browserPath"));
+    QQuickItem* deckButton = findItem(panel, QStringLiteral("deckButton_A"));
     if (pathLabel == nullptr || deckButton == nullptr) {
-        std::fprintf(stderr, "dj-ui: the browser header has no path or no deck button to measure\n");
+        std::fprintf(stderr,
+                     "dj-ui: the browser header has no path or no deck button to measure\n");
         return 1;
     }
-    const auto pixelSizeOf = [](QQuickItem *item) {
+    const auto pixelSizeOf = [](QQuickItem* item) {
         return item->property("font").value<QFont>().pixelSize();
     };
     const int pathBefore = pixelSizeOf(pathLabel);
@@ -342,17 +345,18 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     QMetaObject::invokeMethod(minus, "clicked");
     QCoreApplication::processEvents();
     if (pathAfter != pathBefore + 1 || deckAfter != deckBefore + 1 || !buttonsGrew) {
-        std::fprintf(stderr,
-                     "dj-ui: the browser header did not follow the type (path %d -> %d, deck button "
-                     "%d -> %d, height %.0f -> %.0f)\n",
-                     pathBefore, pathAfter, deckBefore, deckAfter, buttonBefore, buttonAfter);
+        std::fprintf(
+            stderr,
+            "dj-ui: the browser header did not follow the type (path %d -> %d, deck button "
+            "%d -> %d, height %.0f -> %.0f)\n",
+            pathBefore, pathAfter, deckBefore, deckAfter, buttonBefore, buttonAfter);
         return 1;
     }
 
     // The height of the browser is a hand's decision too. A drop writes percentages, and the two
     // numbers must not move when the type changes size: a panel that snaps back the moment the
     // font grows is a panel that never remembers how tall it was.
-    QQuickItem *shellItem = findItem(window->contentItem(), QStringLiteral("shellLayout"));
+    QQuickItem* shellItem = findItem(window->contentItem(), QStringLiteral("shellLayout"));
     if (shellItem == nullptr || shellItem->height() <= 0.0) {
         std::fprintf(stderr, "dj-ui: the shell has no height to divide\n");
         return 1;
@@ -385,7 +389,7 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     // fresh instance, which is exactly what the next start does (DJP-UI-001).
     panel->setProperty("railWidth", 130);
     panel->setProperty("listFont", 14);
-    QQuickItem *detail = findItem(window->contentItem(), QStringLiteral("deckDetail_A"));
+    QQuickItem* detail = findItem(window->contentItem(), QStringLiteral("deckDetail_A"));
     if (detail == nullptr) {
         std::fprintf(stderr, "dj-ui: the deck has no main waveform to zoom\n");
         return 1;
@@ -403,13 +407,12 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         std::fprintf(stderr, "dj-ui: the layout file could not be read back\n");
         return 1;
     }
-    if (reloaded.browserRailWidth() != 130 || reloaded.browserFont() != 14
-        || qAbs(reloaded.waveformSpan() - 0.25) > 1e-9) {
+    if (reloaded.browserRailWidth() != 130 || reloaded.browserFont() != 14 ||
+        qAbs(reloaded.waveformSpan() - 0.25) > 1e-9) {
         std::fprintf(stderr,
                      "dj-ui: the view did not come back as it was left (rail %d, font %d, span "
                      "%.3f)\n",
-                     reloaded.browserRailWidth(), reloaded.browserFont(),
-                     reloaded.waveformSpan());
+                     reloaded.browserRailWidth(), reloaded.browserFont(), reloaded.waveformSpan());
         return 1;
     }
 
@@ -426,7 +429,7 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     QDir(collectionRoot).mkpath(QStringLiteral("B/B"));
     // The import parks a rejected copy here; the collection is what its owner kept.
     QDir(collectionRoot).mkpath(QStringLiteral("_duplicates/C/C"));
-    const auto writeStub = [](const QString &path) {
+    const auto writeStub = [](const QString& path) {
         QFile file(path);
         if (!file.open(QIODevice::WriteOnly)) {
             return false;
@@ -434,30 +437,33 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         file.write("RIFF", 4);
         return true;
     };
-    if (!writeStub(collectionRoot + QStringLiteral("/A/N/ANH - tonight.flac"))
-        || !writeStub(collectionRoot + QStringLiteral("/B/B/Bbno$ - ADD.flac"))
-        || !writeStub(collectionRoot + QStringLiteral("/_duplicates/C/C/Bbno$ - ADD.mp3"))) {
+    if (!writeStub(collectionRoot + QStringLiteral("/A/N/ANH - tonight.flac")) ||
+        !writeStub(collectionRoot + QStringLiteral("/B/B/Bbno$ - ADD.flac")) ||
+        !writeStub(collectionRoot + QStringLiteral("/_duplicates/C/C/Bbno$ - ADD.mp3"))) {
         std::fprintf(stderr, "dj-ui: cannot write the collection's tracks\n");
         return 1;
     }
     QFile record(collectionRoot + QStringLiteral("/A/N/.djmeta/ANH - tonight.flac.json"));
     if (record.open(QIODevice::WriteOnly)) {
-        record.write(R"({"schema":"djmeta/1","revision":1,"updated_at_ms":0,"fingerprint":{},"beatgrid":{"bpm":128.0,"first_beat_frame":0},"key":"8m"})");
+        record.write(
+            R"({"schema":"djmeta/1","revision":1,"updated_at_ms":0,"fingerprint":{},"beatgrid":{"bpm":128.0,"first_beat_frame":0},"key":"8m"})");
         record.close();
     }
     // No root at all is the platform's own collection folder, not an empty section.
     browser.openCollection(QStringList());
     QCoreApplication::processEvents();
-    if (browser.mode() != QStringLiteral("collection")
-        || browser.folder() != browser.defaultCollectionRoot() || !browser.error().isEmpty()) {
-        std::fprintf(stderr, "dj-ui: an unset collection did not fall back to %s (it is %s, "
-                             "error «%s»)\n",
+    if (browser.mode() != QStringLiteral("collection") ||
+        browser.folder() != browser.defaultCollectionRoot() || !browser.error().isEmpty()) {
+        std::fprintf(stderr,
+                     "dj-ui: an unset collection did not fall back to %s (it is %s, "
+                     "error «%s»)\n",
                      qPrintable(browser.defaultCollectionRoot()), qPrintable(browser.folder()),
                      qPrintable(browser.error()));
         return 1;
     }
     if (!browser.defaultCollectionRoot().endsWith(QStringLiteral("/hauler-dj/collection"))) {
-        std::fprintf(stderr, "dj-ui: the default collection root is not hauler-dj/collection (%s)\n",
+        std::fprintf(stderr,
+                     "dj-ui: the default collection root is not hauler-dj/collection (%s)\n",
                      qPrintable(browser.defaultCollectionRoot()));
         return 1;
     }
@@ -467,88 +473,93 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     // How many the list held before the search narrowed it: printed with the summary at the end.
     int unfiltered = 0;
     if (!hasEngine) {
-        // The collection is the index, and this check runs without an engine to ask: an empty list is the
-        // honest answer, not a lost collection. What the list contains is measured by
+        // The collection is the index, and this check runs without an engine to ask: an empty list
+        // is the honest answer, not a lost collection. What the list contains is measured by
         // --collection-page-check, which brings its own engine and index.
-        std::fprintf(stdout,
-                     "dj-ui: without an engine the collection is empty (%d of %d), as the index says\n",
-                     static_cast<int>(collected.size()), browser.total());
+        std::fprintf(
+            stdout,
+            "dj-ui: without an engine the collection is empty (%d of %d), as the index says\n",
+            static_cast<int>(collected.size()), browser.total());
         if (!collected.isEmpty() || browser.mode() != QStringLiteral("collection")) {
-            std::fprintf(stderr, "dj-ui: without an engine the collection is not empty (%d, mode %s)\n",
+            std::fprintf(stderr,
+                         "dj-ui: without an engine the collection is not empty (%d, mode %s)\n",
                          static_cast<int>(collected.size()), qPrintable(browser.mode()));
             return 1;
         }
     } else {
-    // A rejected copy is not part of the collection: three files on disk, two in the list.
-    std::fprintf(stdout, "dj-ui: collection %s -> %d tracks in mode %s\n",
-                 qPrintable(browser.folder()), static_cast<int>(collected.size()),
-                 qPrintable(browser.mode()));
-    if (browser.mode() != QStringLiteral("collection") || browser.total() != 2
-        || collected.size() != 2) {
-        std::fprintf(stderr, "dj-ui: the Collection section did not list the collection (%d of %d)\n",
-                     static_cast<int>(collected.size()), browser.total());
-        return 1;
-    }
-    // Named as the import named it, and sorted by that name: the file name is the name.
-    if (collected.at(0).toMap().value(QStringLiteral("name")).toString()
-        != QStringLiteral("ANH - tonight")) {
-        std::fprintf(stderr, "dj-ui: the collection is not sorted by name (%s)\n",
-                     qPrintable(collected.at(0).toMap().value(QStringLiteral("name")).toString()));
-        return 1;
-    }
-    // The metadata beside the track reaches its row: a tempo and a key, or neither of them.
-    const QVariantMap withMeta = collected.at(0).toMap();
-    const QVariantMap withoutMeta = collected.at(1).toMap();
-    if (qAbs(withMeta.value(QStringLiteral("bpm")).toDouble() - 128.0) > 1e-6
-        || withMeta.value(QStringLiteral("key")).toString() != QStringLiteral("8m")
-        || withoutMeta.contains(QStringLiteral("bpm"))
-        || withoutMeta.contains(QStringLiteral("key"))) {
-        std::fprintf(stderr, "dj-ui: the metadata beside a track did not reach its row\n");
-        return 1;
-    }
-    // One collection may live on several disks: every root is listed, in one list.
-    QTemporaryDir secondRoot;
-    if (!secondRoot.isValid()) {
-        std::fprintf(stderr, "dj-ui: cannot make a second collection root\n");
-        return 1;
-    }
-    QDir(secondRoot.path()).mkpath(QStringLiteral("C/C"));
-    if (!writeStub(secondRoot.path() + QStringLiteral("/C/C/Cazz - one more.flac"))) {
-        std::fprintf(stderr, "dj-ui: cannot write the second root's track\n");
-        return 1;
-    }
-    browser.openCollection({collectionRoot, secondRoot.path()});
-    QCoreApplication::processEvents();
-    const int bothRoots = static_cast<int>(browser.entries().size());
-    const QString lastOfBoth =
-        browser.entries().isEmpty()
-            ? QString()
-            : browser.entries().last().toMap().value(QStringLiteral("name")).toString();
-    std::fprintf(stdout, "dj-ui: two roots -> %d tracks, last «%s»\n", bothRoots,
-                 qPrintable(lastOfBoth));
-    if (bothRoots != 3 || lastOfBoth != QStringLiteral("Cazz - one more")) {
-        std::fprintf(stderr, "dj-ui: two collection roots did not land in one list (%d tracks, last "
-                             "«%s»)\n",
-                     bothRoots, qPrintable(lastOfBoth));
-        return 1;
-    }
-    browser.openCollection({collectionRoot});
-    QCoreApplication::processEvents();
+        // A rejected copy is not part of the collection: three files on disk, two in the list.
+        std::fprintf(stdout, "dj-ui: collection %s -> %d tracks in mode %s\n",
+                     qPrintable(browser.folder()), static_cast<int>(collected.size()),
+                     qPrintable(browser.mode()));
+        if (browser.mode() != QStringLiteral("collection") || browser.total() != 2 ||
+            collected.size() != 2) {
+            std::fprintf(stderr,
+                         "dj-ui: the Collection section did not list the collection (%d of %d)\n",
+                         static_cast<int>(collected.size()), browser.total());
+            return 1;
+        }
+        // Named as the import named it, and sorted by that name: the file name is the name.
+        if (collected.at(0).toMap().value(QStringLiteral("name")).toString() !=
+            QStringLiteral("ANH - tonight")) {
+            std::fprintf(
+                stderr, "dj-ui: the collection is not sorted by name (%s)\n",
+                qPrintable(collected.at(0).toMap().value(QStringLiteral("name")).toString()));
+            return 1;
+        }
+        // The metadata beside the track reaches its row: a tempo and a key, or neither of them.
+        const QVariantMap withMeta = collected.at(0).toMap();
+        const QVariantMap withoutMeta = collected.at(1).toMap();
+        if (qAbs(withMeta.value(QStringLiteral("bpm")).toDouble() - 128.0) > 1e-6 ||
+            withMeta.value(QStringLiteral("key")).toString() != QStringLiteral("8m") ||
+            withoutMeta.contains(QStringLiteral("bpm")) ||
+            withoutMeta.contains(QStringLiteral("key"))) {
+            std::fprintf(stderr, "dj-ui: the metadata beside a track did not reach its row\n");
+            return 1;
+        }
+        // One collection may live on several disks: every root is listed, in one list.
+        QTemporaryDir secondRoot;
+        if (!secondRoot.isValid()) {
+            std::fprintf(stderr, "dj-ui: cannot make a second collection root\n");
+            return 1;
+        }
+        QDir(secondRoot.path()).mkpath(QStringLiteral("C/C"));
+        if (!writeStub(secondRoot.path() + QStringLiteral("/C/C/Cazz - one more.flac"))) {
+            std::fprintf(stderr, "dj-ui: cannot write the second root's track\n");
+            return 1;
+        }
+        browser.openCollection({collectionRoot, secondRoot.path()});
+        QCoreApplication::processEvents();
+        const int bothRoots = static_cast<int>(browser.entries().size());
+        const QString lastOfBoth =
+            browser.entries().isEmpty()
+                ? QString()
+                : browser.entries().last().toMap().value(QStringLiteral("name")).toString();
+        std::fprintf(stdout, "dj-ui: two roots -> %d tracks, last «%s»\n", bothRoots,
+                     qPrintable(lastOfBoth));
+        if (bothRoots != 3 || lastOfBoth != QStringLiteral("Cazz - one more")) {
+            std::fprintf(stderr,
+                         "dj-ui: two collection roots did not land in one list (%d tracks, last "
+                         "«%s»)\n",
+                         bothRoots, qPrintable(lastOfBoth));
+            return 1;
+        }
+        browser.openCollection({collectionRoot});
+        QCoreApplication::processEvents();
 
-    // The search keeps what matches and the count says how much it kept.
-    browser.setFilter(QStringLiteral("bbno"));
-    QCoreApplication::processEvents();
-    const int filtered = static_cast<int>(browser.entries().size());
-    browser.setFilter(QString());
-    QCoreApplication::processEvents();
-    unfiltered = static_cast<int>(browser.entries().size());
-    std::fprintf(stdout, "dj-ui: collection search -> %d of %d, then %d\n", filtered,
-                 browser.total(), unfiltered);
-    if (filtered != 1 || unfiltered != 2) {
-        std::fprintf(stderr, "dj-ui: the collection search did not filter the list (%d, %d)\n",
-                     filtered, unfiltered);
-        return 1;
-    }
+        // The search keeps what matches and the count says how much it kept.
+        browser.setFilter(QStringLiteral("bbno"));
+        QCoreApplication::processEvents();
+        const int filtered = static_cast<int>(browser.entries().size());
+        browser.setFilter(QString());
+        QCoreApplication::processEvents();
+        unfiltered = static_cast<int>(browser.entries().size());
+        std::fprintf(stdout, "dj-ui: collection search -> %d of %d, then %d\n", filtered,
+                     browser.total(), unfiltered);
+        if (filtered != 1 || unfiltered != 2) {
+            std::fprintf(stderr, "dj-ui: the collection search did not filter the list (%d, %d)\n",
+                         filtered, unfiltered);
+            return 1;
+        }
     }
 
     // A track from the collection loads the way a file from a folder does.
@@ -560,25 +571,27 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     QCoreApplication::processEvents();
     QElapsedTimer collectionWait;
     collectionWait.start();
-    while (collectionWait.elapsed() < 60000
-           && panel->property("lastAction").toString().startsWith(QStringLiteral("loading "))) {
+    while (collectionWait.elapsed() < 60000 &&
+           panel->property("lastAction").toString().startsWith(QStringLiteral("loading "))) {
         QCoreApplication::processEvents();
         QThread::msleep(50);
     }
     const QString onCollection = panel->property("lastAction").toString();
     std::fprintf(stdout, "dj-ui: collection track -> %s\n", qPrintable(onCollection));
-    const QString expected = QStringLiteral("loaded ")
-        + chosen.value(QStringLiteral("path")).toString() + QStringLiteral(" into C");
+    const QString expected = QStringLiteral("loaded ") +
+                             chosen.value(QStringLiteral("path")).toString() +
+                             QStringLiteral(" into C");
     if (hasEngine && onCollection != expected) {
-        std::fprintf(stderr, "dj-ui: a collection track did not load into the chosen deck (%s, "
-                             "wanted %s)\n",
+        std::fprintf(stderr,
+                     "dj-ui: a collection track did not load into the chosen deck (%s, "
+                     "wanted %s)\n",
                      qPrintable(onCollection), qPrintable(expected));
         return 1;
     }
-    // Without an engine there is no index, so the list is empty and there is no row to choose: the press
-    // on an empty list says exactly that, and the refusal of a real track is checked above.
-    if (!hasEngine && onCollection != QStringLiteral("no engine for C")
-        && onCollection != QStringLiteral("nothing to load")) {
+    // Without an engine there is no index, so the list is empty and there is no row to choose: the
+    // press on an empty list says exactly that, and the refusal of a real track is checked above.
+    if (!hasEngine && onCollection != QStringLiteral("no engine for C") &&
+        onCollection != QStringLiteral("nothing to load")) {
         std::fprintf(stderr, "dj-ui: without an engine the collection said '%s'\n",
                      qPrintable(onCollection));
         return 1;
@@ -593,8 +606,8 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     // And the way back: Files is the folder it was showing, with its ".." row.
     browser.showFiles();
     QCoreApplication::processEvents();
-    if (browser.mode() != QStringLiteral("files") || browser.entries().isEmpty()
-        || !browser.entries().first().toMap().value(QStringLiteral("parent")).toBool()) {
+    if (browser.mode() != QStringLiteral("files") || browser.entries().isEmpty() ||
+        !browser.entries().first().toMap().value(QStringLiteral("parent")).toBool()) {
         std::fprintf(stderr, "dj-ui: the Files section did not come back\n");
         return 1;
     }
@@ -608,18 +621,17 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         std::fprintf(stderr, "dj-ui: the layout file could not be written\n");
         return 1;
     }
-    QQuickItem *collectionRow = findItem(panel, QStringLiteral("section_collection"));
-    QQuickItem *filesRow = findItem(panel, QStringLiteral("section_files"));
+    QQuickItem* collectionRow = findItem(panel, QStringLiteral("section_collection"));
+    QQuickItem* filesRow = findItem(panel, QStringLiteral("section_files"));
     if (collectionRow == nullptr || filesRow == nullptr) {
         std::fprintf(stderr, "dj-ui: the sections rail has no Collection row\n");
         return 1;
     }
-    const auto pressSection = [&](QQuickItem *item) {
-        const QPointF centre =
-            item->mapToScene(QPointF(item->width() / 2.0, item->height() / 2.0));
+    const auto pressSection = [&](QQuickItem* item) {
+        const QPointF centre = item->mapToScene(QPointF(item->width() / 2.0, item->height() / 2.0));
         for (const QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
-            QMouseEvent event(type, centre, window->mapToGlobal(centre.toPoint()),
-                              Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QMouseEvent event(type, centre, window->mapToGlobal(centre.toPoint()), Qt::LeftButton,
+                              Qt::LeftButton, Qt::NoModifier);
             QCoreApplication::sendEvent(window, &event);
         }
         QCoreApplication::processEvents();
@@ -641,8 +653,8 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
                  qPrintable(afterCollection), pressedCount, qPrintable(afterFiles));
     // Two tracks from the index when there is an engine, none when there is not.
     const int wantedPressed = hasEngine ? 2 : 0;
-    if (afterCollection != QStringLiteral("collection") || pressedCount != wantedPressed
-        || afterFiles != QStringLiteral("files")) {
+    if (afterCollection != QStringLiteral("collection") || pressedCount != wantedPressed ||
+        afterFiles != QStringLiteral("files")) {
         std::fprintf(stderr, "dj-ui: pressing a section did not move the list\n");
         return 1;
     }
@@ -655,7 +667,7 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         browser.openCollection({realRoot});
         const qint64 elapsed = timer.elapsed();
         int withTempo = 0;
-        for (const QVariant &entry : browser.entries()) {
+        for (const QVariant& entry : browser.entries()) {
             if (entry.toMap().contains(QStringLiteral("bpm"))) {
                 ++withTempo;
             }
@@ -670,28 +682,31 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
                  "the key from the metadata, filters by name and loads into a deck\n",
                  unfiltered);
 
-    std::fprintf(stdout,
-                 "dj-ui: browser selects and acts, selection follows the click, \"..\" goes up, "
-                 "the text size moves the row, the sections (%d px) and the header — title, path, "
-                 "the text-size buttons and the deck buttons — with it; the rail is %.0f px wide, "
-                 "the browser keeps %d%% of the window when the type grows, and the rail width, the "
-                 "font and the deck zoom come back after a restart (130 px, 14 px, 0.25)\n",
-                 small, railAfter, browserPercent);
-    // The deck's modes are settings as well, and a restart has to bring them back. This run leaves snap
-    // and quantize off through the switches themselves — the write-through the hand uses is the one under
-    // test — and the scrub mode audible, and the restore check reads all three in a new process.
-    for (const char *name : {"snapGlobal", "quantizeGlobal"}) {
-        auto *sw = findItem(window->contentItem(), QString::fromLatin1(name));
+    std::fprintf(
+        stdout,
+        "dj-ui: browser selects and acts, selection follows the click, \"..\" goes up, "
+        "the text size moves the row, the sections (%d px) and the header — title, path, "
+        "the text-size buttons and the deck buttons — with it; the rail is %.0f px wide, "
+        "the browser keeps %d%% of the window when the type grows, and the rail width, the "
+        "font and the deck zoom come back after a restart (130 px, 14 px, 0.25)\n",
+        small, railAfter, browserPercent);
+    // The deck's modes are settings as well, and a restart has to bring them back. This run leaves
+    // snap and quantize off through the switches themselves — the write-through the hand uses is
+    // the one under test — and the scrub mode audible, and the restore check reads all three in a
+    // new process.
+    for (const char* name : {"snapGlobal", "quantizeGlobal"}) {
+        auto* sw = findItem(window->contentItem(), QString::fromLatin1(name));
         if (sw == nullptr) {
             std::fprintf(stderr, "dj-ui: the mixer has no %s switch to leave a state in\n", name);
             return 1;
         }
         const QPointF centre = sw->mapToScene(QPointF(sw->width() / 2.0, sw->height() / 2.0));
-        for (const QEvent::Type type : {QEvent::MouseMove, QEvent::MouseButtonPress,
-                                        QEvent::MouseButtonRelease}) {
-            const Qt::MouseButtons buttons = type == QEvent::MouseButtonPress ? Qt::LeftButton
-                                                                             : Qt::NoButton;
-            const Qt::MouseButton button = type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton;
+        for (const QEvent::Type type :
+             {QEvent::MouseMove, QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+            const Qt::MouseButtons buttons =
+                type == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton;
+            const Qt::MouseButton button =
+                type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton;
             QMouseEvent event(type, centre, window->mapToGlobal(centre.toPoint()), button, buttons,
                               Qt::NoModifier);
             QCoreApplication::sendEvent(window, &event);
@@ -708,8 +723,9 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
         QThread::msleep(20);
     }
-    std::fprintf(stdout,
-                 "dj-ui: this run leaves snap off, quantize off and the scrub audible for the next one\n");
+    std::fprintf(
+        stdout,
+        "dj-ui: this run leaves snap off, quantize off and the scrub audible for the next one\n");
     return 0;
 }
 
@@ -719,9 +735,8 @@ int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
 // says so (`variable tracking size limit exceeded`). The checks are the tests; a named
 // function is where a failure is read.
 
-int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSettings &layout,
-                        const QString &fixture, const QString &collectionRoot)
-{
+int runSortCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutSettings& layout,
+                 const QString& fixture, const QString& collectionRoot) {
     if (fixture.isEmpty() || collectionRoot.isEmpty()) {
         std::fprintf(stderr, "dj-ui: --sort-check needs --import-fixture and --collection-root\n");
         return 1;
@@ -732,9 +747,10 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
         return 1;
     }
     // Four names that parse as artist and title, so the list has something to sort by without tags.
-    // The keys are what a secondary sort by tone has to see: `2d` before `10d`, and `8d` before `8m`.
-    // The tempo is written with the precision the measurement has — `142.004` against `142.0` — and
-    // the tone has to decide between them: that is the case the DJ hit with BPM first and Key second.
+    // The keys are what a secondary sort by tone has to see: `2d` before `10d`, and `8d` before
+    // `8m`. The tempo is written with the precision the measurement has — `142.004` against `142.0`
+    // — and the tone has to decide between them: that is the case the DJ hit with BPM first and Key
+    // second.
     const QList<QPair<QString, QString>> toneKeys = {
         {QStringLiteral("Alpha - Zebra"), QStringLiteral("2d")},
         {QStringLiteral("Beta - Apple"), QStringLiteral("8m")},
@@ -753,7 +769,7 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
         return 1;
     }
     int index = 0;
-    for (const auto &pair : toneKeys) {
+    for (const auto& pair : toneKeys) {
         ++index;
         const QString target = root.filePath(pair.first + QStringLiteral(".wav"));
         QFile::remove(target);
@@ -761,21 +777,21 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
             std::fprintf(stderr, "dj-ui: cannot place %s\n", qPrintable(target));
             return 1;
         }
-        QFile record(root.filePath(QStringLiteral(".djmeta/") + pair.first
-                                   + QStringLiteral(".wav.json")));
+        QFile record(
+            root.filePath(QStringLiteral(".djmeta/") + pair.first + QStringLiteral(".wav.json")));
         if (!record.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
             std::fprintf(stderr, "dj-ui: cannot write the record for %s\n", qPrintable(pair.first));
             return 1;
         }
         double bpm = 0.0;
-        for (const auto &tempo : tempos) {
+        for (const auto& tempo : tempos) {
             if (tempo.first == pair.first) {
                 bpm = tempo.second;
             }
         }
-        // A record the index can read: the schema, the revision, when it was written and what identifies
-        // the file. The fingerprint is the row's key, so four tracks sharing one file's bytes would be
-        // one row — the size stands in for the bytes this check did not measure.
+        // A record the index can read: the schema, the revision, when it was written and what
+        // identifies the file. The fingerprint is the row's key, so four tracks sharing one file's
+        // bytes would be one row — the size stands in for the bytes this check did not measure.
         const QJsonObject fingerprint{
             {QStringLiteral("size"), 1000 + index},
             {QStringLiteral("head"), QString(16, QLatin1Char(char('a' + index)))},
@@ -785,8 +801,9 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
                                {QStringLiteral("first_beat_frame"), 0},
                                {QStringLiteral("anchors"), QJsonArray{}},
                                {QStringLiteral("beats_per_bar"), 4}};
-        // The names the columns show are the tags the import read, and the sort reads the same tags: a
-        // record without them is four rows the artist column cannot order, whatever the header asks for.
+        // The names the columns show are the tags the import read, and the sort reads the same
+        // tags: a record without them is four rows the artist column cannot order, whatever the
+        // header asks for.
         const QStringList parts = pair.first.split(QStringLiteral(" - "));
         const QJsonObject tags{{QStringLiteral("artist"), parts.value(0)},
                                {QStringLiteral("album"), QStringLiteral("Album")},
@@ -802,12 +819,12 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
         record.write(QJsonDocument(meta).toJson());
     }
 
-    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().value(0));
+    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().value(0));
     if (window == nullptr) {
         std::fprintf(stderr, "dj-ui: no shell window\n");
         return 1;
     }
-    auto *panel = findItem(window->contentItem(), QStringLiteral("browserPanel"));
+    auto* panel = findItem(window->contentItem(), QStringLiteral("browserPanel"));
     if (panel == nullptr) {
         std::fprintf(stderr, "dj-ui: the shell has no browser\n");
         return 1;
@@ -831,8 +848,8 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
     }
 
     // The rail: two places, and the one a DJ starts in is above the one he digs in.
-    auto *collectionRow = findItem(window->contentItem(), QStringLiteral("section_collection"));
-    auto *filesRow = findItem(window->contentItem(), QStringLiteral("section_files"));
+    auto* collectionRow = findItem(window->contentItem(), QStringLiteral("section_collection"));
+    auto* filesRow = findItem(window->contentItem(), QStringLiteral("section_files"));
     if (collectionRow == nullptr || filesRow == nullptr) {
         std::fprintf(stderr, "dj-ui: the rail has no Collection or Files row\n");
         return 1;
@@ -845,7 +862,7 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
     std::fprintf(stderr, "dj-ui: rail: Collection at %.1f, Files at %.1f\n", collectionRow->y(),
                  filesRow->y());
 
-    auto *header = findItem(window->contentItem(), QStringLiteral("collectionHeaderDrag"));
+    auto* header = findItem(window->contentItem(), QStringLiteral("collectionHeaderDrag"));
     if (header == nullptr) {
         std::fprintf(stderr, "dj-ui: the collection has no header\n");
         return 1;
@@ -860,9 +877,9 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
             QThread::msleep(20);
         }
     }
-    // A column's middle, in the header's own coordinates: the click is a real mouse event, because a
-    // sort nobody can reach with the pointer is a sort that only exists in the code.
-    const auto clickColumn = [&](const QString &column, Qt::KeyboardModifiers modifiers) {
+    // A column's middle, in the header's own coordinates: the click is a real mouse event, because
+    // a sort nobody can reach with the pointer is a sort that only exists in the code.
+    const auto clickColumn = [&](const QString& column, Qt::KeyboardModifiers modifiers) {
         const QVariantList columns = layout.collectionColumns();
         int index = -1;
         for (int at = 0; at < columns.size(); ++at) {
@@ -875,20 +892,22 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
             return false;
         }
         const double width = header->width();
-        // The columns start after the row number and the lock that sits beside it, and that gutter is
-        // part of the header: a left edge summed from the shares alone lands tens of pixels to the left
-        // and clicks the gutter, which sorts nothing. The panel is asked for the edge it draws at.
+        // The columns start after the row number and the lock that sits beside it, and that gutter
+        // is part of the header: a left edge summed from the shares alone lands tens of pixels to
+        // the left and clicks the gutter, which sorts nothing. The panel is asked for the edge it
+        // draws at.
         QVariant asked;
-        const bool knows = QMetaObject::invokeMethod(panel, "columnX", Q_RETURN_ARG(QVariant, asked),
-                                                     Q_ARG(QVariant, index), Q_ARG(QVariant, width));
+        const bool knows =
+            QMetaObject::invokeMethod(panel, "columnX", Q_RETURN_ARG(QVariant, asked),
+                                      Q_ARG(QVariant, index), Q_ARG(QVariant, width));
         const double left = knows ? asked.toDouble() : 0.0;
-        // The column's own middle: its share times the width the columns actually share, which the panel
-        // answers with. Multiplying the share by the whole header leans right by the gutter, and a check
-        // that leans can miss the column it aims at.
+        // The column's own middle: its share times the width the columns actually share, which the
+        // panel answers with. Multiplying the share by the whole header leans right by the gutter,
+        // and a check that leans can miss the column it aims at.
         QVariant askedSpan;
-        const bool knowsSpan = QMetaObject::invokeMethod(panel, "columnWidth",
-                                                         Q_RETURN_ARG(QVariant, askedSpan),
-                                                         Q_ARG(QVariant, index), Q_ARG(QVariant, width));
+        const bool knowsSpan =
+            QMetaObject::invokeMethod(panel, "columnWidth", Q_RETURN_ARG(QVariant, askedSpan),
+                                      Q_ARG(QVariant, index), Q_ARG(QVariant, width));
         const double share = columns.at(index).toMap().value(QStringLiteral("width")).toDouble();
         const double span = knowsSpan ? askedSpan.toDouble() : share * width;
         const QPointF at(left + span / 2.0, header->height() / 2.0);
@@ -898,9 +917,10 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
                               Qt::LeftButton, modifiers);
             QCoreApplication::sendEvent(window, &event);
         }
-        // A sort is asked of the index as well as applied here, and the answer carries the order that was
-        // asked for. Reading the list in the same breath reads the answer to the previous question, so the
-        // check waits the way a hand would: the row order settles before the next look.
+        // A sort is asked of the index as well as applied here, and the answer carries the order
+        // that was asked for. Reading the list in the same breath reads the answer to the previous
+        // question, so the check waits the way a hand would: the row order settles before the next
+        // look.
         QElapsedTimer after;
         after.start();
         while (after.elapsed() < 400) {
@@ -911,25 +931,26 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
     };
     const auto order = [&]() {
         QStringList names;
-        for (const QVariant &row : browser.entries()) {
+        for (const QVariant& row : browser.entries()) {
             names.append(row.toMap().value(QStringLiteral("name")).toString());
         }
         return names;
     };
     const auto keys = [&]() {
         QStringList list;
-        for (const QVariant &key : browser.collectionSort()) {
+        for (const QVariant& key : browser.collectionSort()) {
             const QVariantMap entry = key.toMap();
-            list.append(entry.value(QStringLiteral("column")).toString()
-                        + (entry.value(QStringLiteral("ascending")).toBool() ? "+" : "-"));
+            list.append(entry.value(QStringLiteral("column")).toString() +
+                        (entry.value(QStringLiteral("ascending")).toBool() ? "+" : "-"));
         }
         return list.join(QStringLiteral(","));
     };
-    const auto require = [&](const QString &what, const QStringList &wanted) {
+    const auto require = [&](const QString& what, const QStringList& wanted) {
         const QStringList got = order();
         if (got != wanted) {
             // The keys say what was asked for; the rows say what the list did about it. A key that
-            // turned and rows that did not are two different faults, and the message must tell them apart.
+            // turned and rows that did not are two different faults, and the message must tell them
+            // apart.
             std::fprintf(stderr, "dj-ui: %s -> %s, wanted %s (keys %s)\n", qPrintable(what),
                          qPrintable(got.join(QStringLiteral(" | "))),
                          qPrintable(wanted.join(QStringLiteral(" | "))), qPrintable(keys()));
@@ -940,9 +961,9 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
         return true;
     };
 
-    // The order the list carries before any click: the order its own source gives it. Every line below
-    // turns a sort on, so this is the only place it can be read — and it is what a click on the number
-    // column has to give back.
+    // The order the list carries before any click: the order its own source gives it. Every line
+    // below turns a sort on, so this is the only place it can be read — and it is what a click on
+    // the number column has to give back.
     const QStringList sourceOrder = order();
     if (!clickColumn(QStringLiteral("artist"), Qt::NoModifier)) {
         std::fprintf(stderr, "dj-ui: the header has no artist column\n");
@@ -954,12 +975,14 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
         return 1;
     }
     if (keys() != QStringLiteral("artist+")) {
-        std::fprintf(stderr, "dj-ui: the sort keys read «%s», wanted artist+\n", qPrintable(keys()));
+        std::fprintf(stderr, "dj-ui: the sort keys read «%s», wanted artist+\n",
+                     qPrintable(keys()));
         return 1;
     }
 
     clickColumn(QStringLiteral("artist"), Qt::NoModifier);
-    // Equal artists keep the name order: a list that reshuffles between equal rows jumps under the hand.
+    // Equal artists keep the name order: a list that reshuffles between equal rows jumps under the
+    // hand.
     if (!require(QStringLiteral("click artist again"),
                  {QStringLiteral("Gamma - Mango"), QStringLiteral("Beta - Apple"),
                   QStringLiteral("Alpha - Apple"), QStringLiteral("Alpha - Zebra")})) {
@@ -977,7 +1000,8 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
         return 1;
     }
     if (keys() != QStringLiteral("title+")) {
-        std::fprintf(stderr, "dj-ui: a plain click did not replace the key: «%s»\n", qPrintable(keys()));
+        std::fprintf(stderr, "dj-ui: a plain click did not replace the key: «%s»\n",
+                     qPrintable(keys()));
         return 1;
     }
 
@@ -988,8 +1012,8 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
         return 1;
     }
 
-    // Shift: the title keeps deciding, the artist decides between the rows it could not. Ascending it
-    // agrees with the name order, so the change is checked by turning that second key around.
+    // Shift: the title keeps deciding, the artist decides between the rows it could not. Ascending
+    // it agrees with the name order, so the change is checked by turning that second key around.
     clickColumn(QStringLiteral("artist"), Qt::ShiftModifier);
     if (keys() != QStringLiteral("title-,artist+")) {
         std::fprintf(stderr, "dj-ui: the shift click left the keys at «%s»\n", qPrintable(keys()));
@@ -1053,15 +1077,16 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
         std::fprintf(stderr, "dj-ui: the shift click on the key left «%s»\n", qPrintable(keys()));
         return 1;
     }
-    // The tempo reads to a hundredth, and a whole number is padded: a column of rounded tempi cannot be
-    // sorted by eye, and 128 must not read as something between 127 and 129.
-    // The list is re-sorted by the last click, and a delegate is laid out a frame later: the cell is read
-    // after the rows have settled, the way the eye reads it.
+    // The tempo reads to a hundredth, and a whole number is padded: a column of rounded tempi
+    // cannot be sorted by eye, and 128 must not read as something between 127 and 129. The list is
+    // re-sorted by the last click, and a delegate is laid out a frame later: the cell is read after
+    // the rows have settled, the way the eye reads it.
     for (int tick = 0; tick < 25; ++tick) {
         QCoreApplication::processEvents();
         QThread::msleep(20);
     }
-    if (QQuickItem *cell = findItem(window->contentItem(), QStringLiteral("collectionCell_bpm_0"))) {
+    if (QQuickItem* cell =
+            findItem(window->contentItem(), QStringLiteral("collectionCell_bpm_0"))) {
         const QString shown = cell->property("text").toString();
         const QRegularExpression wanted(QStringLiteral("^\\d+\\.\\d\\d$"));
         if (!wanted.match(shown).hasMatch()) {
@@ -1075,9 +1100,10 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
         return 1;
     }
 
-    // The number column's header: a click there drops every key at once. Two keys are in force here (the
-    // tempo and the tone), so the case says "all of them" and not "the last one" — and the order has to
-    // come back to the one the list had before the first click, not merely to something unsorted.
+    // The number column's header: a click there drops every key at once. Two keys are in force here
+    // (the tempo and the tone), so the case says "all of them" and not "the last one" — and the
+    // order has to come back to the one the list had before the first click, not merely to
+    // something unsorted.
     {
         const double numberWidth = panel->property("numberWidth").toDouble();
         if (numberWidth <= 1.0) {
@@ -1092,8 +1118,8 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
                               Qt::LeftButton, Qt::NoModifier);
             QCoreApplication::sendEvent(window, &event);
         }
-        // The index is asked again with no order at all, and its answer carries the rows: give it the
-        // frames a hand would take before reading the list.
+        // The index is asked again with no order at all, and its answer carries the rows: give it
+        // the frames a hand would take before reading the list.
         QElapsedTimer asked;
         asked.start();
         while (asked.elapsed() < 500) {
@@ -1108,18 +1134,18 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
         if (!require(QStringLiteral("click the number column"), sourceOrder)) {
             return 1;
         }
-        // And the marks go with the keys: an arrow over a list that no column decides is the picture of a
-        // sort that is not there.
+        // And the marks go with the keys: an arrow over a list that no column decides is the
+        // picture of a sort that is not there.
         const QString marks = QStringLiteral("▲▼△▽");
         QStringList stillMarked;
         for (int index = 0; index < 6; ++index) {
-            auto *cell = findItem(window->contentItem(),
+            auto* cell = findItem(window->contentItem(),
                                   QStringLiteral("collectionHeaderCell_%1").arg(index));
             if (cell == nullptr) {
                 continue;
             }
             const QString text = cell->property("text").toString();
-            for (const QChar &glyph : text) {
+            for (const QChar& glyph : text) {
                 if (marks.contains(glyph)) {
                     stillMarked.append(text.trimmed());
                 }
@@ -1130,13 +1156,14 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
                          qPrintable(stillMarked.join(QStringLiteral(" | "))));
             return 1;
         }
-        std::fprintf(stderr, "dj-ui: the number column reset the sort, and no header keeps a mark\n");
+        std::fprintf(stderr,
+                     "dj-ui: the number column reset the sort, and no header keeps a mark\n");
     }
 
-    // A list long enough to scroll: the cursor is driven by the keyboard, and the view must be at the
-    // row at once — a window that glides to it reads as lag, not as motion.
-    // A folder of its own: the index fills one it has never seen. Records that appear in a folder it
-    // already knows are a different question — records arriving from outside — and they wait for a rescan.
+    // A list long enough to scroll: the cursor is driven by the keyboard, and the view must be at
+    // the row at once — a window that glides to it reads as lag, not as motion. A folder of its
+    // own: the index fills one it has never seen. Records that appear in a folder it already knows
+    // are a different question — records arriving from outside — and they wait for a rescan.
     const QString scrollRoot = collectionRoot + QStringLiteral("-scroll");
     if (!QDir().mkpath(scrollRoot + QStringLiteral("/.djmeta"))) {
         std::fprintf(stderr, "dj-ui: cannot make %s\n", qPrintable(scrollRoot));
@@ -1179,7 +1206,7 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
         QCoreApplication::processEvents();
         QThread::msleep(20);
     }
-    auto *list = findItem(window->contentItem(), QStringLiteral("browserList"));
+    auto* list = findItem(window->contentItem(), QStringLiteral("browserList"));
     if (list == nullptr) {
         std::fprintf(stderr, "dj-ui: the browser has no list\n");
         return 1;
@@ -1189,8 +1216,8 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
         std::fprintf(stderr, "dj-ui: the list has no row height\n");
         return 1;
     }
-    // Probe: a cursor that arrives without a key — the remembered row of a section left behind, or a
-    // row the DJ clicked. Where is the window then?
+    // Probe: a cursor that arrives without a key — the remembered row of a section left behind, or
+    // a row the DJ clicked. Where is the window then?
     const QVariantList rows = browser.entries();
     if (rows.size() < 31) {
         std::fprintf(stderr, "dj-ui: the collection lists %d rows, wanted at least 31 to scroll\n",
@@ -1258,15 +1285,15 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
     std::fprintf(stderr, "dj-ui: the view is at row %d at once (contentY %.1f, row height %.1f)\n",
                  row, settled, rowHeight);
 
-    // The wheel moves the cursor: a scroll that only moved the picture slid the selection out of the
-    // window, which is what the DJ reported. The wheel event goes through the window, as a real one
-    // does, so the handler on the list is the thing under test.
+    // The wheel moves the cursor: a scroll that only moved the picture slid the selection out of
+    // the window, which is what the DJ reported. The wheel event goes through the window, as a real
+    // one does, so the handler on the list is the thing under test.
     {
         const int beforeWheel = browser.rowOf(browser.cursor());
         const QPointF local(list->width() / 2.0, list->height() / 2.0);
         const QPointF scene = list->mapToScene(local);
-        QWheelEvent wheel(scene, window->mapToGlobal(scene.toPoint()), QPoint(0, 0), QPoint(0, -120),
-                          Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QWheelEvent wheel(scene, window->mapToGlobal(scene.toPoint()), QPoint(0, 0),
+                          QPoint(0, -120), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
         QCoreApplication::sendEvent(window, &wheel);
         for (int tick = 0; tick < 4; ++tick) {
             QCoreApplication::processEvents();
@@ -1274,7 +1301,8 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
         }
         const int afterWheel = browser.rowOf(browser.cursor());
         if (afterWheel != beforeWheel + 1) {
-            std::fprintf(stderr, "dj-ui: the wheel moved the cursor from %d to %d, wanted one row\n",
+            std::fprintf(stderr,
+                         "dj-ui: the wheel moved the cursor from %d to %d, wanted one row\n",
                          beforeWheel, afterWheel);
             return 1;
         }
@@ -1290,9 +1318,9 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
         std::fprintf(stderr, "dj-ui: the wheel moved the cursor to row %d, still in the middle\n",
                      afterWheel);
     }
-    // The DJ's own flow: the cursor is remembered from the last session and the rows arrive after it.
-    // A single positioning against a half-built list lands short — the row ends up below the window,
-    // which is what he saw when he opened the collection.
+    // The DJ's own flow: the cursor is remembered from the last session and the rows arrive after
+    // it. A single positioning against a half-built list lands short — the row ends up below the
+    // window, which is what he saw when he opened the collection.
     {
         root.mkpath(QStringLiteral("empty"));
         const QString remembered = scroll.filePath(QStringLiteral("Scroll 30.wav"));
@@ -1309,8 +1337,9 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
             QCoreApplication::processEvents();
             QThread::msleep(20);
         }
-        // The rows, not only the opening: the index answers a page when it has one, and a page that came
-        // back empty has no row to remember — the cursor then reads -1 and a working panel looks broken.
+        // The rows, not only the opening: the index answers a page when it has one, and a page that
+        // came back empty has no row to remember — the cursor then reads -1 and a working panel
+        // looks broken.
         for (int tick = 0; tick < 250 && browser.entries().isEmpty(); ++tick) {
             QCoreApplication::processEvents();
             QThread::msleep(20);
@@ -1329,8 +1358,8 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
                      rememberedRow, list->property("contentY").toDouble());
     }
 
-    // Probe: a track out of the collection into a deck — the gesture the DJ says stopped working. The
-    // existing check loads from the files section only, which is why this went unnoticed.
+    // Probe: a track out of the collection into a deck — the gesture the DJ says stopped working.
+    // The existing check loads from the files section only, which is why this went unnoticed.
     {
         const QPointF point = list->mapToScene(QPointF(20.0, 5 * rowHeight + 9.0));
         for (const QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
@@ -1348,14 +1377,14 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
                                   Q_ARG(QVariant, QStringLiteral("A")));
         QElapsedTimer wait;
         wait.start();
-        while (wait.elapsed() < 60000
-               && !panel->property("lastAction").toString().startsWith(QStringLiteral("loaded "))) {
+        while (wait.elapsed() < 60000 &&
+               !panel->property("lastAction").toString().startsWith(QStringLiteral("loaded "))) {
             QCoreApplication::processEvents();
             QThread::msleep(50);
         }
         const QString action = panel->property("lastAction").toString();
-        if (clicked < 0 || path.isEmpty() || !returned.toBool()
-            || !action.startsWith(QStringLiteral("loaded "))) {
+        if (clicked < 0 || path.isEmpty() || !returned.toBool() ||
+            !action.startsWith(QStringLiteral("loaded "))) {
             std::fprintf(stderr,
                          "dj-ui: a collection row did not load into a deck (clicked %d, selected "
                          "'%s', action '%s')\n",
@@ -1365,11 +1394,11 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
         std::fprintf(stderr, "dj-ui: a collection row loads into a deck: %s\n", qPrintable(action));
     }
 
-    // Every name is its own door. This is the fault the owner met by hand: the columns sit after the row
-    // number and the lock, and a mapping that forgets the gutter answers one column to the right — a click
-    // on BPM asking the index for Key. The keys the panel asked for say which door the click opened, so the
-    // test does not have to guess from the row order.
-    for (const char *column : {"artist", "album", "title", "time", "bpm", "key"}) {
+    // Every name is its own door. This is the fault the owner met by hand: the columns sit after
+    // the row number and the lock, and a mapping that forgets the gutter answers one column to the
+    // right — a click on BPM asking the index for Key. The keys the panel asked for say which door
+    // the click opened, so the test does not have to guess from the row order.
+    for (const char* column : {"artist", "album", "title", "time", "bpm", "key"}) {
         const QString name = QString::fromLatin1(column);
         if (!clickColumn(name, Qt::NoModifier)) {
             std::fprintf(stderr, "dj-ui: the header has no %s column\n", column);
@@ -1383,12 +1412,12 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
     }
     std::fprintf(stderr, "dj-ui: every column's name sorts by itself (%s)\n", qPrintable(keys()));
 
-    // The header's mapping, asked directly, and at two widths: the middle of every column must answer that
-    // column. This is the arithmetic a click goes through — the columns start after the row number and the
-    // lock, and share what is left — and the fault shows as one column off. A single width can hide it,
-    // because the two ways of summing the same shares can agree there; a narrow window makes the gutter a
-    // larger part of the header and the difference visible.
-    const auto mappingAt = [&](int wide, const char *what) -> QString {
+    // The header's mapping, asked directly, and at two widths: the middle of every column must
+    // answer that column. This is the arithmetic a click goes through — the columns start after the
+    // row number and the lock, and share what is left — and the fault shows as one column off. A
+    // single width can hide it, because the two ways of summing the same shares can agree there; a
+    // narrow window makes the gutter a larger part of the header and the difference visible.
+    const auto mappingAt = [&](int wide, const char* what) -> QString {
         window->resize(wide, 800);
         for (int tick = 0; tick < 15; ++tick) {
             QCoreApplication::processEvents();
@@ -1411,9 +1440,13 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
             QMetaObject::invokeMethod(panel, "columnIndexAt", Q_RETURN_ARG(QVariant, leftAnswer),
                                       Q_ARG(QVariant, left + 2.0), Q_ARG(QVariant, width));
             if (middleAnswer.toInt() != index || leftAnswer.toInt() != index) {
-                const QString id =
-                    layout.collectionColumns().at(index).toMap().value(QStringLiteral("id")).toString();
-                return QStringLiteral("at %1 px (header %2) the middle of %3 answers %4, its left edge %5")
+                const QString id = layout.collectionColumns()
+                                       .at(index)
+                                       .toMap()
+                                       .value(QStringLiteral("id"))
+                                       .toString();
+                return QStringLiteral(
+                           "at %1 px (header %2) the middle of %3 answers %4, its left edge %5")
                     .arg(wide)
                     .arg(width)
                     .arg(id)
@@ -1425,8 +1458,8 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
                      static_cast<unsigned>(width));
         return QString();
     };
-    for (const auto &pass : {std::make_pair(1200, "in the wide window"),
-                             std::make_pair(720, "in a narrow window")}) {
+    for (const auto& pass :
+         {std::make_pair(1200, "in the wide window"), std::make_pair(720, "in a narrow window")}) {
         if (const QString complaint = mappingAt(pass.first, pass.second); !complaint.isEmpty()) {
             std::fprintf(stderr, "dj-ui: %s\n", qPrintable(complaint));
             return 1;
@@ -1443,15 +1476,15 @@ int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSett
 }
 
 // The collection's Analyze…: one track gets a progress window, a selection gets a question with the
-// parallel box and then the same window. Afterwards the numbers are in the list, not only in the files.
+// parallel box and then the same window. Afterwards the numbers are in the list, not only in the
+// files.
 /// How the collection lists: the walk, the sidecars, the rows — and the time it takes.
 ///
-/// The section is built by walking every root and reading a `.djmeta` record per file, then sorted and
-/// filtered in memory. Whether that holds at a hundred thousand tracks is a question with a number, not
-/// an opinion, and this is where the number comes from. Nothing is written.
+/// The section is built by walking every root and reading a `.djmeta` record per file, then sorted
+/// and filtered in memory. Whether that holds at a hundred thousand tracks is a question with a
+/// number, not an opinion, and this is where the number comes from. Nothing is written.
 
-int runCollectionProbe(FileBrowser &browser, const QString &root)
-{
+int runCollectionProbe(FileBrowser& browser, const QString& root) {
     if (root.isEmpty()) {
         std::fprintf(stderr, "dj-ui: --collection-probe needs --collection-root\n");
         return 1;
@@ -1483,8 +1516,7 @@ int runCollectionProbe(FileBrowser &browser, const QString &root)
 
 /// Does this value, anywhere inside it, name the file?
 
-bool holdsName(const QVariant &value, const QString &name)
-{
+bool holdsName(const QVariant& value, const QString& name) {
     if (value.typeId() == QMetaType::QVariantMap) {
         const QVariantMap map = value.toMap();
         for (auto entry = map.cbegin(); entry != map.cend(); ++entry) {
@@ -1495,7 +1527,7 @@ bool holdsName(const QVariant &value, const QString &name)
         return false;
     }
     if (value.typeId() == QMetaType::QVariantList) {
-        for (const QVariant &item : value.toList()) {
+        for (const QVariant& item : value.toList()) {
             if (holdsName(item, name)) {
                 return true;
             }
@@ -1508,23 +1540,22 @@ bool holdsName(const QVariant &value, const QString &name)
 /// A track out of a real collection into a deck, read only.
 ///
 /// The other checks load from the files section and from a collection this program wrote itself. A
-/// collection the DJ made is a different thing: hashed folders, sidecars, names taken from tags. And
-/// the panel's own message is not evidence — the deck's track is, so the engine's snapshot is what
-/// gets read here.
+/// collection the DJ made is a different thing: hashed folders, sidecars, names taken from tags.
+/// And the panel's own message is not evidence — the deck's track is, so the engine's snapshot is
+/// what gets read here.
 
-int runCollectionLoadCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
-                                  BridgeClient &bridge, const QString &collectionRoot)
-{
+int runCollectionLoadCheck(QQmlApplicationEngine& engine, FileBrowser& browser,
+                           BridgeClient& bridge, const QString& collectionRoot) {
     if (collectionRoot.isEmpty()) {
         std::fprintf(stderr, "dj-ui: --collection-load-check needs --collection-root\n");
         return 1;
     }
-    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().value(0));
+    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().value(0));
     if (window == nullptr) {
         std::fprintf(stderr, "dj-ui: no shell window\n");
         return 1;
     }
-    auto *panel = findItem(window->contentItem(), QStringLiteral("browserPanel"));
+    auto* panel = findItem(window->contentItem(), QStringLiteral("browserPanel"));
     if (panel == nullptr) {
         std::fprintf(stderr, "dj-ui: the shell has no browser\n");
         return 1;
@@ -1536,12 +1567,14 @@ int runCollectionLoadCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         QCoreApplication::processEvents();
         QThread::msleep(50);
     }
-    // The row number: a position in the list, drawn to the left of the columns and reading as the DJ counts.
-    if (auto *number = findItem(window->contentItem(), QStringLiteral("collectionCell_number_0"))) {
+    // The row number: a position in the list, drawn to the left of the columns and reading as the
+    // DJ counts.
+    if (auto* number = findItem(window->contentItem(), QStringLiteral("collectionCell_number_0"))) {
         const QString shown = number->property("text").toString();
         std::fprintf(stdout, "dj-ui: the first row is numbered '%s'\n", qPrintable(shown));
         if (shown != QStringLiteral("1")) {
-            std::fprintf(stderr, "dj-ui: the row number reads '%s', wanted '1'\n", qPrintable(shown));
+            std::fprintf(stderr, "dj-ui: the row number reads '%s', wanted '1'\n",
+                         qPrintable(shown));
             return 1;
         }
     } else {
@@ -1559,9 +1592,9 @@ int runCollectionLoadCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     QCoreApplication::processEvents();
     const QString selectedPath =
         panel->property("selected").toMap().value(QStringLiteral("path")).toString();
-    // The button, not the function: the DJ presses a deck button in the header, and a handler that is
-    // never reached by a real press is a handler that does not exist.
-    auto *button = findItem(window->contentItem(), QStringLiteral("deckButton_A"));
+    // The button, not the function: the DJ presses a deck button in the header, and a handler that
+    // is never reached by a real press is a handler that does not exist.
+    auto* button = findItem(window->contentItem(), QStringLiteral("deckButton_A"));
     if (button == nullptr) {
         std::fprintf(stderr, "dj-ui: the header has no deck A button\n");
         return 1;
@@ -1579,8 +1612,8 @@ int runCollectionLoadCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     const QVariant returned = accepted;
     QElapsedTimer settle;
     settle.start();
-    while (settle.elapsed() < 90000
-           && !panel->property("lastAction").toString().startsWith(QStringLiteral("loaded "))) {
+    while (settle.elapsed() < 90000 &&
+           !panel->property("lastAction").toString().startsWith(QStringLiteral("loaded "))) {
         QCoreApplication::processEvents();
         QThread::msleep(50);
     }
@@ -1601,7 +1634,8 @@ int runCollectionLoadCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         QThread::msleep(50);
     }
     if (!loaded()) {
-        std::fprintf(stderr, "dj-ui: deck A does not carry '%s' after the load\n", qPrintable(name));
+        std::fprintf(stderr, "dj-ui: deck A does not carry '%s' after the load\n",
+                     qPrintable(name));
         return 1;
     }
     std::fprintf(stderr, "dj-ui: the collection track reached deck A: %s\n", qPrintable(name));
@@ -1610,15 +1644,16 @@ int runCollectionLoadCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
 
 /// A metronome as a wav file: a click on every beat, so the detector has a beat to find.
 ///
-/// The checks that need several tracks cannot copy one recording: the identity check reads copies as the
-/// same track and sets them aside. Three tempos are three tracks, and each one can be measured.
+/// The checks that need several tracks cannot copy one recording: the identity check reads copies
+/// as the same track and sets them aside. Three tempos are three tracks, and each one can be
+/// measured.
 
-int runCollectionPageCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
-                                  BridgeClient &bridge, const QString &fixture,
-                                  const QString &collectionRoot)
-{
+int runCollectionPageCheck(QQmlApplicationEngine& engine, FileBrowser& browser,
+                           BridgeClient& bridge, const QString& fixture,
+                           const QString& collectionRoot) {
     if (fixture.isEmpty() || !QFile::exists(fixture)) {
-        std::fprintf(stderr, "dj-ui: --collection-page-check needs a real track in --import-fixture\n");
+        std::fprintf(stderr,
+                     "dj-ui: --collection-page-check needs a real track in --import-fixture\n");
         return 1;
     }
     if (collectionRoot.isEmpty()) {
@@ -1630,9 +1665,9 @@ int runCollectionPageCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         std::fprintf(stderr, "dj-ui: cannot make a temporary folder\n");
         return 1;
     }
-    // The cold case first: no index exists yet, so the engine creates it and runs the schema and its
-    // migrations inside the answer. That is what a browser opening the collection on a fresh install
-    // does, and it must not hang the engine.
+    // The cold case first: no index exists yet, so the engine creates it and runs the schema and
+    // its migrations inside the answer. That is what a browser opening the collection on a fresh
+    // install does, and it must not hang the engine.
     {
         QVariantMap cold;
         cold.insert(QStringLiteral("id"), 1111);
@@ -1641,8 +1676,8 @@ int runCollectionPageCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         QElapsedTimer coldClock;
         coldClock.start();
         bridge.queryCollection(cold);
-        while (coldClock.elapsed() < 15000
-               && bridge.collectionPage().value(QStringLiteral("id")).toInt() != 1111) {
+        while (coldClock.elapsed() < 15000 &&
+               bridge.collectionPage().value(QStringLiteral("id")).toInt() != 1111) {
             QCoreApplication::processEvents();
             QThread::msleep(10);
         }
@@ -1652,7 +1687,8 @@ int runCollectionPageCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         }
         std::fprintf(stdout, "dj-ui: a query with no index answered in %lld ms, %d rows\n",
                      static_cast<long long>(coldClock.elapsed()),
-                     static_cast<int>(bridge.collectionPage().value(QStringLiteral("rows")).toList().size()));
+                     static_cast<int>(
+                         bridge.collectionPage().value(QStringLiteral("rows")).toList().size()));
     }
     const QString source = incoming.path() + QStringLiteral("/A - Page.wav");
     if (!QFile::copy(fixture, source)) {
@@ -1660,7 +1696,7 @@ int runCollectionPageCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         return 1;
     }
 
-    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
     if (window == nullptr) {
         std::fprintf(stderr, "dj-ui: the root object is not a window\n");
         return 1;
@@ -1672,7 +1708,7 @@ int runCollectionPageCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     QTimer::singleShot(600, &settle, &QEventLoop::quit);
     settle.exec();
 
-    QQuickItem *panel = findItem(window->contentItem(), QStringLiteral("browserPanel"));
+    QQuickItem* panel = findItem(window->contentItem(), QStringLiteral("browserPanel"));
     if (panel == nullptr) {
         std::fprintf(stderr, "dj-ui: the shell has no browser\n");
         return 1;
@@ -1696,7 +1732,7 @@ int runCollectionPageCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
                               Q_ARG(QVariant, static_cast<int>(Qt::NoModifier)));
     QMetaObject::invokeMethod(panel, "askImport", Q_RETURN_ARG(QVariant, returned));
     QCoreApplication::processEvents();
-    auto *confirmButton = panel->findChild<QObject *>(QStringLiteral("importConfirm"));
+    auto* confirmButton = panel->findChild<QObject*>(QStringLiteral("importConfirm"));
     if (confirmButton == nullptr) {
         std::fprintf(stderr, "dj-ui: the import windows are not in the shell\n");
         return 1;
@@ -1708,8 +1744,8 @@ int runCollectionPageCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     while (batch.elapsed() < 60000) {
         QCoreApplication::processEvents();
         const QVariantMap now = state();
-        if (!now.isEmpty() && now.value(QStringLiteral("total")).toInt() > 0
-            && !now.value(QStringLiteral("running")).toBool()) {
+        if (!now.isEmpty() && now.value(QStringLiteral("total")).toInt() > 0 &&
+            !now.value(QStringLiteral("running")).toBool()) {
             break;
         }
         QThread::msleep(10);
@@ -1742,8 +1778,8 @@ int runCollectionPageCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     bridge.queryCollection(query);
     QElapsedTimer pageClock;
     pageClock.start();
-    while (pageClock.elapsed() < 15000
-           && bridge.collectionPage().value(QStringLiteral("id")).toInt() != 4242) {
+    while (pageClock.elapsed() < 15000 &&
+           bridge.collectionPage().value(QStringLiteral("id")).toInt() != 4242) {
         QCoreApplication::processEvents();
         QThread::msleep(20);
     }
@@ -1757,14 +1793,14 @@ int runCollectionPageCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
                  static_cast<int>(walked.size()), static_cast<int>(pageRows.size()));
 
     QHash<QString, QVariantMap> byPath;
-    for (const QVariant &entry : pageRows) {
+    for (const QVariant& entry : pageRows) {
         const QVariantMap made = entry.toMap();
         byPath.insert(made.value(QStringLiteral("path")).toString(), made);
     }
     int told = 0;
     int compared = 0;
     int wrong = 0;
-    for (const QVariant &entry : walked) {
+    for (const QVariant& entry : walked) {
         const QVariantMap row_ = entry.toMap();
         const QString path = row_.value(QStringLiteral("path")).toString();
         if (!byPath.contains(path)) {
@@ -1776,35 +1812,35 @@ int runCollectionPageCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         }
         const QVariantMap pageRow = byPath.take(path);
         ++compared;
-        const auto complain = [&](const char *field, const QString &walkedValue,
-                                  const QString &pageValue) {
+        const auto complain = [&](const char* field, const QString& walkedValue,
+                                  const QString& pageValue) {
             if (told++ < 5) {
                 std::fprintf(stderr, "dj-ui: %s differs on %s: walk '%s', index '%s'\n", field,
                              qPrintable(path), qPrintable(walkedValue), qPrintable(pageValue));
             }
             ++wrong;
         };
-        if (row_.value(QStringLiteral("artist")).toString()
-            != pageRow.value(QStringLiteral("artist")).toString()) {
+        if (row_.value(QStringLiteral("artist")).toString() !=
+            pageRow.value(QStringLiteral("artist")).toString()) {
             complain("artist", row_.value(QStringLiteral("artist")).toString(),
                      pageRow.value(QStringLiteral("artist")).toString());
         }
-        if (row_.value(QStringLiteral("album")).toString()
-            != pageRow.value(QStringLiteral("album")).toString()) {
+        if (row_.value(QStringLiteral("album")).toString() !=
+            pageRow.value(QStringLiteral("album")).toString()) {
             complain("album", row_.value(QStringLiteral("album")).toString(),
                      pageRow.value(QStringLiteral("album")).toString());
         }
-        if (row_.value(QStringLiteral("title")).toString()
-            != pageRow.value(QStringLiteral("title")).toString()) {
+        if (row_.value(QStringLiteral("title")).toString() !=
+            pageRow.value(QStringLiteral("title")).toString()) {
             complain("title", row_.value(QStringLiteral("title")).toString(),
                      pageRow.value(QStringLiteral("title")).toString());
         }
-        // The walk carries milliseconds, the index frames and their rate: one number, two spellings.
+        // The walk carries milliseconds, the index frames and their rate: one number, two
+        // spellings.
         const double frames = pageRow.value(QStringLiteral("duration_frames")).toDouble();
         const double rate = pageRow.value(QStringLiteral("sample_rate")).toDouble();
-        const qint64 pageMs = rate > 0.0 && frames > 0.0
-            ? static_cast<qint64>(frames * 1000.0 / rate + 0.5)
-            : 0;
+        const qint64 pageMs =
+            rate > 0.0 && frames > 0.0 ? static_cast<qint64>(frames * 1000.0 / rate + 0.5) : 0;
         const qint64 walkedMs = row_.value(QStringLiteral("duration_ms")).toLongLong();
         if (std::abs(pageMs - walkedMs) > 1) {
             complain("duration", QString::number(walkedMs), QString::number(pageMs));
@@ -1812,7 +1848,7 @@ int runCollectionPageCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         // Genres: the walk keeps them apart, the index keeps one line per name.
         QStringList pageGenres;
         const QString names = pageRow.value(QStringLiteral("genre")).toString();
-        for (const QString &genre : names.split(QStringLiteral(", "), Qt::SkipEmptyParts)) {
+        for (const QString& genre : names.split(QStringLiteral(", "), Qt::SkipEmptyParts)) {
             pageGenres.append(genre.trimmed());
         }
         const QStringList walkedGenres = row_.value(QStringLiteral("genres")).toStringList();
@@ -1835,13 +1871,14 @@ int runCollectionPageCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
     }
     std::fprintf(stdout, "dj-ui: the index and the walk agree on every row\n");
 
-    // The genre boxes: the engine counts them in its own table and publishes them apart from the page. The
-    // walk knows the same genres from the same files, so the two counts must agree — that is what makes
-    // "the boxes come from the database" a measurement instead of a claim.
+    // The genre boxes: the engine counts them in its own table and publishes them apart from the
+    // page. The walk knows the same genres from the same files, so the two counts must agree — that
+    // is what makes "the boxes come from the database" a measurement instead of a claim.
     {
         QMap<QString, int> walkedGenres;
-        for (const QVariant &entry : walked) {
-            for (const QString &genre : entry.toMap().value(QStringLiteral("genres")).toStringList()) {
+        for (const QVariant& entry : walked) {
+            for (const QString& genre :
+                 entry.toMap().value(QStringLiteral("genres")).toStringList()) {
                 walkedGenres[genre.toLower()] += 1;
             }
         }
@@ -1853,7 +1890,7 @@ int runCollectionPageCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
             const QVariantList said = bridge.snapshot().value(QStringLiteral("genres")).toList();
             if (!said.isEmpty()) {
                 counted.clear();
-                for (const QVariant &entry : said) {
+                for (const QVariant& entry : said) {
                     const QVariantMap box = entry.toMap();
                     counted.insert(box.value(QStringLiteral("name")).toString().toLower(),
                                    box.value(QStringLiteral("count")).toInt());
@@ -1880,12 +1917,14 @@ int runCollectionPageCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
             }
             return 1;
         }
-        std::fprintf(stdout, "dj-ui: the genre boxes come from the table: %d genres, the walk agrees\n",
+        std::fprintf(stdout,
+                     "dj-ui: the genre boxes come from the table: %d genres, the walk agrees\n",
                      static_cast<int>(counted.size()));
     }
 
-    // A genre filter must narrow the list, not empty it: the answer is already narrowed by the index and
-    // must be shown as it came. This is the bug the DJ reported — a saved genre left an empty collection.
+    // A genre filter must narrow the list, not empty it: the answer is already narrowed by the
+    // index and must be shown as it came. This is the bug the DJ reported — a saved genre left an
+    // empty collection.
     if (!pageRows.isEmpty()) {
         const QString names = pageRows.first().toMap().value(QStringLiteral("genre")).toString();
         const QString wanted = names.split(QStringLiteral(", ")).value(0).trimmed();
@@ -1897,8 +1936,8 @@ int runCollectionPageCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
                 QCoreApplication::processEvents();
                 QThread::msleep(20);
             }
-            std::fprintf(stdout, "dj-ui: the genre filter '%s' leaves %d rows\n", qPrintable(wanted),
-                         static_cast<int>(browser.entries().size()));
+            std::fprintf(stdout, "dj-ui: the genre filter '%s' leaves %d rows\n",
+                         qPrintable(wanted), static_cast<int>(browser.entries().size()));
             if (browser.entries().isEmpty()) {
                 std::fprintf(stderr, "dj-ui: a genre the index knows left an empty list\n");
                 return 1;
@@ -1907,9 +1946,9 @@ int runCollectionPageCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         }
     }
 
-    // Can the engine still take a load after answering a collection query? That is what broke when the
-    // page was wired into the list: the query opened the index — schema and migrations, a write — on the
-    // same loop that acks deck commands. The number below is the answer, not an opinion.
+    // Can the engine still take a load after answering a collection query? That is what broke when
+    // the page was wired into the list: the query opened the index — schema and migrations, a write
+    // — on the same loop that acks deck commands. The number below is the answer, not an opinion.
     if (!walked.isEmpty()) {
         browser.setCursor(walked.first().toMap().value(QStringLiteral("path")).toString());
         QCoreApplication::processEvents();
@@ -1919,22 +1958,22 @@ int runCollectionPageCheck(QQmlApplicationEngine &engine, FileBrowser &browser,
         loadClock.start();
         QMetaObject::invokeMethod(panel, "loadInto", Q_RETURN_ARG(QVariant, returnedLoad),
                                   Q_ARG(QVariant, QStringLiteral("A")));
-        while (loadClock.elapsed() < 20000
-               && !panel->property("lastAction").toString().startsWith(QStringLiteral("loaded "))) {
+        while (loadClock.elapsed() < 20000 &&
+               !panel->property("lastAction").toString().startsWith(QStringLiteral("loaded "))) {
             QCoreApplication::processEvents();
             QThread::msleep(20);
         }
         const QString action = panel->property("lastAction").toString();
-        std::fprintf(stdout, "dj-ui: a load after the query -> '%s' in %lld ms\n", qPrintable(action),
-                     static_cast<long long>(loadClock.elapsed()));
+        std::fprintf(stdout, "dj-ui: a load after the query -> '%s' in %lld ms\n",
+                     qPrintable(action), static_cast<long long>(loadClock.elapsed()));
         if (!action.startsWith(QStringLiteral("loaded "))) {
             std::fprintf(stderr, "dj-ui: the engine did not take a load after the query\n");
             return 1;
         }
     }
 
-    // The header the DJ reads the collection by: the count beside the title, the browser's own controls
-    // at the far right. Measured by the same code the import check runs.
+    // The header the DJ reads the collection by: the count beside the title, the browser's own
+    // controls at the far right. Measured by the same code the import check runs.
     if (const int verdict = measureCollectionHeader(panel); verdict != 0) {
         return verdict;
     }

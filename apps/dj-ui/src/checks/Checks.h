@@ -56,87 +56,169 @@ namespace checks {
 
 /// QML items created by a Repeater are not always in the window's QObject tree, so a search by name
 /// has to walk the visual tree — the one the user actually sees.
-QQuickItem *findItem(QQuickItem *root, const QString &name);
+QQuickItem* findItem(QQuickItem* root, const QString& name);
 
-int measureDeckRows(QQuickWindow *window, const QString &deck);
-bool writeClickTrack(const QString &path, double bpm, double seconds);
-int measureCollectionHeader(QQuickItem *panel);
+int measureDeckRows(QQuickWindow* window, const QString& deck);
+bool writeClickTrack(const QString& path, double bpm, double seconds);
+int measureCollectionHeader(QQuickItem* panel);
 
-QVariantMap deckById(const QVariantMap &snapshot, const QString &deck);
-bool deckHasHotcue(const QVariantMap &snapshot, const QString &deck, int slot);
-bool deckIsPlaying(const QVariantMap &snapshot, const QString &deck);
+QVariantMap deckById(const QVariantMap& snapshot, const QString& deck);
+bool deckHasHotcue(const QVariantMap& snapshot, const QString& deck, int slot);
+bool deckIsPlaying(const QVariantMap& snapshot, const QString& deck);
 
-int runBusyCheck(BridgeClient &bridge, const QString &socketPath, const QString &track, const QString &other, int timeoutMs);
-int runHistoryCheck(BridgeClient &bridge, const QString &socketPath, const QString &track, int timeoutMs);
-int runGainCheck(BridgeClient &bridge, const QString &socketPath, int timeoutMs);
-int runSelfCheck(BridgeClient &bridge, Waveform &waveform, const QString &socketPath, int timeoutMs, const QString &loadPath, const QString &loadSecondPath, bool expectSpread);
-int runBrowserCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSettings &layout, UiSettings &settings);
-int runSyncCheck(QQmlApplicationEngine &engine, std::unique_ptr<BridgeClient> &bridge, QCommandLineParser &parser, const QCommandLineOption &connectOption, const QCommandLineOption &loadOption, const QCommandLineOption &loadSecondOption);
-int runSyncSoak(QQmlApplicationEngine &engine, std::unique_ptr<BridgeClient> &bridge, QCommandLineParser &parser, const QCommandLineOption &connectOption, const QCommandLineOption &soakSecondsOption);
-int runLoop(QQmlApplicationEngine &engine, std::unique_ptr<BridgeClient> &bridge, QCommandLineParser &parser, const QCommandLineOption &connectOption, const QCommandLineOption &loadOption);
-int runEqCheck(QQmlApplicationEngine &engine, std::unique_ptr<BridgeClient> &bridge, QCommandLineParser &parser, const QCommandLineOption &connectOption);
-int runGridLines(QQmlApplicationEngine &engine, std::unique_ptr<BridgeClient> &bridge, QCommandLineParser &parser, const QCommandLineOption &connectOption, const QCommandLineOption &loadOption);
-int runLayoutCheck(QQmlApplicationEngine &engine, LayoutSettings &layout, UiSettings &settings);
-int runSortCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSettings &layout, const QString &fixture, const QString &collectionRoot);
-int runCollectionProbe(FileBrowser &browser, const QString &root);
-bool holdsName(const QVariant &value, const QString &name);
-int runCollectionLoadCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient &bridge, const QString &collectionRoot);
-int runAnalyzeCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSettings &layout, BridgeClient &bridge, const QString &fixture, const QString &collectionRoot);
-int runCollectionPageCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient &bridge, const QString &fixture, const QString &collectionRoot);
-int runImportCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSettings &layout, BridgeClient &bridge, const QString &fixture, const QString &collectionRoot);
-int runPlaylistCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient &bridge, const QString &fixture, const QString &secondFixture, const QString &collectionRoot);
-bool writeShortWav(const QString &path, double seconds);
-int runScrollCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient &bridge, const QString &collectionRoot);
-int runLockCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient &bridge, const QString &fixture, const QString &collectionRoot);
-int runEndCheck(QQmlApplicationEngine &engine, BridgeClient &bridge, const QString &fixture);
-int runGenreCheck(QQmlApplicationEngine &engine, FileBrowser &browser, LayoutSettings &layout, const QString &fixture, const QString &collectionRoot);
+int runBusyCheck(BridgeClient& bridge, const QString& socketPath, const QString& track,
+                 const QString& other, int timeoutMs);
+int runHistoryCheck(BridgeClient& bridge, const QString& socketPath, const QString& track,
+                    int timeoutMs);
+int runGainCheck(BridgeClient& bridge, const QString& socketPath, int timeoutMs);
+int runSelfCheck(BridgeClient& bridge, Waveform& waveform, const QString& socketPath, int timeoutMs,
+                 const QString& loadPath, const QString& loadSecondPath, bool expectSpread);
+int runBrowserCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutSettings& layout,
+                    UiSettings& settings);
+int runSyncCheck(QQmlApplicationEngine& engine, std::unique_ptr<BridgeClient>& bridge,
+                 QCommandLineParser& parser, const QCommandLineOption& connectOption,
+                 const QCommandLineOption& loadOption, const QCommandLineOption& loadSecondOption);
+int runSyncSoak(QQmlApplicationEngine& engine, std::unique_ptr<BridgeClient>& bridge,
+                QCommandLineParser& parser, const QCommandLineOption& connectOption,
+                const QCommandLineOption& soakSecondsOption);
+int runLoop(QQmlApplicationEngine& engine, std::unique_ptr<BridgeClient>& bridge,
+            QCommandLineParser& parser, const QCommandLineOption& connectOption,
+            const QCommandLineOption& loadOption);
+int runEqCheck(QQmlApplicationEngine& engine, std::unique_ptr<BridgeClient>& bridge,
+               QCommandLineParser& parser, const QCommandLineOption& connectOption);
+int runGridLines(QQmlApplicationEngine& engine, std::unique_ptr<BridgeClient>& bridge,
+                 QCommandLineParser& parser, const QCommandLineOption& connectOption,
+                 const QCommandLineOption& loadOption);
+int runLayoutCheck(QQmlApplicationEngine& engine, LayoutSettings& layout, UiSettings& settings);
+int runSortCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutSettings& layout,
+                 const QString& fixture, const QString& collectionRoot);
+int runCollectionProbe(FileBrowser& browser, const QString& root);
+bool holdsName(const QVariant& value, const QString& name);
+int runCollectionLoadCheck(QQmlApplicationEngine& engine, FileBrowser& browser,
+                           BridgeClient& bridge, const QString& collectionRoot);
+int runAnalyzeCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutSettings& layout,
+                    BridgeClient& bridge, const QString& fixture, const QString& collectionRoot);
+int runCollectionPageCheck(QQmlApplicationEngine& engine, FileBrowser& browser,
+                           BridgeClient& bridge, const QString& fixture,
+                           const QString& collectionRoot);
+int runImportCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutSettings& layout,
+                   BridgeClient& bridge, const QString& fixture, const QString& collectionRoot);
+int runPlaylistCheck(QQmlApplicationEngine& engine, FileBrowser& browser, BridgeClient& bridge,
+                     const QString& fixture, const QString& secondFixture,
+                     const QString& collectionRoot);
+bool writeShortWav(const QString& path, double seconds);
+int runScrollCheck(QQmlApplicationEngine& engine, FileBrowser& browser, BridgeClient& bridge,
+                   const QString& collectionRoot);
+int runLockCheck(QQmlApplicationEngine& engine, FileBrowser& browser, BridgeClient& bridge,
+                 const QString& fixture, const QString& collectionRoot);
+int runEndCheck(QQmlApplicationEngine& engine, BridgeClient& bridge, const QString& fixture);
+int runGenreCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutSettings& layout,
+                  const QString& fixture, const QString& collectionRoot);
 
-int runTransportCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient *bridge, LayoutSettings &layout, UiSettings &settings, QCommandLineParser &parser, const QCommandLineOption &loadOption, const QCommandLineOption &loadSecondOption, const QCommandLineOption &connectOption);
+int runTransportCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, UiSettings& settings,
+                      QCommandLineParser& parser, const QCommandLineOption& loadOption,
+                      const QCommandLineOption& connectOption);
+;
 
-int runPitchCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient *bridge, LayoutSettings &layout, UiSettings &settings, QCommandLineParser &parser, const QCommandLineOption &loadOption, const QCommandLineOption &loadSecondOption, const QCommandLineOption &connectOption);
+int runPitchCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, QCommandLineParser& parser,
+                  const QCommandLineOption& loadOption, const QCommandLineOption& connectOption);
+;
 
-int runGridCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient *bridge, LayoutSettings &layout, UiSettings &settings, QCommandLineParser &parser, const QCommandLineOption &loadOption, const QCommandLineOption &loadSecondOption, const QCommandLineOption &connectOption);
+int runGridCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, QCommandLineParser& parser,
+                 const QCommandLineOption& loadOption, const QCommandLineOption& connectOption);
+;
 
-int runLoopBeatsCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient *bridge, LayoutSettings &layout, UiSettings &settings, QCommandLineParser &parser, const QCommandLineOption &loadOption, const QCommandLineOption &loadSecondOption, const QCommandLineOption &connectOption);
+int runLoopBeatsCheck(QQmlApplicationEngine& engine, BridgeClient* bridge,
+                      QCommandLineParser& parser, const QCommandLineOption& loadOption,
+                      const QCommandLineOption& connectOption);
+;
 
-int runGridCreateCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient *bridge, LayoutSettings &layout, UiSettings &settings, QCommandLineParser &parser, const QCommandLineOption &loadOption, const QCommandLineOption &loadSecondOption, const QCommandLineOption &connectOption);
+int runGridCreateCheck(QQmlApplicationEngine& engine, BridgeClient* bridge,
+                       QCommandLineParser& parser, const QCommandLineOption& loadOption,
+                       const QCommandLineOption& loadSecondOption,
+                       const QCommandLineOption& connectOption);
+;
 
-int runFourDeckCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient *bridge, LayoutSettings &layout, UiSettings &settings, QCommandLineParser &parser, const QCommandLineOption &loadOption, const QCommandLineOption &loadSecondOption, const QCommandLineOption &connectOption);
+int runFourDeckCheck(QQmlApplicationEngine& engine, BridgeClient* bridge,
+                     QCommandLineParser& parser, const QCommandLineOption& loadOption,
+                     const QCommandLineOption& connectOption);
+;
 
-int runMasterCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient *bridge, LayoutSettings &layout, UiSettings &settings, QCommandLineParser &parser, const QCommandLineOption &loadOption, const QCommandLineOption &loadSecondOption, const QCommandLineOption &connectOption);
+int runMasterCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, UiSettings& settings,
+                   QCommandLineParser& parser, const QCommandLineOption& loadOption,
+                   const QCommandLineOption& connectOption);
+;
 
-int runTransportExtrasCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient *bridge, LayoutSettings &layout, UiSettings &settings, QCommandLineParser &parser, const QCommandLineOption &loadOption, const QCommandLineOption &loadSecondOption, const QCommandLineOption &connectOption);
+int runTransportExtrasCheck(QQmlApplicationEngine& engine, BridgeClient* bridge,
+                            QCommandLineParser& parser, const QCommandLineOption& loadOption,
+                            const QCommandLineOption& connectOption);
+;
 
-int runPadsCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient *bridge, LayoutSettings &layout, UiSettings &settings, QCommandLineParser &parser, const QCommandLineOption &loadOption, const QCommandLineOption &loadSecondOption, const QCommandLineOption &connectOption);
+int runPadsCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, QCommandLineParser& parser,
+                 const QCommandLineOption& loadOption, const QCommandLineOption& connectOption);
+;
 
-int runMetronomeCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient *bridge, LayoutSettings &layout, UiSettings &settings, QCommandLineParser &parser, const QCommandLineOption &loadOption, const QCommandLineOption &loadSecondOption, const QCommandLineOption &connectOption);
+int runMetronomeCheck(QQmlApplicationEngine& engine, BridgeClient* bridge,
+                      QCommandLineParser& parser, const QCommandLineOption& loadOption,
+                      const QCommandLineOption& connectOption);
+;
 
-int runScratchCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient *bridge, LayoutSettings &layout, UiSettings &settings, QCommandLineParser &parser, const QCommandLineOption &loadOption, const QCommandLineOption &loadSecondOption, const QCommandLineOption &connectOption);
+int runScratchCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, QCommandLineParser& parser,
+                    const QCommandLineOption& loadOption, const QCommandLineOption& connectOption);
+;
 
-int runTempoRecheckCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient *bridge, LayoutSettings &layout, UiSettings &settings, QCommandLineParser &parser, const QCommandLineOption &loadOption, const QCommandLineOption &loadSecondOption, const QCommandLineOption &connectOption);
+int runTempoRecheckCheck(QQmlApplicationEngine& engine, BridgeClient* bridge,
+                         QCommandLineParser& parser, const QCommandLineOption& loadOption,
+                         const QCommandLineOption& connectOption);
+;
 
-int runGridHereCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient *bridge, LayoutSettings &layout, UiSettings &settings, QCommandLineParser &parser, const QCommandLineOption &loadOption, const QCommandLineOption &loadSecondOption, const QCommandLineOption &connectOption);
+int runGridHereCheck(QQmlApplicationEngine& engine, BridgeClient* bridge,
+                     QCommandLineParser& parser, const QCommandLineOption& loadOption,
+                     const QCommandLineOption& connectOption);
+;
 
-int runRefusalCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient *bridge, LayoutSettings &layout, UiSettings &settings, QCommandLineParser &parser, const QCommandLineOption &loadOption, const QCommandLineOption &loadSecondOption, const QCommandLineOption &connectOption);
+int runRefusalCheck(QQmlApplicationEngine& engine, FileBrowser& browser, BridgeClient* bridge,
+                    UiSettings& settings, QCommandLineParser& parser,
+                    const QCommandLineOption& loadOption, const QCommandLineOption& connectOption);
+;
 
-int runGainCurveCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient *bridge, LayoutSettings &layout, UiSettings &settings, QCommandLineParser &parser, const QCommandLineOption &loadOption, const QCommandLineOption &loadSecondOption, const QCommandLineOption &connectOption);
+int runGainCurveCheck(QQmlApplicationEngine& engine, UiSettings& settings);
+;
 
-int runCurveCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient *bridge, LayoutSettings &layout, UiSettings &settings, QCommandLineParser &parser, const QCommandLineOption &loadOption, const QCommandLineOption &loadSecondOption, const QCommandLineOption &connectOption);
+int runCurveCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, QCommandLineParser& parser,
+                  const QCommandLineOption& connectOption);
+;
 
-int runWheelCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient *bridge, LayoutSettings &layout, UiSettings &settings, QCommandLineParser &parser, const QCommandLineOption &loadOption, const QCommandLineOption &loadSecondOption, const QCommandLineOption &connectOption);
+int runWheelCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, QCommandLineParser& parser,
+                  const QCommandLineOption& connectOption);
+;
 
-int runSpaceCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient *bridge, LayoutSettings &layout, UiSettings &settings, QCommandLineParser &parser, const QCommandLineOption &loadOption, const QCommandLineOption &loadSecondOption, const QCommandLineOption &connectOption);
+int runSpaceCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, QCommandLineParser& parser,
+                  const QCommandLineOption& loadOption, const QCommandLineOption& connectOption);
+;
 
-int runNeutralCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient *bridge, LayoutSettings &layout, UiSettings &settings, QCommandLineParser &parser, const QCommandLineOption &loadOption, const QCommandLineOption &loadSecondOption, const QCommandLineOption &connectOption);
+int runNeutralCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, QCommandLineParser& parser,
+                    const QCommandLineOption& connectOption);
+;
 
-int runGridReconnectCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient *bridge, LayoutSettings &layout, UiSettings &settings, QCommandLineParser &parser, const QCommandLineOption &loadOption, const QCommandLineOption &loadSecondOption, const QCommandLineOption &connectOption);
+int runGridReconnectCheck(QQmlApplicationEngine& engine, BridgeClient* bridge,
+                          QCommandLineParser& parser, const QCommandLineOption& connectOption);
+;
 
-int runTempoCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient *bridge, LayoutSettings &layout, UiSettings &settings, QCommandLineParser &parser, const QCommandLineOption &loadOption, const QCommandLineOption &loadSecondOption, const QCommandLineOption &connectOption);
+int runTempoCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, QCommandLineParser& parser,
+                  const QCommandLineOption& loadOption, const QCommandLineOption& connectOption);
+;
 
-int runBrowserRestoreCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient *bridge, LayoutSettings &layout, UiSettings &settings, QCommandLineParser &parser, const QCommandLineOption &loadOption, const QCommandLineOption &loadSecondOption, const QCommandLineOption &connectOption);
+int runBrowserRestoreCheck(QQmlApplicationEngine& engine, LayoutSettings& layout,
+                           UiSettings& settings);
+;
 
-int runStripCheck(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient *bridge, LayoutSettings &layout, UiSettings &settings, QCommandLineParser &parser, const QCommandLineOption &loadOption, const QCommandLineOption &loadSecondOption, const QCommandLineOption &connectOption);
+int runStripCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, QCommandLineParser& parser,
+                  const QCommandLineOption& loadOption, const QCommandLineOption& connectOption);
+;
 
-int runScenario(QQmlApplicationEngine &engine, FileBrowser &browser, BridgeClient *bridge, LayoutSettings &layout, UiSettings &settings, QCommandLineParser &parser, const QCommandLineOption &loadOption, const QCommandLineOption &loadSecondOption, const QCommandLineOption &connectOption);
+int runScenario(QQmlApplicationEngine& engine, BridgeClient* bridge, QCommandLineParser& parser,
+                const QCommandLineOption& loadOption, const QCommandLineOption& connectOption);
+;
 
 } // namespace checks
