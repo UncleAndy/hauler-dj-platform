@@ -76,6 +76,10 @@ case "${1:-}" in
     # ignores is worse than none.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --layout traktor \
         --layout-file "${TMPDIR:-/tmp}/dj-layout-check.json" --layout-check
+    # The pair of decks: same columns, one pair, and no panels for the decks this arrangement does not
+    # show — a deck that exists but is hidden would answer to the same name as the one on the screen.
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --layout duo \
+        --layout-file "${TMPDIR:-/tmp}/dj-layout-duo.json" --layout-check
     # Every layout keeps its own numbers, and a file written before the arrangements existed still
     # opens: a DJ who set his browser to 31 % must not find 28.5 % after an update.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --layout-numbers-check \

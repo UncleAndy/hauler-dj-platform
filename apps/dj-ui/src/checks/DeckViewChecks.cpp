@@ -2201,21 +2201,58 @@ int runLayoutCheck(QQmlApplicationEngine& engine, LayoutSettings& layout, UiSett
         std::fprintf(stderr, "dj-ui: the layout does not match its settings\n");
         return 1;
     }
+    // What the arrangement promises: which decks stand on the screen, and which must not.
+    const QString arrangement = layout.arrangement();
+    QStringList expected;
+    if (arrangement == QStringLiteral("duo") || arrangement == QStringLiteral("stack-duo")) {
+        expected = {QStringLiteral("A"), QStringLiteral("B")};
+    } else if (arrangement == QStringLiteral("studio")) {
+        expected = {QStringLiteral("A")};
+    } else {
+        expected = {QStringLiteral("A"), QStringLiteral("B"), QStringLiteral("C"), QStringLiteral("D")};
+    }
+    // The mixer's place: the edge it was asked for, or between the columns when it is in the middle.
+    const QRectF mixerRect = mixer->mapRectToScene(QRectF(0, 0, mixer->width(), mixer->height()));
+    const QRectF areaRect = deckArea->mapRectToScene(QRectF(0, 0, deckArea->width(), deckArea->height()));
+    const QString edge = layout.mixerEdge();
+    if (edge == QStringLiteral("left") && std::abs(mixerRect.left() - areaRect.left()) > 2.0) {
+        std::fprintf(stderr, "dj-ui: the mixer stands %.0f px from the left edge, not on it\n",
+                     mixerRect.left() - areaRect.left());
+        return 1;
+    }
+    if (edge == QStringLiteral("right") && std::abs(mixerRect.right() - areaRect.right()) > 2.0) {
+        std::fprintf(stderr, "dj-ui: the mixer stands %.0f px from the right edge, not on it\n",
+                     areaRect.right() - mixerRect.right());
+        return 1;
+    }
+
     // Each deck, measured: a deck that grows tall enough to swallow the window is what "too
     // puffy" means, so the numbers are printed next to the layout's.
+    QStringList onScreen;
     for (const char* id : {"A", "B", "C", "D"}) {
         auto* deck = findItem(content, QStringLiteral("deckPanel_%1").arg(QString::fromLatin1(id)));
         auto* detail =
             findItem(content, QStringLiteral("deckDetail_%1").arg(QString::fromLatin1(id)));
         auto* overview =
             findItem(content, QStringLiteral("deckOverview_%1").arg(QString::fromLatin1(id)));
-        if (deck == nullptr || detail == nullptr || overview == nullptr) {
+        const QString wanted = QString::fromLatin1(id);
+        if (!expected.contains(wanted)) {
+            // A layout without that deck must not have it: a panel that exists but is hidden still
+            // answers to its name, and the checks would find the wrong one.
+            if (deck != nullptr) {
+                std::fprintf(stderr, "dj-ui: deck %s is in a layout that has no room for it\n", id);
+                return 1;
+            }
+            continue;
+        }
+        if (deck == nullptr || detail == nullptr || overview == nullptr || !deck->isVisible()) {
             std::fprintf(stderr, "dj-ui: deck %s has no strips (panel %s, strip %s, overview %s)\n",
                          id, deck != nullptr ? "found" : "missing",
                          detail != nullptr ? "found" : "missing",
                          overview != nullptr ? "found" : "missing");
             return 1;
         }
+        onScreen.append(wanted);
         // The rows above and below the wave, measured: the four decks in a column have to know what
         // the panel costs before anybody argues about a threshold.
         const auto rowHeight = [&](const QString& name) {
@@ -2239,12 +2276,47 @@ int runLayoutCheck(QQmlApplicationEngine& engine, LayoutSettings& layout, UiSett
                      qPrintable(rowHeight(QStringLiteral("loopsize_") + deckId)),
                      qPrintable(rowHeight(QStringLiteral("gridedit_") + deckId)));
     }
-    std::fprintf(stdout, "dj-ui: the layout in force is %s\n", qPrintable(layout.preset()));
+    if (onScreen != expected) {
+        std::fprintf(stderr, "dj-ui: %s shows %s, not %s\n", qPrintable(layout.preset()),
+                     qPrintable(onScreen.join(QStringLiteral(", "))),
+                     qPrintable(expected.join(QStringLiteral(", "))));
+        return 1;
+    }
+    // In the middle the mixer stands between the columns: something on its left, something on its
+    // right. An edge mixer has already been checked against its edge.
+    if (edge == QStringLiteral("centre")) {
+        const auto rectOf = [&](const QString& name) {
+            QQuickItem* item = findItem(content, name);
+            return item == nullptr ? QRectF()
+                                   : item->mapRectToScene(QRectF(0, 0, item->width(), item->height()));
+        };
+        const QRectF leftColumn = rectOf(QStringLiteral("leftDecks"));
+        const QRectF rightColumn = rectOf(QStringLiteral("rightDecks"));
+        if (leftColumn.right() > mixerRect.left() + 2.0 || rightColumn.left() < mixerRect.right() - 2.0) {
+            std::fprintf(stderr, "dj-ui: the mixer is not between the columns (left ends %.0f, mixer %.0f..%.0f, right starts %.0f)\n",
+                         leftColumn.right(), mixerRect.left(), mixerRect.right(), rightColumn.left());
+            return 1;
+        }
+    }
+    std::fprintf(stdout, "dj-ui: the layout in force is %s (%s, mixer %s): decks %s\n",
+                 qPrintable(layout.preset()), qPrintable(arrangement), qPrintable(edge),
+                 qPrintable(onScreen.join(QStringLiteral(", "))));
     // At rest nothing plays, so every deck button in the browser must look the same: a button
     // that wears a selection colour just because it is the first in the row says nothing true.
     {
         QColor first;
         for (const char* id : {"A", "B", "C", "D"}) {
+            // The browser's strip offers the decks the layout shows; a button for a deck that is not on
+            // the screen would be a target the DJ cannot see the result of.
+            if (!expected.contains(QString::fromLatin1(id))) {
+                auto* hidden =
+                    findItem(content, QStringLiteral("deckButton_%1").arg(QString::fromLatin1(id)));
+                if (hidden != nullptr && hidden->isVisible()) {
+                    std::fprintf(stderr, "dj-ui: deck %s has a button in a layout without that deck\n", id);
+                    return 1;
+                }
+                continue;
+            }
             auto* button =
                 findItem(content, QStringLiteral("deckButton_%1").arg(QString::fromLatin1(id)));
             if (button == nullptr) {
@@ -2381,6 +2453,10 @@ int runLayoutCheck(QQmlApplicationEngine& engine, LayoutSettings& layout, UiSett
     const QColor accent = QColor(settings.themeAccent());
     QStringList framed;
     for (const char* id : {"A", "B", "C", "D"}) {
+        // A deck the arrangement does not show has no frame to check — and must not have one.
+        if (!expected.contains(QString::fromLatin1(id))) {
+            continue;
+        }
         auto* frame =
             findItem(content, QStringLiteral("deckFrame_%1").arg(QString::fromLatin1(id)));
         if (frame == nullptr) {

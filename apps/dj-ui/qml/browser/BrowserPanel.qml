@@ -20,6 +20,9 @@ Pane {
 
     // Which deck a double click loads into; the header shows it, nothing is assumed.
     property string target: "A"
+    /// The decks the chosen layout puts on the screen: the shell says which, and the browser offers
+    /// exactly those as targets. Default is every deck, for a panel built outside the shell.
+    property var shownDecks: ["A", "B", "C", "D"]
     // What the last activation did: read by --browser-check, so the click path can be measured.
     property string lastAction: ""
     // A load in flight: what was asked for, and how long the deck has had to take it.
@@ -1793,6 +1796,11 @@ Pane {
                         required property string modelData
                         objectName: "deckButton_" + modelData
                         text: modelData
+                        // Only the decks the layout shows can be the target: a button for a deck that is
+                        // not on the screen would load a track nobody can see.
+                        visible: browser.shownDecks.indexOf(modelData) >= 0
+                        width: visible ? implicitWidth : 0
+                        Layout.preferredWidth: visible ? implicitWidth : 0
                         font.pixelSize: browser.headerButtonFont
                         padding: 2
                         implicitWidth: browser.headerDeckButtonWidth

@@ -27,6 +27,45 @@ Item {
         shell.browserOpen = !shell.browserOpen;
     }
 
+    // What the arrangement puts where. One instance per deck, always: a deck named twice would give the
+    // checks two `deckPanel_A` and the DJ two panels that disagree about the same music.
+    readonly property string arrangement: LayoutState.arrangement
+
+    /// Which decks stand in each column for a given arrangement. The only place that decides it, so the
+    /// shell, the browser and the checks cannot drift apart.
+    function columnsFor(name) {
+        if (name === "classic") {
+            return { left: ["A", "C"], right: ["B", "D"] };
+        }
+        if (name === "duo") {
+            return { left: ["A"], right: ["B"] };
+        }
+        return { left: [], right: [] };
+    }
+
+    // Set by `applyArrangement`, not bound: a binding here is read once at start before the shell has
+    // finished, and a `concat` of two properties that do not exist yet is a scene that fails to load.
+    property var leftDeckIds: ["A", "C"]
+    property var rightDeckIds: ["B", "D"]
+    /// Every deck this arrangement puts on the screen, in reading order.
+    readonly property var shownDeckIds: leftDeckIds.concat(rightDeckIds)
+    // Two columns share what the mixer leaves; one column takes all of it.
+    readonly property bool twoColumns: leftDeckIds.length > 0 && rightDeckIds.length > 0
+
+    function applyArrangement() {
+        const columns = columnsFor(arrangement);
+        shell.leftDeckIds = columns.left;
+        shell.rightDeckIds = columns.right;
+        // A deck the layout does not show cannot be the target: loading into it would put a track on a
+        // panel nobody can see. The browser follows this, and so does the header.
+        if (shell.shownDeckIds.indexOf(shell.targetDeck) < 0) {
+            shell.targetDeck = "A";
+        }
+    }
+
+    onArrangementChanged: applyArrangement()
+    Component.onCompleted: applyArrangement()
+
     Shortcut {
         objectName: "browserToggle"
         sequence: "Space"
@@ -85,11 +124,17 @@ Item {
             ColumnLayout {
                 id: leftDecks
                 objectName: "leftDecks"
-                SplitView.preferredWidth: (columns.width - columns.mixerItem.width) / 2.0
+                visible: shell.leftDeckIds.length > 0
+                // A column asks for a little less than its share and lets `fillWidth` absorb the
+                // difference, so the mixer keeps the width its setting gives it.
+                SplitView.preferredWidth: shell.twoColumns
+                                          ? Math.max(200, (columns.width - columns.mixerItem.width) / 2.0 - 8)
+                                          : Math.max(200, columns.width - columns.mixerItem.width - 8)
+                SplitView.fillWidth: true
                 SplitView.minimumWidth: 200
                 spacing: 6
                 Repeater {
-                    model: LayoutState.deckRows === 2 ? ["A", "C"] : ["A"]
+                    model: shell.leftDeckIds
                     delegate: DeckPanel {
                         required property string modelData
                         objectName: "deckPanel_" + modelData
@@ -113,11 +158,17 @@ Item {
             ColumnLayout {
                 id: rightDecks
                 objectName: "rightDecks"
-                SplitView.preferredWidth: (columns.width - columns.mixerItem.width) / 2.0
+                visible: shell.rightDeckIds.length > 0
+                // The divider handles take their own pixels out of the row: asking for the whole
+                // share squeezes the mixer to its minimum instead.
+                SplitView.preferredWidth: shell.twoColumns
+                                          ? Math.max(200, (columns.width - columns.mixerItem.width) / 2.0 - 8)
+                                          : 0
+                SplitView.fillWidth: true
                 SplitView.minimumWidth: 200
                 spacing: 6
                 Repeater {
-                    model: LayoutState.deckRows === 2 ? ["B", "D"] : ["B"]
+                    model: shell.rightDeckIds
                     delegate: DeckPanel {
                         required property string modelData
                         objectName: "deckPanel_" + modelData
@@ -131,7 +182,14 @@ Item {
                 }
             }
 
-            onWidthChanged: Qt.callLater(function () { shell.publishColumnSizes(false) })
+            // The mixer's share is written when the DJ drops the divider, not on every relayout: a
+            // width read before the splitter has distributed its space is a guess, and a guess written
+            // back to the settings shrinks the mixer under the hand.
+            onResizingChanged: {
+                if (!columns.resizing) {
+                    shell.publishColumnSizes(true);
+                }
+            }
         }
 
         BrowserPanel {
@@ -141,6 +199,7 @@ Item {
             // touching any of the numbers the user set.
             visible: shell.browserOpen
             target: shell.targetDeck
+            shownDecks: shell.shownDeckIds
             SplitView.preferredHeight: shell.height * LayoutState.browserPercent / 100.0
             SplitView.minimumHeight: 90
         }
@@ -152,6 +211,7 @@ Item {
                 shell.publishRowSizes();
             }
         }
-        Component.onCompleted: Qt.callLater(function () { shell.publishColumnSizes(false) })
+        // Nothing is published at start: the numbers come from the settings, and the shell is built
+        // to them rather than the other way round.
     }
 }
