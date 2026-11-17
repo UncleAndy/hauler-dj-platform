@@ -12993,6 +12993,12 @@ int main(int argc, char *argv[])
         // всплывающее окно без места открывается в начало координат. Само окно стенду недоступно, но
         // панель отдаёт его координаты — они и сравниваются с положением кнопки.
         if (QQuickItem *metreButton = findItem(window->contentItem(), QStringLiteral("gridMetre_A"))) {
+            // A button the DJ cannot see cannot be pressed: the menu is measured against it, so its own
+            // visibility is part of the premise.
+            if (!metreButton->isVisible()) {
+                std::fprintf(stderr, "dj-ui: the metre button is in the scene but not visible\n");
+                return 1;
+            }
             if (!click(QStringLiteral("gridMetre_A"))) {
                 return 1;
             }
