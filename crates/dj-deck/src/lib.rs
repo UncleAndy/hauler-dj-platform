@@ -2061,6 +2061,33 @@ impl Deck {
         }
         self.keylock_engaged = true;
         self.stretcher.reset();
+        self.prime_keylock();
+    }
+
+    /// Fill the stretcher's buffers before the listener hears it.
+    ///
+    /// A fresh stretcher starts empty: its first `keylock_latency()` samples of output are the silence the
+    /// buffers held, and coming back from a hand — or from the vinyl path — that silence arrives in the
+    /// middle of a groove and reads as a click. Feeding it the material that comes just *before* the head
+    /// costs a few hundred frames once per entry, leaves the head exactly where it was, and makes the
+    /// stretcher's first output the sample the listener was already about to hear.
+    fn prime_keylock(&mut self) {
+        let latency = self.keylock_latency();
+        if latency == 0 || self.source.is_none() {
+            return;
+        }
+        let head = self.position;
+        self.position = head.saturating_sub(latency as u64);
+        let mut scratch = vec![0.0f32; 256 * 2];
+        let mut done = 0usize;
+        while done < latency {
+            let take = (latency - done).min(256);
+            self.render_keylocked(&mut scratch[..take * 2]);
+            done += take;
+        }
+        // The pre-roll ends where the head was: the stretcher's buffers now hold the material that leads
+        // into it, and its next sample is the one the listener expects.
+        self.position = head.max(self.position);
     }
 
     /// Key lock: the tempo moves, the pitch does not (DJP-DECK-008).
