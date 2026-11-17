@@ -24,6 +24,14 @@ qt_add_executable(dj-ui
     src/LayoutSettings.h
     src/SessionState.cpp
     src/SessionState.h
+    src/checks/Checks.cpp
+    src/checks/Checks.h
+    src/checks/EngineChecks.cpp
+    src/checks/DeckViewChecks.cpp
+    src/checks/BrowserChecks.cpp
+    src/checks/LibraryChecks.cpp
+    src/checks/PlaylistChecks.cpp
+    src/checks/LockChecks.cpp
 )
 
 qt_add_qml_module(dj-ui
@@ -57,6 +65,8 @@ qt_add_qml_module(dj-ui
 # The knob's law is one of Signalsmith's curve primitives (`crates/dj-signalsmith-sys/vendor`), the same
 # vendored copy the audio side builds against — one licence record, one version.
 target_include_directories(dj-ui PRIVATE
+    # The checks live one folder down and include the shell's headers by name, the way main.cpp does.
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../crates/dj-signalsmith-sys/vendor)
 
 target_link_libraries(dj-ui PRIVATE Qt6::Quick Qt6::Network)
