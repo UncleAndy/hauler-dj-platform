@@ -1004,10 +1004,11 @@ fn the_crossfader_moves_the_sides_it_is_meant_to_move() {
 
     let mut level = |position: f32, index: usize| {
         mixer.set_crossfader(position);
-        // The master is the delay line's output: the first block fills it, the second one carries the
-        // material mixed under this same crossfader position.
+        // The master is the delay line's output, and the crossfader rides to its new value across a block so
+        // a move is not a click: one block fills the lookahead, the next carries the ride, and the third is
+        // the material mixed under this position alone.
         let mut loudest = 0.0f32;
-        for _ in 0..2 {
+        for _ in 0..3 {
             mixer.begin_block(256);
             mixer.mix_channel(index, &block);
             mixer.finish_block();

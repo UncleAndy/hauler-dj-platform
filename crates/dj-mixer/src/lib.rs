@@ -106,6 +106,9 @@ pub struct Mixer {
     cue: Vec<f32>,
     reference: Vec<f32>,
     crossfader: f32,
+    /// The crossfader gain each channel finished its last block at: the next block starts there and ramps to
+    /// the new value, so a fader that jumps between blocks does not jump in the sound.
+    cross_applied: Vec<f32>,
     /// Whether the crossfader is reversed (hamster switch).
     hamster: bool,
     curve: CrossfaderCurve,
@@ -149,6 +152,8 @@ impl Mixer {
             crossfader: 0.5,
             curve: CrossfaderCurve::ConstantPower,
             hamster: false,
+            // One slot per strip, at the gain the fader starts at: the first block must not ramp from zero.
+            cross_applied: vec![f32::NAN; channels.max(1)],
             master_gain: 1.0,
             cue_gain: 1.0,
             limiter: LookaheadLimiter::new(2, 256, 48_000, LIMITER_THRESHOLD),
@@ -305,9 +310,23 @@ impl Mixer {
         }
 
         let trim = db_to_gain(settings.trim_db);
-        let cross = self.crossfader_gain(settings.assign);
+        let cross_target = self.crossfader_gain(settings.assign);
         let channel_gain = trim * settings.fader;
-        let master_gain = channel_gain * cross;
+        // A fader that moves between two blocks would otherwise step the gain at the block boundary, and a
+        // step in gain is a click in the sound. The applied gain rides from where the last block left it to
+        // the new value across this block, which costs one multiply and one add per frame.
+        if self.cross_applied.len() < self.channels.len() {
+            self.cross_applied.resize(self.channels.len(), cross_target);
+        }
+        let stored = self.cross_applied.get(index).copied().unwrap_or(f32::NAN);
+        // A strip's first block has nothing to ramp from: it starts at the fader's own gain.
+        let cross_from = if stored.is_finite() {
+            stored
+        } else {
+            cross_target
+        };
+        let cross_step = (cross_target - cross_from) / frames as f32;
+        let ramped = (cross_target - cross_from).abs() > f32::EPSILON;
 
         let mut meter = Meter::default();
         let mut sum_squares = 0.0f64;
@@ -323,7 +342,12 @@ impl Mixer {
                     0.0
                 };
                 let scaled = sample * channel_gain;
-                let to_master = sample * master_gain;
+                let cross = if ramped {
+                    cross_from + cross_step * (frame as f32 + 1.0)
+                } else {
+                    cross_target
+                };
+                let to_master = sample * channel_gain * cross;
 
                 let m = &mut self.master[index];
                 *m += to_master;
@@ -336,6 +360,10 @@ impl Mixer {
                 meter.peak = meter.peak.max(scaled.abs());
                 sum_squares += f64::from(scaled) * f64::from(scaled);
             }
+        }
+
+        if let Some(slot) = self.cross_applied.get_mut(index) {
+            *slot = cross_target;
         }
 
         meter.rms = (sum_squares / (frames * 2) as f64).sqrt() as f32;
