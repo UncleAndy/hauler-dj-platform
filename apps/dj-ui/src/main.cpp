@@ -14239,7 +14239,10 @@ int main(int argc, char *argv[])
                     meterRate = map.value(QStringLiteral("source_rate")).toLongLong();
                 }
             }
-            const double heard = (to - from) / (elapsed * 48000.0);
+            // Against the rate the deck actually holds: the window is wall clock, the material is frames of
+            // that file, and a 44,1 kHz clip would read a tenth fast at a hard-coded 48 000.
+            const double meter = meterRate > 0 ? static_cast<double>(meterRate) : 48000.0;
+            const double heard = (to - from) / (elapsed * meter);
             std::fprintf(stdout,
                          "dj-ui: the deck consumed %.3f seconds of the file per second at %.4f "
                          "(elapsed %.3f s, source rate %lld)\n",
