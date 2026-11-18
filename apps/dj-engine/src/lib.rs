@@ -3079,6 +3079,26 @@ pub fn run_analysis(
     running: Arc<AtomicBool>,
     parallel: bool,
 ) {
+    // The lock is the DJ's decision about the file, not about the button that sent the batch: a whole-collection
+    // selection carries locked tracks with it, and a batch that measured them anyway would rewrite the very
+    // numbers the lock exists to keep. The panel leaves them out of the selection; this is the second guard, where
+    // the file is actually opened.
+    let (locked, open): (Vec<String>, Vec<String>) = paths.into_iter().partition(|path| {
+        crate::meta::analysis_locked(
+            &target.store,
+            &target.volume,
+            &target.root,
+            std::path::Path::new(path),
+        )
+    });
+    if !locked.is_empty() {
+        eprintln!(
+            "dj-engine: the lock kept {} of {} files from being measured",
+            locked.len(),
+            locked.len() + open.len()
+        );
+    }
+    let paths = open;
     let total = paths.len();
     let state = Arc::new(std::sync::Mutex::new(dj_domain::AnalyzeState {
         total,

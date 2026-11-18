@@ -259,3 +259,72 @@ fn a_lock_without_a_path_uses_the_decks_own_file() {
         Some(Path::new("/music/b.wav"))
     );
 }
+
+/// The DJ locks a track and then selects the whole collection: the batch carries the locked track with it, and
+/// the lock has to stand where the decision was made — in the engine, not only in the panel that built the list.
+#[test]
+fn a_locked_track_is_not_measured_by_a_batch() -> std::result::Result<(), Box<dyn std::error::Error>>
+{
+    let temp = std::env::temp_dir().join(format!("dj-batch-lock-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&temp);
+    let music = temp.join("music");
+    let mirror = temp.join("mirror");
+    std::fs::create_dir_all(&music)?;
+    std::fs::create_dir_all(&mirror)?;
+    // The repository's own drum loop: a real recording with a beat in it, so the first measurement has a grid to
+    // write and the revision has somewhere to move.
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav");
+    let track = music.join("Batch Locked.wav");
+    std::fs::copy(&fixture, &track)?;
+    let store = Store::new(&mirror);
+    let volume = "vol";
+    let root = PathBuf::from(&music);
+
+    // Measured once with nothing locked, so the file has numbers the batch could overwrite.
+    assert!(
+        dj_engine::meta::analyze_file(&store, volume, &root, &track, false),
+        "the first measurement must find a beat in the click track"
+    );
+    let measured = store.load(volume, &root, &track)?.meta;
+    assert!(
+        measured.beatgrid.is_some(),
+        "the first measurement wrote no grid"
+    );
+    assert!(
+        dj_engine::meta::set_analysis_lock(&store, volume, &root, &track, true)?,
+        "the lock must be a write"
+    );
+    // The lock is itself a write, so the revision to compare against is the one it left behind.
+    let before = store.load(volume, &root, &track)?.meta;
+    assert!(before.analysis_lock, "the lock did not land");
+
+    let cells = std::sync::Arc::new(dj_engine::StateCells::default());
+    let target = dj_engine::AnalysisTarget {
+        store: store.clone(),
+        volume: volume.to_string(),
+        root: root.clone(),
+    };
+    dj_engine::run_analysis(
+        vec![track.display().to_string()],
+        cells,
+        target,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        true,
+    );
+
+    let after = store.load(volume, &root, &track)?.meta;
+    assert!(
+        after.analysis_lock,
+        "the batch lifted the lock off the track it was told to leave alone"
+    );
+    assert_eq!(
+        before.revision, after.revision,
+        "a locked track was measured by the batch: revision {} -> {}",
+        before.revision, after.revision
+    );
+
+    let _ = std::fs::remove_dir_all(&temp);
+    Ok(())
+}

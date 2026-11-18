@@ -252,6 +252,15 @@ pub fn write_beatgrid(
 /// A client that reconnected to a running engine never loaded anything and carries an empty path; the
 /// engine is the one that knows which file the deck plays. Writing beside `""` made the engine refuse
 /// the lock with "No such file or directory" and the button looked dead (owner's report, 2026-11-19).
+/// Whether the DJ has locked this track's numbers. The lock is a decision about the file, so it has to be read
+/// where the file is measured — a batch that trusted the list would rewrite exactly what the lock keeps.
+pub fn analysis_locked(store: &Store, volume: &str, root: &Path, path: &Path) -> bool {
+    store
+        .load(volume, root, path)
+        .map(|loaded| loaded.meta.analysis_lock)
+        .unwrap_or(false)
+}
+
 pub fn analysis_lock_target(deck_path: Option<&str>, command_path: &str) -> Option<PathBuf> {
     if let Some(path) = deck_path
         && !path.trim().is_empty()
