@@ -48,3 +48,7 @@ result-*
 /dist/
 /build-windows/
 aqtinstall.log
+
+# Python bytecode from the build helpers
+__pycache__/
+*.pyc

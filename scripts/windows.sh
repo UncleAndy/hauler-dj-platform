@@ -22,7 +22,8 @@ scripts/windows.sh <команда>
   --engine     собрать dist/windows/dj-engine.exe
   --ui         собрать dist/windows/dj-ui.exe (Qt под mingw, скачивается один раз)
   --dist       положить рядом с exe всё нужное и собрать zip
-  --all        --engine --ui --dist
+  --msi        собрать установочный пакет (нужен готовый дистрибутив)
+  --all        --engine --ui --dist --msi
   --clean      удалить dist/windows, кэш Qt и сборку UI
 
 Переменные: HAULER_QT_VERSION (по умолчанию 6.8.1), HAULER_QT_ROOT, HAULER_ORT_DLL.
@@ -268,16 +269,60 @@ Hauler DJ для Windows.
 Связь: именованная труба \\.\pipe\hauler-dj-engine-<пользователь>.
 onnxruntime.dll рядом необязательна: без неё работает встроенный детектор темпа.
 TXT
-    ( cd "$dist" && rm -f hauler-dj-windows.zip && zip -q -r hauler-dj-windows.zip . -x '*.zip' )
+    ( cd "$dist" && rm -f hauler-dj-windows.zip && zip -q -r hauler-dj-windows.zip . -x '*.zip' -x '*.msi' )
     echo "готово: $dist/hauler-dj-windows.zip"
+}
+
+msi_tools() {
+    # msitools собирается с `doCheck = false`: его собственный набор тестов падает в песочнице на msibuild, а
+    # сам wixl при этом рабочий. Найденный путь кэшируется, чтобы не будить nix на каждой сборке пакета.
+    cache="$repo/.cache/msitools-path"
+    if [ -s "$cache" ] && [ -x "$(cat "$cache")/bin/wixl" ]; then
+        cat "$cache"
+        return
+    fi
+    mkdir -p "$repo/.cache"
+    path=$(nix build --impure --no-link --print-out-paths --expr '
+        with import (builtins.getFlake "nixpkgs") {};
+        msitools.overrideAttrs (o: { doCheck = false; })' | tail -1)
+    printf '%s\n' "$path" > "$cache"
+    cat "$cache"
+}
+
+msi() {
+    if [ ! -f "$dist/dj-ui.exe" ] || [ ! -f "$dist/dj-engine.exe" ]; then
+        echo "нет готового дистрибутива в $dist: сначала --dist" >&2
+        exit 1
+    fi
+    tools="$(msi_tools)"
+    echo "== пакет msi"
+    REPO="$repo" MSITOOLS="$tools" nix shell nixpkgs#python3 --command bash -c '
+        set -eu
+        export PATH="$MSITOOLS/bin:$PATH"
+        cd "$REPO"
+        python3 scripts/windows-msi.py --dist dist/windows
+    '
+    # Проверка: в пакете должно быть ровно столько файлов, сколько в дистрибутиве, без самого zip и без msi.
+    package="$dist/hauler-dj-$(grep -m1 "^version" "$repo/Cargo.toml" | cut -d'"' -f2)-x64.msi"
+    # Считаются только строки данных таблицы File: у выгрузки msitools впереди идут строка имён колонок и
+    # строка типов, а ключи файлов начинаются с `cmp_`.
+    in_package=$("$tools/bin/msiinfo" export "$package" File | grep -c '^cmp_')
+    in_dist=$(find "$dist" -type f ! -name "*.zip" ! -name "*.msi" | wc -l)
+    if [ "$in_package" -ne "$in_dist" ]; then
+        echo "в пакете $in_package файлов, в дистрибутиве $in_dist" >&2
+        exit 1
+    fi
+    echo "проверено: $in_package файлов, шаблон $("$tools/bin/msiinfo" suminfo "$package" | sed -n "s/^Template: //p")"
+    ls -la "$package"
 }
 
 case "${1:---all}" in
     --engine) engine ;;
     --ui) ui ;;
     --dist) deploy ;;
-    --all) engine; ui; deploy ;;
-    --clean) rm -rf "$dist" "$qt_root" "$repo/build-windows" ;;
+    --msi) msi ;;
+    --all) engine; ui; deploy; msi ;;
+    --clean) rm -rf "$dist" "$qt_root" "$repo/build-windows" "$repo/.cache/msitools-path" ;;
     -h|--help) usage ;;
     *) usage; exit 2 ;;
 esac

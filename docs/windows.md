@@ -9,6 +9,7 @@
 bash scripts/windows.sh --engine    # dist/windows/dj-engine.exe
 bash scripts/windows.sh --ui        # dist/windows/dj-ui.exe (Qt скачивается один раз в .cache/qt-windows)
 bash scripts/windows.sh --dist      # рядом с exe: Qt, плагины, mingw-runtime, qt.conf, hauler-dj.bat, zip
+bash scripts/windows.sh --msi       # установочный пакет hauler-dj-<версия>-x64.msi
 bash scripts/windows.sh --all       # всё подряд
 ```
 
@@ -42,17 +43,47 @@ bash scripts/windows.sh --all       # всё подряд
 Собирается всё:
 
 ```
-bash scripts/windows.sh --all
+bash scripts/windows.sh --all          # движок, оболочка, дистрибутив, установочный пакет
+bash scripts/windows.sh --msi          # только пакет, если дистрибутив уже собран
 ```
 
 - `dist/windows/dj-engine.exe` — PE32+, x86-64, около 21 МБ, консольный;
 - `dist/windows/dj-ui.exe` — PE32+, x86-64, около 5 МБ, консольный (`WIN32_EXECUTABLE OFF` не менялся);
 - `dist/windows/hauler-dj-windows.zip` — 124 МБ: оба exe, Qt-библиотеки, плагины (`platforms` с `qwindows.dll`),
   дерево `qml`, рантайм mingw (`libstdc++-6.dll`, `libgcc_s_seh-1.dll`, `libatomic-1.dll`), `qt.conf`,
-  `hauler-dj.bat`, `README.txt`.
+  `hauler-dj.bat`, `README.txt`;
+- `dist/windows/hauler-dj-0.1.0-x64.msi` — 37 МБ, установочный пакет, см. ниже.
 
 Linux собирается тем же деревом, что и раньше: `cargo build --workspace` и `scripts/ui.sh --build-only` проходят,
 `CXXFLAGS` в dev shell не задан, поэтому C++-сборка крейтов идёт прежними флагами.
+
+### Установочный пакет (msi)
+
+Пакет собирается на Linux: `wixl` из msitools читает WiX-описание и пишет msi. Описание генерирует
+`scripts/windows-msi.py` из готового дистрибутива — файлов больше полутора тысяч, руками такой список не ведут.
+
+Что делает пакет:
+
+- ставит всё содержимое `dist/windows` в `Program Files\Hauler DJ` (per-machine, нужны права администратора);
+- кладёт ярлык «Hauler DJ» в меню «Пуск» на `hauler-dj.bat` — он поднимает движок, затем оболочку;
+- появляется в «Программы и компоненты» с версией из `Cargo.toml`, удаляется оттуда же вместе с каталогом и
+  ярлыком;
+- новая версия ставится поверх старой: `UpgradeCode` постоянен, `RemoveExistingProducts` идёт после проверки
+  установки, поэтому рядом не оказывается двух копий.
+
+Идентификаторы компонентов и каталогов — UUIDv5 от пути внутри дистрибутива, поэтому одна и та же версия даёт
+один и тот же пакет, а разные версии — разные `ProductCode` при общем `UpgradeCode`.
+
+Проверка после сборки (её делает сам `--msi`): число строк в таблице `File` равно числу файлов дистрибутива
+(сам zip и сам msi не упаковываются), шаблон пакета `x64;1033`. Содержимое сверялось распаковкой
+(`msiextract`) и сравнением sha256 — `dj-ui.exe`, `dj-engine.exe`, `qt.conf`, `hauler-dj.bat` и файлы дерева
+`qml` совпадают с дистрибутивом байт в байт.
+
+Чего в пакете нет: `onnxruntime.dll` (Windows-сборка ORT не скачивалась, движок работает на встроенном
+детекторе темпа) и ярлыка на рабочем столе — по умолчанию только меню «Пуск».
+
+msitools в nixpkgs собирается с `doCheck = false`: его собственный набор тестов падает в песочнице на
+`msibuild`, а `wixl` при этом рабочий. Путь к собранному msitools кэшируется в `.cache/msitools-path`.
 
 ### Что пришлось решить в окружении хоста
 
