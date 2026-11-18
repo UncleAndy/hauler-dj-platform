@@ -493,6 +493,50 @@ pub fn write_key(
         .map_err(|error| error.to_string())
 }
 
+/// Store the loudness correction, unless the file already carries one.
+///
+/// The correction is a property of the master: measuring it again would cost a full decode to reach the same
+/// number. `force` is the DJ asking for the measurement again — a remaster, or a record written by a build that
+/// kept no correction at all.
+pub fn write_auto_gain(
+    store: &Store,
+    volume: &str,
+    root: &Path,
+    path: &Path,
+    correction_db: f32,
+    force: bool,
+) -> Result<bool, String> {
+    if !correction_db.is_finite() {
+        return Ok(false);
+    }
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or_default();
+    let (mut meta, existed) = match store.load(volume, root, path) {
+        Ok(loaded) => (loaded.meta, true),
+        Err(_) => {
+            let print = fingerprint::of_path(path)
+                .map_err(|error| format!("{}: {error}", path.display()))?;
+            (TrackMeta::new(print, now_ms), false)
+        }
+    };
+    if !force && meta.auto_gain_db.is_some() {
+        return Ok(false);
+    }
+    meta.auto_gain_db = Some(f64::from(correction_db));
+    if existed {
+        meta.bump(now_ms);
+    }
+    store
+        .save(volume, root, path, &meta)
+        .map(|_| {
+            refresh_row(path, &meta);
+            true
+        })
+        .map_err(|error| error.to_string())
+}
+
 /// Write the deck's cues and loop into the track's metadata file.
 pub fn write_edit(store: &Store, volume: &str, root: &Path, edit: &MetaEdit) -> Result<(), String> {
     let now_ms = SystemTime::now()

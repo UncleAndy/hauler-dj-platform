@@ -307,6 +307,14 @@ pub struct Deck {
     /// The DJ locked this track's beat grid: the editor and the measurement both stand down.
     analysis_lock: bool,
     position: u64,
+    /// A seek that arrived before the deck had a source.
+    ///
+    /// The loader publishes "ready" and the graph applies the attach at its next block boundary: a hand that
+    /// acts on that word is faster than the audio thread, and a seek that lands in between finds an empty deck.
+    /// Dropping it moves the deck nowhere and the attach then puts the head at the start — a working deck that
+    /// ignores the DJ. The seek is kept and applied when the track lands; taking the track out forgets it, so it
+    /// cannot follow the next one.
+    pending_seek: Option<u64>,
     gain: f32,
     /// Correction from the file's own loudness, applied with the trim but never written into it: the
     /// knob belongs to the hand, and a knob that moves by itself is a knob nobody trusts.
@@ -516,6 +524,7 @@ impl Deck {
             analyzing: false,
             analysis_lock: false,
             position: 0,
+            pending_seek: None,
             gain: 1.0,
             auto_gain: 1.0,
             auto_gain_db: None,
@@ -959,6 +968,15 @@ impl Deck {
         self.track = track;
         self.load = DeckLoad::Ready;
         self.position = 0;
+        if let Some(frame) = self.pending_seek.take() {
+            // The seek that came in before the track did belongs to this track: it was meant for the load the
+            // deck was waiting for.
+            let total = self.source.as_ref().and_then(|source| source.frames());
+            self.position = match total {
+                Some(frames) => frame.min(frames.saturating_sub(1)),
+                None => frame,
+            };
+        }
         self.playing = false;
         self.loop_region = None;
         self.levels = Levels::SILENT;
@@ -992,11 +1010,13 @@ impl Deck {
     /// The caller owns the old source, which matters on the audio path: freeing a decoder's
     /// buffers there can take longer than a block, so the engine parks it instead.
     pub fn take_source(&mut self) -> Option<Box<dyn DeckSource>> {
+        self.pending_seek = None;
         self.source.take()
     }
 
     /// Remove the source and return the deck to `Empty`.
     pub fn eject(&mut self) {
+        self.pending_seek = None;
         self.drop_pending();
         self.source = None;
         self.track = None;
@@ -1058,7 +1078,8 @@ impl Deck {
         self.drop_pending();
         let lead = self.lead();
         let Some(source) = self.source.as_mut() else {
-            return 0;
+            self.pending_seek = Some(frame);
+            return frame;
         };
         let clamped = match source.frames() {
             Some(total) => frame.min(total.saturating_sub(1)),

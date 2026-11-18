@@ -558,6 +558,13 @@ struct DeckCells {
     // it, and a snapshot that kept saying "Ready" kept a track on screen that was no longer in the
     // deck.
     attached: AtomicBool,
+    /// Static infos published for this deck that claim `Ready`, and the attaches the graph has applied.
+    ///
+    /// `attached` alone answers "the deck holds *a* source", which is true the moment a new load is published
+    /// and the previous track is still in the deck: a client that acts on that word seeks the old track, and the
+    /// attach then puts the head at the start. A publication is honest only once the graph has answered it.
+    sent: AtomicU64,
+    attached_loads: AtomicU64,
     frame: AtomicU64,
     gain: AtomicU32,
     tempo: AtomicU64,
@@ -601,6 +608,8 @@ impl DeckCells {
             metronome: AtomicBool::new(false),
             clicks: AtomicU64::new(0),
             attached: AtomicBool::new(false),
+            sent: AtomicU64::new(0),
+            attached_loads: AtomicU64::new(0),
             frame: AtomicU64::new(0),
             gain: AtomicU32::new(1.0f32.to_bits()),
             tempo: AtomicU64::new(1.0f64.to_bits()),
@@ -1381,6 +1390,22 @@ impl StateCells {
         }
     }
 
+    /// The loader published a static info for this deck that claims `Ready`: until the graph answers it, the
+    /// snapshot must keep saying `Loading`.
+    pub fn note_publication(&self, deck: dj_domain::DeckId) {
+        if let Some(cells) = self.decks.get(deck.index()) {
+            cells.sent.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// The graph applied the publication for this deck — attached a track, or took one out: either way the
+    /// snapshot's static info is no longer ahead of the deck.
+    pub fn note_applied(&self, deck: dj_domain::DeckId) {
+        if let Some(cells) = self.decks.get(deck.index()) {
+            cells.attached_loads.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
     /// Assemble a snapshot. Allocates, so it belongs to the publisher thread, never the callback.
     pub fn read(&self, statics: &[DeckStatic], rate: u32, epoch: u64, revision: u64) -> Snapshot {
         let count = self
@@ -1391,18 +1416,25 @@ impl StateCells {
         let mut decks = Vec::with_capacity(count);
         for (index, fixed) in statics.iter().take(count).enumerate() {
             let cells = &self.decks[index];
-            let attached = cells.attached.load(Ordering::Relaxed);
+            // A publication the graph has not answered is a load on its way: the deck may still hold the
+            // previous track, and nothing read from this snapshot belongs to the new one yet.
+            let answered =
+                cells.attached_loads.load(Ordering::Relaxed) >= cells.sent.load(Ordering::Relaxed);
+            let attached = cells.attached.load(Ordering::Relaxed) && answered;
             let frame = cells.frame.load(Ordering::Relaxed);
             let total = if attached { fixed.total_frames } else { None };
             // `Ready` means the deck holds the source, which is when a client may act on it. The
             // loader knows the file, but the graph attaches it a block later; a cue sent into that
             // window would belong to nothing, so the gap reads as `Loading` rather than `Ready`.
-            let load = match (attached, &fixed.load) {
-                (true, state) => state.clone(),
-                (false, DeckLoad::Loading { progress }) => DeckLoad::Loading {
+            let load = match (attached, answered, &fixed.load) {
+                (true, _, state) => state.clone(),
+                // Published and not answered: on its way. Calling it empty blinks the deck back to nothing
+                // while the DJ is watching it load.
+                (false, false, _) => DeckLoad::Loading { progress: 0.0 },
+                (false, true, DeckLoad::Loading { progress }) => DeckLoad::Loading {
                     progress: *progress,
                 },
-                (false, _) => DeckLoad::Empty,
+                (false, true, _) => DeckLoad::Empty,
             };
             let loop_start = cells.loop_start.load(Ordering::Relaxed);
             let loop_end = cells.loop_end.load(Ordering::Relaxed);
@@ -1682,6 +1714,11 @@ pub struct PreparedTrack {
     pub static_info: DeckStatic,
     /// Where the file is, so an edit knows what to write (DJP-DATA-006).
     pub path: Option<std::path::PathBuf>,
+    /// The correction before the settings' share, in decibels — what the record beside the file keeps.
+    ///
+    /// `auto_gain_db` below is the level the deck runs at; this is what the file asked for, and it is the number
+    /// that survives a changed share without a second decode (DJP-MEDIA-004).
+    pub auto_gain_correction_db: Option<f32>,
     /// Cues recorded for this file, restored at attach.
     pub cues: Vec<(u8, u64)>,
     /// Beat grid from the analysis, in source frames, replaced by the stored one when the file
@@ -2173,7 +2210,14 @@ pub fn prepare_track(
     auto_gain_share: f32,
     cache: Option<&mut dj_codec::PcmCache>,
 ) -> Result<PreparedTrack, String> {
-    prepare_track_with_key(path, rate, window_seconds, auto_gain_share, cache, None)
+    prepare_track_with_key(
+        path,
+        rate,
+        window_seconds,
+        auto_gain_share,
+        cache,
+        &KnownMeta::default(),
+    )
 }
 
 /// Prepare a track, told the key the file already records.
@@ -2181,13 +2225,28 @@ pub fn prepare_track(
 /// Measuring a key is a decode of the whole file. A track whose metadata already states one is not
 /// measured again: the answer is in the file, and a load that pays four seconds for it is a load the
 /// DJ waits through twice for nothing.
+/// What the record beside a file already knows.
+///
+/// A load is a queue of full decodes — loudness, tempo, key, waveform — and every one of them that the
+/// record can answer is a decode the DJ does not wait for. The record is the authority: a grid it holds is
+/// the DJ's (or the detector's) earlier answer, and measuring again would only reproduce it.
+#[derive(Debug, Clone, Default)]
+pub struct KnownMeta {
+    /// A key written by the DJ's ear or by another program: it outranks a measurement.
+    pub key: Option<String>,
+    /// The loudness correction measured earlier, in decibels, before the settings' share.
+    pub auto_gain_db: Option<f32>,
+    /// The record holds a grid: the deck does not need the file decoded to find the beat again.
+    pub grid: bool,
+}
+
 pub fn prepare_track_with_key(
     path: &std::path::Path,
     rate: u32,
     window_seconds: f64,
     auto_gain_share: f32,
     cache: Option<&mut dj_codec::PcmCache>,
-    known_key: Option<&str>,
+    known: &KnownMeta,
 ) -> Result<PreparedTrack, String> {
     let config = PrefetchConfig::for_sample_rate(rate, window_seconds);
     let mut prefetcher = Prefetcher::open(path, config).map_err(|err| err.to_string())?;
@@ -2227,17 +2286,34 @@ pub fn prepare_track_with_key(
     };
     // Loudness is measured here, on the loader thread: it is a full decode of the file, and the audio
     // callback must never see it. A file that cannot be measured opens at unity and says nothing.
-    let measured = dj_analysis::loudness::analyse(path, auto_gain_share).ok();
-    let auto_gain = measured.map_or(1.0, |loudness| loudness.gain);
+    //
+    // The correction is a property of the master, not of the set, so once the record carries it the decode is
+    // not repeated: the share from the settings is applied to the stored number instead. A record from an older
+    // build has none, and then the file is measured as before.
+    let correction_db = known.auto_gain_db.or_else(|| {
+        dj_analysis::loudness::analyse(path, auto_gain_share)
+            .ok()
+            .map(|loudness| loudness.correction_db)
+    });
+    let auto_gain = correction_db.map_or(1.0, |correction| {
+        dj_analysis::loudness::gain_for(correction, auto_gain_share)
+    });
     // The published number is the gain in force, not the correction the file asked for: the correction is
     // applied whole and the matched level is then taken down by the configured factor, so a snapshot that
     // showed only the correction would describe a gain the deck does not run at.
-    let auto_gain_db = measured.map(|loudness| 20.0 * loudness.gain.max(1e-6).log10());
+    let auto_gain_db = Some(20.0 * auto_gain.max(1e-6).log10());
     // Tempo is measured here too: another full decode, on the thread that already owns one, and the
     // audio callback never sees it. A file whose tempo cannot be measured plays without a grid.
     // The measurement is expressed in the file's own frames — the decoder reads at the file's rate and
     // so does the deck, so a 44.1 kHz track keeps its grid in 44.1 kHz frames whatever the device runs at.
-    let measured_tempo = crate::beatmodel::analyse(path);
+    // A grid in the record is an answer already given — by the detector earlier, or by the DJ's hand and then
+    // locked. Measuring again would decode the whole file to reproduce it, and `meta::restore` would throw the
+    // answer away a moment later anyway.
+    let measured_tempo = if known.grid {
+        None
+    } else {
+        crate::beatmodel::analyse(path)
+    };
     let measured_grid = measured_tempo.and_then(|found| {
         let segments: Vec<BeatSegment> = found
             .segments
@@ -2262,7 +2338,7 @@ pub fn prepare_track_with_key(
     // The circle of fifths is how the owner reads a key (`11m` is G minor, `12d` is F major), so that is
     // the form the deck carries and the file stores. One notation, one source of truth: the name is for
     // a tooltip, not for the wire.
-    track.key = match known_key {
+    track.key = match known.key.as_deref() {
         Some(known) => Some(known.to_owned()),
         None => dj_analysis::key::analyse(path)
             .ok()
@@ -2315,6 +2391,7 @@ pub fn prepare_track_with_key(
 
     Ok(PreparedTrack {
         deck: DeckId::A,
+        auto_gain_correction_db: correction_db,
         source,
         track: Some(track),
         grid: measured_grid,
@@ -2601,6 +2678,7 @@ impl EngineGraph {
                         self.decks[index].set_auto_gain(prepared.auto_gain, prepared.auto_gain_db);
                         self.paths[index] = prepared.path;
                         self.loads_applied += 1;
+                        self.cells.note_applied(prepared.deck);
                     }
                 }
                 GraphLoad::ReverseWindow {
@@ -2646,6 +2724,9 @@ impl EngineGraph {
                         self.park_old(old);
                         self.decks[index].eject();
                         self.loads_applied += 1;
+                        // Taking the track out answers the publication as well: an ejected deck is empty, not
+                        // still loading.
+                        self.cells.note_applied(deck);
                     }
                 }
             }

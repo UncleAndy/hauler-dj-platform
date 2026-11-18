@@ -132,6 +132,10 @@ pub struct TrackMeta {
     pub loops: Vec<Loop>,
     #[serde(default = "unity_gain")]
     pub gain: f64,
+    /// The file's own loudness correction in decibels, measured once. The share from the settings is applied
+    /// to it, so a changed share needs no second decode of the file (DJP-MEDIA-004).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_gain_db: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
     #[serde(default)]
@@ -248,6 +252,7 @@ impl TrackMeta {
             beatgrid: None,
             loops: Vec::new(),
             gain: unity_gain(),
+            auto_gain_db: None,
             key: None,
             rating: 0,
             notes: None,

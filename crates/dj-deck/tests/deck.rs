@@ -3068,3 +3068,39 @@ fn a_forty_four_one_tone_keeps_its_pitch_on_a_forty_eight_device() {
         "a 1 kHz tone recorded at 44.1 kHz came out at {ratio:.3} times the pitch ({baseline} -> {measured})"
     );
 }
+
+/// A hand that acts the moment it hears "ready" is faster than the audio thread: the attach is applied at a
+/// block boundary, and a seek that arrives in between finds a deck with no source. Dropping it moves the deck
+/// nowhere, and the load then resets the head to the start — the DJ sees a working deck that ignores him.
+#[test]
+fn a_seek_that_arrives_before_the_track_is_kept() {
+    let mut deck = Deck::new(DeckId::A);
+    deck.set_output_rate(44_100);
+    // The vinyl path: with key lock the stretcher's window stands between what is read and what is heard, and
+    // the check would be comparing positions offset by that window instead of the seek.
+    deck.set_keylock(false);
+    deck.seek(48_000);
+    deck.attach(Box::new(RampSource::new(480_000)), None);
+    assert_eq!(
+        deck.position(),
+        48_000,
+        "the seek that came in before the attach was lost"
+    );
+}
+
+/// A seek on an empty deck is forgotten when the track is taken out: the next track starts where it starts, not
+/// where some earlier hand pointed at nothing.
+#[test]
+fn a_seek_on_an_emptied_deck_does_not_follow_the_next_track() {
+    let mut deck = Deck::new(DeckId::A);
+    deck.set_output_rate(44_100);
+    deck.set_keylock(false);
+    deck.seek(96_000);
+    deck.eject();
+    deck.attach(Box::new(RampSource::new(480_000)), None);
+    assert_eq!(
+        deck.position(),
+        0,
+        "a seek from an older, empty deck moved the new track"
+    );
+}

@@ -1,7 +1,7 @@
 {
   "schema": "djp-track-v1",
-  "revision": 30,
-  "updated_at_ms": 1794514235110,
+  "revision": 31,
+  "updated_at_ms": 1794964096278,
   "fingerprint": {
     "size": 1536044,
     "head": "4552d1d6cb86790a",
@@ -21,6 +21,7 @@
   },
   "loops": [],
   "gain": 1.0,
+  "auto_gain_db": 7.667102813720703,
   "key": "5m",
   "rating": 0,
   "analysis_lock": false

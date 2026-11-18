@@ -1797,6 +1797,20 @@ int runGridLines(QQmlApplicationEngine& engine, std::unique_ptr<BridgeClient>& b
         }
         return QVariantMap();
     };
+    // The deck may already hold this very file from another client: then "the deck shows the file with a grid"
+    // is true before the load is even read, and the check would act on the track the *previous* load put there.
+    // Emptying first makes the wait below mean what it says — this load, not whatever was left.
+    bridge->eject(QStringLiteral("A"));
+    if (!waitFor(
+            [&]() {
+                const QVariantMap deck = deckA();
+                return deck.value(QStringLiteral("path")).toString().isEmpty()
+                    && deck.value(QStringLiteral("total_frames")).toDouble() <= 0.0;
+            },
+            3000)) {
+        std::fprintf(stderr, "dj-ui: the deck did not empty before the load\n");
+        return 1;
+    }
     bridge->load(QStringLiteral("A"), fixture);
     const QString wantName = QFileInfo(fixture).fileName();
     const auto loadArrived = [&]() {
@@ -1857,7 +1871,18 @@ int runGridLines(QQmlApplicationEngine& engine, std::unique_ptr<BridgeClient>& b
                        total / 2.0 - 1.0;
             },
             5000)) {
-        std::fprintf(stderr, "dj-ui: the deck never moved to the middle of the track\n");
+        const QVariantMap state = deckA();
+        std::fprintf(stderr,
+                     "dj-ui: the deck never moved to the middle of the track (load %s playing %d from %.0f "
+                     "remaining %.0f total %.0f tempo %.2f slip %d cached %d)\n",
+                     qPrintable(state.value(QStringLiteral("load")).toString()),
+                     state.value(QStringLiteral("playing")).toBool() ? 1 : 0,
+                     state.value(QStringLiteral("source_frame")).toDouble(),
+                     state.value(QStringLiteral("remaining_frames")).toDouble(),
+                     state.value(QStringLiteral("total_frames")).toDouble(),
+                     state.value(QStringLiteral("tempo_ratio")).toDouble(),
+                     state.value(QStringLiteral("slip")).toBool() ? 1 : 0,
+                     state.value(QStringLiteral("cached")).toBool() ? 1 : 0);
         return 1;
     }
     // The whole track, whatever the zoom the settings were left at: a strip that shows a quarter of

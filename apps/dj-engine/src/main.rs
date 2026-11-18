@@ -1021,6 +1021,7 @@ fn run(argv: &[String]) -> Result<(), String> {
     {
         let prepared = graph_loads.clone();
         let updates = deck_updates.clone();
+        let load_cells = Arc::clone(&cells);
         std::thread::spawn(move || {
             while let Ok(request) = load_requests_rx.recv() {
                 let _ = updates.send(Published::Deck(Box::new(DeckUpdate {
@@ -1046,62 +1047,87 @@ fn run(argv: &[String]) -> Result<(), String> {
                 // boundary once it exists (GraphLoad::CacheReady).
                 // What the file already says about its key saves a whole decode below: a track with a
                 // stored key is not measured again.
-                let known_key = store
+                // One read of the record answers three of the four decodes a load would otherwise pay for: the
+                // key, the loudness correction and the grid.
+                let record = store
                     .load(volume(), root(), &path)
                     .ok()
-                    .and_then(|loaded| loaded.meta.key);
-                match prepare_track_with_key(
-                    &path,
-                    rate,
-                    2.0,
-                    auto_gain_share,
-                    None,
-                    known_key.as_deref(),
-                )
-                .map(|mut prepared| {
-                    if let Some(problem) =
-                        dj_engine::meta::restore(&mut prepared, &store, volume(), root())
-                    {
-                        eprintln!("dj-engine: {problem}");
-                    }
-                    // The grid is worth keeping: measuring it is a decode of the whole file, and the
-                    // next load should not pay for it again. A stored grid is left alone by the write.
-                    if let Some(grid) = prepared.grid.as_ref() {
-                        match dj_engine::meta::write_beatgrid(
+                    .map(|loaded| loaded.meta);
+                let known = dj_engine::KnownMeta {
+                    key: record.as_ref().and_then(|meta| meta.key.clone()),
+                    auto_gain_db: record
+                        .as_ref()
+                        .and_then(|meta| meta.auto_gain_db)
+                        .map(|db| db as f32),
+                    grid: record.as_ref().is_some_and(|meta| meta.beatgrid.is_some()),
+                };
+                match prepare_track_with_key(&path, rate, 2.0, auto_gain_share, None, &known).map(
+                    |mut prepared| {
+                        if let Some(problem) =
+                            dj_engine::meta::restore(&mut prepared, &store, volume(), root())
+                        {
+                            eprintln!("dj-engine: {problem}");
+                        }
+                        // The grid is worth keeping: measuring it is a decode of the whole file, and the
+                        // next load should not pay for it again. A stored grid is left alone by the write.
+                        if let Some(grid) = prepared.grid.as_ref() {
+                            match dj_engine::meta::write_beatgrid(
+                                &store,
+                                volume(),
+                                root(),
+                                &path,
+                                grid,
+                                false,
+                            ) {
+                                Ok(true) => {}
+                                Ok(false) => {}
+                                Err(message) => eprintln!("dj-engine: {message}"),
+                            }
+                        }
+                        // Names for a collection list: the tags are read here anyway, and an import from
+                        // before they travelled in the record has none of them. The same read gives the
+                        // genres, and they go into the index the browser reads.
+                        let mut index = dj_library::Index::open_default().ok();
+                        dj_engine::meta::write_names(
                             &store,
                             volume(),
                             root(),
                             &path,
-                            grid,
                             false,
-                        ) {
-                            Ok(true) => {}
-                            Ok(false) => {}
-                            Err(message) => eprintln!("dj-engine: {message}"),
+                            index.as_mut(),
+                        );
+                        // The key is worth keeping for the same reason: measuring it is a decode of the
+                        // whole file. A key already in the file is left alone by the write.
+                        // The correction, for the same reason as the key: measuring it is a full decode of the
+                        // file, and a track loaded twice should pay for it once.
+                        if let Some(correction) = prepared.auto_gain_correction_db
+                            && let Err(message) = dj_engine::meta::write_auto_gain(
+                                &store,
+                                volume(),
+                                root(),
+                                &path,
+                                correction,
+                                false,
+                            )
+                        {
+                            eprintln!("dj-engine: {message}");
                         }
-                    }
-                    // Names for a collection list: the tags are read here anyway, and an import from
-                    // before they travelled in the record has none of them. The same read gives the
-                    // genres, and they go into the index the browser reads.
-                    let mut index = dj_library::Index::open_default().ok();
-                    dj_engine::meta::write_names(
-                        &store,
-                        volume(),
-                        root(),
-                        &path,
-                        false,
-                        index.as_mut(),
-                    );
-                    // The key is worth keeping for the same reason: measuring it is a decode of the
-                    // whole file. A key already in the file is left alone by the write.
-                    if let Some(key) = prepared.track.as_ref().and_then(|track| track.key.clone())
-                        && let Err(message) =
-                            dj_engine::meta::write_key(&store, volume(), root(), &path, &key, false)
-                    {
-                        eprintln!("dj-engine: {message}");
-                    }
-                    prepared
-                }) {
+                        if let Some(key) =
+                            prepared.track.as_ref().and_then(|track| track.key.clone())
+                            && let Err(message) = dj_engine::meta::write_key(
+                                &store,
+                                volume(),
+                                root(),
+                                &path,
+                                &key,
+                                false,
+                            )
+                        {
+                            eprintln!("dj-engine: {message}");
+                        }
+                        prepared
+                    },
+                ) {
                     Ok(mut prepared_track) => {
                         prepared_track.deck = request.deck;
                         prepared_track.static_info.deck = request.deck;
@@ -1121,6 +1147,9 @@ fn run(argv: &[String]) -> Result<(), String> {
                         // stream, so this second decode costs the loader thread and nobody's ears.
                         // Ask for the entry; the cache thread answers with CacheReady when it has one.
                         let _ = cache_requests.send((path.clone(), request.deck));
+                        // The word "ready" goes out with a number: until the graph has applied as many attaches
+                        // as there were publications, the snapshot keeps saying `Loading`.
+                        load_cells.note_publication(request.deck);
                         let _ = updates.send(Published::Deck(Box::new(DeckUpdate {
                             deck: request.deck,
                             static_info: static_info.clone(),

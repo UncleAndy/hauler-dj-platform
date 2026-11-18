@@ -1119,6 +1119,7 @@ fn prepared_with(
         // Built by hand, so no file was measured: the deck opens at unity and says nothing.
         auto_gain: 1.0,
         auto_gain_db: None,
+        auto_gain_correction_db: None,
     }
 }
 

@@ -10,8 +10,20 @@
 //! is a level match, not a compliance meter, and the target is chosen with headroom for the EQ.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use dj_codec::{MediaError, StreamDecoder};
+
+/// How many files have been decoded for their loudness since the process started.
+///
+/// The loader skips the decode when the record beside the file already holds the correction, and a number
+/// that does not move is the only honest witness that the work was skipped.
+static MEASURED: AtomicUsize = AtomicUsize::new(0);
+
+/// Files decoded for loudness since the process started (DJP-MEDIA-004).
+pub fn measurements() -> usize {
+    MEASURED.load(Ordering::Relaxed)
+}
 
 /// Level a track is trimmed to, in dBFS RMS.
 ///
@@ -46,6 +58,7 @@ pub struct Loudness {
 /// it alone). It comes from the settings (`dj-config`'s `AnalysisSettings`), because the matched level
 /// itself was a decibel too hot for the meters.
 pub fn analyse(path: &Path, level: f32) -> Result<Loudness, MediaError> {
+    MEASURED.fetch_add(1, Ordering::Relaxed);
     let rms_db = rms_db(path)?;
     let correction_db = rms_db.map_or(0.0, correction_for);
     Ok(Loudness {

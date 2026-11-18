@@ -7,6 +7,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use dj_analysis::tempo::{LevelPrior, Tempo};
 use dj_beatmodel::{BeatModel, DbnConfig, prior_and_beats};
@@ -208,8 +209,18 @@ pub fn source() -> &'static str {
     }
 }
 
+/// How many files have been decoded for their tempo since the process started: the loader skips the
+/// measurement when the record already holds a grid, and this is how a test knows it did.
+static MEASURED: AtomicUsize = AtomicUsize::new(0);
+
+/// Files decoded for tempo since the process started.
+pub fn measurements() -> usize {
+    MEASURED.load(Ordering::Relaxed)
+}
+
 /// Сетка трека: уровень от модели, если она есть, иначе свой замер.
 pub fn analyse(path: &Path) -> Option<Tempo> {
+    MEASURED.fetch_add(1, Ordering::Relaxed);
     let (mono, rate) = match dj_analysis::tempo::decode_mono(path) {
         Ok(decoded) => decoded,
         Err(error) => {
