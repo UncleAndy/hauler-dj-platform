@@ -81,6 +81,26 @@ engine() {
     echo "готово: $dist/dj-engine.exe"
 }
 
+qt_mingw_tool() {
+    # Официальные сборки Qt для Windows собраны mingw с потоками winpthreads, и Qt6*.dll требуют
+    # libwinpthread-1.dll. Файл приходит только вместе с инструментом Qt — берём его оттуда, чтобы версия
+    # совпадала с той, под которую собран Qt.
+    tool_dir="$qt_root/Tools/mingw1310_64"
+    if [ -f "$tool_dir/bin/libwinpthread-1.dll" ]; then
+        echo "$tool_dir"
+        return
+    fi
+    echo "== инструмент mingw для Qt (один раз)" >&2
+    QT_ROOT="$qt_root" nix shell nixpkgs#python3 --command bash -c '
+        set -eu
+        [ -x "$QT_ROOT/venv/bin/aqt" ] || {
+            python3 -m venv "$QT_ROOT/venv" >/dev/null
+            "$QT_ROOT/venv/bin/pip" install --quiet aqtinstall
+        }
+        "$QT_ROOT/venv/bin/aqt" install-tool windows desktop tools_mingw1310 --outputdir "$QT_ROOT"
+    '
+    echo "$tool_dir"
+}
 qt_host_download() {
     host_root="${HAULER_QT_HOST_ROOT:-$repo/.cache/qt-host}"
     if [ -d "$host_root/$qt_version/gcc_64/lib/cmake" ]; then
@@ -232,18 +252,28 @@ deploy() {
     if [ -n "${HAULER_ORT_DLL:-}" ] && [ -f "${HAULER_ORT_DLL}" ]; then
         cp "$HAULER_ORT_DLL" "$dist/onnxruntime.dll"
     fi
-    # C++-рантайм mingw: exe собран этим тулчейном, и без этих dll он на Windows не стартует. Qt из aqt их не
-    # приносит, потому что собран другим mingw.
+    # C++-рантайм: два разных набора, и нужны оба. Наши exe собраны mingw из nix — его libstdc++ работает через
+    # mcfgthread (libmcfgthread-2.dll). Qt собран mingw с winpthreads — Qt6*.dll требуют libwinpthread-1.dll.
+    # Без первого не стартует наш код, без второго — Qt.
     DIST="$dist" nix shell "nixpkgs#pkgsCross.mingwW64.stdenv.cc" --command bash -c '
         set -eu
         for store_path in $(nix-store -qR "$(readlink -f "$(command -v x86_64-w64-mingw32-g++)")"); do
-            for dll in libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll libatomic-1.dll; do
-                if [ -f "$store_path/x86_64-w64-mingw32/lib/$dll" ]; then
-                    cp -n "$store_path/x86_64-w64-mingw32/lib/$dll" "$DIST/" || true
-                fi
+            for dll in libstdc++-6.dll libgcc_s_seh-1.dll libatomic-1.dll libmcfgthread-2.dll; do
+                for dir in x86_64-w64-mingw32/lib bin lib; do
+                    if [ -f "$store_path/$dir/$dll" ] && [ ! -f "$DIST/$dll" ]; then
+                        cp "$store_path/$dir/$dll" "$DIST/"
+                    fi
+                done
             done
         done
     '
+    winpthread_dir="$(qt_mingw_tool)"
+    if [ -f "$winpthread_dir/bin/libwinpthread-1.dll" ]; then
+        cp "$winpthread_dir/bin/libwinpthread-1.dll" "$dist/"
+    else
+        echo "нет libwinpthread-1.dll: оболочка на Windows не запустится" >&2
+        exit 1
+    fi
     cat > "$dist/qt.conf" <<'CONF'
 [Paths]
 Prefix = .
@@ -269,6 +299,33 @@ Hauler DJ для Windows.
 Связь: именованная труба \\.\pipe\hauler-dj-engine-<пользователь>.
 onnxruntime.dll рядом необязательна: без неё работает встроенный детектор темпа.
 TXT
+    # qml-плагины тянут куда больше модулей Qt, чем перечислено выше (диалоги, эффекты, частицы, формы,
+    # векторные картинки, QtTest). Вместо длинного списка — цикл: проверка говорит, чего не хватает, файлы
+    # берутся из bin Qt; повторяется, пока пропажи не кончатся.
+    for _ in 1 2 3 4 5; do
+        missing=$(DIST="$dist" REPO="$repo" nix shell "nixpkgs#pkgsCross.mingwW64.stdenv.cc" nixpkgs#python3 \
+            --command bash -c 'cd "$REPO" && python3 scripts/windows-deps-check.py --dist "$DIST" --only-missing' \
+            2>/dev/null || true)
+        [ -z "$missing" ] && break
+        copied=0
+        for name in $missing; do
+            found=$(find "$prefix/bin" -maxdepth 1 -iname "$name" | head -1)
+            if [ -n "$found" ]; then
+                cp "$found" "$dist/"
+                copied=1
+            fi
+        done
+        if [ "$copied" -eq 0 ]; then
+            echo "модули не найдены в $prefix/bin: $(echo "$missing" | tr '\n' ' ')" >&2
+            break
+        fi
+    done
+    # Проверка: ни один exe и ни одна dll не должны требовать библиотеку, которой нет в дистрибутиве.
+    DIST="$dist" REPO="$repo" nix shell "nixpkgs#pkgsCross.mingwW64.stdenv.cc" nixpkgs#python3 --command bash -c '
+        set -eu
+        cd "$REPO"
+        python3 scripts/windows-deps-check.py --dist "$DIST"
+    '
     ( cd "$dist" && rm -f hauler-dj-windows.zip && zip -q -r hauler-dj-windows.zip . -x '*.zip' -x '*.msi' )
     echo "готово: $dist/hauler-dj-windows.zip"
 }

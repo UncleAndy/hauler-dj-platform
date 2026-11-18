@@ -74,7 +74,8 @@ Usage:
   dj-engine [--socket PATH] --stop      ask a running engine to shut down
   dj-engine --rebuild-index ROOT...     make the index out of the .djmeta records and exit
 
-Defaults: socket $XDG_RUNTIME_DIR/hauler-dj-engine.sock, null sink, 48 kHz, block 256.
+Defaults: socket $XDG_RUNTIME_DIR/hauler-dj-engine.sock on Linux, named pipe hauler-dj-engine-<user> on
+          Windows; null sink, 48 kHz, block 256.
 --device SUBSTR opens the real output (substring of the backend name); --null-sink keeps a
 generated tone and a clock instead, so the command path works anywhere, including CI.
 On a device with four or more outputs master goes to the first pair and cue to the second
@@ -1480,9 +1481,12 @@ fn remove_socket(path: &std::path::Path) {
     let _ = dj_bridge::transport::remove_stale(path);
 }
 
+/// Where the engine listens by default: the platform decides, and `dj-paths` is the one place that knows.
+///
+/// A socket file on Linux, a named pipe on Windows. Spelling this out here instead was a real fault: on Windows
+/// the engine still built an XDG path, while the shell connected to a pipe name, and the two never met.
 fn default_socket() -> PathBuf {
-    let base = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(base).join("hauler-dj-engine.sock")
+    dj_paths::default_endpoint()
 }
 
 /// A request to edit the grid of the deck's track (DJP-SYNC-003).
