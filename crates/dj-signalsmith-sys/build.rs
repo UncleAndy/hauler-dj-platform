@@ -7,6 +7,19 @@
 use std::path::PathBuf;
 use std::process::Command;
 
+/// The compiler for the platform being built, not for the one doing the building.
+///
+/// Cargo sets `CXX_<target>` for a cross build (`x86_64_pc_windows_gnu`, say) and leaves `CXX` for the host.
+/// Reading only `CXX` puts host objects into a library for another platform, and all the linker can say about
+/// that is that the symbols are missing.
+fn target_var(name: &str) -> Option<String> {
+    let target = std::env::var("TARGET").unwrap_or_default();
+    let underscored = target.replace('-', "_");
+    std::env::var(format!("{name}_{underscored}"))
+        .ok()
+        .or_else(|| std::env::var(name).ok())
+}
+
 fn main() {
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("cargo sets OUT_DIR"));
     let vendor = PathBuf::from("vendor");
@@ -21,8 +34,8 @@ fn main() {
     );
     println!("cargo:rerun-if-changed=vendor/signalsmith-basics/include/stfx/stfx-library.h");
 
-    let compiler = std::env::var("CXX")
-        .ok()
+    let compiler = target_var("CXX")
+        .filter(|value| !value.is_empty())
         .or_else(|| {
             ["clang++", "c++", "g++"]
                 .into_iter()
@@ -42,6 +55,8 @@ fn main() {
         // in its base class, and with the C++11/14 rules an implicit copy of that base is ill-formed.
         // C++17's guaranteed copy elision removes the copies, and the headers compile clean.
         .args(["-std=c++17", "-O2", "-fPIC", "-fvisibility=hidden", "-c"])
+        // Where the platform keeps the thread part of its standard library is the platform's business.
+        .args(target_var("CXXFLAGS").unwrap_or_default().split_whitespace())
         .arg("src/wrapper.cpp")
         .arg("-I")
         .arg(&vendor)
@@ -52,7 +67,8 @@ fn main() {
     assert!(status.success(), "{compiler} failed on src/wrapper.cpp");
 
     let archive = out_dir.join("libdj_signalsmith.a");
-    let status = Command::new("ar")
+    let archiver = target_var("AR").unwrap_or_else(|| "ar".to_string());
+    let status = Command::new(&archiver)
         .arg("crs")
         .arg(&archive)
         .arg(&object)

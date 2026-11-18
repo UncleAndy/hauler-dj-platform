@@ -14,3 +14,14 @@ serde_json.workspace = true
 
 [lints]
 workspace = true
+
+[target.'cfg(windows)'.dependencies]
+# The pipe functions live in System::Pipes and their signatures name OVERLAPPED and SECURITY_ATTRIBUTES:
+# windows-sys cfg's each item out unless those modules are enabled too.
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
+] }

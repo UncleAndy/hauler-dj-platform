@@ -55,12 +55,7 @@ impl Store {
 
     /// `$XDG_DATA_HOME/hauler-dj/meta`, or `~/.local/share/hauler-dj/meta` when the variable is unset.
     pub fn with_default_mirror() -> Self {
-        let base = std::env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .or_else(|| {
-                std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share"))
-            })
-            .unwrap_or_else(|| PathBuf::from("."));
+        let base = dj_paths::data_dir_raw().unwrap_or_else(|| PathBuf::from("."));
         Self::new(base.join("hauler-dj").join("meta"))
     }
 

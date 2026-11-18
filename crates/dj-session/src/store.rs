@@ -101,10 +101,7 @@ impl SessionStore {
 
     /// `$XDG_CONFIG_HOME/hauler-dj/session.json`, or `~/.config/hauler-dj/session.json`.
     pub fn with_default_path() -> Self {
-        let base = std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
-            .unwrap_or_else(|| PathBuf::from("."));
+        let base = dj_paths::config_dir_raw().unwrap_or_else(|| PathBuf::from("."));
         Self::new(base.join("hauler-dj").join("session.json"))
     }
 

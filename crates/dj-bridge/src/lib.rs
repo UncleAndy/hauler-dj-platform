@@ -149,16 +149,217 @@ pub fn read_frame<R: Read, T: DeserializeOwned>(reader: &mut R) -> Result<T, Fra
     serde_json::from_slice(&payload).map_err(|err| FrameError::Encoding(err.to_string()))
 }
 
+/// The channel the engine and the shell talk over.
+///
+/// The wire format is the same on every platform; only the endpoint differs. On Linux it is a socket file, on
+/// Windows a named pipe: a name served by the kernel instead of a file on disk, which is why the two are wrapped
+/// here rather than spelled out at each call site.
+pub mod transport {
+    use std::io;
+    use std::path::Path;
+
+    #[cfg(unix)]
+    mod imp {
+        use super::{io, Path};
+        use std::path::PathBuf;
+
+        /// A connected socket.
+        pub type Stream = std::os::unix::net::UnixStream;
+
+        /// A listening socket.
+        #[derive(Debug)]
+        pub struct Listener {
+            inner: std::os::unix::net::UnixListener,
+            path: PathBuf,
+        }
+
+        impl Listener {
+            pub fn bind(path: &Path) -> io::Result<Self> {
+                let inner = std::os::unix::net::UnixListener::bind(path)?;
+                Ok(Self {
+                    inner,
+                    path: path.to_path_buf(),
+                })
+            }
+
+            pub fn accept(&self) -> io::Result<Stream> {
+                self.inner.accept().map(|(stream, _address)| stream)
+            }
+
+            pub fn path(&self) -> &Path {
+                &self.path
+            }
+        }
+
+        pub fn connect(path: &Path) -> io::Result<Stream> {
+            std::os::unix::net::UnixStream::connect(path)
+        }
+
+        /// Whether something already answers on this endpoint.
+        pub fn served(path: &Path) -> bool {
+            std::os::unix::net::UnixStream::connect(path).is_ok()
+        }
+
+        /// Remove a socket file left by a crashed engine. Only unix has one to remove.
+        pub fn remove_stale(path: &Path) -> io::Result<()> {
+            std::fs::remove_file(path)
+        }
+    }
+
+    // The pipe API is C: there is no safe wrapper for it in `std`, so this module is the one place in the
+    // workspace that speaks to the kernel directly. Every block below says what it is doing and why the
+    // handles cannot outlive it.
+    #[cfg(windows)]
+    #[allow(unsafe_code)]
+    mod imp {
+        use super::{io, Path};
+        use std::io::{Read, Write};
+        use std::os::windows::io::{FromRawHandle, RawHandle};
+        use std::path::PathBuf;
+        use windows_sys::Win32::Foundation::{CloseHandle, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE};
+        use windows_sys::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
+        use windows_sys::Win32::System::Pipes::{
+            ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE,
+            PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+        };
+
+        /// One pipe instance. It reads and writes like a file, which is what a pipe handle is.
+        #[derive(Debug)]
+        pub struct Stream {
+            file: std::fs::File,
+        }
+
+        impl Stream {
+            pub fn try_clone(&self) -> io::Result<Self> {
+                self.file.try_clone().map(|file| Self { file })
+            }
+
+            /// A blocking pipe read has no deadline without overlapped I/O. The engine gives every connection
+            /// its own thread, and the shell reads in its event loop, so the deadline is accepted and not
+            /// enforced rather than pretended at.
+            pub fn set_read_timeout(&self, _timeout: Option<std::time::Duration>) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl Read for Stream {
+            fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+                self.file.read(out)
+            }
+        }
+
+        impl Write for Stream {
+            fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+                self.file.write(data)
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                self.file.flush()
+            }
+        }
+
+        /// A pipe name: the kernel creates an instance when a client arrives.
+        #[derive(Debug)]
+        pub struct Listener {
+            full: Vec<u16>,
+            name: PathBuf,
+        }
+
+        fn wide(text: &str) -> Vec<u16> {
+            text.encode_utf16().chain(std::iter::once(0)).collect()
+        }
+
+        impl Listener {
+            pub fn bind(path: &Path) -> io::Result<Self> {
+                Ok(Self {
+                    full: wide(&crate::transport::pipe_name(path)),
+                    name: path.to_path_buf(),
+                })
+            }
+
+            pub fn accept(&self) -> io::Result<Stream> {
+                // SAFETY: the name is a NUL-terminated buffer owned by `self` for the call, and the other
+                // arguments are plain constants from the same header.
+                let handle: HANDLE = unsafe {
+                    CreateNamedPipeW(
+                        self.full.as_ptr(),
+                        PIPE_ACCESS_DUPLEX,
+                        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                        PIPE_UNLIMITED_INSTANCES,
+                        1 << 16,
+                        1 << 16,
+                        0,
+                        std::ptr::null(),
+                    )
+                };
+                if handle == INVALID_HANDLE_VALUE {
+                    return Err(io::Error::last_os_error());
+                }
+                // SAFETY: `handle` came from `CreateNamedPipeW` and is still open; a null OVERLAPPED means
+                // a blocking wait, which is what this one-instance-per-client server wants.
+                let connected = unsafe { ConnectNamedPipe(handle, std::ptr::null_mut()) };
+                if connected == 0 {
+                    let error = io::Error::last_os_error();
+                    // A client that connected between the two calls is not a failure.
+                    if error.raw_os_error() != Some(ERROR_PIPE_CONNECTED as i32) {
+                        // SAFETY: the handle is ours, the wait failed, and nothing else holds it.
+                        unsafe { CloseHandle(handle) };
+                        return Err(error);
+                    }
+                }
+                // SAFETY: the handle is open and uniquely owned here; handing it to `File` gives it exactly
+                // one owner, and that owner closes it.
+                let file = unsafe { std::fs::File::from_raw_handle(handle as RawHandle) };
+                Ok(Stream { file })
+            }
+
+            pub fn path(&self) -> &Path {
+                &self.name
+            }
+        }
+
+        pub fn connect(path: &Path) -> io::Result<Stream> {
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(crate::transport::pipe_name(path))?;
+            Ok(Stream { file })
+        }
+
+        pub fn served(path: &Path) -> bool {
+            connect(path).is_ok()
+        }
+
+        /// A pipe has nothing on disk to clean up.
+        pub fn remove_stale(_path: &Path) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    pub use imp::{Listener, Stream, connect, remove_stale, served};
+
+    /// The full name of a pipe, `\\.\pipe\<name>`, from the endpoint as the caller spells it.
+    #[cfg(windows)]
+    pub fn pipe_name(endpoint: &Path) -> String {
+        let text = endpoint.display().to_string();
+        if text.starts_with(r"\\.\pipe\") {
+            text
+        } else {
+            format!(r"\\.\pipe\{text}")
+        }
+    }
+}
+
 /// One accepted connection, with framing already handled.
 #[derive(Debug)]
 pub struct Connection {
-    stream: std::os::unix::net::UnixStream,
-    reader: BufReader<std::os::unix::net::UnixStream>,
+    stream: transport::Stream,
+    reader: BufReader<transport::Stream>,
 }
 
 impl Connection {
     /// Wrap an accepted socket.
-    pub fn new(stream: std::os::unix::net::UnixStream) -> std::io::Result<Self> {
+    pub fn new(stream: transport::Stream) -> std::io::Result<Self> {
         let reader = BufReader::new(stream.try_clone()?);
         Ok(Self { stream, reader })
     }
@@ -197,7 +398,7 @@ impl Connection {
 
 /// The reading half of a split connection.
 pub struct ConnectionReader {
-    reader: BufReader<std::os::unix::net::UnixStream>,
+    reader: BufReader<transport::Stream>,
 }
 
 impl ConnectionReader {
@@ -217,7 +418,7 @@ impl ConnectionReader {
 
 /// The writing half of a split connection.
 pub struct ConnectionWriter {
-    stream: std::os::unix::net::UnixStream,
+    stream: transport::Stream,
 }
 
 impl ConnectionWriter {
@@ -230,7 +431,7 @@ impl ConnectionWriter {
 /// A listening socket the engine owns.
 #[derive(Debug)]
 pub struct BridgeServer {
-    listener: std::os::unix::net::UnixListener,
+    listener: transport::Listener,
     path: PathBuf,
 }
 
@@ -240,22 +441,19 @@ impl BridgeServer {
     /// The stale file is only removed when nothing answers on it: a second engine must not steal
     /// the path from a running one.
     pub fn bind(path: &Path) -> Result<Self, FrameError> {
-        if path.exists() {
-            match std::os::unix::net::UnixStream::connect(path) {
-                Ok(_) => {
-                    return Err(FrameError::Io(format!(
-                        "{} is already served by a running engine",
-                        path.display()
-                    )));
-                }
-                Err(_) => {
-                    std::fs::remove_file(path).map_err(|err| {
-                        FrameError::Io(format!("cannot remove stale {}: {err}", path.display()))
-                    })?;
-                }
-            }
+        if transport::served(path) {
+            return Err(FrameError::Io(format!(
+                "{} is already served by a running engine",
+                path.display()
+            )));
         }
-        let listener = std::os::unix::net::UnixListener::bind(path)
+        // A socket file left by a crashed engine is in the way of the new one; a pipe name has no file.
+        if path.exists() {
+            transport::remove_stale(path).map_err(|err| {
+                FrameError::Io(format!("cannot remove stale {}: {err}", path.display()))
+            })?;
+        }
+        let listener = transport::Listener::bind(path)
             .map_err(|err| FrameError::Io(format!("cannot bind {}: {err}", path.display())))?;
         Ok(Self {
             listener,
@@ -270,7 +468,7 @@ impl BridgeServer {
 
     /// Accept the next client.
     pub fn accept(&self) -> Result<Connection, FrameError> {
-        let (stream, _) = self
+        let stream = self
             .listener
             .accept()
             .map_err(|err| FrameError::Io(err.to_string()))?;
@@ -330,7 +528,7 @@ pub fn connect_with_timeout(
     path: &Path,
     timeout: Option<std::time::Duration>,
 ) -> Result<(Connection, ServerMessage), FrameError> {
-    let stream = std::os::unix::net::UnixStream::connect(path)
+    let stream = transport::connect(path)
         .map_err(|err| FrameError::Io(format!("cannot connect to {}: {err}", path.display())))?;
     if let Some(timeout) = timeout {
         stream

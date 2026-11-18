@@ -145,13 +145,7 @@ impl Store {
 
     /// Хранилище по умолчанию: `$XDG_DATA_HOME/hauler-dj/models`.
     pub fn default_root() -> PathBuf {
-        let base = std::env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .filter(|path| path.is_absolute())
-            .or_else(|| {
-                std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share"))
-            })
-            .unwrap_or_else(|| PathBuf::from(".local/share"));
+        let base = dj_paths::data_dir().unwrap_or_else(|| PathBuf::from(".local/share"));
         base.join("hauler-dj").join("models")
     }
 

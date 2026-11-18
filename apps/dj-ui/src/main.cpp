@@ -58,11 +58,18 @@ void collectMessages(QtMsgType type, const QMessageLogContext &context, const QS
 
 QString defaultSocketPath()
 {
+#ifdef Q_OS_WIN
+    // A named pipe, not a file: the engine adds the `\\.\pipe\` prefix itself, and the name carries the
+    // user so two sessions on one machine do not meet.
+    const QString user = qEnvironmentVariable("USERNAME", QStringLiteral("dj"));
+    return QStringLiteral("hauler-dj-engine-") + user;
+#else
     const QByteArray runtime = qgetenv("XDG_RUNTIME_DIR");
     if (!runtime.isEmpty()) {
         return QString::fromLocal8Bit(runtime) + QStringLiteral("/hauler-dj-engine.sock");
     }
     return QStringLiteral("/tmp/hauler-dj-engine.sock");
+#endif
 }
 
 } // namespace

@@ -1,0 +1,10 @@
+[package]
+name = "dj-paths"
+description = "Where the application keeps its files, on every platform it runs on."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]

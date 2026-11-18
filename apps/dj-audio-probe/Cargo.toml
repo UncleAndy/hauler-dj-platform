@@ -8,8 +8,15 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
-cpal = { version = "0.18", features = ["pipewire"] }
+
 serde_json = "1"
 
 [lints]
 workspace = true
+
+# The Linux backend is PipeWire; Windows and macOS use what cpal gives them by default (WASAPI, CoreAudio).
+[target.'cfg(target_os = "linux")'.dependencies]
+cpal = { version = "0.18", features = ["pipewire"] }
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+cpal = "0.18"

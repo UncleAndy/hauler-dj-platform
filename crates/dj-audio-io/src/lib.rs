@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+#[cfg(unix)]
 use rustix::time::{ClockId, clock_gettime};
 
 /// Which physical channels carry which bus (ADR-0005).
@@ -296,12 +297,48 @@ fn percentiles(histogram: &[AtomicU32], low: f64, high: f64) -> (f64, f64) {
 ///
 /// The difference against wall time is the whole answer to "was the block slow, or was the thread
 /// gone?": a block that takes 2.7 ms of wall time but 20 us of CPU was not executing our code.
+#[cfg(unix)]
 fn thread_cpu_ns() -> u64 {
     let now = clock_gettime(ClockId::ThreadCPUTime);
     u64::try_from(now.tv_sec)
         .unwrap_or(0)
         .saturating_mul(1_000_000_000)
         .saturating_add(u64::try_from(now.tv_nsec).unwrap_or(0))
+}
+
+/// CPU time consumed by the calling thread, in nanoseconds.
+///
+/// Windows keeps the same two clocks per thread — kernel time and user time, both in 100 ns units — and the
+/// question is the same one: a block that takes 2.7 ms of wall time but 20 us of CPU was not executing our code.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+fn thread_cpu_ns() -> u64 {
+    use windows_sys::Win32::Foundation::{FILETIME, HANDLE};
+    use windows_sys::Win32::System::Threading::{GetCurrentThread, GetThreadTimes};
+
+    let zero = FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    let (mut creation, mut exit, mut kernel, mut user) = (zero, zero, zero, zero);
+    // SAFETY: `GetCurrentThread` returns a pseudo-handle for the calling thread, valid for this call; the four
+    // FILETIME pointers are local and correctly sized, and nothing outlives the call.
+    let asked = unsafe {
+        GetThreadTimes(
+            GetCurrentThread() as HANDLE,
+            &mut creation,
+            &mut exit,
+            &mut kernel,
+            &mut user,
+        )
+    };
+    if asked == 0 {
+        return 0;
+    }
+    let ticks = |time: FILETIME| (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime);
+    ticks(kernel)
+        .saturating_add(ticks(user))
+        .saturating_mul(100)
 }
 
 /// What the kernel says about the thread the callback runs on.
@@ -321,6 +358,7 @@ pub struct ThreadPressure {
 }
 
 /// Parse `nonvoluntary_ctxt_switches` out of `/proc/<pid>/task/<tid>/status`.
+#[cfg(unix)]
 fn parse_nonvoluntary(status: &str) -> Option<u64> {
     status
         .lines()
@@ -329,6 +367,7 @@ fn parse_nonvoluntary(status: &str) -> Option<u64> {
 }
 
 /// Parse `/proc/<pid>/task/<tid>/schedstat`: cpu nanoseconds, run-queue delay, timeslices.
+#[cfg(unix)]
 fn parse_schedstat(schedstat: &str) -> Option<(u64, u64, u64)> {
     let mut fields = schedstat.split_whitespace();
     let cpu = fields.next()?.parse().ok()?;
@@ -351,6 +390,7 @@ pub struct ThreadScheduling {
     pub nice: i64,
 }
 
+#[cfg(unix)]
 /// Parse `/proc/<pid>/task/<tid>/stat`: fields 19 (nice), 40 (rt_priority) and 41 (policy).
 ///
 /// The command name in field 2 may contain spaces and parentheses, so parsing starts after the
@@ -449,7 +489,14 @@ pub fn realtime_status(scheduling: Option<ThreadScheduling>) -> RealtimeStatus {
     }
 }
 
+/// Scheduling policy and priority of one thread: a procfs question on Linux, and nothing to ask on Windows.
+#[cfg(windows)]
+pub fn thread_scheduling(_tid: u64) -> Option<ThreadScheduling> {
+    None
+}
+
 /// Scheduling policy and priority of one thread.
+#[cfg(unix)]
 pub fn thread_scheduling(tid: u64) -> Option<ThreadScheduling> {
     if tid == 0 {
         return None;
@@ -459,6 +506,16 @@ pub fn thread_scheduling(tid: u64) -> Option<ThreadScheduling> {
 }
 
 /// Kernel counters for one thread. `None` when the platform has no procfs.
+/// Involuntary switches, run-queue delay and CPU time for a thread — the counters Linux keeps per task.
+///
+/// Windows has no equivalent readable from inside the callback, and "not known" is the honest answer: a
+/// zero here would claim the thread was never taken off the CPU.
+#[cfg(windows)]
+pub fn thread_pressure(_tid: u64) -> Option<ThreadPressure> {
+    None
+}
+
+#[cfg(unix)]
 pub fn thread_pressure(tid: u64) -> Option<ThreadPressure> {
     if tid == 0 {
         return None;

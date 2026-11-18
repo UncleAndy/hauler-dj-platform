@@ -41,3 +41,10 @@ result-*
 /tmp/
 .hermes/scratch/
 
+# --- Windows build ---
+# Build caches and the assembled distribution are products of scripts/windows.sh: the Qt downloads and the
+# cargo registry for the cross target are large, and the dist folder is rebuilt from source.
+/.cache/
+/dist/
+/build-windows/
+aqtinstall.log

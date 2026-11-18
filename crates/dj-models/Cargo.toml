@@ -8,6 +8,7 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+dj-paths = { path = "../dj-paths" }
 serde.workspace = true
 toml.workspace = true
 # SHA-256 of the artifact is the only thing that separates "downloaded" from "the right bytes".

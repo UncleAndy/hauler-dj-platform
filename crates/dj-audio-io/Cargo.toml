@@ -10,8 +10,24 @@ authors.workspace = true
 [dependencies]
 # Same backend decision as ADR-0002: CPAL with the native PipeWire host on Linux, WASAPI/CoreAudio
 # elsewhere.
-cpal = { version = "0.18.2", features = ["pipewire"] }
-rustix = { version = "1.1.6", features = ["time"] }
+
+
 
 [lints]
 workspace = true
+
+# The Linux backend is PipeWire; Windows and macOS use what cpal gives them by default (WASAPI, CoreAudio).
+[target.'cfg(target_os = "linux")'.dependencies]
+cpal = { version = "0.18.2", features = ["pipewire"] }
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+cpal = "0.18.2"
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.6", features = ["time"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+] }

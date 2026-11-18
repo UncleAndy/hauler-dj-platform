@@ -1471,18 +1471,13 @@ fn run_null(mut graph: EngineGraph, options: &RunOptions, stop: &Arc<AtomicBool>
 
 /// Where waveform envelopes are cached: the user's cache directory, never the collection.
 fn peaks_directory() -> PathBuf {
-    let base = std::env::var("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-            PathBuf::from(home).join(".cache")
-        });
+    let base = dj_paths::cache_dir().unwrap_or_else(|| PathBuf::from("."));
     base.join("hauler-dj").join("peaks")
 }
 
-/// Remove the socket file the accept thread still holds open.
+/// Remove the socket file the accept thread still holds open. A pipe name has no file.
 fn remove_socket(path: &std::path::Path) {
-    let _ = std::fs::remove_file(path);
+    let _ = dj_bridge::transport::remove_stale(path);
 }
 
 fn default_socket() -> PathBuf {

@@ -8,6 +8,7 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+dj-paths = { path = "../dj-paths" }
 serde.workspace = true
 serde_json.workspace = true
 # The index is a cache over portable metadata (DJP-DATA-006): SQLite for queries, bundled so the

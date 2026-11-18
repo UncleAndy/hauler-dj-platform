@@ -1094,10 +1094,7 @@ impl Index {
 /// The environment is read here and nowhere else: a second reader of `XDG_DATA_HOME` is a second
 /// opinion about where the database lives.
 pub fn data_folder() -> Option<PathBuf> {
-    data_folder_from(
-        std::env::var_os("XDG_DATA_HOME").as_deref().map(Path::new),
-        std::env::var_os("HOME").as_deref().map(Path::new),
-    )
+    dj_paths::data_dir()
 }
 
 /// The same decision, taken from values instead of the environment.

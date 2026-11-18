@@ -372,6 +372,7 @@ version = "0.1.0"
 dependencies = [
  "cpal",
  "rustix",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -397,6 +398,7 @@ dependencies = [
  "dj-domain",
  "serde",
  "serde_json",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -414,6 +416,7 @@ dependencies = [
 name = "dj-config"
 version = "0.1.0"
 dependencies = [
+ "dj-paths",
  "serde",
  "toml 0.9.12+spec-1.1.0",
 ]
@@ -465,6 +468,7 @@ dependencies = [
  "dj-library",
  "dj-mixer",
  "dj-models",
+ "dj-paths",
  "dj-sync",
  "dj-testkit",
  "serde_json",
@@ -500,6 +504,7 @@ version = "0.1.0"
 dependencies = [
  "dj-codec",
  "dj-fingerprint",
+ "dj-paths",
  "lofty",
  "rusqlite",
  "serde",
@@ -541,6 +546,7 @@ dependencies = [
 name = "dj-models"
 version = "0.1.0"
 dependencies = [
+ "dj-paths",
  "serde",
  "sha2",
  "toml 0.9.12+spec-1.1.0",
@@ -548,9 +554,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "dj-paths"
+version = "0.1.0"
+
+[[package]]
 name = "dj-session"
 version = "0.1.0"
 dependencies = [
+ "dj-paths",
  "serde",
  "serde_json",
 ]
@@ -2230,6 +2241,15 @@ name = "windows-sys"
 version = "0.52.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "282be5f36a8ce781fad8c8ae18fa3f9beff57ec1b52cb3de0789201425d9a33d"
+dependencies = [
+ "windows-targets",
+]
+
+[[package]]
+name = "windows-sys"
+version = "0.59.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e38bc4d79ed67fd075bcc251a1c39b32a1776bbe92e5bef1f0bf1f8c531853b"
 dependencies = [
  "windows-targets",
 ]

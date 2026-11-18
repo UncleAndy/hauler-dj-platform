@@ -332,10 +332,7 @@ impl Config {
     /// Where the settings live unless a flag says otherwise: `$XDG_CONFIG_HOME/hauler-dj/config.toml`,
     /// or the same under the home folder when the variable is unset.
     pub fn default_path() -> Option<PathBuf> {
-        let base = std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .filter(|path| path.is_absolute())
-            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
+        let base = dj_paths::config_dir()?;
         Some(base.join("hauler-dj").join("config.toml"))
     }
 
