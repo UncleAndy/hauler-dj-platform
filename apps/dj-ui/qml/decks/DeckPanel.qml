@@ -342,6 +342,21 @@ Pane {
         return panel.track !== null && panel.track.bpm !== undefined && panel.track.bpm !== null
                ? panel.track.bpm : 0;
     }
+    /// The rate the deck runs at: the tempo fader, a nudge, or a sync to the master.
+    readonly property real tempoRatio: panel.deck !== null && panel.deck !== undefined
+                                       && panel.deck.tempo_ratio !== undefined
+                                       ? panel.deck.tempo_ratio : 1.0
+    /// The tempo the room hears: the grid's number under the play head, moved by the deck's rate.
+    ///
+    /// Two numbers, not one, because a DJ reads both: the sounding tempo is what he mixes with, and the file's
+    /// own tempo is what the track was measured at. With the fader at zero they are the same number, and after a
+    /// shift only the first moves.
+    readonly property real soundingBpm: panel.localBpm * panel.tempoRatio
+    /// The tempo the file itself carries: the measurement, not the setting.
+    readonly property real fileBpm: panel.track !== null && panel.track !== undefined
+                                    && panel.track.bpm !== undefined && panel.track.bpm !== null
+                                    && panel.track.bpm > 0
+                                    ? panel.track.bpm : panel.localBpm
     readonly property var loop: panel.deck.loop_region !== undefined ? panel.deck.loop_region : null
 
     /// Whether this deck's metronome clicks its grid. The state is the engine's: the button draws it and
@@ -747,8 +762,11 @@ Pane {
                     // a label that comes and goes moves every button beside it — while a series of taps is
                     // running the tempo it publishes is briefly nothing, and the Tap button walked 19 px
                     // out from under the hand (owner's report, 15.11.2026).
-                    Layout.preferredWidth: 54
-                    text: panel.localBpm > 0 ? panel.localBpm.toFixed(1) + " BPM" : ""
+                    // Two numbers need two numbers' room: the slot is fixed so the tools beside it stand still.
+                    Layout.preferredWidth: 96
+                    text: panel.localBpm > 0
+                          ? panel.soundingBpm.toFixed(1) + "/" + panel.fileBpm.toFixed(1) + " BPM"
+                          : ""
                     color: UiSettings.themeAccent
                     font.pixelSize: 10
                 }

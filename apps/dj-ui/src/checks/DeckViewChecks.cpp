@@ -4,6 +4,8 @@
 
 #include "Checks.h"
 
+#include <QRegularExpression>
+
 namespace checks {
 
 int runSyncCheck(QQmlApplicationEngine& engine, std::unique_ptr<BridgeClient>& bridge,
@@ -7221,7 +7223,66 @@ int runTempoCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, QCommandL
         std::fprintf(stderr, "dj-ui: the deck shows no tempo (label \"%s\")\n", qPrintable(shown));
         return 1;
     }
-    std::fprintf(stdout, "dj-ui: the measured tempo reached the deck\n");
+    // Two numbers, not one: the tempo the deck sounds at and the tempo the file was measured at. A DJ reads
+    // both — with the pitch fader at zero they are the same number, and after a shift the first one moves.
+    const auto numbersIn = [](const QString& text) {
+        QStringList found;
+        static const QRegularExpression number(QStringLiteral("[0-9]+[.,][0-9]"));
+        auto match = number.globalMatch(text);
+        while (match.hasNext()) {
+            found.append(match.next().captured(0).replace(QLatin1Char(','), QLatin1Char('.')));
+        }
+        return found;
+    };
+    const QStringList atZero = numbersIn(shown);
+    if (atZero.size() != 2 || !shown.contains(QLatin1Char('/'))) {
+        std::fprintf(stderr,
+                     "dj-ui: the deck shows one tempo instead of two (label \"%s\")\n",
+                     qPrintable(shown));
+        return 1;
+    }
+    if (std::abs(atZero.at(0).toDouble() - atZero.at(1).toDouble()) > 0.15) {
+        std::fprintf(stderr, "dj-ui: the two numbers differ with the pitch at zero (\"%s\")\n",
+                     qPrintable(shown));
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: the deck shows the tempo twice (\"%s\")\n", qPrintable(shown));
+
+    // The fader moves the first number and leaves the second alone: the file's tempo is not a setting.
+    bridge->setTempo(QStringLiteral("A"), 1.06);
+    QString moved;
+    QElapsedTimer shifted;
+    shifted.start();
+    while (shifted.elapsed() < 4000) {
+        QCoreApplication::processEvents();
+        QThread::msleep(20);
+        moved = label != nullptr ? label->property("text").toString() : QString();
+        const QStringList pair = numbersIn(moved);
+        if (pair.size() == 2 && pair.at(0).toDouble() > atZero.at(1).toDouble() + 1.0) {
+            break;
+        }
+    }
+    const QStringList afterShift = numbersIn(moved);
+    if (afterShift.size() != 2) {
+        std::fprintf(stderr, "dj-ui: the shifted label lost a number (\"%s\")\n", qPrintable(moved));
+        return 1;
+    }
+    const double sounded = afterShift.at(0).toDouble();
+    const double measuredAfter = afterShift.at(1).toDouble();
+    if (std::abs(measuredAfter - atZero.at(1).toDouble()) > 0.15) {
+        std::fprintf(stderr, "dj-ui: the file's own tempo moved with the fader (\"%s\")\n",
+                     qPrintable(moved));
+        return 1;
+    }
+    if (std::abs(sounded - atZero.at(1).toDouble() * 1.06) > 0.3) {
+        std::fprintf(stderr,
+                     "dj-ui: the sounding tempo did not follow the fader (\"%s\", expected %.1f)\n",
+                     qPrintable(moved), atZero.at(1).toDouble() * 1.06);
+        return 1;
+    }
+    bridge->setTempo(QStringLiteral("A"), 1.0);
+    std::fprintf(stdout, "dj-ui: the pitch moved the sounding tempo to %.1f and left the file's %.1f (\"%s\")\n",
+                 sounded, measuredAfter, qPrintable(moved));
     return 0;
 }
 
