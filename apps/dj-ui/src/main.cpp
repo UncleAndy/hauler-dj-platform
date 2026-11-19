@@ -248,6 +248,10 @@ int main(int argc, char *argv[])
         QStringLiteral("whole-list-check"),
         QStringLiteral("The list is read whole: every row of a four-hundred-row collection arrives without a "
                        "scroll (needs --collection-root and --import-fixture)."));
+    const QCommandLineOption pathsCheckOption(
+        QStringLiteral("paths-check"),
+        QStringLiteral("The rules that spell and read a path, held to both separators: a file name, a folder the "
+                       "import sets aside, the parts of a path, and the spelling of a root."));
     const QCommandLineOption reconnectCheckOption(
         QStringLiteral("reconnect-check"),
         QStringLiteral("The shell is started before the engine and has to come back on its own: one attempt "
@@ -557,6 +561,7 @@ int main(int argc, char *argv[])
     parser.addOption(pageCheckOption);
     parser.addOption(analyzeBatchCheckOption);
     parser.addOption(wholeListCheckOption);
+    parser.addOption(pathsCheckOption);
     parser.addOption(reconnectCheckOption);
     parser.addOption(selectionCheckOption);
     parser.addOption(layoutMenuCheckOption);
@@ -620,6 +625,12 @@ int main(int argc, char *argv[])
     parser.addOption(barGapOption);
     parser.addOption(dialogCheckOption);
     parser.process(app);
+
+    if (parser.isSet(pathsCheckOption)) {
+        // Neither engine nor window: the rules are arithmetic on strings, and they must hold on the machine that
+        // runs them, whichever platform that is.
+        return runPathsCheck();
+    }
 
     auto bridge = std::make_unique<BridgeClient>();
     qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "Bridge", bridge.get());

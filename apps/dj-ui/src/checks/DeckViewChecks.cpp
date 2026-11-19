@@ -7235,7 +7235,10 @@ int runTempoCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, QCommandL
         return found;
     };
     const QStringList atZero = numbersIn(shown);
-    if (atZero.size() != 2 || !shown.contains(QLatin1Char('/'))) {
+    // Either separator: the path is drawn the way the platform spells it, and a check that insists on `/` is a
+    // check that fails on the machine the shell is shipped to.
+    if (atZero.size() != 2
+        || (!shown.contains(QLatin1Char('/')) && !shown.contains(QLatin1Char('\\')))) {
         std::fprintf(stderr,
                      "dj-ui: the deck shows one tempo instead of two (label \"%s\")\n",
                      qPrintable(shown));

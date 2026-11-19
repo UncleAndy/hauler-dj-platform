@@ -138,6 +138,9 @@ public:
     Q_INVOKABLE void setFilter(const QString &text);
     /// True when `path` is a file rather than a folder: a batch of one file needs no confirmation.
     Q_INVOKABLE bool entryIsFile(const QString &path) const;
+    // The file or folder name of a path, on either platform: a contract the panel asks for instead of cutting the
+    // string on a slash of its own.
+    Q_INVOKABLE QString fileName(const QString &path) const;
 
     // --- The lock as the list wears it ---
     //

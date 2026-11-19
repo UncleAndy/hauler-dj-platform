@@ -1,5 +1,7 @@
 #include "BridgeClient.h"
 
+#include "PathRules.h"
+
 #include <QDateTime>
 
 #include <QCoreApplication>
@@ -57,7 +59,9 @@ namespace {
 // are not part of the collection until their owner deletes them, so the section does not list them.
 bool insideDuplicates(const QString &directory)
 {
-    return directory.split(QLatin1Char('/')).contains(QStringLiteral("_duplicates"));
+    // Either separator: on Windows this path is spelled with backslashes, and a split on `/` alone never found the
+    // folder it was looking for (owner's machine, 2026-11-19).
+    return pathrules::insideDuplicates(directory);
 }
 
 bool looksLikeAudio(const QString &name)
@@ -150,7 +154,8 @@ void FileBrowser::load(const QString &path)
 /// Where the shell writes its log, next to the engine's own.
 QString uiLogPath()
 {
-    return QFileInfo(defaultCollectionRoot()).absolutePath() + QStringLiteral("/logs/dj-ui.log");
+    // Built by QDir, not by a slash: the same line on every platform, spelled the way the platform spells it.
+    return QDir(QFileInfo(defaultCollectionRoot()).absolutePath()).filePath(QStringLiteral("logs/dj-ui.log"));
 }
 
 namespace {
@@ -298,13 +303,7 @@ void FileBrowser::openCollection(const QStringList &roots)
     // there. Every root is spelled the way this platform spells paths before it is used or sent anywhere.
     QStringList spelled;
     for (const QString &root : roots) {
-        QString one = QDir::toNativeSeparators(QDir::cleanPath(root));
-        while (one.size() > 1 && one.endsWith(QLatin1Char('/'))) {
-            one.chop(1);
-        }
-        while (one.size() > 1 && one.endsWith(QLatin1Char('\\'))) {
-            one.chop(1);
-        }
+        const QString one = pathrules::spelled(root);
         if (!one.isEmpty() && !spelled.contains(one)) {
             spelled.append(one);
         }
@@ -1326,7 +1325,7 @@ void FileBrowser::collect(const QStringList &roots)
                               {QStringLiteral("path"), info.absoluteFilePath()},
                               {QStringLiteral("dir"), false}};
             const QString record =
-                info.dir().absolutePath() + QStringLiteral("/.djmeta/") + info.fileName()
+                QDir(info.dir().absolutePath()).filePath(QStringLiteral(".djmeta/%1").arg(info.fileName()))
                 + QStringLiteral(".json");
             QFile meta(record);
             if (meta.open(QIODevice::ReadOnly)) {
@@ -2226,6 +2225,11 @@ int BridgeClient::cue(const QString &deck, const QString &action, int slot)
     QJsonObject command;
     command.insert(QStringLiteral("Cue"), options);
     return sendCommand(deck, command);
+}
+
+QString FileBrowser::fileName(const QString &path) const
+{
+    return pathrules::name(path);
 }
 
 void BridgeClient::note(const QString &message)

@@ -43,6 +43,9 @@ case "${1:-}" in
     export XDG_CONFIG_HOME="$smoke_dir/config"
     trap 'rm -rf "$smoke_dir"' EXIT
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --smoke
+    # The rules that spell and read a path, held to both separators: the class of bug that only ever showed up on
+    # Windows is checked here, on Linux, because the rule itself must not depend on the machine that runs it.
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --paths-check
     # The strip repaints every frame while scrolling: a frame must fit well inside 60 Hz.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --waveform-bench 60
     # The browser must open where the last track came from, and follow a new load.

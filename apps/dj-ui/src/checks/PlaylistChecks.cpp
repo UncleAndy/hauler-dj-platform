@@ -90,7 +90,7 @@ int runPlaylistCheck(QQmlApplicationEngine& engine, FileBrowser& browser, Bridge
         }
         QDir mirror(data + QStringLiteral("/hauler-dj/playlists"));
         return folder.isEmpty() ? mirror.filePath(name + QStringLiteral(".djplaylist.json"))
-                                : mirror.filePath(folder + QLatin1Char('/') + name +
+                                : mirror.filePath(QDir(folder).filePath(name) +
                                                   QStringLiteral(".djplaylist.json"));
     };
     // A click with no movement: press and release on the same point, the way a hand does it.
@@ -774,7 +774,7 @@ int runGenreCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutSet
     }
     for (const auto& row : rows) {
         const QString target =
-            collectionRoot + QStringLiteral("/") + row.first + QStringLiteral(".wav");
+            QDir(collectionRoot).filePath(row.first + QStringLiteral(".wav"));
         QFile::remove(target);
         if (!QFile::copy(fixture, target)) {
             std::fprintf(stderr, "dj-ui: cannot place %s\n", qPrintable(target));

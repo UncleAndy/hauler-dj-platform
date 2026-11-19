@@ -8,6 +8,7 @@ qt_add_executable(dj-ui
     src/main.cpp
     src/BridgeClient.cpp
     src/CrashLog.cpp
+    src/checks/PathChecks.cpp
     src/BridgeClient.h
     src/Waveform.cpp
     src/Waveform.h

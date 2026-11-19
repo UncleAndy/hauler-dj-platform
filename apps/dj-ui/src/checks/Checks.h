@@ -237,5 +237,6 @@ int runAnalyzeBatchCheck(QQmlApplicationEngine& engine, FileBrowser& browser, La
 
 /// The shell meets an engine that starts after it: one attempt at startup used to be the whole story.
 int runReconnectCheck(BridgeClient& bridge, const QString& endpoint);
+int runPathsCheck();
 
 } // namespace checks

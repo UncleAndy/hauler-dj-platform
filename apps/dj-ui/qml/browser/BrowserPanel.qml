@@ -647,7 +647,9 @@ Pane {
         repeat: true
         running: browser.pendingDeck !== ""
         onTriggered: {
-            const name = browser.pendingPath.split("/").pop();
+            // The name, not the tail of a split on `/`: a Windows path has no forward slash in it, and the load
+            // watch then waited for a deck to report a file called `C:\\Users\\…\\x.flac` — which it never would.
+            const name = Browser.fileName(browser.pendingPath);
             if (browser.snapshotHas(Bridge.snapshot, name)) {
                 browser.lastAction = "loaded " + browser.pendingPath + " into " + browser.pendingDeck;
                 browser.pendingDeck = "";
