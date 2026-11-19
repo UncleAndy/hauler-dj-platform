@@ -704,6 +704,9 @@ pub struct LiveOutput {
 /// fallback for an interface we know nothing about.
 pub fn output_channels(device: Option<&str>, limit: usize) -> Result<usize, IoError> {
     let host = cpal::default_host();
+    // An empty name means "the system's own choice". A launcher should not have to know a device name to make
+    // sound, and guessing the first device in the list is not the same as the default one.
+    let device = device.filter(|needle| !needle.is_empty());
     let chosen = match device {
         Some(needle) => {
             let needle_lower = needle.to_ascii_lowercase();
@@ -740,7 +743,9 @@ impl LiveOutput {
         renderer: Box<dyn Renderer>,
     ) -> Result<Self, IoError> {
         let host = cpal::default_host();
-        let device = match &config.device {
+        // An empty name is the system's own choice, exactly as in `output_channels`.
+        let device_config = config.device.as_deref().filter(|needle| !needle.is_empty());
+        let device = match device_config {
             Some(needle) => {
                 let needle_lower = needle.to_ascii_lowercase();
                 let devices = host
@@ -754,7 +759,7 @@ impl LiveOutput {
                         break;
                     }
                 }
-                found.ok_or_else(|| IoError::DeviceNotFound(needle.clone()))?
+                found.ok_or_else(|| IoError::DeviceNotFound(needle.to_string()))?
             }
             None => host
                 .default_output_device()

@@ -283,7 +283,9 @@ CONF
     cat > "$dist/hauler-dj.bat" <<'BAT'
 @echo off
 rem Движок и оболочка — два процесса; оболочка подключается к трубе движка.
-start "" "%~dp0dj-engine.exe"
+rem --device with an empty name asks for the system's own output: without it the engine plays a generated
+rem tone into nothing, which looks exactly like "no sound but the meter is lit".
+start "" "%~dp0dj-engine.exe" --device ""
 timeout /t 1 /nobreak >nul
 start "" "%~dp0dj-ui.exe"
 BAT

@@ -391,13 +391,38 @@ fn run(argv: &[String]) -> Result<(), String> {
         return Ok(());
     }
 
+    // A device that will not open costs the DJ the sound, not the program: the engine keeps running on the null
+    // sink and says so, so the shell still starts and the log names the reason. Exiting left a window with no
+    // engine at all, which is a worse answer than a silent one.
     let device_channels = match &device {
-        Some(requested) => Some(
-            dj_audio_io::output_channels(Some(requested), 4)
-                .map_err(|err| format!("cannot open {requested:?}: {err}"))?,
-        ),
+        Some(requested) => match dj_audio_io::output_channels(Some(requested), 4) {
+            Ok(channels) => Some(channels),
+            Err(err) => {
+                let named = if requested.is_empty() {
+                    "the default output device".to_string()
+                } else {
+                    format!("{requested:?}")
+                };
+                dj_engine::log::info(format!(
+                    "output {named} would not open: {err}; falling back to the null sink"
+                ));
+                device = None;
+                None
+            }
+        },
         None => None,
     };
+
+    // Which output the engine took: a silent app on Windows was the null sink, and nothing in the log said so.
+    match &device {
+        Some(name) if name.is_empty() => {
+            dj_engine::log::info("output: the system's default device");
+        }
+        Some(name) => dj_engine::log::info(format!("output: device matching {name:?}")),
+        None => dj_engine::log::info(
+            "output: null sink (a generated tone; pass --device for real sound)",
+        ),
+    }
 
     let socket = socket.unwrap_or_else(default_socket);
     let server = BridgeServer::bind(&socket).map_err(|err| err.to_string())?;

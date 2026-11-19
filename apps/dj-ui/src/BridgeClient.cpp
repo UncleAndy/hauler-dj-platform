@@ -602,6 +602,15 @@ void FileBrowser::takePage()
     const QVariantMap answer = m_bridge->collectionPage();
     const int id = answer.value(QStringLiteral("id")).toInt();
     if (id == 2000000000 || id != m_pageQuery || id == m_pageAnsweredFor) {
+        // Why an answer was not taken: the numbers are the whole story, and a list that stays empty is
+        // otherwise indistinguishable from a question that was never answered.
+        if (id != 0 && id != m_pageAnsweredFor) {
+            uiLog(QStringLiteral("answer %1 dropped: asked %2, already had %3, mode %4")
+                      .arg(id)
+                      .arg(m_pageQuery)
+                      .arg(m_pageAnsweredFor)
+                      .arg(m_mode));
+        }
         return;
     }
     m_pageAnsweredFor = id;
