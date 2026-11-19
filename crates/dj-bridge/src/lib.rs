@@ -160,7 +160,7 @@ pub mod transport {
 
     #[cfg(unix)]
     mod imp {
-        use super::{io, Path};
+        use super::{Path, io};
         use std::path::PathBuf;
 
         /// A connected socket.
@@ -212,11 +212,13 @@ pub mod transport {
     #[cfg(windows)]
     #[allow(unsafe_code)]
     mod imp {
-        use super::{io, Path};
+        use super::{Path, io};
         use std::io::{Read, Write};
         use std::os::windows::io::{FromRawHandle, RawHandle};
         use std::path::PathBuf;
-        use windows_sys::Win32::Foundation::{CloseHandle, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE};
+        use windows_sys::Win32::Foundation::{
+            CloseHandle, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE,
+        };
         use windows_sys::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
         use windows_sys::Win32::System::Pipes::{
             ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE,
@@ -237,7 +239,10 @@ pub mod transport {
             /// A blocking pipe read has no deadline without overlapped I/O. The engine gives every connection
             /// its own thread, and the shell reads in its event loop, so the deadline is accepted and not
             /// enforced rather than pretended at.
-            pub fn set_read_timeout(&self, _timeout: Option<std::time::Duration>) -> io::Result<()> {
+            pub fn set_read_timeout(
+                &self,
+                _timeout: Option<std::time::Duration>,
+            ) -> io::Result<()> {
                 Ok(())
             }
         }

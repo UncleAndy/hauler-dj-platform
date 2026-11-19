@@ -146,12 +146,27 @@ void FileBrowser::load(const QString &path)
     emit changed();
 }
 
+QString defaultCollectionRoot()
+{
+#ifdef Q_OS_WIN
+    QString base = qEnvironmentVariable("APPDATA");
+    if (base.isEmpty()) {
+        base = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+    }
+#else
+    QString base = qEnvironmentVariable("XDG_DATA_HOME");
+    if (base.isEmpty() || !QFileInfo(base).isAbsolute()) {
+        base = QDir::homePath() + QStringLiteral("/.local/share");
+    }
+#endif
+    return base + QStringLiteral("/hauler-dj/collection");
+}
+
 QString FileBrowser::defaultCollectionRoot() const
 {
-    // The tree the engine keeps its own data in ($XDG_DATA_HOME/hauler-dj): one collection, one place,
-    // and a copy of the collection carries its .djmeta with it.
-    const QString base = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
-    return base + QStringLiteral("/hauler-dj/collection");
+    // One collection, one place, and a copy of the collection carries its .djmeta with it. The free function is
+    // named with `::` on purpose: without it the name finds this very member and the call never returns.
+    return ::defaultCollectionRoot();
 }
 
 QString FileBrowser::cursor() const
@@ -1691,6 +1706,8 @@ void FileBrowser::applySort()
 BridgeClient::BridgeClient(QObject *parent)
     : QObject(parent)
 {
+    m_retryTimer.setSingleShot(true);
+    connect(&m_retryTimer, &QTimer::timeout, this, &BridgeClient::attemptConnect);
     connect(&m_socket, &QLocalSocket::connected, this, &BridgeClient::onConnected);
     connect(&m_socket, &QLocalSocket::disconnected, this, &BridgeClient::onDisconnected);
     connect(&m_socket, &QLocalSocket::readyRead, this, &BridgeClient::onReadyRead);
@@ -1719,6 +1736,18 @@ QString BridgeClient::homeFolder() const
 
 void BridgeClient::connectToEngine(const QString &path)
 {
+    m_endpoint = path;
+    m_wantConnection = true;
+    m_retryAttempts = 0;
+    m_retryTimer.stop();
+    attemptConnect();
+}
+
+void BridgeClient::attemptConnect()
+{
+    if (m_shuttingDown || !m_wantConnection) {
+        return;
+    }
     if (m_socket.state() != QLocalSocket::UnconnectedState) {
         m_socket.abort();
     }
@@ -1726,7 +1755,22 @@ void BridgeClient::connectToEngine(const QString &path)
     m_handshakeSent = false;
     setConnected(false);
     setStatus(QStringLiteral("connecting"));
-    m_socket.connectToServer(path);
+    m_socket.connectToServer(m_endpoint);
+}
+
+void BridgeClient::scheduleReconnect()
+{
+    if (m_shuttingDown || !m_wantConnection || m_retryTimer.isActive()) {
+        return;
+    }
+    ++m_retryAttempts;
+    // The first seconds are the common case: the launcher starts the engine and the shell together, and the
+    // engine needs a moment to open its pipe. After that the tries thin out — an engine that is still absent
+    // half a minute later is a real fault, and the terminal should say so once, not fifty times.
+    const int delay = m_retryAttempts <= 40 ? 250 : 2000;
+    std::fprintf(stderr, "dj-ui: no engine on %s yet (attempt %d), trying again in %d ms\n",
+                 qPrintable(m_endpoint), m_retryAttempts, delay);
+    m_retryTimer.start(delay);
 }
 
 void BridgeClient::onConnected()
@@ -1747,6 +1791,8 @@ void BridgeClient::onDisconnected()
     }
     setConnected(false);
     setStatus(QStringLiteral("disconnected"));
+    // An engine that went away is worth meeting again: it may be restarting.
+    scheduleReconnect();
 }
 
 void BridgeClient::onSocketError(QLocalSocket::LocalSocketError error)
@@ -1754,7 +1800,12 @@ void BridgeClient::onSocketError(QLocalSocket::LocalSocketError error)
     Q_UNUSED(error);
     setConnected(false);
     setStatus(QStringLiteral("error: %1").arg(m_socket.errorString()));
-    emit failed(m_socket.errorString());
+    // The greeting is reported as a failure only when the connection had been established: a refused first
+    // attempt is the ordinary race with a starting engine, not news.
+    if (m_handshakeSent) {
+        emit failed(m_socket.errorString());
+    }
+    scheduleReconnect();
 }
 
 void BridgeClient::onReadyRead()
@@ -2541,6 +2592,8 @@ BridgeClient::~BridgeClient()
     // and the slot would then touch a client mid-destruction and emit into a QML scene that has already
     // been torn down. That is the heap corruption seen when the window is closed right after the start.
     m_shuttingDown = true;
+    m_wantConnection = false;
+    m_retryTimer.stop();
     disconnect(&m_socket, nullptr, this, nullptr);
     m_socket.abort();
 }

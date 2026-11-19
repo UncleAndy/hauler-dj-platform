@@ -171,6 +171,40 @@ fn a_search_looks_in_the_names_and_counts_what_it_finds() {
 }
 
 #[test]
+fn a_page_finds_rows_under_a_windows_root() {
+    // Windows spells paths with `\`, and the list asks for its roots in the same spelling. A root joined with a
+    // forward slash matches nothing there, and the DJ sees an empty collection over a full folder.
+    let (mut inside, inside_genres) = row("A", "Alpha", 0.0, &[]);
+    inside.path = r"C:\Music\One\A - Alpha.flac".to_owned();
+    // A folder whose name starts with the same letters is still not the same folder.
+    let (mut neighbour, neighbour_genres) = row("C", "Cat", 0.0, &[]);
+    neighbour.path = r"C:\Music\One2\C - Cat.flac".to_owned();
+    let (index, _dir) = filled(
+        "roots-win",
+        &[(inside, inside_genres), (neighbour, neighbour_genres)],
+    );
+
+    let page = index
+        .page(&dj_library::index::PageQuery {
+            roots: vec![std::path::PathBuf::from(r"C:\Music\One")],
+            ..dj_library::index::PageQuery::default()
+        })
+        .expect("page");
+    assert_eq!(page.total, 1, "в ответе только строки своего корня");
+    assert_eq!(titles(&page), vec!["A".to_owned()]);
+
+    // The list of genres is filtered by the same roots, so it has to agree with the page.
+    let genres = index
+        .genre_list_in(&[std::path::PathBuf::from(r"C:\Music\One")])
+        .expect("genres");
+    assert_eq!(
+        genres.len(),
+        0,
+        "у строки нет жанров, и выдумывать их нельзя"
+    );
+}
+
+#[test]
 fn a_page_belongs_to_the_roots_it_was_asked_for() {
     // The index is one for the machine; the list is one for the folders the DJ opened.
     let (mut inside, inside_genres) = row("A", "Alpha", 0.0, &[]);

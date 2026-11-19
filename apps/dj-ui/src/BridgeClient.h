@@ -10,10 +10,19 @@
 #include <QJsonObject>
 #include <QLocalSocket>
 #include <QObject>
+#include <QTimer>
 
 #include <functional>
 #include <QString>
 #include <QVariantMap>
+
+/// The collection the engine keeps when the DJ has named no folder: `<data>/hauler-dj/collection`.
+///
+/// The engine answers this question from `dj_paths`: `%APPDATA%` on Windows, `$XDG_DATA_HOME` or
+/// `~/.local/share` on Linux. Qt's `GenericDataLocation` answers `%LOCALAPPDATA%` on Windows — a different
+/// folder — and a shell that points the import at one place while the list reads another shows an empty
+/// collection over a full folder.
+QString defaultCollectionRoot();
 
 // Lists a directory for the load dialog, or the whole collection for the Collection section.
 //
@@ -532,6 +541,11 @@ private slots:
     void onSocketError(QLocalSocket::LocalSocketError error);
 
 private:
+    /// One attempt to reach the endpoint this client wants.
+    void attemptConnect();
+    /// Arrange the next attempt, once. The shell and the engine start together, and either may be first.
+    void scheduleReconnect();
+
     void sendJson(const QJsonObject &message);
     void handleMessage(const QJsonObject &message);
     int sendCommand(const QString &deck, const QJsonObject &command);
@@ -539,6 +553,15 @@ private:
     void setConnected(bool connected);
 
     QLocalSocket m_socket;
+    /// Where this client wants to be, and the timer that keeps trying.
+    ///
+    /// One attempt at startup was the whole story before, and it was wrong: the launcher starts the engine and
+    /// the shell together, so a shell that lost the race stayed alive but deaf — an empty collection, an empty
+    /// genre list and a deck that refused every load, with nothing in the terminal to explain it.
+    QString m_endpoint;
+    bool m_wantConnection = false;
+    int m_retryAttempts = 0;
+    QTimer m_retryTimer;
     // Set while the object is being torn down: no signals out to a half-destroyed scene.
     bool m_shuttingDown = false;
     QByteArray m_buffer;

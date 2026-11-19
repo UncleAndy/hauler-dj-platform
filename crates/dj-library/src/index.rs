@@ -832,11 +832,12 @@ impl Index {
         let mut args: Vec<Value> = Vec::new();
         let mut filter = String::new();
         if !roots.is_empty() {
-            let mut marks = Vec::with_capacity(roots.len());
+            let mut marks = Vec::with_capacity(roots.len() * 2);
             for folder in roots {
-                let prefix = format!("{}/", folder.to_string_lossy().trim_end_matches('/'));
-                args.push(Value::Text(prefix));
-                marks.push(format!("t.path LIKE ?{} || '%'", args.len()));
+                for prefix in Self::root_prefixes(folder) {
+                    args.push(Value::Text(prefix));
+                    marks.push(format!("t.path LIKE ?{} || '%'", args.len()));
+                }
             }
             filter = format!(" WHERE ({})", marks.join(" OR "));
         }
@@ -960,6 +961,17 @@ impl Index {
         Ok(rows)
     }
 
+    /// The prefixes that make a row belong to a folder.
+    ///
+    /// A row belongs to a root when its path starts with the folder and then a separator: without the separator
+    /// a sibling like `/music/one2` would pass for `/music/one`. Both separators are offered, because the index
+    /// can hold rows written on either platform and Windows paths use `\`.
+    fn root_prefixes(folder: &std::path::Path) -> [String; 2] {
+        let text = folder.to_string_lossy();
+        let trimmed = text.trim_end_matches(['/', '\\']);
+        [format!("{trimmed}/"), format!("{trimmed}\\")]
+    }
+
     /// One page of the collection: ordered, filtered and searched **in SQL**.
     ///
     /// This is the question the interface asks over the bridge. A page keeps the cost of opening the
@@ -972,11 +984,12 @@ impl Index {
         // The index is one for the whole machine; the list is one for the roots the DJ opened. Without
         // this, a collection of forty records would show whatever else the index happens to hold.
         if !query.roots.is_empty() {
-            let mut marks = Vec::with_capacity(query.roots.len());
+            let mut marks = Vec::with_capacity(query.roots.len() * 2);
             for folder in &query.roots {
-                let prefix = format!("{}/", folder.to_string_lossy().trim_end_matches('/'));
-                args.push(Value::Text(prefix));
-                marks.push(format!("path LIKE ?{} || '%'", args.len()));
+                for prefix in Self::root_prefixes(folder) {
+                    args.push(Value::Text(prefix));
+                    marks.push(format!("path LIKE ?{} || '%'", args.len()));
+                }
             }
             filters.push(format!("({})", marks.join(" OR ")));
         }

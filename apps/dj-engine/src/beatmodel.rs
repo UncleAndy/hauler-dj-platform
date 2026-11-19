@@ -48,17 +48,32 @@ fn library() -> Option<PathBuf> {
         }
     }
     let directory = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    for name in [
-        "libonnxruntime.so",
-        "libonnxruntime.dylib",
-        "onnxruntime.dll",
-    ] {
+    for name in library_names() {
         let candidate = directory.join(name);
         if candidate.is_file() {
             return Some(candidate);
         }
     }
     None
+}
+
+/// What the ONNX Runtime library is called on this platform.
+///
+/// The names differ, and telling a Windows user to look for `libonnxruntime.so` sends him after a file that
+/// cannot exist there.
+fn library_names() -> &'static [&'static str] {
+    #[cfg(windows)]
+    {
+        &["onnxruntime.dll"]
+    }
+    #[cfg(target_os = "macos")]
+    {
+        &["libonnxruntime.dylib", "libonnxruntime.so"]
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        &["libonnxruntime.so"]
+    }
 }
 
 /// Состояние загрузки модели на процесс: загрузка стоит треть секунды, а треков за сеанс много.
@@ -130,9 +145,10 @@ pub fn announce() {
             path.display()
         ),
         None => eprintln!(
-            "dj-engine: beat model {} is installed but libonnxruntime.so was not found — using the \
-             built-in detector (put the library next to the engine or set ORT_DYLIB_PATH)",
-            status.variant
+            "dj-engine: beat model {} is installed but {} was not found — using the built-in detector \
+             (put the library next to the engine or set ORT_DYLIB_PATH)",
+            status.variant,
+            library_names()[0]
         ),
     }
 }

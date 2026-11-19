@@ -231,6 +231,10 @@ int main(int argc, char *argv[])
         QStringLiteral("whole-list-check"),
         QStringLiteral("The list is read whole: every row of a four-hundred-row collection arrives without a "
                        "scroll (needs --collection-root and --import-fixture)."));
+    const QCommandLineOption reconnectCheckOption(
+        QStringLiteral("reconnect-check"),
+        QStringLiteral("The shell is started before the engine and has to come back on its own: one attempt "
+                       "at startup used to leave a window that was alive and deaf."));
     const QCommandLineOption selectionCheckOption(
         QStringLiteral("selection-check"),
         QStringLiteral("Shift+arrows, PgUp/PgDown and Shift+Home/End take runs in the browser's lists "
@@ -536,6 +540,7 @@ int main(int argc, char *argv[])
     parser.addOption(pageCheckOption);
     parser.addOption(analyzeBatchCheckOption);
     parser.addOption(wholeListCheckOption);
+    parser.addOption(reconnectCheckOption);
     parser.addOption(selectionCheckOption);
     parser.addOption(layoutMenuCheckOption);
     parser.addOption(layoutNumbersCheckOption);
@@ -2163,7 +2168,8 @@ int main(int argc, char *argv[])
             return 1;
         }
         bridge->connectToEngine(parser.value(connectOption));
-        return runCollectionPageCheck(engine, browser, *bridge, parser.value(importFixtureOption),
+        return runCollectionPageCheck(engine, browser, *bridge, layout,
+                                      parser.value(importFixtureOption),
                                       parser.values(collectionRootOption).value(0));
     }
 
@@ -2188,6 +2194,13 @@ int main(int argc, char *argv[])
         bridge->connectToEngine(parser.value(connectOption));
         return runAnalyzeBatchCheck(engine, browser, layout, *bridge, parser.value(importFixtureOption),
                                     parser.values(collectionRootOption).value(0));
+    }
+
+    if (parser.isSet(reconnectCheckOption)) {
+        // A name of its own: the default endpoint may be busy with the DJ's own engine.
+        return checks::runReconnectCheck(*bridge,
+                                         QStringLiteral("hauler-dj-reconnect-check-%1")
+                                             .arg(QCoreApplication::applicationPid()));
     }
 
     if (parser.isSet(wholeListCheckOption)) {

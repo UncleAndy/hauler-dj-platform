@@ -17,7 +17,18 @@ use std::path::{Path, PathBuf};
 #[cfg(unix)]
 pub fn data_dir() -> Option<PathBuf> {
     let xdg = std::env::var_os("XDG_DATA_HOME");
-    data_dir_from(xdg.as_deref().map(Path::new), std::env::var_os("HOME").as_deref().map(Path::new))
+    data_dir_from(
+        xdg.as_deref().map(Path::new),
+        std::env::var_os("HOME").as_deref().map(Path::new),
+    )
+}
+
+/// The collection the engine keeps when nothing else is chosen: `<data>/hauler-dj/collection`.
+///
+/// The shell asks the same question and must get the same answer — an import that lands where the list does not
+/// look is a track the DJ never finds again.
+pub fn collection_root() -> Option<PathBuf> {
+    data_dir().map(|base| base.join("hauler-dj").join("collection"))
 }
 
 /// The same decision, from values instead of the environment.
@@ -53,7 +64,10 @@ pub fn data_dir_raw() -> Option<PathBuf> {
 #[cfg(unix)]
 pub fn config_dir() -> Option<PathBuf> {
     let xdg = std::env::var_os("XDG_CONFIG_HOME");
-    config_dir_from(xdg.as_deref().map(Path::new), std::env::var_os("HOME").as_deref().map(Path::new))
+    config_dir_from(
+        xdg.as_deref().map(Path::new),
+        std::env::var_os("HOME").as_deref().map(Path::new),
+    )
 }
 
 /// The same decision, from values instead of the environment.
@@ -88,7 +102,11 @@ pub fn cache_dir() -> Option<PathBuf> {
     std::env::var("XDG_CACHE_HOME")
         .ok()
         .map(PathBuf::from)
-        .or_else(|| std::env::var("HOME").ok().map(|home| PathBuf::from(home).join(".cache")))
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|home| PathBuf::from(home).join(".cache"))
+        })
 }
 
 #[cfg(windows)]
@@ -139,13 +157,19 @@ mod tests {
     fn an_absolute_xdg_folder_wins_and_a_relative_one_is_not_a_folder() {
         let xdg = Path::new("/var/data");
         let home = Path::new("/home/dj");
-        assert_eq!(data_dir_from(Some(xdg), Some(home)), Some(PathBuf::from("/var/data")));
+        assert_eq!(
+            data_dir_from(Some(xdg), Some(home)),
+            Some(PathBuf::from("/var/data"))
+        );
         assert_eq!(
             data_dir_from(Some(Path::new("relative")), Some(home)),
             Some(PathBuf::from("/home/dj/.local/share"))
         );
         assert_eq!(data_dir_from(None, None), None);
-        assert_eq!(config_dir_from(Some(Path::new("rel")), Some(home)), Some(PathBuf::from("/home/dj/.config")));
+        assert_eq!(
+            config_dir_from(Some(Path::new("rel")), Some(home)),
+            Some(PathBuf::from("/home/dj/.config"))
+        );
     }
 
     #[cfg(unix)]
@@ -153,7 +177,10 @@ mod tests {
     fn the_default_endpoint_is_the_socket_file_the_shell_has_always_used() {
         let endpoint = default_endpoint();
         assert!(
-            endpoint.display().to_string().ends_with("hauler-dj-engine.sock"),
+            endpoint
+                .display()
+                .to_string()
+                .ends_with("hauler-dj-engine.sock"),
             "{}",
             endpoint.display()
         );

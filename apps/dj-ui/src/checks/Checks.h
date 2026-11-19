@@ -99,7 +99,7 @@ int runCollectionLoadCheck(QQmlApplicationEngine& engine, FileBrowser& browser,
 int runAnalyzeCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutSettings& layout,
                     BridgeClient& bridge, const QString& fixture, const QString& collectionRoot);
 int runCollectionPageCheck(QQmlApplicationEngine& engine, FileBrowser& browser,
-                           BridgeClient& bridge, const QString& fixture,
+                           BridgeClient& bridge, LayoutSettings& layout, const QString& fixture,
                            const QString& collectionRoot);
 int runImportCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutSettings& layout,
                    BridgeClient& bridge, const QString& fixture, const QString& collectionRoot);
@@ -234,5 +234,8 @@ int runWholeListCheck(QQmlApplicationEngine& engine, FileBrowser& browser, Bridg
 
 int runAnalyzeBatchCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutSettings& layout,
                          BridgeClient& bridge, const QString& fixture, const QString& collectionRoot);
+
+/// The shell meets an engine that starts after it: one attempt at startup used to be the whole story.
+int runReconnectCheck(BridgeClient& bridge, const QString& endpoint);
 
 } // namespace checks

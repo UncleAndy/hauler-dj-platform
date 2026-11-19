@@ -335,7 +335,8 @@ fn thread_cpu_ns() -> u64 {
     if asked == 0 {
         return 0;
     }
-    let ticks = |time: FILETIME| (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime);
+    let ticks =
+        |time: FILETIME| (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime);
     ticks(kernel)
         .saturating_add(ticks(user))
         .saturating_mul(100)

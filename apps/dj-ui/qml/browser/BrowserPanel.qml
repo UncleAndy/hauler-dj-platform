@@ -1334,6 +1334,30 @@ Pane {
         }
     }
 
+    // Why the genre button has nothing to show. Two very different reasons wear the same empty face: the
+    // collection is empty or unmeasured, or the shell is not talking to the engine at all. Saying which one it
+    // is saves the DJ from hunting for a fault that is not there.
+    Dialog {
+        id: genreEmptyDialog
+        objectName: "genreEmptyDialog"
+        title: qsTr("Genres")
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        standardButtons: Dialog.Ok
+
+        Label {
+            objectName: "genreEmptyText"
+            wrapMode: Text.WordWrap
+            width: 420
+            font.pixelSize: browser.listFont
+            text: !Bridge.connected
+                  ? qsTr("The engine is not answering, so there is nothing to list. The genres live in the "
+                         + "engine's index; the shell only asks.")
+                  : qsTr("The collection has no genres yet. A genre comes from a track that carries one — "
+                         + "after the track is imported, and its tags are read or it is analyzed.")
+        }
+    }
+
     // The genre filter: the whole list with how many tracks carry each genre, and the choice applied
     // only when the DJ says so. A box that narrows the list on the spot is a list that changes under
     // the hand that is still choosing.
@@ -1939,9 +1963,16 @@ Pane {
                           : qsTr("Genre filter…")
                     font.pixelSize: browser.headerButtonFont
                     implicitHeight: browser.headerButtonHeight
-                    // A button that opens an empty dialog teaches nothing: it waits for the census.
-                    enabled: Browser.genres.length > 0
-                    onClicked: genreFilterDialog.open()
+                    // A button that is greyed out says nothing at all: the DJ presses it and gets no answer.
+                    // When there is nothing to choose, it says why — an empty collection explains itself only
+                    // when it is asked.
+                    onClicked: {
+                        if (Browser.genres.length > 0) {
+                            genreFilterDialog.open();
+                            return;
+                        }
+                        genreEmptyDialog.open();
+                    }
                 }
 
                 // The search lives in the section that needs it: a field that is always there is a field

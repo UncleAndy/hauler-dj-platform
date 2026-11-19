@@ -32,6 +32,7 @@ qt_add_executable(dj-ui
     src/checks/LibraryChecks.cpp
     src/checks/PlaylistChecks.cpp
     src/checks/LockChecks.cpp
+    src/checks/ReconnectCheck.cpp
 )
 
 qt_add_qml_module(dj-ui

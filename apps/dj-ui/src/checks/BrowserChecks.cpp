@@ -1651,7 +1651,7 @@ int runCollectionLoadCheck(QQmlApplicationEngine& engine, FileBrowser& browser,
 /// measured.
 
 int runCollectionPageCheck(QQmlApplicationEngine& engine, FileBrowser& browser,
-                           BridgeClient& bridge, const QString& fixture,
+                           BridgeClient& bridge, LayoutSettings& layout, const QString& fixture,
                            const QString& collectionRoot) {
     if (fixture.isEmpty() || !QFile::exists(fixture)) {
         std::fprintf(stderr,
@@ -1662,6 +1662,9 @@ int runCollectionPageCheck(QQmlApplicationEngine& engine, FileBrowser& browser,
         std::fprintf(stderr, "dj-ui: --collection-page-check needs --collection-root\n");
         return 1;
     }
+    // The import writes into the folder the layout names: a DJ with one collection root has it in the settings,
+    // and a check that imports without saying where proves nothing about what he sees.
+    layout.setCollectionRoots({collectionRoot});
     QTemporaryDir incoming;
     if (!incoming.isValid()) {
         std::fprintf(stderr, "dj-ui: cannot make a temporary folder\n");

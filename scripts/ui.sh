@@ -97,6 +97,9 @@ case "${1:-}" in
         --layout-file "${TMPDIR:-/tmp}/dj-layout-numbers.json"
     # A light panel means the palette was lost; the shell has to stay dark for a booth.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --ui-theme-check
+    # The shell has to survive being started before the engine: a single attempt at startup left a window
+    # that was alive, deaf, and silent about it.
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --reconnect-check
     # A non-default colour exercises the binding from the command line through QML: a misspelled
     # property would warn here instead of silently keeping the default.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --smoke \

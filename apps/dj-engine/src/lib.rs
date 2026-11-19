@@ -2952,6 +2952,37 @@ fn write_index(index: Option<&mut dj_library::Index>, imported: &dj_library::imp
     }
 }
 
+/// The folder an import writes into, and never a guess.
+///
+/// An empty root used to be taken as-is: the copies landed in whatever the engine's working directory was, and the
+/// index kept their relative paths — so the collection list, which asks about absolute folders, stayed empty while
+/// the files existed. A relative root is the same fault wearing a different face: it is made absolute here,
+/// against the engine's own directory, and said out loud.
+pub fn import_root(spelled: &str) -> std::path::PathBuf {
+    let spelled = spelled.trim();
+    if spelled.is_empty() {
+        let fallback = dj_paths::collection_root().unwrap_or_else(|| std::path::PathBuf::from("."));
+        eprintln!(
+            "dj-engine: the import named no folder; the copies go to {}",
+            fallback.display()
+        );
+        return fallback;
+    }
+    let path = std::path::PathBuf::from(spelled);
+    if path.is_absolute() {
+        return path;
+    }
+    let absolute = std::env::current_dir()
+        .map(|cwd| cwd.join(&path))
+        .unwrap_or(path);
+    eprintln!(
+        "dj-engine: the import folder {} is relative; reading it as {}",
+        spelled,
+        absolute.display()
+    );
+    absolute
+}
+
 pub fn run_import(
     request: ImportRequest,
     cells: Arc<StateCells>,
@@ -2961,7 +2992,7 @@ pub fn run_import(
     after_place: Arc<dyn Fn(&std::path::Path) + Send + Sync>,
     mut index: Option<&mut dj_library::Index>,
 ) {
-    let root = std::path::PathBuf::from(&request.root);
+    let root = import_root(&request.root);
     let files = collect_audio(&request.paths);
     let mut state = dj_domain::ImportState {
         total: files.len(),

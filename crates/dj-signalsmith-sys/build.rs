@@ -56,7 +56,11 @@ fn main() {
         // C++17's guaranteed copy elision removes the copies, and the headers compile clean.
         .args(["-std=c++17", "-O2", "-fPIC", "-fvisibility=hidden", "-c"])
         // Where the platform keeps the thread part of its standard library is the platform's business.
-        .args(target_var("CXXFLAGS").unwrap_or_default().split_whitespace())
+        .args(
+            target_var("CXXFLAGS")
+                .unwrap_or_default()
+                .split_whitespace(),
+        )
         .arg("src/wrapper.cpp")
         .arg("-I")
         .arg(&vendor)

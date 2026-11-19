@@ -1,4 +1,5 @@
 #include "LayoutSettings.h"
+#include "BridgeClient.h"
 
 #include <QDir>
 #include <QFile>
@@ -324,7 +325,15 @@ void LayoutSettings::setScrubAudible(bool on)
 
 QString LayoutSettings::roomiestRoot() const
 {
-    QString best;
+    // No roots at all is not "nowhere": the engine has a collection folder of its own, and an import with an empty
+    // folder writes into the shell's working directory, out of sight of the list.
+    if (m_collectionRoots.isEmpty()) {
+        return defaultCollectionRoot();
+    }
+    // The first root is the answer unless another one is measurably roomier. A volume Qt cannot measure reports
+    // -1, and an empty answer here is not a harmless one: it used to send the import into the shell's working
+    // directory, and the copies were never seen in the list again.
+    QString best = m_collectionRoots.first();
     qint64 most = -1;
     for (const QString &path : m_collectionRoots) {
         // A root that does not exist yet is judged by the closest parent that does: the import will

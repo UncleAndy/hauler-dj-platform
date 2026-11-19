@@ -47,7 +47,11 @@ fn main() {
         .args(["-std=c++11", "-O2", "-fPIC", "-fvisibility=hidden", "-c"])
         // The platform decides where its standard library keeps its own headers: on mingw from nix the
         // thread part of libstdc++ lives in mcfgthread, outside the default search path.
-        .args(target_var("CXXFLAGS").unwrap_or_default().split_whitespace())
+        .args(
+            target_var("CXXFLAGS")
+                .unwrap_or_default()
+                .split_whitespace(),
+        )
         .arg("src/wrapper.cpp")
         .arg("-I")
         .arg(&vendor)
