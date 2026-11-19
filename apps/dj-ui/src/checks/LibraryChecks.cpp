@@ -375,6 +375,22 @@ int runImportCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutSe
         std::fprintf(stderr, "dj-ui: the dialog stayed open after the confirmation\n");
         return 1;
     }
+    // The window that says the batch is at work is up from the moment the command leaves the panel, not from the
+    // first snapshot that mentions it: a batch of four files takes a second and a half, and a window that waits for
+    // the engine's word is a window the DJ never sees (owner's report, Windows, 2026-11-19).
+    {
+        const bool pending = panel->property("importPending").toBool();
+        const bool showing = panel->property("importShowing").toBool();
+        std::fprintf(stdout, "dj-ui: progress window right after the press: pending %d, showing %d, visible %d\n",
+                     static_cast<int>(pending), static_cast<int>(showing),
+                     static_cast<int>(progressDialog->property("visible").toBool()));
+        if (!pending || !showing) {
+            std::fprintf(stderr,
+                         "dj-ui: the batch started with nothing on the screen to say so (pending %d, showing %d)\n",
+                         static_cast<int>(pending), static_cast<int>(showing));
+            return 1;
+        }
+    }
 
     // The batch runs: progress, and no question at all — the two files are identical in length and
     // average bitrate, and an identical copy is not the DJ's decision to make.

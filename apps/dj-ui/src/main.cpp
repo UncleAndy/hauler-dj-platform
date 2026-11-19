@@ -873,7 +873,7 @@ int main(int argc, char *argv[])
         QObject::connect(pulse, &QTimer::timeout, &app, [&bridge, &browser]() {
             const QVariantMap snapshot = bridge->snapshot();
             uiLogAt(3, QStringLiteral("alive: rev %1, mode %2, rows %3, page %4, socket %5")
-                           .arg(snapshot.value(QStringLiteral("rev")).toInt())
+                           .arg(snapshot.value(QStringLiteral("revision")).toInt())
                            .arg(browser.mode())
                            .arg(browser.entries().size())
                            .arg(bridge->collectionPage().value(QStringLiteral("id")).toInt())
@@ -881,6 +881,21 @@ int main(int argc, char *argv[])
                                                                        : QStringLiteral("closed")));
         });
         pulse->start();
+    }
+    // The shell can stop answering while its window stays on the screen: a modal window that never appears is
+    // usually the main thread away doing something longer than a frame. One line per gap says so, with the number.
+    {
+        auto *watch = new QTimer(&app);
+        watch->setInterval(250);
+        auto *last = new QElapsedTimer();
+        last->start();
+        QObject::connect(watch, &QTimer::timeout, &app, [last]() {
+            const qint64 away = last->restart();
+            if (away > 750) {
+                uiLogAt(1, QStringLiteral("stall: the shell was away from its own loop for %1 ms").arg(away));
+            }
+        });
+        watch->start();
     }
 
     if (parser.isSet(waveformPngOption)) {

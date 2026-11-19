@@ -232,9 +232,53 @@ Pane {
     // What the engine says about the import, if one was started since it came up.
     readonly property var importState: Bridge.snapshot !== undefined && Bridge.snapshot.import !== undefined
                                        ? Bridge.snapshot.import : null
+    // The batch exists from the moment the command leaves this panel, not from the first snapshot that says so. A
+    // fast import (four files, one and a half seconds) otherwise shows its window for a blink — or not at all when
+    // the next snapshot carries `running: false` already (owner's report, Windows, 2026-11-19).
+    property bool importPending: false
+    // The batch the engine had already reported when this one was asked for. Its last word is `running: false`
+    // and says nothing about the batch that has just started: without remembering it, the window for the new
+    // batch would never open (the second import of a session).
+    property string importBaseline: ""
+    property bool importSawRunning: false
+    // How the window is shown: from our own note, until the engine's word about *this* batch.
+    readonly property bool importShowing: importPending
+    function importSignature(state) {
+        if (state === null || state === undefined) {
+            return "";
+        }
+        return "%1/%2/%3/%4".arg(state.total).arg(state.placed).arg(state.skipped).arg(state.failed);
+    }
     readonly property var importQuestion: browser.importState !== null
                                           && browser.importState.question !== undefined
                                           ? browser.importState.question : null
+    // The engine has the last word, but only about the batch it was asked about: a state that was already finished
+    // when the command left is the previous batch, and a state that is running is this one.
+    onImportStateChanged: {
+        if (!importPending || importState === null) {
+            return;
+        }
+        if (importState.running === true) {
+            importSawRunning = true;
+            return;
+        }
+        if (importState.running === false &&
+                (importSawRunning || importSignature(importState) !== importBaseline)) {
+            importPending = false;
+            importSawRunning = false;
+        }
+    }
+    // A batch that never reports back must not leave a modal window in the way for ever.
+    Timer {
+        interval: 120000
+        running: browser.importPending
+        repeat: false
+        onTriggered: {
+            browser.importPending = false;
+            Bridge.note("import: no word from the engine in two minutes, the window is put away");
+        }
+    }
+
     // What the engine says about the analysis started from this panel.
     readonly property var analysisState: Bridge.snapshot !== undefined && Bridge.snapshot.analysis !== undefined
                                          ? Bridge.snapshot.analysis : null
@@ -343,6 +387,9 @@ Pane {
         }
         const root = LayoutState.roomiestRoot();
         Bridge.note("import sending %1 path(s) to %2, first %3".arg(paths.length).arg(root).arg(paths[0]));
+        browser.importBaseline = importSignature(browser.importState);
+        browser.importSawRunning = false;
+        browser.importPending = true;
         Bridge.importPaths(paths, root, parallel);
         browser.lastAction = "import " + paths.length + " into " + root;
         return true;
@@ -1305,8 +1352,7 @@ Pane {
         anchors.centerIn: Overlay.overlay
         closePolicy: Popup.NoAutoClose
         standardButtons: Dialog.NoButton
-        visible: browser.importState !== null && browser.importState.running === true
-                 && browser.importQuestion === null
+        visible: browser.importShowing && browser.importQuestion === null
         ColumnLayout {
             spacing: 8
             Label {
