@@ -1357,10 +1357,21 @@ fn records_under(roots: &[PathBuf]) -> Vec<PathBuf> {
     found
 }
 
-const INSERT: &str = "INSERT OR REPLACE INTO tracks
+// An update, not a replacement. `INSERT OR REPLACE` deletes the row it conflicts with, and the genres of that row
+// hang off it with `ON DELETE CASCADE`: a metadata refresh that carried no genres therefore wiped the genres of a
+// track that had them, and the collection answered "0 genres" over rows that carry one (owner's machine, Windows,
+// 2026-11-19). A row that is written again keeps its children.
+const INSERT: &str = "INSERT INTO tracks
      (fingerprint, path, artist, title, album, genre, year, bpm, musical_key, rating,
       duration_frames, sample_rate, gain, play_count, last_played_ms, analysis_lock)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)";
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+     ON CONFLICT(fingerprint) DO UPDATE SET
+        path = excluded.path, artist = excluded.artist, title = excluded.title,
+        album = excluded.album, genre = excluded.genre, year = excluded.year, bpm = excluded.bpm,
+        musical_key = excluded.musical_key, rating = excluded.rating,
+        duration_frames = excluded.duration_frames, sample_rate = excluded.sample_rate,
+        gain = excluded.gain, play_count = excluded.play_count,
+        last_played_ms = excluded.last_played_ms, analysis_lock = excluded.analysis_lock";
 
 fn bind(statement: &mut rusqlite::Statement<'_>, row: &TrackRow) -> Result<(), IndexError> {
     statement.execute(params![

@@ -447,6 +447,21 @@ QString wireColumn(const QString &id)
 
 } // namespace
 
+QString FileBrowser::pageSignature() const
+{
+    // What a list is, spelled out: an answer to a question with this same signature lists the same rows, whatever
+    // else the shell has done in the meantime, and however many rows that question asked for.
+    QString signature = m_filter + QLatin1Char('|') + m_genres.join(QLatin1Char(','))
+        + QLatin1Char('|') + m_roots.join(QLatin1Char(','));
+    for (const QVariant &entry : m_sort) {
+        const QVariantMap key = entry.toMap();
+        signature += key.value(QStringLiteral("column")).toString()
+            + (key.value(QStringLiteral("ascending")).toBool() ? QStringLiteral("+") : QStringLiteral("-"))
+            + QLatin1Char(',');
+    }
+    return signature;
+}
+
 void FileBrowser::askPage(int offset, int limit)
 {
     if (m_bridge == nullptr) {
@@ -461,15 +476,7 @@ void FileBrowser::askPage(int offset, int limit)
     }
     // The same question, still unanswered: say nothing. A panel that re-asks on every progress tick
     // floods the engine and makes the status flicker between "waiting for the engine" and ready.
-    QString signature = QString::number(offset) + QLatin1Char('|') + QString::number(limit)
-        + QLatin1Char('|') + m_filter + QLatin1Char('|') + m_genres.join(QLatin1Char(','))
-        + QLatin1Char('|');
-    for (const QVariant &entry : m_sort) {
-        const QVariantMap key = entry.toMap();
-        signature += key.value(QStringLiteral("column")).toString()
-            + (key.value(QStringLiteral("ascending")).toBool() ? QStringLiteral("+") : QStringLiteral("-"))
-            + QLatin1Char(',');
-    }
+    const QString signature = pageSignature();
     if (signature == m_askedSignature && m_pageAnsweredFor != m_pageQuery) {
         return;
     }
@@ -480,6 +487,19 @@ void FileBrowser::askPage(int offset, int limit)
     }
     m_askedSignature = signature;
     const int id = ++m_pageQuery;
+    // Every question is remembered by its number: the answer carries the number, and the number alone says nothing
+    // about what was asked.
+    m_askedSignatures.insert(id, signature);
+    while (m_askedSignatures.size() > 8) {
+        auto oldest = m_askedSignatures.begin();
+        for (auto it = m_askedSignatures.begin(); it != m_askedSignatures.end(); ++it) {
+            if (it.key() < oldest.key()) {
+                oldest = it;
+            }
+        }
+        m_askedSignatures.erase(oldest);
+    }
+    m_droppedAnswers.remove(id);
     QVariantMap query;
     query.insert(QStringLiteral("id"), id);
     QVariantList order;
@@ -669,15 +689,26 @@ void FileBrowser::takePage()
                    .arg(m_pageAnsweredFor));
     const QVariantMap answer = m_bridge->collectionPage();
     const int id = answer.value(QStringLiteral("id")).toInt();
-    if (id == 2000000000 || id != m_pageQuery || id == m_pageAnsweredFor) {
+    // An answer is taken when it belongs to the list on screen, and "belongs" is a question of what was asked, not
+    // of which number is the highest. The shell re-opens the section on several notifications, each opening asks
+    // again, and the engine answers the questions it was given in order — so an answer carrying an older number was
+    // thrown away while the newest one was still on its way, and the list stayed empty over a correct answer. What
+    // decides is the signature: same roots, same filter, same genres, same order.
+    const QString askedFor = m_askedSignatures.value(id);
+    const bool sameQuestion = !askedFor.isEmpty() && askedFor == pageSignature();
+    if (id == 2000000000 || id == m_pageAnsweredFor || !sameQuestion) {
         // Why an answer was not taken: the numbers are the whole story, and a list that stays empty is
-        // otherwise indistinguishable from a question that was never answered.
-        if (id != 0 && id != m_pageAnsweredFor) {
-            uiLog(QStringLiteral("answer %1 dropped: asked %2, already had %3, mode %4")
+        // otherwise indistinguishable from a question that was never answered. Once per answer, not once per
+        // snapshot: the engine republishes the same slot twenty times a second, and a log of that says nothing.
+        const bool once = !m_droppedAnswers.contains(id);
+        m_droppedAnswers.insert(id);
+        if (id != 0 && id != m_pageAnsweredFor && once) {
+            uiLog(QStringLiteral("answer %1 dropped: asked %2, already had %3, mode %4, same question %5")
                       .arg(id)
                       .arg(m_pageQuery)
                       .arg(m_pageAnsweredFor)
-                      .arg(m_mode));
+                      .arg(m_mode)
+                      .arg(sameQuestion ? QStringLiteral("yes") : QStringLiteral("no")));
         }
         return;
     }
@@ -2172,6 +2203,11 @@ int BridgeClient::cue(const QString &deck, const QString &action, int slot)
     QJsonObject command;
     command.insert(QStringLiteral("Cue"), options);
     return sendCommand(deck, command);
+}
+
+void BridgeClient::note(const QString &message)
+{
+    uiLogAt(2, QStringLiteral("panel: ") + message);
 }
 
 int BridgeClient::importPaths(const QStringList &paths, const QString &root, bool parallel)

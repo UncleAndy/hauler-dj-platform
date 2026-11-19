@@ -287,8 +287,11 @@ Pane {
     // One file goes straight in: the confirmation exists for batches, not for a single click.
     function askImport() {
         const chosen = browser.selection.slice();
+        Bridge.note("import asked: %1 selected, section %2, folder %3"
+                    .arg(chosen.length).arg(browser.section).arg(browser.folder));
         if (chosen.length === 0) {
             browser.lastAction = "nothing to add";
+            Bridge.note("import asked with nothing selected: the button will say so and send nothing");
             return false;
         }
         if (chosen.length === 1 && Browser.entryIsFile(chosen[0])) {
@@ -331,8 +334,18 @@ Pane {
     }
 
     function startImport(paths, parallel) {
-        Bridge.importPaths(paths, LayoutState.roomiestRoot(), parallel);
-        browser.lastAction = "import " + paths.length + " into " + LayoutState.roomiestRoot();
+        // An empty list is not a request: sending it would put a command in the journal with nothing in it and tell
+        // the DJ only that nothing happened.
+        if (!paths || paths.length === 0) {
+            browser.lastAction = "nothing to add";
+            Bridge.note("import refused here: nothing selected");
+            return false;
+        }
+        const root = LayoutState.roomiestRoot();
+        Bridge.note("import sending %1 path(s) to %2, first %3".arg(paths.length).arg(root).arg(paths[0]));
+        Bridge.importPaths(paths, root, parallel);
+        browser.lastAction = "import " + paths.length + " into " + root;
+        return true;
     }
 
     // The collection's columns: order and widths are a setting, because what matters in a table is

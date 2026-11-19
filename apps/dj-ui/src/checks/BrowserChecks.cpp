@@ -1881,11 +1881,17 @@ int runCollectionPageCheck(QQmlApplicationEngine& engine, FileBrowser& browser,
     {
         // No return value is asked for: a QML function returns a QVariant, and the boolean it carries is not worth
         // the conversion. The list is the evidence.
-        const bool asked = QMetaObject::invokeMethod(panel, "showSection",
-                                                     Q_ARG(QVariant, QVariant(QStringLiteral("collection"))));
-        if (!asked) {
-            std::fprintf(stderr, "dj-ui: the Collection section could not be asked to open\n");
-            return 1;
+        // Three times in a row, because the panel is opened by more than one notification in the real shell: each
+        // opening asks again, and an answer that arrives for the earlier question must still fill the list. Before
+        // this, every such answer was thrown away for carrying an older number, and the list stayed empty over a
+        // correct answer (owner's report, Windows, 2026-11-19).
+        for (int press = 0; press < 3; ++press) {
+            const bool asked = QMetaObject::invokeMethod(panel, "showSection",
+                                                         Q_ARG(QVariant, QVariant(QStringLiteral("collection"))));
+            if (!asked) {
+                std::fprintf(stderr, "dj-ui: the Collection section could not be asked to open\n");
+                return 1;
+            }
         }
         QElapsedTimer rail;
         rail.start();

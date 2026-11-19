@@ -278,6 +278,7 @@ private:
     void takeGenres();
     /// Ask the index for the rows at `offset`: one door for the first page and for the next ones.
     void askPage(int offset, int limit = 0);
+    QString pageSignature() const;
     /// One unfiltered page for the genre boxes alone: the census a restored filter needs.
     void askCensus();
     /// The rows the index answered with, in the shape the list and the columns read.
@@ -325,6 +326,12 @@ private:
     /// The question in flight, as one string: the same question asked again while the answer is on its
     /// way is not a second question — it is a flush of commands the engine has to answer one by one.
     QString m_askedSignature;
+    // What each question asked for, by id. An answer belongs to the list when the question that produced it asked
+    // about the same roots, filter, genres and order — not when it happens to carry the latest number. A shell that
+    // re-opens the section while an answer is on its way would otherwise throw every answer away and leave the list
+    // empty while the engine is answering correctly (owner's report, Windows, 2026-11-19).
+    QHash<int, QString> m_askedSignatures;
+    QSet<int> m_droppedAnswers;
     /// The genres the collection is narrowed to. Empty is the whole collection.
     QStringList m_genres;
     int m_total = 0;
@@ -411,6 +418,9 @@ public:
 
     /// Add files and folders to the collection (DJP-MEDIA-004). The engine runs the batch and
     /// publishes progress; this only says what the DJ picked.
+    // A word from the panel into the journal: a control that does nothing is otherwise indistinguishable from a
+    // control that was never pressed, and the owner's machine has no terminal to watch.
+    Q_INVOKABLE void note(const QString &message);
     Q_INVOKABLE int importPaths(const QStringList &paths, const QString &root, bool parallel);
     /// Stop the running import between files.
     Q_INVOKABLE int cancelImport();

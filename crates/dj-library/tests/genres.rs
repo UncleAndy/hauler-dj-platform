@@ -128,6 +128,23 @@ fn with_genres(index: &mut Index, fingerprint: &str, raw: &str) {
 }
 
 #[test]
+fn writing_the_row_again_keeps_the_genres_it_had() {
+    // A metadata refresh carries names and no genres, and it writes the row again. The genres hang off that row by
+    // the fingerprint, so a write that replaces the row takes them with it: the tag still says `Techno`, the genre
+    // table still lists it, and the collection answers "0 genres" over rows that carry one.
+    let dir = scratch("refresh");
+    let mut index = Index::open(&dir.join("library.db")).expect("open");
+    with_genres(&mut index, "a", "Techno");
+    index.upsert(&row("a", "Renamed")).expect("row again");
+    assert_eq!(
+        index.genres_of("a").expect("genres"),
+        vec!["Techno"],
+        "the row was written again without genres, and the genres stayed"
+    );
+    assert_eq!(index.genre_list_in(&[]).expect("count").len(), 1);
+}
+
+#[test]
 fn setting_the_same_genres_twice_leaves_one_link_each() {
     let dir = scratch("twice");
     let mut index = Index::open(&dir.join("library.db")).expect("open");

@@ -1906,10 +1906,11 @@ fn serve_client(
                                             .collect::<Vec<_>>()
                                     })
                                     .unwrap_or_default();
-                                eprintln!(
-                                    "dj-engine: genre question answered with {} genres",
-                                    genres.len()
-                                );
+                                dj_engine::log::info(format!(
+                                    "genre question answered with {} genres over {:?}",
+                                    genres.len(),
+                                    folders
+                                ));
                                 query_cells.set_genres(genres);
                                 let _ = query_alerts.send(ServerMessage::Ack(
                                     dj_domain::Ack::applied(command_id, 0),
