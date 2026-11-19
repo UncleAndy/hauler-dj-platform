@@ -7,6 +7,7 @@ qt_standard_project_setup(REQUIRES 6.8)
 qt_add_executable(dj-ui
     src/main.cpp
     src/BridgeClient.cpp
+    src/CrashLog.cpp
     src/BridgeClient.h
     src/Waveform.cpp
     src/Waveform.h
@@ -82,3 +83,8 @@ set_target_properties(dj-ui PROPERTIES
     WIN32_EXECUTABLE OFF
     MACOSX_BUNDLE OFF
 )
+
+if (WIN32)
+    # The fault writer names the module of every frame; dbghelp is what reads the module table.
+    target_link_libraries(dj-ui PRIVATE dbghelp)
+endif ()

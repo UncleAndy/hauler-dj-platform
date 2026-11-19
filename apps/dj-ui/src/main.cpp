@@ -74,6 +74,7 @@ QString defaultSocketPath()
 
 } // namespace
 
+#include "CrashLog.h"
 #include "checks/Checks.h"
 
 using namespace checks;
@@ -81,6 +82,8 @@ using namespace checks;
 int main(int argc, char *argv[])
 {
     qInstallMessageHandler(collectMessages);
+    // Before anything else can fall over: a fault on a machine we cannot see has to leave a note that names it.
+    installCrashLog();
 
     QGuiApplication app(argc, argv);
 
@@ -853,6 +856,7 @@ int main(int argc, char *argv[])
     // The arrangement is the user's, and it is written when the shell exits: a root adopted by
     // default must reach the file even if nothing was dragged and no flag was typed.
     QObject::connect(&app, &QCoreApplication::aboutToQuit, [&layout, &browser, &session]() {
+        noteShutdown();
         // Where the cursor stood is part of the session, like the folder: a browser that forgets the
         // row makes the DJ find it again every evening.
         session.rememberCursor(browser.filesCursor());
@@ -860,6 +864,24 @@ int main(int argc, char *argv[])
         session.save();
         layout.save();
     });
+
+    // A journal that ends at the last event cannot say whether the shell was alive a second later. One line every
+    // five seconds answers that, and it costs nothing at any other level of detail.
+    {
+        auto *pulse = new QTimer(&app);
+        pulse->setInterval(5000);
+        QObject::connect(pulse, &QTimer::timeout, &app, [&bridge, &browser]() {
+            const QVariantMap snapshot = bridge->snapshot();
+            uiLogAt(3, QStringLiteral("alive: rev %1, mode %2, rows %3, page %4, socket %5")
+                           .arg(snapshot.value(QStringLiteral("rev")).toInt())
+                           .arg(browser.mode())
+                           .arg(browser.entries().size())
+                           .arg(bridge->collectionPage().value(QStringLiteral("id")).toInt())
+                           .arg(bridge->property("connected").toBool() ? QStringLiteral("open")
+                                                                       : QStringLiteral("closed")));
+        });
+        pulse->start();
+    }
 
     if (parser.isSet(waveformPngOption)) {
         // The envelope drawn exactly as the deck draws it, but into a file: no display, no engine,

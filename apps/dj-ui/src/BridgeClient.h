@@ -27,6 +27,8 @@ QString defaultCollectionRoot();
 /// One line from the shell: `level` is 0 error, 1 warn, 2 info, 3 debug, 4 trace, and `HAULER_LOG` decides how
 /// much is kept. The file is rotated at 8 MB, one previous copy is kept.
 void uiLogAt(int level, const QString &message);
+// Where the shell writes its journal: the fault writer puts its note beside it.
+QString uiLogPath();
 
 // Lists a directory for the load dialog, or the whole collection for the Collection section.
 //

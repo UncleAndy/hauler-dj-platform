@@ -293,7 +293,23 @@ void FileBrowser::refreshCollection()
 
 void FileBrowser::openCollection(const QStringList &roots)
 {
-    QStringList listed = roots.isEmpty() ? QStringList{defaultCollectionRoot()} : roots;
+    // A saved root keeps the spelling it was written with, and a root written by an older build (`C:/…`) does not
+    // compare equal to the engine's own paths (`C:\…`): the page then answers nothing while the files are right
+    // there. Every root is spelled the way this platform spells paths before it is used or sent anywhere.
+    QStringList spelled;
+    for (const QString &root : roots) {
+        QString one = QDir::toNativeSeparators(QDir::cleanPath(root));
+        while (one.size() > 1 && one.endsWith(QLatin1Char('/'))) {
+            one.chop(1);
+        }
+        while (one.size() > 1 && one.endsWith(QLatin1Char('\\'))) {
+            one.chop(1);
+        }
+        if (!one.isEmpty() && !spelled.contains(one)) {
+            spelled.append(one);
+        }
+    }
+    QStringList listed = spelled.isEmpty() ? QStringList{defaultCollectionRoot()} : spelled;
     // A root that is no longer there is not a root: a temporary folder or a moved disk leaves a path that
     // can never list anything, and the DJ would see an empty collection with no way to know why. What
     // survives stays; when nothing survives, the default root takes over.
@@ -646,6 +662,11 @@ void FileBrowser::takePage()
     if (m_bridge == nullptr || m_mode != QLatin1String("collection")) {
         return;
     }
+    // The entry is logged before anything is read: a crash that leaves the journal without this line did not happen
+    // here, and one that leaves it as the last line happened in the reading.
+    uiLogAt(4, QStringLiteral("page seen: asked %1, answered %2")
+                   .arg(m_pageQuery)
+                   .arg(m_pageAnsweredFor));
     const QVariantMap answer = m_bridge->collectionPage();
     const int id = answer.value(QStringLiteral("id")).toInt();
     if (id == 2000000000 || id != m_pageQuery || id == m_pageAnsweredFor) {

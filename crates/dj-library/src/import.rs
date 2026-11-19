@@ -158,10 +158,24 @@ impl Prepared {
     }
 }
 
+/// The root comes from a shell, and a shell on Windows may spell it `C:/Users/…` while the index spells every path
+/// it holds with backslashes. A row under `C:/x\y` then sits outside the root `C:/x/y` for every comparison, and
+/// the collection looks empty while the files are there. One spelling per platform, decided at the door.
+#[cfg(windows)]
+fn spelled_root(root: &Path) -> PathBuf {
+    PathBuf::from(root.to_string_lossy().replace('/', "\\"))
+}
+
+/// On Unix a backslash is an ordinary character in a name, so the root is taken as it stands.
+#[cfg(not(windows))]
+fn spelled_root(root: &Path) -> PathBuf {
+    root.to_path_buf()
+}
+
 /// Import one file into the collection rooted at `root`, without asking about duplicates.
 pub fn import(source: &Path, root: &Path, now_ms: u64) -> Result<Imported, ImportError> {
     let prepared = prepare(source)?;
-    place(source, root, prepared, now_ms, None)
+    place(source, &spelled_root(root), prepared, now_ms, None)
 }
 
 /// Import one file, telling a duplicate from a version by duration and chromaprint (DJP-MEDIA-005).
@@ -176,6 +190,8 @@ pub fn import_checked(
     policy: Policy,
 ) -> Result<Outcome, ImportError> {
     let prepared = prepare(source)?;
+    let root = spelled_root(root);
+    let root = root.as_path();
     let target = root.join(prepared.relative());
     let matched = find(&prepared.identity);
     let Some((existing, existing_identity, verdict)) = matched else {
@@ -569,6 +585,26 @@ mod tests {
             from_file_name(Path::new("/music/Dancing Queen.flac")),
             (String::new(), "Dancing Queen".to_owned())
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_root_in_slashes_still_places_under_that_root() {
+        // The shell sends what the user's layout file carries, and an older build wrote `C:/…`: the copy must land
+        // under the same folder the page asks about, or the list answers nothing.
+        let root = std::env::temp_dir().join(format!("dj-import-root-{}", std::process::id()));
+        let slashed = PathBuf::from(root.to_string_lossy().replace('\\', "/"));
+        let source = root.join("src").join("Artist - Title.flac");
+        let placed =
+            spelled_root(&slashed).join(layout::collection_path("Artist", "Title", "flac"));
+        assert!(
+            placed.starts_with(spelled_root(&root)),
+            "the copy must sit under the root it was given: {} under {}",
+            placed.display(),
+            spelled_root(&root).display()
+        );
+        assert_eq!(spelled_root(&slashed), spelled_root(&root));
+        assert!(source.starts_with(root));
     }
 
     #[test]
