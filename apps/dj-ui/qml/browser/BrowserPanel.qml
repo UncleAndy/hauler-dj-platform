@@ -258,6 +258,11 @@ Pane {
         if (!importPending || importState === null) {
             return;
         }
+        // The numbers the window draws, in the journal: a window of zeros is then a fact with a name, not a report.
+        Bridge.note("import state %1 of %2 added, %3 skipped, %4 failed, %5"
+                    .arg(importState.done).arg(importState.total)
+                    .arg(importState.skipped).arg(importState.failed)
+                    .arg(importState.running === true ? "running" : "stopped"));
         if (importState.running === true) {
             importSawRunning = true;
             return;
@@ -1357,11 +1362,16 @@ Pane {
             spacing: 8
             Label {
                 objectName: "importProgressText"
-                text: qsTr("%1 of %2 added, %3 skipped, %4 failed")
-                      .arg(browser.importState !== null ? browser.importState.done : 0)
-                      .arg(browser.importState !== null ? browser.importState.total : 0)
-                      .arg(browser.importState !== null ? browser.importState.skipped : 0)
-                      .arg(browser.importState !== null ? browser.importState.failed : 0)
+                // Zeros are a number, and a number that is not yet known must not be dressed as one: until the
+                // engine says how many files the batch has, the window says that it is starting rather than
+                // "0 of 0".
+                text: browser.importState !== null && browser.importState.total !== undefined
+                      ? qsTr("%1 of %2 added, %3 skipped, %4 failed")
+                        .arg(browser.importState.done)
+                        .arg(browser.importState.total)
+                        .arg(browser.importState.skipped)
+                        .arg(browser.importState.failed)
+                      : qsTr("starting…")
                 color: UiSettings.themeText
                 font.pixelSize: browser.listFont
             }

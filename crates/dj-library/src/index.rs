@@ -193,6 +193,20 @@ CREATE INDEX IF NOT EXISTS playlist_tracks_of  ON playlist_tracks(playlist_id, p
 PRAGMA user_version = 5;
 ";
 
+/// A stored path, spelled the way the platform spells paths.
+///
+/// Rows written by an earlier build carry the shell's spelling: `C:/Users/uncle/…/collection/7/K/x.flac` with forward
+/// slashes, while the folder the page asks about is spelled with backslashes. `LIKE` matches one and not the other,
+/// and the collection looks empty while the files sit in it (owner's machine, Windows, 2026-11-19). On Unix a
+/// backslash is an ordinary character in a name, so only Windows is rewritten.
+pub fn platform_path(path: &str) -> String {
+    if cfg!(windows) {
+        path.replace('/', "\\")
+    } else {
+        path.to_owned()
+    }
+}
+
 /// The database file. One writer, opened off the audio path.
 pub struct Index {
     connection: Connection,
@@ -225,6 +239,20 @@ impl Index {
             if !columns.iter().any(|name| name == "sample_rate") {
                 connection.execute_batch("ALTER TABLE tracks ADD COLUMN sample_rate INTEGER")?;
             }
+        }
+        #[cfg(windows)]
+        {
+            // Written on every open, and only when there is something to rewrite: the database is a cache, but a
+            // cache that hides the rows it holds is worse than an empty one.
+            connection.execute_batch(
+                "UPDATE tracks SET path = replace(path, '/', '\\') WHERE path LIKE '%/%';",
+            )?;
+            connection.execute_batch(
+                "UPDATE playlist_tracks SET path = replace(path, '/', '\\') WHERE path LIKE '%/%';",
+            )?;
+            connection.execute_batch(
+                "UPDATE plays SET path = replace(path, '/', '\\') WHERE path LIKE '%/%';",
+            )?;
         }
         Ok(Self { connection })
     }
@@ -1399,6 +1427,26 @@ fn bind(statement: &mut rusqlite::Statement<'_>, row: &TrackRow) -> Result<(), I
 #[allow(clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_path_is_spelled_the_way_the_platform_spells_it() {
+        // A row written by an older shell: a Windows path with forward slashes, which no folder spelled with
+        // backslashes can match.
+        let written = "C:/Users/uncle/AppData/Roaming/hauler-dj/collection/B/A/track.flac";
+        let spelled = platform_path(written);
+        if cfg!(windows) {
+            assert_eq!(
+                spelled,
+                "C:\\Users\\uncle\\AppData\\Roaming\\hauler-dj\\collection\\B\\A\\track.flac"
+            );
+            assert!(
+                !spelled.contains('/'),
+                "no forward slash is left on Windows"
+            );
+        } else {
+            assert_eq!(spelled, written, "on Unix a backslash is part of a name");
+        }
+    }
 
     /// A database as the previous build left it: the `tracks` table, one row, version 1.
     fn version_one(path: &Path) {

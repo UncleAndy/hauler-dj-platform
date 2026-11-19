@@ -396,12 +396,19 @@ int runImportCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutSe
     // average bitrate, and an identical copy is not the DJ's decision to make.
     bool sawProgress = false;
     bool sawQuestion = false;
+    // The window of zeros the owner reported over a batch of two: the numbers it draws come from the engine, so the
+    // panel must hold a total that is the size of the batch, not an empty state dressed as a count.
+    int seenTotal = -1;
     QString facts;
     QElapsedTimer batch;
     batch.start();
     while (batch.elapsed() < 60000) {
         QCoreApplication::processEvents();
         if (progressDialog->property("visible").toBool()) {
+            const QVariantMap visibleState = state();
+            if (seenTotal < 0 && !visibleState.isEmpty()) {
+                seenTotal = visibleState.value(QStringLiteral("total")).toInt();
+            }
             if (!sawProgress) {
                 std::fprintf(stdout, "dj-ui: import progress -> %s\n",
                              qPrintable(progressText->property("text").toString()));
@@ -435,6 +442,13 @@ int runImportCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutSe
         return 1;
     }
     const QVariantMap finished = state();
+    if (seenTotal != 2) {
+        std::fprintf(stderr,
+                     "dj-ui: the progress window drew a batch of %d files, wanted 2\n",
+                     seenTotal);
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: the progress window counted the batch: total %d\n", seenTotal);
     std::fprintf(stdout, "dj-ui: import finished -> %d of %d, %d placed, %d skipped, %d failed\n",
                  finished.value(QStringLiteral("done")).toInt(),
                  finished.value(QStringLiteral("total")).toInt(),
