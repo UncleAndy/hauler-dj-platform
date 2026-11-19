@@ -146,6 +146,26 @@ void FileBrowser::load(const QString &path)
     emit changed();
 }
 
+/// Where the shell writes its log, next to the engine's own.
+QString uiLogPath()
+{
+    return QFileInfo(defaultCollectionRoot()).absolutePath() + QStringLiteral("/logs/dj-ui.log");
+}
+
+/// One line from the shell, with the time it happened: stderr for a terminal that is there, a file for a
+/// launcher on Windows that opens none.
+void uiLog(const QString &message)
+{
+    const QString stamp = QString::number(QDateTime::currentMSecsSinceEpoch());
+    std::fprintf(stderr, "dj-ui: %s\n", qPrintable(message));
+    const QString path = uiLogPath();
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QFile file(path);
+    if (file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
+        file.write(QStringLiteral("%1 dj-ui: %2\n").arg(stamp, message).toUtf8());
+    }
+}
+
 QString defaultCollectionRoot()
 {
 #ifdef Q_OS_WIN
@@ -159,7 +179,9 @@ QString defaultCollectionRoot()
         base = QDir::homePath() + QStringLiteral("/.local/share");
     }
 #endif
-    return base + QStringLiteral("/hauler-dj/collection");
+    // Spelled the way the platform spells paths: the engine compares roots with separators, and a root that
+    // reads `C:\users\...\Roaming/hauler-dj/collection` invites a comparison that misses.
+    return QDir::toNativeSeparators(QDir(base).filePath(QStringLiteral("hauler-dj/collection")));
 }
 
 QString FileBrowser::defaultCollectionRoot() const
@@ -1263,6 +1285,14 @@ int BridgeClient::queryCollection(const QVariantMap &query)
     body.insert(QStringLiteral("query"), QJsonObject::fromVariantMap(query));
     QJsonObject command;
     command.insert(QStringLiteral("QueryCollection"), body);
+    // The question as it leaves the shell: an empty list is either a question with no rows in it or a question
+    // that never arrived, and only the log can tell those apart.
+    uiLog(QStringLiteral("question %1: offset %2, limit %3, roots [%4], search \"%5\"")
+              .arg(query.value(QStringLiteral("id")).toInt())
+              .arg(query.value(QStringLiteral("offset")).toInt())
+              .arg(query.value(QStringLiteral("limit")).toInt())
+              .arg(query.value(QStringLiteral("roots")).toStringList().join(QStringLiteral(" | ")),
+                   query.value(QStringLiteral("search")).toString()));
     return sendCommand(QString(), command);
 }
 
@@ -1734,9 +1764,20 @@ QString BridgeClient::homeFolder() const
     return home;
 }
 
+void BridgeClient::setEndpoint(const QString &endpoint)
+{
+    if (m_endpoint == endpoint) {
+        return;
+    }
+    m_endpoint = endpoint;
+    emit endpointChanged();
+}
+
 void BridgeClient::connectToEngine(const QString &path)
 {
-    m_endpoint = path;
+    setEndpoint(path);
+    uiLog(QStringLiteral("shell %1: asking for the engine on %2 (log %3)")
+              .arg(QCoreApplication::applicationVersion(), path, uiLogPath()));
     m_wantConnection = true;
     m_retryAttempts = 0;
     m_retryTimer.stop();
@@ -1755,6 +1796,7 @@ void BridgeClient::attemptConnect()
     m_handshakeSent = false;
     setConnected(false);
     setStatus(QStringLiteral("connecting"));
+    uiLog(QStringLiteral("attempt %1: connecting to %2").arg(m_retryAttempts + 1).arg(m_endpoint));
     m_socket.connectToServer(m_endpoint);
 }
 
@@ -1782,6 +1824,7 @@ void BridgeClient::onConnected()
     sendJson(hello);
     m_handshakeSent = true;
     setStatus(QStringLiteral("handshaking"));
+    uiLog(QStringLiteral("socket connected to %1; hello sent").arg(m_endpoint));
 }
 
 void BridgeClient::onDisconnected()
@@ -1800,6 +1843,7 @@ void BridgeClient::onSocketError(QLocalSocket::LocalSocketError error)
     Q_UNUSED(error);
     setConnected(false);
     setStatus(QStringLiteral("error: %1").arg(m_socket.errorString()));
+    uiLog(QStringLiteral("socket error on %1: %2").arg(m_endpoint, m_socket.errorString()));
     // The greeting is reported as a failure only when the connection had been established: a refused first
     // attempt is the ordinary race with a starting engine, not news.
     if (m_handshakeSent) {
@@ -1844,6 +1888,9 @@ void BridgeClient::handleMessage(const QJsonObject &message)
         const QString protocol = welcome.value(QStringLiteral("protocol")).toString();
         const QString stateProtocol = welcome.value(QStringLiteral("state_protocol")).toString();
         m_epoch = static_cast<qulonglong>(welcome.value(QStringLiteral("engine_epoch")).toDouble());
+        uiLog(QStringLiteral("engine answered: protocol %1, state %2, epoch %3")
+                  .arg(protocol, stateProtocol)
+                  .arg(m_epoch));
         if (stateProtocol != QStringLiteral("state-v1")) {
             setStatus(QStringLiteral("error: engine speaks %1").arg(stateProtocol));
             emit failed(QStringLiteral("incompatible state protocol %1").arg(stateProtocol));
@@ -1893,6 +1940,9 @@ void BridgeClient::handleMessage(const QJsonObject &message)
         }
         if (m_pendingCommands == 0 && m_connected) {
             setStatus(QStringLiteral("connected"));
+        }
+        if (rejected) {
+            uiLog(QStringLiteral("command %1 refused: %2").arg(id).arg(reason));
         }
         emit acked(id, applied, rejected, reason);
         return;
@@ -2111,6 +2161,9 @@ int BridgeClient::cancelAnalysis()
 
 int BridgeClient::load(const QString &deck, const QString &path)
 {
+    uiLog(QStringLiteral("load into %1: %2 (connected: %3)")
+              .arg(deck, path)
+              .arg(m_connected ? QStringLiteral("yes") : QStringLiteral("no")));
     // Remembered before the command is sent and regardless of its fate: the folder is where the
     // person was looking, which stays true even if the engine refuses the track.
     if (m_loadFolder && !path.isEmpty()) {

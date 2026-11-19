@@ -365,6 +365,9 @@ public:
     ~BridgeClient() override;
 
     bool isConnected() const { return m_connected; }
+
+    /// Where this shell is trying to reach the engine: shown when the answer is "no engine".
+    QString endpoint() const { return m_endpoint; }
     QString status() const { return m_status; }
     QVariantMap snapshot() const { return m_snapshot; }
     qulonglong epoch() const { return m_epoch; }
@@ -528,6 +531,8 @@ public:
 signals:
     void connectedChanged();
     void statusChanged();
+    /// The endpoint moved: the shell is now asking another name for the engine.
+    void endpointChanged();
     void snapshotChanged();
     // An ack arrived: the engine applied (or refused) command `id`.
     void acked(int id, bool applied, bool rejected, QString reason);
@@ -550,6 +555,7 @@ private:
     void handleMessage(const QJsonObject &message);
     int sendCommand(const QString &deck, const QJsonObject &command);
     void setStatus(const QString &status);
+    void setEndpoint(const QString &endpoint);
     void setConnected(bool connected);
 
     QLocalSocket m_socket;

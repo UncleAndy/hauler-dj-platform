@@ -23,6 +23,7 @@ use dj_sync::{DeckClock, Phase, PitchLimits, RateTrim, Reading, SyncMode, plan a
 
 pub mod beatmodel;
 pub mod history;
+pub mod log;
 pub mod meta;
 pub mod metronome;
 pub mod playlists;

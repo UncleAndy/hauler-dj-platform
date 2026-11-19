@@ -780,19 +780,30 @@ fn run(argv: &[String]) -> Result<(), String> {
         };
         let stop_handle = Arc::clone(&stop);
         std::thread::spawn(move || {
+            dj_engine::log::info(format!(
+                "engine {} listening on {}",
+                env!("CARGO_PKG_VERSION"),
+                server.path().display()
+            ));
             // Accept forever: a refused connection must not take the engine down with it.
+            let mut accepted = 0;
             loop {
                 let mut connection = match server.accept() {
                     Ok(connection) => connection,
                     Err(err) => {
-                        eprintln!("dj-engine: accept failed: {err}");
+                        dj_engine::log::info(format!("accept failed: {err}"));
                         continue;
                     }
                 };
+                accepted += 1;
+                // Who connected, in the order they came: a shell that never appears here never reached the
+                // engine, and that is the first thing to know when a window looks empty.
+                dj_engine::log::info(format!("client #{accepted} connected"));
                 if let Err(err) = BridgeServer::handshake(&mut connection, epoch) {
-                    eprintln!("dj-engine: handshake refused: {err}");
+                    dj_engine::log::info(format!("client #{accepted}: handshake refused: {err}"));
                     continue;
                 }
+                dj_engine::log::info(format!("client #{accepted}: handshake done"));
                 let (outgoing, receiver) = std::sync::mpsc::channel::<ServerMessage>();
                 // Greet with the counters as they are now; the publisher fills the rest within one
                 // tick, so the client is never left without a snapshot.
@@ -1595,6 +1606,11 @@ fn serve_client(
     loop {
         match reader.recv_client() {
             Ok(ClientMessage::Command(command)) => {
+                // One line per command the DJ asked for; the ones a moving hand sends every block are named
+                // `None` and stay out of the file.
+                if let Some(name) = dj_engine::log::command_name(&command.command) {
+                    dj_engine::log::info(format!("command #{}: {name}", command.id));
+                }
                 // A load is answered here, not by the audio callback: it is `Accepted`, and the
                 // deck becomes playable only when the state says `Ready`.
                 match dj_engine::route(&command) {
@@ -1794,9 +1810,9 @@ fn serve_client(
                                             // Still nothing for these folders after a fill: the rows are in
                                             // the index and the question cannot see them, so the two are put
                                             // side by side — asked folders first, stored paths after.
-                                            eprintln!("dj-engine: asked {folders:?}");
+                                            dj_engine::log::info(format!("asked {folders:?}"));
                                             if let Ok(paths) = index.sample_paths(3) {
-                                                eprintln!("dj-engine: stored {paths:?}");
+                                                dj_engine::log::info(format!("stored {paths:?}"));
                                             }
                                         }
                                     }
@@ -1807,12 +1823,15 @@ fn serve_client(
                                 total: page.total,
                                 rows: page.rows.iter().map(dj_engine::collection_row).collect(),
                             };
-                            eprintln!(
-                                "dj-engine: page question {} answered with {} rows of {}",
+                            // The question and the answer, side by side: a list that stays empty is either a
+                            // question that never arrived or an answer with nothing in it.
+                            dj_engine::log::info(format!(
+                                "page question {} over {:?}: {} rows of {}",
                                 query.id,
+                                query.roots,
                                 page.rows.len(),
                                 page.total
-                            );
+                            ));
                             query_cells.set_collection(page);
                             let _ = query_alerts
                                 .send(ServerMessage::Ack(dj_domain::Ack::applied(command_id, 0)));

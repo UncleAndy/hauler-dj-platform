@@ -79,12 +79,16 @@ Pane {
             color: Bridge.connected ? UiSettings.themeText : UiSettings.themeDanger
         }
         Label {
+            // The endpoint is part of the message: "no engine" alone leaves the DJ guessing which name was
+            // asked for, and the engine's own log answers with the name it bound.
             text: Bridge.connected
                   ? qsTr("rev %1").arg(Bridge.snapshot.revision !== undefined
                                         ? Bridge.snapshot.revision : 0)
-                  : qsTr("no engine")
+                  : qsTr("no engine on %1").arg(Bridge.endpoint)
             color: UiSettings.themeTextDim
             font.pixelSize: 10
+            elide: Text.ElideMiddle
+            Layout.maximumWidth: 320
         }
         // Справа от счётчика и с постоянной шириной: текст состояния меняется каждую секунду, и
         // кнопка, стоящая слева от него, ездила бы под рукой.
