@@ -579,6 +579,9 @@ private:
     QVariantMap m_snapshot;
     qulonglong m_epoch = 0;
     int m_nextCommandId = 1;
+    /// What each command id asked for, so a refusal can name it: "command 12 (Load) refused: Busy" says
+    /// something, "command 12 refused" does not.
+    QHash<int, QString> m_commandKinds;
     // Commands sent but not yet acknowledged; used to prove the UI is not optimistic.
     int m_pendingCommands = 0;
     // Which file each deck holds, as this client loaded it: a re-measure needs the path, and the

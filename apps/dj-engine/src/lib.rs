@@ -3012,11 +3012,11 @@ pub fn run_import(
     let mut placed: Vec<std::path::PathBuf> = Vec::new();
     for file in files {
         if cancel.load(Ordering::Relaxed) {
-            eprintln!(
-                "dj-engine: batch stopped after {} of {} files",
+            crate::log::info(format!(
+                "batch stopped after {} of {} files",
                 state.placed + state.skipped,
                 state.total
-            );
+            ));
             break;
         }
         // The copy that landed, so the caller can finish what an import cannot: measuring the tempo
@@ -3037,6 +3037,11 @@ pub fn run_import(
             match outcome {
                 Ok(dj_library::import::Outcome::Placed(imported)) => {
                     state.placed += 1;
+                    crate::log::info(format!(
+                        "import placed {} for {}",
+                        imported.path.display(),
+                        file.display()
+                    ));
                     catalog.add(imported.path.clone(), imported.identity.clone());
                     write_index(index.as_deref_mut(), &imported);
                     landed = Some(imported.path.clone());
@@ -3057,6 +3062,10 @@ pub fn run_import(
                 }
                 Ok(dj_library::import::Outcome::Rejected { .. }) => {
                     state.skipped += 1;
+                    crate::log::info(format!(
+                        "import skipped {}: refused by the collection",
+                        file.display()
+                    ));
                     break;
                 }
                 Ok(dj_library::import::Outcome::Duplicate {
@@ -3160,6 +3169,15 @@ pub fn run_import(
 
     state.running = false;
     state.current = None;
+    // `placed` has already been handed to the analysis queue by here: the count is taken from the state,
+    // which is the same number the window shows.
+    crate::log::info(format!(
+        "import finished in {}: {} placed, {} skipped, {} failed",
+        root.display(),
+        state.placed,
+        state.skipped,
+        state.failed
+    ));
     cells.set_import(Some(state));
     running.store(false, Ordering::Relaxed);
 }

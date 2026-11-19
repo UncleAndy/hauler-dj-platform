@@ -1047,6 +1047,10 @@ fn run(argv: &[String]) -> Result<(), String> {
         let load_cells = Arc::clone(&cells);
         std::thread::spawn(move || {
             while let Ok(request) = load_requests_rx.recv() {
+                dj_engine::log::info(format!(
+                    "load arrived for {:?}: {}",
+                    request.deck, request.path
+                ));
                 let _ = updates.send(Published::Deck(Box::new(DeckUpdate {
                     deck: request.deck,
                     static_info: DeckStatic {
@@ -1152,6 +1156,12 @@ fn run(argv: &[String]) -> Result<(), String> {
                     },
                 ) {
                     Ok(mut prepared_track) => {
+                        dj_engine::log::info(format!(
+                            "load prepared {}: {} frames at {} Hz",
+                            request.path,
+                            prepared_track.static_info.total_frames.unwrap_or(0),
+                            prepared_track.static_info.source_rate
+                        ));
                         prepared_track.deck = request.deck;
                         prepared_track.static_info.deck = request.deck;
                         // Second decode of the file, off the audio path: this is why a load is a
@@ -1165,6 +1175,10 @@ fn run(argv: &[String]) -> Result<(), String> {
                         // The attach goes first: whoever hears "Ready" may act on it at once, and
                         // a cue sent before the deck holds the track would belong to nothing.
                         let static_info = prepared_track.static_info.clone();
+                        dj_engine::log::info(format!(
+                            "load attaching {} to {:?}",
+                            request.path, request.deck
+                        ));
                         let _ = prepared.send(GraphLoad::Attach(Box::new(prepared_track)));
                         // Now the same file again, into memory. The deck is already playing from the
                         // stream, so this second decode costs the loader thread and nobody's ears.
@@ -1179,7 +1193,9 @@ fn run(argv: &[String]) -> Result<(), String> {
                         })));
                     }
                     Err(message) => {
-                        eprintln!("dj-engine: cannot load {}: {message}", request.path);
+                        // The same line the console gets, and it is the one that explains a deck standing
+                        // still: a path the engine could not open says why.
+                        dj_engine::log::info(format!("cannot load {}: {message}", request.path));
                         let _ = updates.send(Published::Deck(Box::new(DeckUpdate {
                             deck: request.deck,
                             static_info: DeckStatic {
@@ -1648,12 +1664,27 @@ fn serve_client(
                             }
                             continue;
                         }
+                        // The path is read before the request is handed over: the request is moved into the
+                        // queue, and a line about a load that says nothing about which file is a line wasted.
+                        let loading_path = request.path.clone();
                         let ack = match work.loads.send(request) {
-                            Ok(()) => dj_domain::Ack::accepted(command.id),
-                            Err(_) => dj_domain::Ack::rejected(
-                                command.id,
-                                dj_domain::RejectReason::InvalidValue,
-                            ),
+                            Ok(()) => {
+                                dj_engine::log::info(format!(
+                                    "load #{} handed to the loader: {loading_path}",
+                                    command.id
+                                ));
+                                dj_domain::Ack::accepted(command.id)
+                            }
+                            Err(_) => {
+                                dj_engine::log::info(format!(
+                                    "load #{} refused: the loader is gone",
+                                    command.id
+                                ));
+                                dj_domain::Ack::rejected(
+                                    command.id,
+                                    dj_domain::RejectReason::InvalidValue,
+                                )
+                            }
                         };
                         if alerts.send(ServerMessage::Ack(ack)).is_err() {
                             return;
@@ -1843,6 +1874,18 @@ fn serve_client(
                                 page.rows.len(),
                                 page.total
                             ));
+                            {
+                                let sample: Vec<String> = page
+                                    .rows
+                                    .iter()
+                                    .take(3)
+                                    .map(|row| row.path.clone())
+                                    .collect();
+                                dj_engine::log::info(format!(
+                                    "page {} gives {:?}",
+                                    query.id, sample
+                                ));
+                            }
                             query_cells.set_collection(page);
                             let _ = query_alerts
                                 .send(ServerMessage::Ack(dj_domain::Ack::applied(command_id, 0)));

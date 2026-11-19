@@ -607,6 +607,9 @@ void FileBrowser::takePage()
     m_pageAnsweredFor = id;
     const QVariantList rows = answer.value(QStringLiteral("rows")).toList();
     const int total = answer.value(QStringLiteral("total")).toInt();
+    // The answer as the list received it: a question in the log without an answer next to it says the
+    // engine stayed silent, and an answer with no rows says the index is empty for those folders.
+    uiLog(QStringLiteral("answer %1: %2 rows of %3").arg(id).arg(rows.size()).arg(total));
     // The page does not carry its offset back: the question does, and the id says which question.
     const int offset = m_askedOffset;
     if (offset == 0 && rows.isEmpty() && total == 0) {
@@ -1946,8 +1949,12 @@ void BridgeClient::handleMessage(const QJsonObject &message)
             setStatus(QStringLiteral("connected"));
         }
         if (rejected) {
-            uiLog(QStringLiteral("command %1 refused: %2").arg(id).arg(reason));
+            uiLog(QStringLiteral("command %1 (%2) refused: %3")
+                      .arg(id)
+                      .arg(m_commandKinds.value(id, QStringLiteral("?")))
+                      .arg(reason));
         }
+        m_commandKinds.remove(id);
         emit acked(id, applied, rejected, reason);
         return;
     }
@@ -1989,6 +1996,7 @@ int BridgeClient::sendCommand(const QString &deck, const QJsonObject &command)
 
     QJsonObject message;
     message.insert(QStringLiteral("Command"), scheduled);
+    m_commandKinds.insert(id, command.keys().value(0));
     sendJson(message);
     ++m_pendingCommands;
     setStatus(QStringLiteral("waiting for the engine"));
