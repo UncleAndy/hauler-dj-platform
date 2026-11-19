@@ -1776,8 +1776,12 @@ void BridgeClient::setEndpoint(const QString &endpoint)
 void BridgeClient::connectToEngine(const QString &path)
 {
     setEndpoint(path);
-    uiLog(QStringLiteral("shell %1: asking for the engine on %2 (log %3)")
-              .arg(QCoreApplication::applicationVersion(), path, uiLogPath()));
+    // The build, not just the version: two installs of one version look the same in a log, and «is this the file
+    // I just installed?» is the first question when a fix seems not to have arrived.
+    const QString exe = QCoreApplication::applicationFilePath();
+    uiLog(QStringLiteral("shell %1 from %2 (file time %3): asking for the engine on %4 (log %5)")
+              .arg(QCoreApplication::applicationVersion(), exe,
+                   QFileInfo(exe).lastModified().toString(Qt::ISODate), path, uiLogPath()));
     m_wantConnection = true;
     m_retryAttempts = 0;
     m_retryTimer.stop();

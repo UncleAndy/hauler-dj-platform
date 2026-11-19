@@ -780,9 +780,20 @@ fn run(argv: &[String]) -> Result<(), String> {
         };
         let stop_handle = Arc::clone(&stop);
         std::thread::spawn(move || {
+            // The build, not just the version: two installs of one version look the same in a log, and «is this
+            // the file I just installed?» is the first question when a fix seems not to have arrived.
+            let exe = std::env::current_exe().unwrap_or_default();
+            let built = std::fs::metadata(&exe)
+                .and_then(|meta| meta.modified())
+                .ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|since| since.as_millis().to_string())
+                .unwrap_or_else(|| "unknown".to_string());
             dj_engine::log::info(format!(
-                "engine {} listening on {}",
+                "engine {} from {} (file time {}) listening on {}",
                 env!("CARGO_PKG_VERSION"),
+                exe.display(),
+                built,
                 server.path().display()
             ));
             // Accept forever: a refused connection must not take the engine down with it.
