@@ -689,6 +689,29 @@ void FileBrowser::takePage()
                    .arg(m_pageAnsweredFor));
     const QVariantMap answer = m_bridge->collectionPage();
     const int id = answer.value(QStringLiteral("id")).toInt();
+    if (answer.isEmpty()) {
+        // The page is missing from the snapshot itself, and that is a different fault from an answer that carries
+        // the wrong number: the engine may have answered, and the shell never saw it. The keys of the snapshot say
+        // what did arrive — once a second, so a stream of identical snapshots stays readable.
+        static qint64 lastComplaint = 0;
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        if (now - lastComplaint > 1000) {
+            lastComplaint = now;
+            uiLogAt(1, QStringLiteral("the snapshot carries no page: keys [%1], revision %2")
+                           .arg(m_bridge->snapshot().keys().join(QStringLiteral(", ")))
+                           .arg(m_bridge->snapshot().value(QStringLiteral("revision")).toInt()));
+        }
+        // The list is empty on the screen and the page is not in the snapshot: ask again, once a second, rather than
+        // sit in front of nothing. The dedupe below would refuse a repeat of the same question, so the signature is
+        // cleared first — this is not a duplicate, it is a question that was never answered in what came back.
+        if (now - m_lastRepairAsk > 1000) {
+            m_lastRepairAsk = now;
+            m_askedSignature.clear();
+            uiLogAt(2, QStringLiteral("the list has no page: asking again (question %1)").arg(m_pageQuery + 1));
+            QTimer::singleShot(0, this, [this]() { askPage(0); });
+        }
+        return;
+    }
     // An answer is taken when it belongs to the list on screen, and "belongs" is a question of what was asked, not
     // of which number is the highest. The shell re-opens the section on several notifications, each opening asks
     // again, and the engine answers the questions it was given in order — so an answer carrying an older number was

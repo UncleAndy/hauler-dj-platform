@@ -332,6 +332,9 @@ private:
     // empty while the engine is answering correctly (owner's report, Windows, 2026-11-19).
     QHash<int, QString> m_askedSignatures;
     QSet<int> m_droppedAnswers;
+    // When the shell last asked again for a page that the snapshot did not carry: a lost page is asked for again,
+    // once a second, until it arrives.
+    qint64 m_lastRepairAsk = 0;
     /// The genres the collection is narrowed to. Empty is the whole collection.
     QStringList m_genres;
     int m_total = 0;
