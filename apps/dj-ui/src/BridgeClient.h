@@ -24,6 +24,10 @@
 /// collection over a full folder.
 QString defaultCollectionRoot();
 
+/// One line from the shell: `level` is 0 error, 1 warn, 2 info, 3 debug, 4 trace, and `HAULER_LOG` decides how
+/// much is kept. The file is rotated at 8 MB, one previous copy is kept.
+void uiLogAt(int level, const QString &message);
+
 // Lists a directory for the load dialog, or the whole collection for the Collection section.
 //
 // Written by hand because both alternatives fail here: Qt's FileDialog is the GTK/portal dialog
@@ -582,6 +586,10 @@ private:
     /// What each command id asked for, so a refusal can name it: "command 12 (Load) refused: Busy" says
     /// something, "command 12 refused" does not.
     QHash<int, QString> m_commandKinds;
+    /// What was reported about each deck, so only changes reach the log: twenty snapshots a second say nothing new.
+    QHash<QString, QString> m_deckSignatures;
+    /// The environment is reported once per process, however many times the shell asks for the engine.
+    bool m_reportedOnce = false;
     // Commands sent but not yet acknowledged; used to prove the UI is not optimistic.
     int m_pendingCommands = 0;
     // Which file each deck holds, as this client loaded it: a re-measure needs the path, and the

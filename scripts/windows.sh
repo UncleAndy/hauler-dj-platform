@@ -280,13 +280,20 @@ Prefix = .
 Plugins = .
 Qml2Imports = qml
 CONF
+    cat > "$dist/engine-console.bat" <<'BAT'
+@echo off
+rem The engine's console goes to a file: a crash before its own log opens still leaves a trace.
+if not exist "%APPDATA%\hauler-dj\logs" mkdir "%APPDATA%\hauler-dj\logs"
+"%~dp0dj-engine.exe" %* >> "%APPDATA%\hauler-dj\logs\dj-engine-console.log" 2>&1
+BAT
     cat > "$dist/hauler-dj.bat" <<'BAT'
 @echo off
-rem Движок и оболочка — два процесса; оболочка подключается к трубе движка.
+rem Maximum detail for now: the two log files are how a fault on a machine we cannot see is found.
+set HAULER_LOG=trace
 rem --device with an empty name asks for the system's own output: without it the engine plays a generated
 rem tone into nothing, which looks exactly like "no sound but the meter is lit".
-start "" "%~dp0dj-engine.exe" --device ""
-timeout /t 1 /nobreak >nul
+start "" /min "%~dp0engine-console.bat" --device ""
+timeout /t 2 /nobreak >nul
 start "" "%~dp0dj-ui.exe"
 BAT
     cat > "$dist/README.txt" <<'TXT'

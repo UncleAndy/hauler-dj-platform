@@ -702,6 +702,18 @@ pub struct LiveOutput {
 /// Capped at `limit`, because the graph has at most two output pairs (master and cue); a wider
 /// interface has no more to give us. Two when the backend says nothing, which is the ADR-0005
 /// fallback for an interface we know nothing about.
+/// Every output the system offers, by name, in the order the backend lists them.
+///
+/// Diagnostics only: a silent engine is often a wrong device, and «what was there to choose from» is the question
+/// no console answers by itself.
+pub fn output_devices() -> Result<Vec<String>, IoError> {
+    let host = cpal::default_host();
+    let devices = host
+        .output_devices()
+        .map_err(|err| IoError::Unsupported(err.to_string()))?;
+    Ok(devices.map(|device| device.to_string()).collect())
+}
+
 pub fn output_channels(device: Option<&str>, limit: usize) -> Result<usize, IoError> {
     let host = cpal::default_host();
     // An empty name means "the system's own choice". A launcher should not have to know a device name to make

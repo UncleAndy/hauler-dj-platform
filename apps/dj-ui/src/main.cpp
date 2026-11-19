@@ -109,6 +109,20 @@ int main(int argc, char *argv[])
 
     QGuiApplication::setPalette(palette);
 
+    // Qt's own warnings — a QML binding that failed, a plugin that did not load — go to the same file as the rest.
+    // On Windows there is no console to read them from, and a scene that renders without its styles still looks
+    // like a bug in the shell.
+    qInstallMessageHandler([](QtMsgType type, const QMessageLogContext &context, const QString &text) {
+        const char *kind = type == QtDebugMsg      ? "debug"
+            : type == QtInfoMsg                    ? "info"
+            : type == QtWarningMsg                 ? "WARN"
+            : "ERROR";
+        const QString where = context.file != nullptr
+            ? QStringLiteral(" (%1:%2)").arg(QString::fromUtf8(context.file)).arg(context.line)
+            : QString();
+        uiLogAt(type == QtWarningMsg ? 1 : (type == QtCriticalMsg || type == QtFatalMsg ? 0 : 3),
+                QStringLiteral("qt %1: %2%3").arg(QString::fromLatin1(kind), text, where));
+    });
     QCoreApplication::setApplicationName(QStringLiteral("dj-platform"));
     QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0"));
     QCoreApplication::setOrganizationName(QStringLiteral("DJ Platform"));

@@ -155,6 +155,10 @@ type Subscribers = Arc<Mutex<Vec<Sender<ServerMessage>>>>;
 
 fn main() -> std::process::ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
+    // Before anything else: the level, then the environment. A report that names the file, the folders and the
+    // switches is what tells two installations apart when a fix seems not to have arrived.
+    dj_engine::log::init();
+    dj_engine::log::startup_report(&argv);
     // The writer brings the database up to the current schema, once, at start. A reader no longer does
     // it — a reader that migrates takes the writer's lock away from a load that is recording names — so
     // if nobody else did, the page query would look for a column that is not there and answer "nothing".
@@ -401,10 +405,10 @@ fn run(argv: &[String]) -> Result<(), String> {
                 let named = if requested.is_empty() {
                     "the default output device".to_string()
                 } else {
-                    format!("{requested:?}")
+                    format!("the device {requested:?}")
                 };
                 dj_engine::log::info(format!(
-                    "output {named} would not open: {err}; falling back to the null sink"
+                    "{named} would not open: {err}; falling back to the null sink"
                 ));
                 device = None;
                 None
@@ -413,6 +417,9 @@ fn run(argv: &[String]) -> Result<(), String> {
         None => None,
     };
 
+    if device.is_some() {
+        dj_engine::log::output_report();
+    }
     // Which output the engine took: a silent app on Windows was the null sink, and nothing in the log said so.
     match &device {
         Some(name) if name.is_empty() => {
@@ -615,8 +622,44 @@ fn run(argv: &[String]) -> Result<(), String> {
                     .ok()
                     .map(|print| print.key())
             };
+            let mut ticks: u64 = 0;
+            let mut last_report = std::time::Instant::now();
             loop {
                 std::thread::sleep(publish_every);
+                // Once a second: is anything moving? A deck that says `Ready` while the graph renders nothing
+                // looks exactly like a deck playing silence, and only the numbers tell them apart.
+                if last_report.elapsed() >= Duration::from_secs(1) {
+                    last_report = std::time::Instant::now();
+                    let clients = subscribers.lock().map(|list| list.len()).unwrap_or(0);
+                    let states: Vec<String> = statics
+                        .iter()
+                        .map(|entry| {
+                            format!(
+                                "{:?}={}{}",
+                                entry.deck,
+                                match &entry.load {
+                                    dj_domain::DeckLoad::Empty => "Empty".to_string(),
+                                    dj_domain::DeckLoad::Loading { .. } => "Loading".to_string(),
+                                    dj_domain::DeckLoad::Ready => "Ready".to_string(),
+                                    dj_domain::DeckLoad::Failed { message } => {
+                                        format!("Failed({message})")
+                                    }
+                                },
+                                entry
+                                    .path
+                                    .as_ref()
+                                    .map(|path| format!(" {path}"))
+                                    .unwrap_or_default()
+                            )
+                        })
+                        .collect();
+                    dj_engine::log::debug(format!(
+                        "state: rev {revision}, ticks {ticks}, snapshots {}, clients {clients}, decks [{}]",
+                        published.load(Ordering::Relaxed),
+                        states.join(", ")
+                    ));
+                }
+                ticks += 1;
                 if stop.load(Ordering::Relaxed) {
                     // The way out: close what is still open and hand it over before leaving, or the play
                     // the DJ is listening to right now is the one nobody records.
@@ -1407,6 +1450,12 @@ fn run_device(
     let output = dj_audio_io::LiveOutput::start(&config, plan, Box::new(graph))
         .map_err(|err| format!("cannot open {requested:?}: {err}"))?;
     let report = output.snapshot();
+    // What the backend actually gave: a request for 256 frames can come back as 480, and a rate the device does
+    // not support is quietly replaced. Silence and crackle both start here.
+    dj_engine::log::info(format!(
+        "device opened: {:?}, {} channel(s), {} Hz, {} frames per callback",
+        report.device, report.channels, report.sample_rate, report.frames_per_callback
+    ));
     eprintln!(
         "dj-engine: playing on {:?} — {} channel(s), master {}/{} cue {}",
         report.device,
@@ -1655,14 +1704,31 @@ fn serve_client(
 
     // The reader only reads, so a quiet client cannot starve the snapshot stream.
     let alerts = alerts;
+    // How many messages of each kind arrive, once a second: a hand on the platter sends a seek every block, and
+    // a log line per message would bury everything else. The count tells the same story at trace level.
+    let mut seen: std::collections::BTreeMap<&'static str, u32> = std::collections::BTreeMap::new();
+    let mut counting_since = std::time::Instant::now();
     loop {
+        if counting_since.elapsed() >= Duration::from_secs(1) && !seen.is_empty() {
+            let parts: Vec<String> = seen
+                .iter()
+                .map(|(name, count)| format!("{name} x{count}"))
+                .collect();
+            dj_engine::log::trace(format!("client in 1 s: {}", parts.join(", ")));
+            seen.clear();
+            counting_since = std::time::Instant::now();
+        }
         match reader.recv_client() {
             Ok(ClientMessage::Command(command)) => {
+                let kind = dj_engine::log::command_name(&command.command).unwrap_or("deck");
+                *seen.entry(kind).or_insert(0) += 1;
                 // One line per command the DJ asked for; the ones a moving hand sends every block are named
                 // `None` and stay out of the file.
-                if let Some(name) = dj_engine::log::command_name(&command.command) {
-                    dj_engine::log::info(format!("command #{}: {name}", command.id));
-                }
+                dj_engine::log::debug(format!(
+                    "command #{}: {}",
+                    command.id,
+                    dj_engine::log::command_name(&command.command).unwrap_or("a deck command")
+                ));
                 // A load is answered here, not by the audio callback: it is `Accepted`, and the
                 // deck becomes playable only when the state says `Ready`.
                 match dj_engine::route(&command) {

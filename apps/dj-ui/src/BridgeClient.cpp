@@ -11,6 +11,7 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QFileInfoList>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -152,18 +153,63 @@ QString uiLogPath()
     return QFileInfo(defaultCollectionRoot()).absolutePath() + QStringLiteral("/logs/dj-ui.log");
 }
 
-/// One line from the shell, with the time it happened: stderr for a terminal that is there, a file for a
-/// launcher on Windows that opens none.
-void uiLog(const QString &message)
+namespace {
+
+/// How much detail the log keeps. `HAULER_LOG` chooses, as it does for the engine.
+int uiLevel()
 {
+    static const int level = [] {
+        const QString name = qEnvironmentVariable("HAULER_LOG").trimmed().toLower();
+        if (name == QLatin1String("error")) {
+            return 0;
+        }
+        if (name == QLatin1String("warn") || name == QLatin1String("warning")) {
+            return 1;
+        }
+        if (name == QLatin1String("debug")) {
+            return 3;
+        }
+        if (name == QLatin1String("trace")) {
+            return 4;
+        }
+        return 2;
+    }();
+    return level;
+}
+
+/// Rotate at a fixed size: a session can run for hours at trace, and a log that fills the disk is its own incident.
+constexpr qint64 kLogMaxBytes = 8 * 1024 * 1024;
+
+} // namespace
+
+/// One line from the shell, with the time it happened: stderr for a terminal that is there, a file for a
+/// launcher on Windows that opens none. `level` is 0 error, 1 warn, 2 info, 3 debug, 4 trace.
+void uiLogAt(int level, const QString &message)
+{
+    if (level > uiLevel()) {
+        return;
+    }
+    static const char *tags[] = {"ERROR", "WARN", "info", "debug", "trace"};
+    const QString tag = QString::fromLatin1(tags[qBound(0, level, 4)]);
     const QString stamp = QString::number(QDateTime::currentMSecsSinceEpoch());
-    std::fprintf(stderr, "dj-ui: %s\n", qPrintable(message));
+    const QString line = QStringLiteral("%1 %2 dj-ui: %3").arg(stamp, tag, message);
+    std::fprintf(stderr, "%s\n", qPrintable(line));
     const QString path = uiLogPath();
     QDir().mkpath(QFileInfo(path).absolutePath());
+    const QFileInfo info(path);
+    if (info.exists() && info.size() > kLogMaxBytes) {
+        QFile::remove(path + QStringLiteral(".1"));
+        QFile::rename(path, path + QStringLiteral(".1"));
+    }
     QFile file(path);
     if (file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
-        file.write(QStringLiteral("%1 dj-ui: %2\n").arg(stamp, message).toUtf8());
+        file.write(line.toUtf8() + '\n');
     }
+}
+
+void uiLog(const QString &message)
+{
+    uiLogAt(2, message);
 }
 
 QString defaultCollectionRoot()
@@ -618,7 +664,12 @@ void FileBrowser::takePage()
     const int total = answer.value(QStringLiteral("total")).toInt();
     // The answer as the list received it: a question in the log without an answer next to it says the
     // engine stayed silent, and an answer with no rows says the index is empty for those folders.
-    uiLog(QStringLiteral("answer %1: %2 rows of %3").arg(id).arg(rows.size()).arg(total));
+    uiLog(QStringLiteral("answer %1: %2 rows of %3, mode %4, roots [%5], filter \"%6\"")
+              .arg(id)
+              .arg(rows.size())
+              .arg(total)
+              .arg(m_mode)
+              .arg(m_roots.join(QStringLiteral(" | ")), m_filter));
     // The page does not carry its offset back: the question does, and the id says which question.
     const int offset = m_askedOffset;
     if (offset == 0 && rows.isEmpty() && total == 0) {
@@ -1788,6 +1839,32 @@ void BridgeClient::setEndpoint(const QString &endpoint)
 void BridgeClient::connectToEngine(const QString &path)
 {
     setEndpoint(path);
+    // The environment, once per process: without it two installations of one version are indistinguishable, and a
+    // report about «no engine» cannot be checked against the name the engine actually took.
+    if (!m_reportedOnce) {
+        m_reportedOnce = true;
+        uiLog(QStringLiteral("shell %1 from %2 (file time %3)")
+                  .arg(QCoreApplication::applicationVersion(),
+                       QCoreApplication::applicationFilePath(),
+                       QFileInfo(QCoreApplication::applicationFilePath())
+                           .lastModified()
+                           .toString(Qt::ISODate)));
+        uiLog(QStringLiteral("qt %1, platform %2, pid %3")
+                  .arg(QString::fromLatin1(qVersion()), QGuiApplication::platformName())
+                  .arg(QCoreApplication::applicationPid()));
+        uiLog(QStringLiteral("cwd %1").arg(QDir::currentPath()));
+        uiLog(QStringLiteral("collection by default %1").arg(defaultCollectionRoot()));
+        uiLog(QStringLiteral("log level %1 (HAULER_LOG=%2)")
+                  .arg(uiLevel())
+                  .arg(qEnvironmentVariable("HAULER_LOG", QStringLiteral("(unset)"))));
+        for (const char *name : {"APPDATA", "LOCALAPPDATA", "USERPROFILE", "USERNAME", "XDG_DATA_HOME",
+                                 "XDG_CONFIG_HOME", "XDG_RUNTIME_DIR", "ORT_DYLIB_PATH"}) {
+            const QString value = qEnvironmentVariable(name);
+            if (!value.isEmpty()) {
+                uiLog(QStringLiteral("env %1=%2").arg(QString::fromLatin1(name), value));
+            }
+        }
+    }
     // The build, not just the version: two installs of one version look the same in a log, and «is this the file
     // I just installed?» is the first question when a fix seems not to have arrived.
     const QString exe = QCoreApplication::applicationFilePath();
@@ -1931,6 +2008,21 @@ void BridgeClient::handleMessage(const QJsonObject &message)
             const QString path = deck.value(QStringLiteral("path")).toString();
             if (!id.isEmpty() && !path.isEmpty()) {
                 m_deckPaths.insert(id, path);
+            }
+            // The deck's own story, told when it changes: a load that never leaves `Loading` and a deck that says
+            // `Ready` over silence look the same on the screen and are told apart here.
+            const QString load = deck.value(QStringLiteral("load")).toString();
+            const QString peaks = QStringLiteral("%1/%2")
+                                      .arg(deck.value(QStringLiteral("peak_left")).toDouble(), 0, 'f', 3)
+                                      .arg(deck.value(QStringLiteral("peak_right")).toDouble(), 0, 'f', 3);
+            const QString signature = id + QLatin1Char('|') + load + QLatin1Char('|')
+                + path + QLatin1Char('|') + peaks;
+            if (!id.isEmpty() && m_deckSignatures.value(id) != signature) {
+                m_deckSignatures.insert(id, signature);
+                uiLogAt(load == QLatin1String("Ready") ? 2 : 3,
+                        QStringLiteral("deck %1: %2, path %3, peaks %4, revision %5")
+                            .arg(id, load, path.isEmpty() ? QStringLiteral("(none)") : path, peaks)
+                            .arg(m_snapshot.value(QStringLiteral("revision")).toInt()));
             }
         }
         emit snapshotChanged();
