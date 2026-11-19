@@ -308,9 +308,9 @@ void FileBrowser::openCollection(const QStringList &roots)
             alive.append(defaultCollectionRoot());
         }
         if (alive != listed) {
-            std::fprintf(stderr, "dj-ui: dropped %d roots that are gone, opening %d\n",
-                         static_cast<int>(listed.size() - alive.size()),
-                         static_cast<int>(alive.size()));
+            uiLog(QStringLiteral("dropped %1 roots that are gone, opening %2")
+                      .arg(listed.size() - alive.size())
+                      .arg(alive.size()));
         }
         listed = alive;
     }
@@ -347,8 +347,9 @@ void FileBrowser::openCollection(const QStringList &roots)
     if (m_bridge != nullptr && m_bridge->isConnected()) {
         // A line per opening: with two rounds of "nothing changed" it is worth knowing whether the shell
         // asked with a filter at all.
-        std::fprintf(stderr, "dj-ui: collection opened, %d roots, %d genres chosen\n",
-                     static_cast<int>(m_roots.size()), static_cast<int>(m_genres.size()));
+        uiLog(QStringLiteral("collection opened, %1 roots, %2 genres chosen")
+                  .arg(m_roots.size())
+                  .arg(m_genres.size()));
         // The genres are asked once per opening, whatever the filter: their answer travels in its own slot,
         // so it neither waits for the page nor erases it.
         if (!m_censusAsked) {
@@ -526,7 +527,7 @@ void FileBrowser::takeGenres()
     if (boxes == m_genreList) {
         return;
     }
-    std::fprintf(stderr, "dj-ui: the index knows %d genres\n", static_cast<int>(boxes.size()));
+    uiLog(QStringLiteral("the index knows %1 genres").arg(boxes.size()));
     m_genreList = boxes;
     publishGenres();
     // A genre restored from the layout may not be in this collection any more, or may now have no tracks:
@@ -546,7 +547,7 @@ void FileBrowser::takeGenres()
             }
         }
         if (kept != m_genres) {
-            std::fprintf(stderr, "dj-ui: dropped genre filters the collection no longer offers\n");
+            uiLog(QStringLiteral("dropped genre filters the collection no longer offers"));
             m_genres = kept;
             emit genresChanged();
             applyFilter();
@@ -1903,8 +1904,10 @@ void BridgeClient::scheduleReconnect()
     // engine needs a moment to open its pipe. After that the tries thin out — an engine that is still absent
     // half a minute later is a real fault, and the terminal should say so once, not fifty times.
     const int delay = m_retryAttempts <= 40 ? 250 : 2000;
-    std::fprintf(stderr, "dj-ui: no engine on %s yet (attempt %d), trying again in %d ms\n",
-                 qPrintable(m_endpoint), m_retryAttempts, delay);
+    uiLog(QStringLiteral("no engine on %1 yet (attempt %2), trying again in %3 ms")
+              .arg(m_endpoint)
+              .arg(m_retryAttempts)
+              .arg(delay));
     m_retryTimer.start(delay);
 }
 

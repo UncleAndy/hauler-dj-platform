@@ -1876,6 +1876,37 @@ int runCollectionPageCheck(QQmlApplicationEngine& engine, FileBrowser& browser,
     }
     std::fprintf(stdout, "dj-ui: the index and the walk agree on every row\n");
 
+    // The DJ's own way in: he presses the Collection section in the rail. The function behind that press is the
+    // one the MouseArea calls, so a section that opens nothing is caught here — with the numbers that say why.
+    {
+        // No return value is asked for: a QML function returns a QVariant, and the boolean it carries is not worth
+        // the conversion. The list is the evidence.
+        const bool asked = QMetaObject::invokeMethod(panel, "showSection",
+                                                     Q_ARG(QVariant, QVariant(QStringLiteral("collection"))));
+        if (!asked) {
+            std::fprintf(stderr, "dj-ui: the Collection section could not be asked to open\n");
+            return 1;
+        }
+        QElapsedTimer rail;
+        rail.start();
+        while (browser.entries().isEmpty() && rail.elapsed() < 5000) {
+            QCoreApplication::processEvents();
+            QThread::msleep(20);
+        }
+        if (browser.entries().isEmpty()) {
+            std::fprintf(stderr,
+                         "dj-ui: the section opened but the list stayed empty: %d roots, folder '%s', "
+                         "%d rows after the filter\n",
+                         static_cast<int>(browser.property("roots").toStringList().size()),
+                         qPrintable(browser.folder()),
+                         static_cast<int>(browser.property("showingRows").toList().size()));
+            return 1;
+        }
+        std::fprintf(stdout, "dj-ui: pressing Collection listed %d rows after %lld ms\n",
+                     static_cast<int>(browser.entries().size()),
+                     static_cast<long long>(rail.elapsed()));
+    }
+
     // The genre boxes: the engine counts them in its own table and publishes them apart from the
     // page. The walk knows the same genres from the same files, so the two counts must agree — that
     // is what makes "the boxes come from the database" a measurement instead of a claim.

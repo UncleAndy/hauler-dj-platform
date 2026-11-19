@@ -155,6 +155,10 @@ qt_host_wrap() {
         for tool in "$host_prefix/$dir"/*; do
             [ -f "$tool" ] || continue
             case "$tool" in *.so*|*.prl|*.cmake|*.json|*.txt|*.dat) continue ;; esac
+            # Уже обёрнутый двоичный файл лежит рядом как *.qt-bin. Обернуть его ещё раз значит построить цепочку
+            # обёрток (qmlcachegen.qt-bin.qt-bin…), а внутри цепочки инструмент теряет свой rpath и падает на
+            # Qt_6_PRIVATE_API. Обёртки создаются только для настоящих инструментов, не для *.qt-bin.
+            case "$tool" in *.qt-bin|*.qt-bin.*) continue ;; esac
             # Уже обёрнутый инструмент лежит рядом как *.qt-bin: обёртку переписываем, а не пропускаем, иначе
             # исправленная обёртка не доедет до уже подготовленного каталога.
             if [ ! -f "$tool.qt-bin" ]; then
@@ -166,8 +170,14 @@ qt_host_wrap() {
             {
                 printf '%s\n' "$bash_path" \
                     '# Инструмент Qt из официальной Linux-сборки: запускается внутри FHS-окружения.' \
+                    '# Пути к библиотекам, унаследованные от оболочки сборки, убираются: иначе инструмент 6.8.1 грузит' \
+                    '# libQt6Qml 6.11 из dev shell и падает на приватном символе Qt_6_PRIVATE_API.' \
+                    'unset LD_LIBRARY_PATH LD_PRELOAD QML2_IMPORT_PATH QML_IMPORT_PATH QT_PLUGIN_PATH' \
+                    'unset QT_QPA_PLATFORM_PLUGIN_PATH QT_HOST_PATH_CMAKE_DIR' \
                     "QT_HOST_PATH='$host_prefix'" \
                     'export QT_HOST_PATH' \
+                    "LD_LIBRARY_PATH='$host_prefix/lib'" \
+                    'export LD_LIBRARY_PATH' \
                     "exec '$fhs_path/bin/qt-tools' -c 'exec \"\$@\"' sh '$real' \"\$@\""
             } > "$tool"
             chmod +x "$tool"

@@ -1456,6 +1456,30 @@ fn run_device(
         "device opened: {:?}, {} channel(s), {} Hz, {} frames per callback",
         report.device, report.channels, report.sample_rate, report.frames_per_callback
     ));
+    // A stream that opened is not a stream that runs: the callback may never be called, and then the deck plays to
+    // nobody. Two seconds is enough to tell the two apart.
+    let mut settled = output.snapshot();
+    for _ in 0..20 {
+        if settled.callbacks > 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        settled = output.snapshot();
+    }
+    if settled.callbacks == 0 {
+        dj_engine::log::error(
+            "the device opened but no audio callback arrived in 2 s: the deck will be silent",
+        );
+    } else {
+        dj_engine::log::info(format!(
+            "device running: {} callbacks, {} frames per callback, {} Hz, late {}, errors {}",
+            settled.callbacks,
+            settled.frames_per_callback,
+            settled.sample_rate,
+            settled.late_callbacks,
+            settled.errors
+        ));
+    }
     eprintln!(
         "dj-engine: playing on {:?} — {} channel(s), master {}/{} cue {}",
         report.device,

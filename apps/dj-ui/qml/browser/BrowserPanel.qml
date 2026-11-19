@@ -1344,17 +1344,26 @@ Pane {
         modal: true
         anchors.centerIn: Overlay.overlay
         standardButtons: Dialog.Ok
+        // An explicit width ends the question of where the size comes from: a dialog that asks its content for
+        // `implicitWidth` while the content asks the dialog for its width is a loop, and Qt reported it.
+        width: 480
 
-        Label {
-            objectName: "genreEmptyText"
-            wrapMode: Text.WordWrap
-            width: 420
-            font.pixelSize: browser.listFont
-            text: !Bridge.connected
-                  ? qsTr("The engine is not answering, so there is nothing to list. The genres live in the "
-                         + "engine's index; the shell only asks.")
-                  : qsTr("The collection has no genres yet. A genre comes from a track that carries one — "
-                         + "after the track is imported, and its tags are read or it is analyzed.")
+        // The text sets its own preferred width inside a layout: a `width` on a direct child of a Dialog is a
+        // binding loop (the dialog sizes itself from the child, the child from the dialog), and Qt said so in the
+        // log of the owner's machine.
+        contentItem: ColumnLayout {
+            spacing: 6
+            Label {
+                objectName: "genreEmptyText"
+                wrapMode: Text.WordWrap
+                Layout.preferredWidth: 420
+                font.pixelSize: browser.listFont
+                text: !Bridge.connected
+                      ? qsTr("The engine is not answering, so there is nothing to list. The genres live in the "
+                             + "engine's index; the shell only asks.")
+                      : qsTr("The collection has no genres yet. A genre comes from a track that carries one — "
+                             + "after the track is imported, and its tags are read or it is analyzed.")
+            }
         }
     }
 
