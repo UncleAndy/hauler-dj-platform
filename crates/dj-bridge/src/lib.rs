@@ -564,3 +564,71 @@ impl Connection {
             .map_err(|err| FrameError::Io(err.to_string()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+    struct Note {
+        path: String,
+        text: String,
+    }
+
+    fn two_line_note() -> Note {
+        // A Windows path with backslashes and a piece of text that carries both kinds of line ending: if the
+        // protocol read lines, this is what it would break on.
+        Note {
+            path: String::from(r"C:\Users\uncle\Music\collection\7\K\a.flac"),
+            text: String::from("first\r\nsecond\nthird\r"),
+        }
+    }
+
+    #[test]
+    fn the_frame_is_its_announced_length_and_nothing_else() -> Result<(), FrameError> {
+        let mut wire = Vec::new();
+        write_frame(&mut wire, &two_line_note())?;
+        let announced = u32::from_le_bytes([wire[0], wire[1], wire[2], wire[3]]) as usize;
+        assert_eq!(
+            announced,
+            wire.len() - 4,
+            "the frame is exactly what it announced"
+        );
+        // Not one raw carriage return or line feed: JSON escapes control characters, so a line ending cannot be
+        // mistaken for the end of anything, and no delimiter is needed to find the frame's boundary.
+        assert!(
+            !wire.windows(2).any(|pair| pair == b"\r\n"),
+            "no line ending reaches the wire as bytes"
+        );
+        assert!(
+            !wire.contains(&b'\n') && !wire.contains(&b'\r'),
+            "control characters travel escaped inside the JSON text"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_note_with_line_endings_comes_back_unchanged() -> Result<(), FrameError> {
+        let note = two_line_note();
+        let mut wire = Vec::new();
+        write_frame(&mut wire, &note)?;
+        let mut reader = &wire[..];
+        let back: Note = read_frame(&mut reader)?;
+        assert_eq!(back, note, "line endings are data, not framing");
+        assert!(reader.is_empty(), "one frame is one message");
+        Ok(())
+    }
+
+    #[test]
+    fn two_frames_in_a_row_are_split_by_the_length_alone() -> Result<(), FrameError> {
+        let mut wire = Vec::new();
+        write_frame(&mut wire, &two_line_note())?;
+        write_frame(&mut wire, &two_line_note())?;
+        let mut reader = &wire[..];
+        let first: Note = read_frame(&mut reader)?;
+        let second: Note = read_frame(&mut reader)?;
+        assert_eq!(first, second);
+        assert!(reader.is_empty());
+        Ok(())
+    }
+}
