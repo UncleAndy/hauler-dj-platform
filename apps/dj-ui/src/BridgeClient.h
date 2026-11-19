@@ -9,6 +9,10 @@
 #include <QByteArray>
 #include <QJsonObject>
 #include <QLocalSocket>
+#ifdef Q_OS_WIN
+#include <QHostAddress>
+#include <QTcpSocket>
+#endif
 #include <QObject>
 #include <QTimer>
 
@@ -565,7 +569,13 @@ private slots:
     void onConnected();
     void onDisconnected();
     void onReadyRead();
+#ifdef Q_OS_WIN
+    // The slot does not read the error code: the socket's own `errorString()` is what a person can use, and it says
+    // the same thing for either kind of socket.
+    void onSocketError();
+#else
     void onSocketError(QLocalSocket::LocalSocketError error);
+#endif
 
 private:
     /// One attempt to reach the endpoint this client wants.
@@ -580,7 +590,14 @@ private:
     void setEndpoint(const QString &endpoint);
     void setConnected(bool connected);
 
+#ifdef Q_OS_WIN
+    // Windows speaks to the engine over a loopback socket: the endpoint is a file the engine writes, and the address
+    // in it is where the engine listens. A named pipe was our own C over the kernel and delivered snapshots in
+    // bursts of twenty with half a minute of silence between them (owner's machine, 2026-11-19).
+    QTcpSocket m_socket;
+#else
     QLocalSocket m_socket;
+#endif
     /// Where this client wants to be, and the timer that keeps trying.
     ///
     /// One attempt at startup was the whole story before, and it was wrong: the launcher starts the engine and

@@ -206,138 +206,93 @@ pub mod transport {
         }
     }
 
-    // The pipe API is C: there is no safe wrapper for it in `std`, so this module is the one place in the
-    // workspace that speaks to the kernel directly. Every block below says what it is doing and why the
-    // handles cannot outlive it.
+    /// TCP over the loopback interface.
+    ///
+    /// The transport used to be a named pipe: our own C over the kernel, exercised on one platform only, and it
+    /// behaved differently from everything else in the system — the shell received snapshots in bursts of twenty and
+    /// then nothing for half a minute while the engine published twenty a second (owner's machine, Windows,
+    /// 2026-11-19). A loopback socket is a transport neither side has to get right: the engine binds a port, writes
+    /// the address into the endpoint file, and the shell reads that file.
     #[cfg(windows)]
-    #[allow(unsafe_code)]
     mod imp {
         use super::{Path, io};
-        use std::io::{Read, Write};
-        use std::os::windows::io::{FromRawHandle, RawHandle};
+        use std::net::{TcpListener, TcpStream};
         use std::path::PathBuf;
-        use windows_sys::Win32::Foundation::{
-            CloseHandle, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE,
-        };
-        use windows_sys::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
-        use windows_sys::Win32::System::Pipes::{
-            ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE,
-            PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
-        };
+        use std::time::Duration;
 
-        /// One pipe instance. It reads and writes like a file, which is what a pipe handle is.
-        #[derive(Debug)]
-        pub struct Stream {
-            file: std::fs::File,
-        }
+        /// A connected socket.
+        pub type Stream = TcpStream;
 
-        impl Stream {
-            pub fn try_clone(&self) -> io::Result<Self> {
-                self.file.try_clone().map(|file| Self { file })
-            }
-
-            /// A blocking pipe read has no deadline without overlapped I/O. The engine gives every connection
-            /// its own thread, and the shell reads in its event loop, so the deadline is accepted and not
-            /// enforced rather than pretended at.
-            pub fn set_read_timeout(
-                &self,
-                _timeout: Option<std::time::Duration>,
-            ) -> io::Result<()> {
-                Ok(())
-            }
-        }
-
-        impl Read for Stream {
-            fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
-                self.file.read(out)
-            }
-        }
-
-        impl Write for Stream {
-            fn write(&mut self, data: &[u8]) -> io::Result<usize> {
-                self.file.write(data)
-            }
-
-            fn flush(&mut self) -> io::Result<()> {
-                self.file.flush()
-            }
-        }
-
-        /// A pipe name: the kernel creates an instance when a client arrives.
+        /// A listening socket and the file that names its address.
         #[derive(Debug)]
         pub struct Listener {
-            full: Vec<u16>,
-            name: PathBuf,
+            inner: TcpListener,
+            path: PathBuf,
         }
 
-        fn wide(text: &str) -> Vec<u16> {
-            text.encode_utf16().chain(std::iter::once(0)).collect()
+        /// The address written in an endpoint file: `127.0.0.1:54321`.
+        pub fn address(path: &Path) -> io::Result<String> {
+            let text = std::fs::read_to_string(path)?;
+            Ok(text.trim().to_string())
         }
 
         impl Listener {
             pub fn bind(path: &Path) -> io::Result<Self> {
+                let inner = TcpListener::bind(("127.0.0.1", 0))?;
+                let address = inner.local_addr()?.to_string();
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                // Written beside and renamed into place: a shell that reads a half-written file reads nothing, and
+                // this file is the only thing that stands between the two processes.
+                let staging = path.with_extension("new");
+                std::fs::write(&staging, &address)?;
+                std::fs::rename(&staging, path)?;
                 Ok(Self {
-                    full: wide(&crate::transport::pipe_name(path)),
-                    name: path.to_path_buf(),
+                    inner,
+                    path: path.to_path_buf(),
                 })
             }
 
             pub fn accept(&self) -> io::Result<Stream> {
-                // SAFETY: the name is a NUL-terminated buffer owned by `self` for the call, and the other
-                // arguments are plain constants from the same header.
-                let handle: HANDLE = unsafe {
-                    CreateNamedPipeW(
-                        self.full.as_ptr(),
-                        PIPE_ACCESS_DUPLEX,
-                        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-                        PIPE_UNLIMITED_INSTANCES,
-                        1 << 16,
-                        1 << 16,
-                        0,
-                        std::ptr::null(),
-                    )
-                };
-                if handle == INVALID_HANDLE_VALUE {
-                    return Err(io::Error::last_os_error());
-                }
-                // SAFETY: `handle` came from `CreateNamedPipeW` and is still open; a null OVERLAPPED means
-                // a blocking wait, which is what this one-instance-per-client server wants.
-                let connected = unsafe { ConnectNamedPipe(handle, std::ptr::null_mut()) };
-                if connected == 0 {
-                    let error = io::Error::last_os_error();
-                    // A client that connected between the two calls is not a failure.
-                    if error.raw_os_error() != Some(ERROR_PIPE_CONNECTED as i32) {
-                        // SAFETY: the handle is ours, the wait failed, and nothing else holds it.
-                        unsafe { CloseHandle(handle) };
-                        return Err(error);
-                    }
-                }
-                // SAFETY: the handle is open and uniquely owned here; handing it to `File` gives it exactly
-                // one owner, and that owner closes it.
-                let file = unsafe { std::fs::File::from_raw_handle(handle as RawHandle) };
-                Ok(Stream { file })
+                let (stream, _peer) = self.inner.accept()?;
+                // Snapshots are small and the shell is on the same machine: a delayed packet is the shell waiting
+                // for something that was already written.
+                let _ = stream.set_nodelay(true);
+                let _ = stream.set_read_timeout(None);
+                Ok(stream)
             }
 
             pub fn path(&self) -> &Path {
-                &self.name
+                &self.path
+            }
+        }
+
+        impl Drop for Listener {
+            fn drop(&mut self) {
+                // The address would otherwise outlive the engine by a moment, and the shell would knock on a port
+                // nothing listens on and call it a fault.
+                let _ = std::fs::remove_file(&self.path);
             }
         }
 
         pub fn connect(path: &Path) -> io::Result<Stream> {
-            let file = std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(crate::transport::pipe_name(path))?;
-            Ok(Stream { file })
+            let stream = TcpStream::connect(address(path)?)?;
+            let _ = stream.set_nodelay(true);
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
+            Ok(stream)
         }
 
+        /// Whether something already answers on the address this endpoint file names.
         pub fn served(path: &Path) -> bool {
             connect(path).is_ok()
         }
 
-        /// A pipe has nothing on disk to clean up.
-        pub fn remove_stale(_path: &Path) -> io::Result<()> {
-            Ok(())
+        pub fn remove_stale(path: &Path) -> io::Result<()> {
+            match std::fs::remove_file(path) {
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+                other => other,
+            }
         }
     }
 

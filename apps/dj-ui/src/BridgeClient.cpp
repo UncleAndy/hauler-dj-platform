@@ -1876,6 +1876,13 @@ BridgeClient::BridgeClient(QObject *parent)
 {
     m_retryTimer.setSingleShot(true);
     connect(&m_retryTimer, &QTimer::timeout, this, &BridgeClient::attemptConnect);
+#ifdef Q_OS_WIN
+    connect(&m_socket, &QTcpSocket::connected, this, &BridgeClient::onConnected);
+    connect(&m_socket, &QTcpSocket::disconnected, this, &BridgeClient::onDisconnected);
+    connect(&m_socket, &QTcpSocket::readyRead, this, &BridgeClient::onReadyRead);
+    connect(&m_socket, &QTcpSocket::errorOccurred, this,
+            [this](QAbstractSocket::SocketError) { onSocketError(); });
+#else
     connect(&m_socket, &QLocalSocket::connected, this, &BridgeClient::onConnected);
     connect(&m_socket, &QLocalSocket::disconnected, this, &BridgeClient::onDisconnected);
     connect(&m_socket, &QLocalSocket::readyRead, this, &BridgeClient::onReadyRead);
@@ -1884,6 +1891,7 @@ BridgeClient::BridgeClient(QObject *parent)
 #else
     connect(&m_socket, QOverload<QLocalSocket::LocalSocketError>::of(&QLocalSocket::error),
             this, &BridgeClient::onSocketError);
+#endif
 #endif
     setStatus(QStringLiteral("offline"));
 }
@@ -1957,15 +1965,49 @@ void BridgeClient::attemptConnect()
     if (m_shuttingDown || !m_wantConnection) {
         return;
     }
+#ifdef Q_OS_WIN
+    if (m_socket.state() != QAbstractSocket::UnconnectedState) {
+        m_socket.abort();
+    }
+#else
     if (m_socket.state() != QLocalSocket::UnconnectedState) {
         m_socket.abort();
     }
+#endif
     m_buffer.clear();
     m_handshakeSent = false;
     setConnected(false);
     setStatus(QStringLiteral("connecting"));
+#ifdef Q_OS_WIN
+    // The endpoint is a file: the engine binds a port of the loopback interface and writes the address there. An
+    // engine that is not up yet has no file, and that is a retry, not a fault.
+    QFile endpoint(m_endpoint);
+    if (!endpoint.exists() || !endpoint.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        uiLog(QStringLiteral("attempt %1: no engine address file yet at %2").arg(m_retryAttempts + 1).arg(m_endpoint));
+        scheduleReconnect();
+        return;
+    }
+    const QString address = QString::fromUtf8(endpoint.readAll()).trimmed();
+    endpoint.close();
+    const int colon = address.lastIndexOf(QLatin1Char(':'));
+    bool portOk = false;
+    const int port = colon > 0 ? address.mid(colon + 1).toInt(&portOk) : 0;
+    if (!portOk || port <= 0) {
+        uiLog(QStringLiteral("attempt %1: the address file says \"%2\", which is not an address")
+                  .arg(m_retryAttempts + 1)
+                  .arg(address));
+        scheduleReconnect();
+        return;
+    }
+    uiLog(QStringLiteral("attempt %1: connecting to %2 on port %3")
+              .arg(m_retryAttempts + 1)
+              .arg(address.left(colon))
+              .arg(port));
+    m_socket.connectToHost(QHostAddress::LocalHost, static_cast<quint16>(port));
+#else
     uiLog(QStringLiteral("attempt %1: connecting to %2").arg(m_retryAttempts + 1).arg(m_endpoint));
     m_socket.connectToServer(m_endpoint);
+#endif
 }
 
 void BridgeClient::scheduleReconnect()
@@ -2008,9 +2050,15 @@ void BridgeClient::onDisconnected()
     scheduleReconnect();
 }
 
+#ifdef Q_OS_WIN
+void BridgeClient::onSocketError()
+#else
 void BridgeClient::onSocketError(QLocalSocket::LocalSocketError error)
+#endif
 {
+#ifndef Q_OS_WIN
     Q_UNUSED(error);
+#endif
     setConnected(false);
     setStatus(QStringLiteral("error: %1").arg(m_socket.errorString()));
     uiLog(QStringLiteral("socket error on %1: %2").arg(m_endpoint, m_socket.errorString()));

@@ -12,6 +12,7 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QStandardPaths>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -59,10 +60,16 @@ void collectMessages(QtMsgType type, const QMessageLogContext &context, const QS
 QString defaultSocketPath()
 {
 #ifdef Q_OS_WIN
-    // A named pipe, not a file: the engine adds the `\\.\pipe\` prefix itself, and the name carries the
-    // user so two sessions on one machine do not meet.
-    const QString user = qEnvironmentVariable("USERNAME", QStringLiteral("dj"));
-    return QStringLiteral("hauler-dj-engine-") + user;
+    // The endpoint is a file the engine writes: it names the port the engine listens on. Two sessions on one machine
+    // already do not meet, because the file lives under the user's own data folder.
+    // `%APPDATA%\hauler-dj\engine.endpoint` — the same file `dj_paths::default_endpoint` names on the engine's
+    // side, spelled out here rather than derived from the collection folder: one subtraction of the wrong level and
+    // the two processes look in different folders, which is exactly the kind of fault that costs a session.
+    QString base = qEnvironmentVariable("APPDATA");
+    if (base.isEmpty()) {
+        base = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+    }
+    return QDir(base).filePath(QStringLiteral("hauler-dj/engine.endpoint"));
 #else
     const QByteArray runtime = qgetenv("XDG_RUNTIME_DIR");
     if (!runtime.isEmpty()) {

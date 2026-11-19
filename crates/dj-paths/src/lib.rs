@@ -134,11 +134,20 @@ pub fn default_endpoint() -> PathBuf {
 
 #[cfg(windows)]
 pub fn default_endpoint() -> PathBuf {
-    let user = std::env::var("USERNAME").unwrap_or_else(|_| "dj".to_string());
-    PathBuf::from(format!("hauler-dj-engine-{user}"))
+    // A file, not a pipe name: the engine listens on a TCP socket of the loopback interface and writes the address
+    // it chose into this file. A pipe was our own C over the kernel and behaved differently from every other part of
+    // the system — the shell saw snapshots arrive in bursts of twenty and then nothing for half a minute, while the
+    // engine published twenty a second (owner's machine, Windows, 2026-11-19). TCP over loopback is a transport
+    // neither side has to get right.
+    data_dir()
+        .map(|folder| folder.join("hauler-dj").join("engine.endpoint"))
+        .unwrap_or_else(|| PathBuf::from("engine.endpoint"))
 }
 
 /// The full name of a pipe, `\\.\pipe\<name>`, from the endpoint as the caller spells it.
+///
+/// Kept because an older engine and an older shell still speak over a pipe, and the name is how they find each
+/// other: the transport moved to TCP, the spelling did not.
 #[cfg(windows)]
 pub fn pipe_name(endpoint: &Path) -> String {
     let text = endpoint.display().to_string();
