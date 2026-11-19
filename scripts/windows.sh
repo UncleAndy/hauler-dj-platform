@@ -280,20 +280,28 @@ Prefix = .
 Plugins = .
 Qml2Imports = qml
 CONF
-    cat > "$dist/engine-console.bat" <<'BAT'
-@echo off
-rem The engine's console goes to a file: a crash before its own log opens still leaves a trace.
-if not exist "%APPDATA%\hauler-dj\logs" mkdir "%APPDATA%\hauler-dj\logs"
-"%~dp0dj-engine.exe" %* >> "%APPDATA%\hauler-dj\logs\dj-engine-console.log" 2>&1
-BAT
     cat > "$dist/hauler-dj.bat" <<'BAT'
 @echo off
-rem Maximum detail for now: the two log files are how a fault on a machine we cannot see is found.
+rem Maximum detail for now: the engine's own log file is where a fault on a machine we cannot see is found.
 set HAULER_LOG=trace
-rem --device with an empty name asks for the system's own output: without it the engine plays a generated
-rem tone into nothing, which looks exactly like "no sound but the meter is lit".
-start "" /min "%~dp0engine-console.bat" --device ""
-timeout /t 2 /nobreak >nul
+rem The launcher starts the engine directly: a helper script started through `start` was one more thing that could
+rem fail silently, and it did — the engine never came up.
+rem --device with an empty name asks for the system's own output: without it the engine plays a generated tone into
+rem nothing, which looks exactly like "no sound but the meter is lit".
+start "" "%~dp0dj-engine.exe" --device ""
+rem Wait for the process, not for a fixed time: a slow disk and a fast one are both ordinary.
+for /l %%i in (1,1,20) do (
+    tasklist /fi "imagename eq dj-engine.exe" 2>nul | find /i "dj-engine.exe" >nul && goto engine_up
+    ping -n 2 127.0.0.1 >nul
+)
+:engine_up
+tasklist /fi "imagename eq dj-engine.exe" 2>nul | find /i "dj-engine.exe" >nul
+if errorlevel 1 (
+    echo.
+    echo The engine did not start. Run dj-engine.exe from this folder: it prints the reason.
+    echo Its log would be %%APPDATA%%\hauler-dj\logs\dj-engine.log
+    pause
+)
 start "" "%~dp0dj-ui.exe"
 BAT
     cat > "$dist/README.txt" <<'TXT'
@@ -307,6 +315,12 @@ Hauler DJ для Windows.
 
 Связь: именованная труба \\.\pipe\hauler-dj-engine-<пользователь>.
 onnxruntime.dll рядом необязательна: без неё работает встроенный детектор темпа.
+
+Журналы (подробность — переменная HAULER_LOG, запускатор ставит trace):
+  %APPDATA%\hauler-dj\logs\dj-engine.log
+  %APPDATA%\hauler-dj\logs\dj-ui.log
+
+Если движок не поднялся, запустите dj-engine.exe вручную из этой папки: он печатает причину в консоль и в журнал.
 TXT
     # qml-плагины тянут куда больше модулей Qt, чем перечислено выше (диалоги, эффекты, частицы, формы,
     # векторные картинки, QtTest). Вместо длинного списка — цикл: проверка говорит, чего не хватает, файлы
