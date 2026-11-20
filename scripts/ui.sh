@@ -20,6 +20,17 @@ export DJ_BEATMODEL="${DJ_BEATMODEL:-off}"
 # last client would go away in the middle of the suite.
 export HAULER_IDLE_EXIT_MS=0
 
+# The engines this run starts. `set -e` leaves the script on the first failed check, and the engine started for
+# that check would keep running with a socket in a temp folder that no longer exists — sixteen of them were left
+# behind by a series of failed gate runs (owner's report, 2026-11-20).
+started_engines=()
+stop_started_engines() {
+  for pid in "${started_engines[@]:-}"; do
+    kill "$pid" 2>/dev/null || true
+  done
+}
+trap stop_started_engines EXIT
+
 # Build outside the tree by default: a cache created from another checkout path makes CMake refuse
 # to proceed ("the source ... does not match the source ... used to generate cache"), and a
 # repository-local build/ then belongs to whoever ran the build first.
@@ -146,6 +157,7 @@ case "${1:-}" in
     socket="$run_dir/engine.sock"
     "$engine_bin" --null-sink --socket "$socket" --block 256 &
     engine_pid=$!
+    started_engines+=("$engine_pid")
     cleanup() {
       kill "$engine_pid" 2>/dev/null || true
       wait "$engine_pid" 2>/dev/null || true
@@ -188,6 +200,7 @@ case "${1:-}" in
     mkdir -p "$run_dir/collection"
     "$engine_bin" --null-sink --socket "$socket" --block 256 &
     engine_pid=$!
+    started_engines+=("$engine_pid")
     cleanup() {
       kill "$engine_pid" 2>/dev/null || true
       wait "$engine_pid" 2>/dev/null || true
@@ -235,6 +248,7 @@ case "${1:-}" in
     "$engine_bin" --null-sink --socket "$socket" --block 256 --history-min-seconds 1 \
         --played-recently-hours 1 &
     engine_pid=$!
+    started_engines+=("$engine_pid")
     cleanup() {
       kill "$engine_pid" 2>/dev/null || true
       wait "$engine_pid" 2>/dev/null || true
@@ -357,6 +371,7 @@ case "${1:-}" in
     scroll_socket="$run_dir/engine-scroll.sock"
     "$engine_bin" --null-sink --socket "$scroll_socket" --block 256 &
     scroll_pid=$!
+    started_engines+=("$scroll_pid")
     for _ in $(seq 1 100); do
       [ -S "$scroll_socket" ] && break
       sleep 0.05
@@ -375,6 +390,7 @@ case "${1:-}" in
     XDG_DATA_HOME="$run_dir/selection-data" XDG_CONFIG_HOME="$run_dir/selection-config" \
         "$engine_bin" --null-sink --socket "$selection_socket" --block 256 &
     selection_pid=$!
+    started_engines+=("$selection_pid")
     for _ in $(seq 1 100); do
       [ -S "$selection_socket" ] && break
       sleep 0.05
@@ -393,6 +409,7 @@ case "${1:-}" in
     XDG_DATA_HOME="$run_dir/whole-data" XDG_CONFIG_HOME="$run_dir/whole-config" \
         "$engine_bin" --null-sink --socket "$whole_socket" --block 256 &
     whole_pid=$!
+    started_engines+=("$whole_pid")
     for _ in $(seq 1 100); do
       [ -S "$whole_socket" ] && break
       sleep 0.05
@@ -412,6 +429,7 @@ case "${1:-}" in
     XDG_DATA_HOME="$run_dir/batch-data" XDG_CONFIG_HOME="$run_dir/batch-config" \
         taskset -c 0 "$engine_bin" --null-sink --socket "$analyze_batch_socket" --block 256 &
     batch_pid=$!
+    started_engines+=("$batch_pid")
     for _ in $(seq 1 100); do
       [ -S "$analyze_batch_socket" ] && break
       sleep 0.05
@@ -570,6 +588,7 @@ TOML
     # that the file is in force at all (a flag still wins over it; this run gives none).
     "$engine_bin" --null-sink --socket "$history_socket" --block 256 --config "$history_settings" &
     history_pid=$!
+    started_engines+=("$history_pid")
     for _ in $(seq 1 100); do
       [ -S "$history_socket" ] && break
       sleep 0.05
@@ -590,6 +609,7 @@ TOML
     sync_socket="$run_dir/engine-sync.sock"
     "$engine_bin" --null-sink --socket "$sync_socket" --block 256 &
     sync_pid=$!
+    started_engines+=("$sync_pid")
     for _ in $(seq 1 100); do
       [ -S "$sync_socket" ] && break
       sleep 0.05
@@ -603,6 +623,7 @@ TOML
     four_socket="$run_dir/engine-four.sock"
     "$engine_bin" --null-sink --socket "$four_socket" --block 256 &
     four_pid=$!
+    started_engines+=("$four_pid")
     for _ in $(seq 1 100); do
       [ -S "$four_socket" ] && break
       sleep 0.05
@@ -618,6 +639,7 @@ TOML
     soak_socket="$run_dir/engine-soak.sock"
     "$engine_bin" --null-sink --socket "$soak_socket" --block 256 &
     soak_pid=$!
+    started_engines+=("$soak_pid")
     for _ in $(seq 1 100); do
       [ -S "$soak_socket" ] && break
       sleep 0.05
@@ -651,6 +673,7 @@ TOML
     wait "$engine_pid" 2>/dev/null || true
     "$engine_bin" --null-sink --socket "$cue_socket" --block 256 &
     engine_pid=$!
+    started_engines+=("$engine_pid")
     for _ in $(seq 1 100); do
       [ -S "$cue_socket" ] && break
       sleep 0.05
@@ -688,6 +711,7 @@ TOML
       second_socket="$run_dir/engine-colour.sock"
       "$engine_bin" --null-sink --socket "$second_socket" --block 256 &
       second_pid=$!
+      started_engines+=("$second_pid")
       for _ in $(seq 1 100); do
         [ -S "$second_socket" ] && break
         sleep 0.05
