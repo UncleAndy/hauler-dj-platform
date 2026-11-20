@@ -1553,7 +1553,12 @@ bool FileBrowser::isLocked(const QString &path) const
 
 void FileBrowser::setLocked(const QString &path, bool on)
 {
-    if (path.isEmpty()) {
+
+    // A lock that goes nowhere looks the same as a lock that does nothing: the path and the direction are the whole
+    // story on a machine we cannot watch.
+    uiLog(QStringLiteral("lock %1 asked for %2")
+              .arg(on ? QStringLiteral("on") : QStringLiteral("off"),
+                   path.isEmpty() ? QStringLiteral("an empty path") : path));    if (path.isEmpty()) {
         return;
     }
     // The row keeps the value too: the next page answer replaces the flags, and a press that only lives in
@@ -1634,7 +1639,12 @@ void FileBrowser::refreshLocked()
     if (found == m_lockedPaths) {
         return;
     }
+    const bool grew = found.size() > m_lockedPaths.size();
     m_lockedPaths = found;
+    uiLog(QStringLiteral("the list now carries %1 locked row(s)%2")
+              .arg(found.size())
+              .arg(grew && !found.isEmpty() ? QStringLiteral(", last %1").arg(found.last())
+                                            : QString()));
     emit lockChanged();
 }
 

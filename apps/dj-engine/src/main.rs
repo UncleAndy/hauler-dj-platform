@@ -2306,12 +2306,34 @@ fn serve_client(
                         );
                         let ack = match written {
                             Ok(_) => {
-                                if let (Ok(loaded), Ok(mut index)) = (
+                                // The row in the collection is drawn from the index, so a lock that is written
+                                // beside the file and not into the index is a lock the DJ never sees. Both, and
+                                // the journal says which of them failed.
+                                match (
                                     store.load(volume(), root(), &target),
                                     dj_library::Index::open_default(),
                                 ) {
-                                    let _ = index
-                                        .upsert(&dj_engine::meta::row_of(&loaded.meta, &target));
+                                    (Ok(loaded), Ok(mut index)) => {
+                                        let row = dj_engine::meta::row_of(&loaded.meta, &target);
+                                        match index.upsert(&row) {
+                                            Ok(()) => dj_engine::log::info(format!(
+                                                "lock {enabled} written for {} and into the index",
+                                                target.display()
+                                            )),
+                                            Err(error) => dj_engine::log::error(format!(
+                                                "lock {enabled} written for {} but the index refused the row: {error}",
+                                                target.display()
+                                            )),
+                                        }
+                                    }
+                                    (Err(error), _) => dj_engine::log::error(format!(
+                                        "lock {enabled} written for {} but the record did not load back: {error}",
+                                        target.display()
+                                    )),
+                                    (_, Err(error)) => dj_engine::log::error(format!(
+                                        "lock {enabled} written for {} but the index did not open: {error}",
+                                        target.display()
+                                    )),
                                 }
                                 let _ = work
                                     .published

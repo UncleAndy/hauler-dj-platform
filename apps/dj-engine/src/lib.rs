@@ -3283,6 +3283,11 @@ pub fn run_analysis(
     };
     publish();
 
+    // What the batch measured, by path: the record is written where the file lives, but the list is drawn from the
+    // index, and an index that never hears about the measurement keeps the empty `BPM` and `Key` columns it had
+    // (owner's report, Windows, 2026-11-20).
+    let measured_paths: Arc<std::sync::Mutex<Vec<String>>> =
+        Arc::new(std::sync::Mutex::new(Vec::new()));
     let queue = std::sync::Mutex::new(paths.into_iter());
     let workers = if parallel {
         dj_library::queue::threads_for(0).min(total)
@@ -3297,6 +3302,7 @@ pub fn run_analysis(
             let publish = &publish;
             let cancel = Arc::clone(&cancel);
             let target = target.clone();
+            let measured_paths = Arc::clone(&measured_paths);
             scope.spawn(move || {
                 loop {
                     if cancel.load(Ordering::Relaxed) {
@@ -3322,6 +3328,9 @@ pub fn run_analysis(
                         &file,
                         true,
                     );
+                    if measured && let Ok(mut list) = measured_paths.lock() {
+                        list.push(path.clone());
+                    }
                     {
                         let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
                         guard.done += 1;
@@ -3334,6 +3343,33 @@ pub fn run_analysis(
             });
         }
     });
+
+    // The batch is over: what it measured goes into the index, which is what the list asks about. One thread, after
+    // the workers have stopped, because the index takes one writer at a time.
+    let measured = measured_paths
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clone();
+    if !measured.is_empty()
+        && let Ok(mut index) = dj_library::Index::open_default()
+    {
+        for path in &measured {
+            let file = std::path::Path::new(path);
+            let Ok(loaded) = target.store.load(&target.volume, &target.root, file) else {
+                continue;
+            };
+            let row = crate::meta::row_of(&loaded.meta, file);
+            let genres = dj_library::genres::split(&row.genre);
+            if let Err(error) = index.upsert_with_genres(&row, &genres) {
+                eprintln!("dj-engine: index write after the analysis failed for {path}: {error}");
+            }
+        }
+        crate::log::info(format!(
+            "the analysis wrote {} of {} measured file(s) into the index",
+            measured.len(),
+            total
+        ));
+    }
 
     let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
     guard.running = false;
