@@ -13,6 +13,11 @@
 //! `--engine-only` exists for the checks: it brings the engine up, waits for its endpoint, says `engine ready`
 //! and leaves — and the engine then dies with it, which is exactly the property under test.
 
+// A release build on Windows is a windowed program: no console of its own, so a double click is the application
+// rather than a black window. Debug builds keep the console, because that is where a developer reads the reason
+// for a failure. This has to be the first thing in the crate, before any item.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, Stdio};
@@ -191,6 +196,15 @@ fn start_engine(engine: &Path) -> Result<Child, String> {
         // The engine's own log is where a fault on a machine we cannot see is found; keep it out of our stderr
         // only when nobody is reading it.
         command.stdout(Stdio::null());
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // The engine is a console program. Started from a windowed launcher without this flag, Windows gives it a
+        // console of its own — a black window that stays on screen for as long as the engine runs (owner's
+        // report, 2026-11-20). The console still exists; nobody sees it.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
     }
     #[cfg(unix)]
     {

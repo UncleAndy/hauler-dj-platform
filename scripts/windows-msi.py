@@ -8,7 +8,8 @@
 
   * `Program Files\\Hauler DJ` — всё содержимое дистрибутива, кроме самого zip: он artefact сборки, а не
     часть установки;
-  * ярлык в меню «Пуск» на `hauler-dj.bat` — он поднимает движок и оболочку в правильном порядке;
+  * ярлык в меню «Пуск» на `hauler-dj.exe` — запускатор поднимает движок и оболочку и сам консоли не
+    показывает (`hauler-dj.bat` рядом остаётся диагностическим путём, с консолью);
   * запись в списке установленных программ, версия из `Cargo.toml`.
 
 Идентификаторы компонентов берутся из пути файла (UUIDv5), поэтому повторная сборка той же версии даёт тот же
@@ -169,7 +170,7 @@ def render(dist: Path, version: str) -> str:
           <Component Id="StartMenuShortcut" Guid="{{{component_guid("shortcut:start-menu")}}}">
             <Shortcut Id="ApplicationStartMenuShortcut" Name="{SHORTCUT_NAME}"
                       Description="{PRODUCT_NAME} {version}"
-                      Target="[APPLICATIONFOLDER]hauler-dj.bat" WorkingDirectory="APPLICATIONFOLDER" />
+                      Target="[APPLICATIONFOLDER]hauler-dj.exe" WorkingDirectory="APPLICATIONFOLDER" />
             <RemoveFolder Id="RemoveApplicationProgramsFolder" On="uninstall" />
             <RegistryValue Root="HKCU" Key="Software\\{FOLDER_NAME}" Name="installed"
                            Type="integer" Value="1" KeyPath="yes" />

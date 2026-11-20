@@ -28,8 +28,15 @@ export XDG_CONFIG_HOME="$run_dir/config"
 export XDG_RUNTIME_DIR="$run_dir"
 mkdir -p "$XDG_DATA_HOME" "$XDG_CONFIG_HOME"
 
+# How many engines are running. `pgrep -c` prints `0` **and** exits 1 when there is none, so a `|| echo 0`
+# gives `0\n0` and every comparison after it fails — which is how this check went red once on a quiet machine
+# while passing on a busy one (2026-11-20).
+count_engines() {
+  ps -eo cmd | awk '$1 ~ /dj-engine$/ {count += 1} END {print count + 0}'
+}
+
 failed=0
-engines_before=$(pgrep -fc "dj-engine" 2>/dev/null || echo 0)
+engines_before=$(count_engines)
 
 # 1. Запускатор поднимает движок и говорит, что тот готов.
 out="$("$launcher" --engine-only --verbose --timeout-ms 15000 2>&1)"
@@ -45,7 +52,7 @@ fi
 # 2. Lifeline: после выхода запускатора движка нет. На Linux это PDEATHSIG, на Windows — выход по простою,
 #    поэтому окно ожидания с запасом.
 sleep 3
-engines_after=$(pgrep -fc "dj-engine" 2>/dev/null || echo 0)
+engines_after=$(count_engines)
 if [ "$engines_after" -le "$engines_before" ]; then
   echo "launcher-check: the engine did not outlive the launcher ($engines_before -> $engines_after)"
 else
