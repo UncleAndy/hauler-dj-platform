@@ -148,7 +148,9 @@ Item {
         }
         onPositionChanged: function (mouse) {
             if (knob.dragging) {
-                knob.ask(knob.dbForPixels(knob.pressY - mouse.y, knob.pressDb));
+                // Up turns it up, down turns it down (owner's report, 20.11): the hand pushes the level the way the
+                // pointer goes, which is how every other vertical control in the shell reads.
+                knob.ask(knob.dbForPixels(mouse.y - knob.pressY, knob.pressDb));
             }
         }
         onReleased: knob.dragging = false

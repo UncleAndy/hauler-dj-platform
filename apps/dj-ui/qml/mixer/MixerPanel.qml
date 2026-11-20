@@ -196,6 +196,9 @@ Pane {
                         // stands where a channel's trim would (owner's decision, 20.11).
                         deckId: "mix"
                         showNumber: false
+                        // The master's fill: same geometry and the same look as the knob above it (owner's
+                        // decision, 20.11).
+                        capColor: UiSettings.themeSurface
                         // Six decibels each way: the proportion's ends are its ends, not a seventh of a channel
                         // gain's travel.
                         negativeRangeDb: 6

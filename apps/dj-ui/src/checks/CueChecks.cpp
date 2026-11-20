@@ -99,6 +99,8 @@ int runCueCheck(QQmlApplicationEngine& engine, std::unique_ptr<BridgeClient>& br
     // The cap is the master's size (owner's decision, 20.11); the item is taller because the number sits under it,
     // as it does on a channel's gain knob.
     auto* master = checks::findItem(content, QStringLiteral("masterKnob"));
+    std::fprintf(stdout, "dj-ui: caps: master %.1f, phones %.1f, mix %.1f\n",
+                 master != nullptr ? master->width() : -1.0, phones->width(), mix->width());
     if (master == nullptr) {
         std::fprintf(stderr, "dj-ui: the mixer has no master knob to compare with\n");
         return 1;

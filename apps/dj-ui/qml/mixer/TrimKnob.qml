@@ -29,6 +29,9 @@ Item {
     property string itemName: "trim_" + deckId
     /// The number under the cap: a strip has room for it, the middle column does not (owner's decision, 20.11).
     property bool showNumber: true
+    /// Fill of the cap. A channel strip's knob sits in its own well; the same knob standing beside the master's
+    /// needs the master's fill, or a dark disc on a dark panel reads smaller than the light one next to it.
+    property color capColor: UiSettings.themeBackground
 
     implicitHeight: diameter + (showNumber ? 11 : 0)
     objectName: itemName
@@ -109,7 +112,7 @@ Item {
         Rectangle {
             anchors.fill: parent
             radius: width / 2
-            color: UiSettings.themeBackground
+            color: knob.capColor
             border.width: 1
             border.color: UiSettings.themeBorder
         }
