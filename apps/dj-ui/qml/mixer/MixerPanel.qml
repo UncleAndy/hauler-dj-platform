@@ -52,7 +52,8 @@ Pane {
     // that line is what makes a strip readable at a glance.
     readonly property real eqKnobSide: masterKnobSide
     // The headphone knobs are smaller than the master: two of them and two captions share the column's width.
-    readonly property real cueKnobSide: Math.max(18, Math.round(masterKnobSide * 0.72))
+    // The headphone knobs are the master's size: one column, one class of control (owner's decision, 20.11).
+    readonly property real cueKnobSide: masterKnobSide
 
     /// The headphone value the engine published, by knob kind.
     function headphoneValue(kind) {
@@ -188,10 +189,20 @@ Pane {
                 // on the grid) and quantize (the loop's end is whole beats after its start). They stand in
                 // the void between the master's knob and its meter, centred on the knob, and the decks
                 // read them (owner's decision, 14.11).
+                // The row's bottom sits on the line where the strips' smallest knob ends (the LO label), so the
+                // two switches read as part of the same block (owner's decision, 20.11). A spacer carries the
+                // height the strips' knob block takes, and the row is pinned to its foot.
+                Item {
+                    id: knobsBlock
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    height: mixer.stripKnobsHeight
+                }
+
                 ColumnLayout {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    anchors.top: phonesColumn.bottom
-                    anchors.topMargin: 6
+                    anchors.bottom: knobsBlock.bottom
                     spacing: 4
 
                     Rectangle {

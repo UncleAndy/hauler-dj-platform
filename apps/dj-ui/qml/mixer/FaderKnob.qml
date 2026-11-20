@@ -98,15 +98,23 @@ Item {
     // monitoring button now uses, and the value belongs where the hand is. The outline keeps it readable over
     // the meter's colours.
     Text {
-        readonly property real wanted: knob.handleY - height - 4
+        // Above −6 dB the number goes under the fader line, below it stays above: the line is high up near the
+        // top of the travel, and a number above it would leave the meter (owner's decision, 20.11).
+        readonly property bool under: knob.dbForLabel() > -6.0
+        readonly property real wanted: under ? knob.handleY + 4 : knob.handleY - height - 4
         anchors.horizontalCenter: parent.horizontalCenter
-        // At the top of the travel the number would leave the meter: it stops at the frame instead.
+        // Either way it stops at the frame instead of leaving the meter.
         y: Math.max(0, Math.min(knob.height - height, wanted))
         text: knob.dbText()
         color: UiSettings.themeText
         font.pixelSize: 8
         style: Text.Outline
         styleColor: UiSettings.themePanel
+    }
+
+    /// The fader's position in decibels, for the label's side: silence has no number worth showing.
+    function dbForLabel() {
+        return knob.fraction > 0.0 ? 20.0 * Math.log(knob.fraction) / Math.LN10 : -60.0;
     }
 
     /// The fader's position in decibels, the way a DJ reads it: unity is `+0.0`, silence is `-∞`.
