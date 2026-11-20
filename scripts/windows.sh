@@ -92,14 +92,24 @@ launcher() {
     mkdir -p "$dist"
     # Запускатор — чистый Rust без C++: нужны только линкер mingw и сам target, поэтому обёртка проще,
     # чем у движка, но rustup в dev shell не живёт: он приходит из nix shell.
-    REPO="$repo" nix shell nixpkgs#rustup "nixpkgs#pkgsCross.mingwW64.stdenv.cc" --command bash -c '
+    REPO="$repo" nix shell nixpkgs#rustup nixpkgs#llvm "nixpkgs#pkgsCross.mingwW64.stdenv.cc" --command bash -c '
         export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
         # chromaprint просит libpthread.a, которого mingw из nix не содержит: пустой архив под этим именем
         # лежит в кэше сборки, и тот же путь нужен запускатору — он тянет dj-paths, а через него конвейер.
         mkdir -p "$REPO/.cache/win-shims"
         [ -f "$REPO/.cache/win-shims/libpthread.a" ] || \
             x86_64-w64-mingw32-ar cr "$REPO/.cache/win-shims/libpthread.a"
-        export RUSTFLAGS="-L native=$REPO/.cache/win-shims"
+        # The icon Explorer draws for the launcher: a resource object linked in as an argument. Rust has no
+        # resource step of its own, and a crate for it would be one more download for one file.
+        #
+        # Two steps, because `windres` on a `.rc` starts a C preprocessor through `popen`, and popen needs
+        # `/bin/sh`, which NixOS does not have: `llvm-rc -no-preprocess` turns the `.rc` into a `.res`, and
+        # `windres` on a `.res` calls no preprocessor at all.
+        mkdir -p "$REPO/.cache/win-icon"
+        llvm-rc -no-preprocess /fo "$REPO/.cache/win-icon/app.res" "$REPO/assets/app.rc"
+        x86_64-w64-mingw32-windres -O coff -i "$REPO/.cache/win-icon/app.res" \
+            -o "$REPO/.cache/win-icon/app-icon.o"
+        export RUSTFLAGS="-L native=$REPO/.cache/win-shims -C link-arg=$REPO/.cache/win-icon/app-icon.o"
         rustup toolchain install stable --profile minimal --target x86_64-pc-windows-gnu --no-self-update
         cd "$REPO"
         rustup run stable cargo build --release --target x86_64-pc-windows-gnu -p dj-launcher
@@ -327,6 +337,7 @@ deploy() {
     prefix="$qt_root/$qt_version/mingw_64"
     echo "== дистрибутив"
     mkdir -p "$dist"
+    cp "$repo/assets/app.ico" "$dist/"
     for dll in Qt6Core Qt6Gui Qt6Qml Qt6Quick Qt6QuickControls2 Qt6QuickLayouts Qt6QuickTemplates2 \
                Qt6Widgets Qt6Svg Qt6Network Qt6ShaderTools Qt6OpenGL Qt6QmlModels Qt6QmlMeta \
                Qt6QmlWorkerScript Qt6QmlCompiler Qt6Concurrent Qt6DBus Qt6PrintSupport; do

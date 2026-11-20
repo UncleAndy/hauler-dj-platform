@@ -1,0 +1,3 @@
+// The application icon in Explorer: one drawing, four sizes, as an .ico beside this file.
+// Compiled by windres (mingw) or by the resource compiler of whoever builds on Windows.
+IDI_ICON1 ICON "app.ico"

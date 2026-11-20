@@ -2,6 +2,7 @@
 # forwards user intent as commands (DJP-UI-001, DJP-ARCH-001, ADR-003).
 find_package(Qt6 6.8 REQUIRED COMPONENTS Quick Network)
 
+
 qt_standard_project_setup(REQUIRES 6.8)
 
 qt_add_executable(dj-ui
@@ -84,6 +85,18 @@ target_compile_options(dj-ui PRIVATE -Wall -Wextra -Werror=format)
 # WIN32_EXECUTABLE ON is the Windows GUI subsystem: with it OFF the shell was a console program, and Windows gave
 # it a console window on every start — the "terminal" next to the player (owner's report, 2026-11-20). CMake
 # ignores this property outside Windows, and a build started from cmd still prints into that cmd's console.
+# The window and taskbar icon: the same drawing at four sizes, taken from the owner's PNGs. It lives in the
+# binary, so the shell shows it without any file next to it.
+qt_add_resources(dj-ui "appicons"
+    PREFIX "/icons"
+    BASE "../../assets/icons"
+    FILES
+        ../../assets/icons/hauler-dj-32.png
+        ../../assets/icons/hauler-dj-64.png
+        ../../assets/icons/hauler-dj-96.png
+        ../../assets/icons/hauler-dj-128.png
+)
+
 set_target_properties(dj-ui PROPERTIES
     WIN32_EXECUTABLE ON
     MACOSX_BUNDLE OFF

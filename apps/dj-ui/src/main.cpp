@@ -20,6 +20,7 @@
 #include <QWheelEvent>
 #include <QEventLoop>
 #include <QGuiApplication>
+#include <QIcon>
 #include <QPalette>
 #include <QDir>
 #include <QDirIterator>
@@ -93,6 +94,9 @@ int main(int argc, char *argv[])
     installCrashLog();
 
     QGuiApplication app(argc, argv);
+    // The window icon, for the taskbar and the window list: the asset is inside the binary, so the shell does not
+    // depend on an icon file lying next to it (owner's PNGs, 2026-11-20).
+    app.setWindowIcon(QIcon(":/icons/hauler-dj-128.png"));
 
     // Controls follow the application palette, and the palette is the measured Traktor scheme:
     // neutral dark greys with one blue accent. Without this the shell's own background is dark
