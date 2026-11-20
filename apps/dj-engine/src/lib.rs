@@ -3335,13 +3335,28 @@ pub fn run_analysis(
                     publish();
                     let file = std::path::PathBuf::from(&path);
                     let started = std::time::Instant::now();
-                    let measured = crate::meta::analyze_file(
-                        &target.store,
-                        &target.volume,
-                        &target.root,
-                        &file,
-                        true,
-                    );
+                    // One file that panics must not take the batch with it: the batch would keep `running` true for
+                    // ever, the window would stand still, and the next press would queue behind a dead worker
+                    // (owner's report, Windows, 2026-11-20).
+                    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        crate::meta::analyze_file(
+                            &target.store,
+                            &target.volume,
+                            &target.root,
+                            &file,
+                            true,
+                        )
+                    }));
+                    let measured = match outcome {
+                        Ok(measured) => measured,
+                        Err(_) => {
+                            crate::log::error(format!(
+                                "analysis of {} panicked; the batch goes on",
+                                file.display()
+                            ));
+                            false
+                        }
+                    };
                     crate::log::info(format!(
                         "analysis of {} took {} ms",
                         file.display(),

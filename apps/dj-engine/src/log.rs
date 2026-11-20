@@ -28,6 +28,28 @@ pub enum Level {
 static LEVEL: AtomicU8 = AtomicU8::new(Level::Info as u8);
 
 /// Read the level from the environment once, at startup.
+/// A panic is a fault, and a fault that prints into a console nobody sees is a fault without a trace. Everything
+/// the engine panics on — a worker thread, a scope, the audio path — is written into the same journal as the rest,
+/// with the place it happened.
+pub fn capture_panics() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let place = info
+            .location()
+            .map(|location| format!("{}:{}", location.file(), location.line()))
+            .unwrap_or_else(|| "unknown place".to_string());
+        let message = if let Some(text) = info.payload().downcast_ref::<&str>() {
+            (*text).to_string()
+        } else if let Some(text) = info.payload().downcast_ref::<String>() {
+            text.clone()
+        } else {
+            "a panic without a message".to_string()
+        };
+        error(format!("panic at {place}: {message}"));
+        previous(info);
+    }));
+}
+
 pub fn init() {
     let level = match std::env::var("HAULER_LOG")
         .unwrap_or_default()

@@ -158,6 +158,7 @@ fn main() -> std::process::ExitCode {
     // Before anything else: the level, then the environment. A report that names the file, the folders and the
     // switches is what tells two installations apart when a fix seems not to have arrived.
     dj_engine::log::init();
+    dj_engine::log::capture_panics();
     dj_engine::log::startup_report(&argv);
     // The writer brings the database up to the current schema, once, at start. A reader no longer does
     // it — a reader that migrates takes the writer's lock away from a load that is recording names — so
@@ -814,18 +815,35 @@ fn run(argv: &[String]) -> Result<(), String> {
             while let Ok(job) = file_requests_rx.recv() {
                 running.store(true, Ordering::Relaxed);
                 cancel.store(false, Ordering::Relaxed);
-                dj_engine::run_analysis(
-                    job.paths,
-                    Arc::clone(&cells),
-                    dj_engine::AnalysisTarget {
-                        store: store.clone(),
-                        volume: volume().to_string(),
-                        root: root().to_path_buf(),
-                    },
-                    Arc::clone(&cancel),
-                    Arc::clone(&running),
-                    job.parallel,
-                );
+                // A panic inside a batch used to kill this worker for good: `running` stayed true, the window stood
+                // still and every later press queued behind a thread that no longer existed. The batch is healed
+                // here, and the journal says what happened.
+                let healed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    dj_engine::run_analysis(
+                        job.paths,
+                        Arc::clone(&cells),
+                        dj_engine::AnalysisTarget {
+                            store: store.clone(),
+                            volume: volume().to_string(),
+                            root: root().to_path_buf(),
+                        },
+                        Arc::clone(&cancel),
+                        Arc::clone(&running),
+                        job.parallel,
+                    );
+                }));
+                if healed.is_err() {
+                    dj_engine::log::error(
+                        "the analysis batch panicked; the worker stays up and the next press is heard",
+                    );
+                    // The state must not stay `running` after a fault: the window would never close.
+                    if let Some(mut state) = cells.analysis() {
+                        state.running = false;
+                        state.current = None;
+                        cells.set_analysis(Some(state));
+                    }
+                    running.store(false, Ordering::Relaxed);
+                }
             }
         });
     }
