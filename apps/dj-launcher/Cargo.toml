@@ -1,0 +1,17 @@
+[package]
+name = "dj-launcher"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Starts the engine and the shell as one application, on Windows and Linux."
+
+[dependencies]
+dj-paths = { path = "../../crates/dj-paths" }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.6", features = ["process", "fs"] }
+
+[lints]
+workspace = true

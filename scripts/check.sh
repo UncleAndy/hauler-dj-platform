@@ -13,6 +13,7 @@ fi
 bash scripts/check-fixtures.sh
 bash scripts/check-rust.sh
 bash scripts/check-docs.sh
+bash scripts/launcher-check.sh
 bash scripts/ui.sh --smoke
 bash scripts/ui.sh --engine-check
 

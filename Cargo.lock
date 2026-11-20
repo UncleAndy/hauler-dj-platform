@@ -499,6 +499,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "dj-launcher"
+version = "0.1.0"
+dependencies = [
+ "dj-paths",
+ "rustix",
+]
+
+[[package]]
 name = "dj-library"
 version = "0.1.0"
 dependencies = [

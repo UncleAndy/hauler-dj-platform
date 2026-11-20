@@ -21,6 +21,7 @@ scripts/windows.sh <команда>
 
   --engine     собрать dist/windows/dj-engine.exe
   --ui         собрать dist/windows/dj-ui.exe (Qt под mingw, скачивается один раз)
+  --launcher   собрать dist/windows/hauler-dj.exe (запускатор: движок и оболочка одним действием)
   --dist       положить рядом с exe всё нужное и собрать zip
   --msi        собрать установочный пакет (нужен готовый дистрибутив)
   --all        --engine --ui --dist --msi
@@ -79,6 +80,31 @@ engine() {
     '
     cp "${CARGO_TARGET_DIR:-$repo/target}/$target/release/dj-engine.exe" "$dist/"
     echo "готово: $dist/dj-engine.exe"
+}
+
+# Запускатор: один exe, который поднимает движок, ждёт его и открывает оболочку.
+#
+# В релизе он собирается без консоли (windows_subsystem = "windows"): двойной щелчок по нему — это приложение,
+# а не чёрное окно. Диагностическим путём остаётся hauler-dj.bat.
+launcher() {
+    echo "== запускатор"
+    mkdir -p "$dist"
+    # Запускатор — чистый Rust без C++: нужны только линкер mingw и сам target, поэтому обёртка проще,
+    # чем у движка, но rustup в dev shell не живёт: он приходит из nix shell.
+    REPO="$repo" nix shell nixpkgs#rustup "nixpkgs#pkgsCross.mingwW64.stdenv.cc" --command bash -c '
+        export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
+        # chromaprint просит libpthread.a, которого mingw из nix не содержит: пустой архив под этим именем
+        # лежит в кэше сборки, и тот же путь нужен запускатору — он тянет dj-paths, а через него конвейер.
+        mkdir -p "$REPO/.cache/win-shims"
+        [ -f "$REPO/.cache/win-shims/libpthread.a" ] || \
+            x86_64-w64-mingw32-ar cr "$REPO/.cache/win-shims/libpthread.a"
+        export RUSTFLAGS="-L native=$REPO/.cache/win-shims"
+        rustup toolchain install stable --profile minimal --target x86_64-pc-windows-gnu --no-self-update
+        cd "$REPO"
+        rustup run stable cargo build --release --target x86_64-pc-windows-gnu -p dj-launcher
+    '
+    cp "${CARGO_TARGET_DIR:-$repo/target}/$target/release/dj-launcher.exe" "$dist/hauler-dj.exe"
+    echo "готово: $dist/hauler-dj.exe"
 }
 
 qt_mingw_tool() {
@@ -294,30 +320,22 @@ CONF
 @echo off
 rem Maximum detail for now: the engine's own log file is where a fault on a machine we cannot see is found.
 set HAULER_LOG=trace
-rem The launcher starts the engine directly: a helper script started through `start` was one more thing that could
-rem fail silently, and it did — the engine never came up.
-rem --device with an empty name asks for the system's own output: without it the engine plays a generated tone into
-rem nothing, which looks exactly like "no sound but the meter is lit".
-start "" "%~dp0dj-engine.exe" --device ""
-rem Wait for the process, not for a fixed time: a slow disk and a fast one are both ordinary.
-for /l %%i in (1,1,20) do (
-    tasklist /fi "imagename eq dj-engine.exe" 2>nul | find /i "dj-engine.exe" >nul && goto engine_up
-    ping -n 2 127.0.0.1 >nul
-)
-:engine_up
-tasklist /fi "imagename eq dj-engine.exe" 2>nul | find /i "dj-engine.exe" >nul
+rem The launcher is the one that knows how to start the pair: it waits for the engine's endpoint, starts the shell
+rem and keeps the engine from outliving it. This script is the diagnostic way in — it keeps a console, so a
+rem failure has somewhere to print.
+"%~dp0hauler-dj.exe"
 if errorlevel 1 (
     echo.
-    echo The engine did not start. Run dj-engine.exe from this folder: it prints the reason.
+    echo The application did not start. Run dj-engine.exe from this folder: it prints the reason.
     echo Its log would be %%APPDATA%%\hauler-dj\logs\dj-engine.log
     pause
 )
-start "" "%~dp0dj-ui.exe"
+rem The shell is started by the launcher, not here.
 BAT
     cat > "$dist/README.txt" <<'TXT'
 Hauler DJ для Windows.
 
-Запуск: hauler-dj.bat (движок, затем оболочка) или dj-engine.exe и затем dj-ui.exe.
+Запуск: hauler-dj.exe (движок и оболочка вместе) или hauler-dj.bat — то же, но с консолью для диагностики.
 
 Каталоги:
   %APPDATA%\hauler-dj        — настройки, раскладка, зеркало метаданных, модели
@@ -412,9 +430,10 @@ msi() {
 case "${1:---all}" in
     --engine) engine ;;
     --ui) ui ;;
+    --launcher) launcher ;;
     --dist) deploy ;;
     --msi) msi ;;
-    --all) engine; ui; deploy; msi ;;
+    --all) engine; ui; launcher; deploy; msi ;;
     --clean) rm -rf "$dist" "$qt_root" "$repo/build-windows" "$repo/.cache/msitools-path" ;;
     -h|--help) usage ;;
     *) usage; exit 2 ;;

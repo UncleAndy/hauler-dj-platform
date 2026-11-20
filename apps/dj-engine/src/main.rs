@@ -533,6 +533,9 @@ fn run(argv: &[String]) -> Result<(), String> {
         .map(|deck| DeckStatic::from_snapshot(&deck.snapshot()))
         .collect::<Vec<_>>();
     let subscribers: Subscribers = Arc::new(Mutex::new(Vec::new()));
+    // Whether a client has ever been here. An engine nobody has opened yet is not an idle engine: the grace is
+    // for the one a shell has left, not for one that is still being set up by a script.
+    let seen_client = Arc::new(AtomicBool::new(false));
     let (submissions, submissions_rx) = std::sync::mpsc::channel::<Submission>();
     // Requests to measure a tempo again; the worker below owns the answers.
     let (analysis_requests, analysis_requests_rx) = std::sync::mpsc::channel::<AnalysisRequest>();
@@ -866,6 +869,7 @@ fn run(argv: &[String]) -> Result<(), String> {
             published: deck_updates.clone(),
         };
         let stop_handle = Arc::clone(&stop);
+        let accept_seen = Arc::clone(&seen_client);
         std::thread::spawn(move || {
             // The build, not just the version: two installs of one version look the same in a log, and «is this
             // the file I just installed?» is the first question when a fix seems not to have arrived.
@@ -902,6 +906,7 @@ fn run(argv: &[String]) -> Result<(), String> {
                     continue;
                 }
                 dj_engine::log::info(format!("client #{accepted}: handshake done"));
+                accept_seen.store(true, Ordering::Relaxed);
                 let (outgoing, receiver) = std::sync::mpsc::channel::<ServerMessage>();
                 // Greet with the counters as they are now; the publisher fills the rest within one
                 // tick, so the client is never left without a snapshot.
@@ -923,6 +928,49 @@ fn run(argv: &[String]) -> Result<(), String> {
                 });
             }
         });
+    }
+
+    // The engine leaves a grace period after its last client: closing the shell closes the application, and a
+    // shell started again inside the window finds a warm engine. `HAULER_IDLE_EXIT_MS=0` switches it off, which
+    // is what a check that shares one engine across runs needs.
+    {
+        let grace_ms: u64 = std::env::var("HAULER_IDLE_EXIT_MS")
+            .ok()
+            .and_then(|text| text.trim().parse().ok())
+            .unwrap_or(10_000);
+        if grace_ms > 0 {
+            let grace = Duration::from_millis(grace_ms);
+            let idle_stop = Arc::clone(&stop);
+            let idle_subs = Arc::clone(&subscribers);
+            let idle_seen = Arc::clone(&seen_client);
+            dj_engine::log::info(format!(
+                "idle exit: the engine leaves {} ms after its last client",
+                grace_ms
+            ));
+            std::thread::spawn(move || {
+                let mut idle_since: Option<std::time::Instant> = None;
+                loop {
+                    std::thread::sleep(Duration::from_millis(500));
+                    if idle_stop.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    let connected = idle_subs.lock().map(|list| list.len()).unwrap_or(0);
+                    if connected > 0 || !idle_seen.load(Ordering::Relaxed) {
+                        idle_since = None;
+                        continue;
+                    }
+                    let since = *idle_since.get_or_insert_with(std::time::Instant::now);
+                    if since.elapsed() >= grace {
+                        dj_engine::log::info(format!(
+                            "no client for {} ms: the engine leaves",
+                            grace.as_millis()
+                        ));
+                        idle_stop.store(true, Ordering::Relaxed);
+                        return;
+                    }
+                }
+            });
+        }
     }
 
     // Re-measuring a tempo is another full decode, so it gets a thread of its own: the DJ asks for it

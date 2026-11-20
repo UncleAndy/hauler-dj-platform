@@ -16,6 +16,9 @@ fi
 # девять секунд вместо двух и отвечает нейросеть, а не наш детектор. Путь модели проверяют отдельно
 # (`--tempo-check` с DJ_BEATMODEL=on и ORT_DYLIB_PATH).
 export DJ_BEATMODEL="${DJ_BEATMODEL:-off}"
+# The checks share one engine from run to run: an engine that leaves on its own ten seconds after its
+# last client would go away in the middle of the suite.
+export HAULER_IDLE_EXIT_MS=0
 
 # Build outside the tree by default: a cache created from another checkout path makes CMake refuse
 # to proceed ("the source ... does not match the source ... used to generate cache"), and a
