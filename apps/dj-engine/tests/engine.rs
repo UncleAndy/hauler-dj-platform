@@ -614,19 +614,19 @@ fn a_block_through_the_graph_is_audible_acked_and_published() {
 }
 
 #[test]
-fn a_block_larger_than_prepared_is_truncated_not_allocated_for() {
+fn a_block_larger_than_prepared_is_played_in_full() {
+    // The device decides the callback size, and it is not the block the graph was prepared for: WASAPI on the owner's
+    // machine delivers 1124 frames for a block of 256. Stopping at the block boundary left the rest of the callback
+    // silent — the deck advanced a quarter of real time and the sound was a quarter of the music (owner's machine,
+    // Windows, 2026-11-19). The callback is rendered in as many pieces as it takes, without allocating.
     let (mut graph, _, _) = graph_for(128);
     let mut master = vec![0.0f32; 512 * 2];
     let mut cue = vec![0.0f32; 512 * 2];
     graph.render_pair(&mut master, &mut cue, 512);
     assert_eq!(
         graph.clock(),
-        128,
-        "rendering beyond the prepared block stops at the block boundary"
-    );
-    assert!(
-        master[128 * 2..].iter().all(|sample| *sample == 0.0),
-        "the part that was not rendered stays silent"
+        512,
+        "the whole callback is played, in pieces of the prepared block"
     );
 }
 

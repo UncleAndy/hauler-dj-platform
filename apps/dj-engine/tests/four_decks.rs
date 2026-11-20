@@ -130,6 +130,38 @@ fn render(graph: &mut EngineGraph, blocks: usize) -> f32 {
 /// The four decks the shell shows are four channels of one mixer, and a file on any of them has to
 /// reach the master. This walks the whole chain four times, once per deck, with nothing else playing.
 #[test]
+fn a_callback_longer_than_a_block_advances_the_whole_callback() {
+    // The device decides how many frames a callback carries, and it is not the block the graph was built for: WASAPI
+    // on the owner's machine delivers 1124 frames for a block of 256. A graph that rendered one block and stopped
+    // left the rest of the buffer silent, so the deck advanced a quarter of real time — the counter ran slow and the
+    // sound was a quarter of the music (owner's machine, Windows, 2026-11-19). What the callback carries is what the
+    // deck must play.
+    let (mut graph, submissions, _cells) = graph_with_only(Some(DeckId::A));
+    send(
+        &submissions,
+        1,
+        DjCommand::Play {
+            deck: DeckId::A,
+            enabled: true,
+        },
+    );
+    let _ = render(&mut graph, 40);
+
+    const CALLBACK: usize = 1124;
+    let mut master = vec![0.0_f32; CALLBACK * 2];
+    let mut cue = vec![0.0_f32; CALLBACK * 2];
+    let before = graph.deck_frames(DeckId::A);
+    graph.render_pair(&mut master, &mut cue, CALLBACK);
+    let after = graph.deck_frames(DeckId::A);
+    let advanced = after.saturating_sub(before);
+    println!("one callback of {CALLBACK} frames moved the deck {advanced} frames");
+    assert_eq!(
+        advanced, CALLBACK as u64,
+        "a {CALLBACK}-frame callback must play {CALLBACK} frames, and the deck advanced {advanced}"
+    );
+}
+
+#[test]
 fn every_one_of_four_decks_reaches_the_master() {
     for id in IDS {
         let (mut graph, submissions, cells) = graph_with_only(Some(id));

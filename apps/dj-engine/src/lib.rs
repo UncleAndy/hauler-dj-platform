@@ -2620,8 +2620,40 @@ impl EngineGraph {
     ///
     /// Everything here runs inside the audio callback, so it allocates nothing, locks nothing, and
     /// never waits for a decoder: a deck that has no data renders silence and counts it.
+    /// Where a deck's play head stands, in source frames.
+    ///
+    /// The callback is the only place that knows how much music went out, and a test that asks "did the whole
+    /// callback play" has to read the same number the counter shows.
+    pub fn deck_frames(&self, deck: DeckId) -> u64 {
+        self.decks
+            .iter()
+            .find(|entry| entry.id() == deck)
+            .map(|entry| entry.position())
+            .unwrap_or(0)
+    }
+
     pub fn render_pair(&mut self, master: &mut [f32], cue: &mut [f32], frames: usize) {
-        let frames = frames.min(self.block);
+        // The device decides how many frames a callback carries, and it is not always the block the graph was built
+        // for: WASAPI on the owner's machine delivers 1124 frames for a block of 256. Rendering only the first block
+        // left the rest of the callback silent — the deck advanced a quarter of real time and the sound was a
+        // quarter of the music (owner's machine, Windows, 2026-11-19). The buffer is filled in as many blocks as it
+        // takes, so one callback is always one callback's worth of music.
+        let block = self.block.max(1);
+        let mut done = 0usize;
+        while done < frames {
+            let chunk = (frames - done).min(block);
+            let from = done * 2;
+            let to = from + chunk * 2;
+            if to > master.len() || to > cue.len() {
+                break;
+            }
+            self.render_chunk(&mut master[from..to], &mut cue[from..to]);
+            done += chunk;
+        }
+    }
+
+    fn render_chunk(&mut self, master: &mut [f32], cue: &mut [f32]) {
+        let frames = master.len() / 2;
         // The budget is a setting, not a measurement: one atomic store keeps the state honest.
         self.cells.set_cache_budget(self.cache_budget);
         self.cells.set_beats_per_bar(beats_per_bar(&self.decks));

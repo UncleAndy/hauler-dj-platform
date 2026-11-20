@@ -242,7 +242,10 @@ Pane {
     property string importBaseline: ""
     property bool importSawRunning: false
     // How the window is shown: from our own note, until the engine's word about *this* batch.
+    // The window is shown by our own note or by the engine's word, whichever comes first: a batch started by
+    // something other than this panel (a check, a future caller) still gets its window.
     readonly property bool importShowing: importPending
+                                          || (importState !== null && importState.running === true)
     function importSignature(state) {
         if (state === null || state === undefined) {
             return "";
@@ -299,6 +302,25 @@ Pane {
             Browser.refreshCollection();
         }
         analysisWasRunning = running;
+        // The window of a batch follows the same rule as the import window: it exists from the moment the batch is
+        // asked for, and the engine's word about *this* batch closes it. See `analyzePending` below.
+        if (browser.analyzePending && browser.analysisState !== null) {
+            if (running) {
+                browser.analyzeSawRunning = true;
+            }
+            Bridge.note("analyze state %1 of %2 measured, %3 failed, %4"
+                        .arg(browser.analysisState.done).arg(browser.analysisState.total)
+                        .arg(browser.analysisState.failed)
+                        .arg(running ? "running" : "stopped"));
+            if (!running && (browser.analyzeSawRunning
+                             || analyzeSignature(browser.analysisState) !== browser.analyzeBaseline)) {
+                browser.analyzePending = false;
+                browser.analyzeSawRunning = false;
+                if (browser.section === "collection") {
+                    Browser.refreshCollection();
+                }
+            }
+        }
     }
 
     function isChosen(path) {
@@ -371,6 +393,7 @@ Pane {
             browser.lastAction = "analysing %1, %2 locked".arg(chosen.length).arg(skipped);
         }
         if (chosen.length === 1) {
+            browser.beginAnalyze();
             Bridge.analyzePaths(chosen, true);
             if (skipped === 0) {
                 browser.lastAction = "analysing 1";
@@ -1178,6 +1201,36 @@ Pane {
     // batch has stopped, however it stopped.
     readonly property bool batchRunning: browser.analysisState !== null
                                          && browser.analysisState.running === true
+    // The window exists from the moment the batch is asked for, not from the first snapshot that mentions it: a
+    // single track is measured in seconds, and a window that waits for the engine is a window the DJ never sees
+    // (owner's report, Windows, 2026-11-19). The same shape as the import window, and for the same reason.
+    property bool analyzePending: false
+    property string analyzeBaseline: ""
+    property bool analyzeSawRunning: false
+    // Either our own note or the engine's word: a batch started from anywhere still shows its window.
+    readonly property bool analyzeShowing: analyzePending
+                                           || (analysisState !== null && analysisState.running === true)
+    function analyzeSignature(state) {
+        if (state === null || state === undefined) {
+            return "";
+        }
+        return "%1/%2/%3".arg(state.total).arg(state.done).arg(state.failed)
+    }
+    function beginAnalyze() {
+        browser.analyzeBaseline = analyzeSignature(browser.analysisState);
+        browser.analyzeSawRunning = false;
+        browser.analyzePending = true;
+    }
+    // A batch that never reports back must not leave a modal window in the way for ever.
+    Timer {
+        interval: 300000
+        running: browser.analyzePending
+        repeat: false
+        onTriggered: {
+            browser.analyzePending = false;
+            Bridge.note("analyze: no word from the engine in five minutes, the window is put away");
+        }
+    }
     /// The DJ's Cancel was heard and the batch is winding down: the files already being decoded finish and
     /// nothing new starts, which takes as long as the slowest file in flight. The window says so instead of
     /// counting on as though the press had been lost.
@@ -1232,6 +1285,7 @@ Pane {
                 font.pixelSize: browser.listFont
                 onClicked: {
                     analyzeDialog.close();
+                    browser.beginAnalyze();
                     Bridge.analyzePaths(analyzeDialog.paths, analyzeDialog.parallel);
                 }
             }
@@ -1254,7 +1308,7 @@ Pane {
         anchors.centerIn: Overlay.overlay
         closePolicy: Popup.NoAutoClose
         standardButtons: Dialog.NoButton
-        visible: browser.analysisState !== null && browser.analysisState.running === true
+        visible: browser.analyzeShowing
         ColumnLayout {
             spacing: 8
             Label {
