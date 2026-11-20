@@ -60,11 +60,16 @@ Pane {
     // label under the meter with its own margin. Measured on the built scene: the number has to come
     // out even, or the meter grows into the LO label by exactly the difference.
     readonly property real stripHeaderHeight: 14
-    readonly property real stripFooterHeight: 14
+    // The row under the meter belongs to the monitoring button: a square a finger can find (owner's decision,
+    // 20.11). The fader's number moved onto the fader, and the master column keeps a row of the same height —
+    // which is what holds both meters on one line.
+    readonly property real stripFooterHeight: 36
     // Everything a strip puts above its meter: the letter, the gain knob and the EQ stack, with gaps.
     readonly property real stripKnobsHeight: stripHeaderHeight + trimKnobHeight + 2 + eqStackHeight + 2
+    // Three pixels of air between the EQ labels and the meter: without them the meter starts exactly where the
+    // knobs end, and the check that guards the arrangement reads a sub-pixel overlap as a collision.
     readonly property real meterHeight: Math.max(
-        18, bandHeight - stripKnobsHeight - stripFooterHeight)
+        18, bandHeight - stripKnobsHeight - stripFooterHeight - 3)
 
     function deckOf(id) {
         for (let index = 0; index < mixer.decks.length; ++index) {
@@ -194,22 +199,32 @@ Pane {
                 MasterMeter {
                     id: masterMeterItem
                     anchors.horizontalCenter: parent.horizontalCenter
-                    anchors.bottom: masterLabel.top
+                    anchors.bottom: masterFooter.top
                     anchors.bottomMargin: 2
                     width: 28
                     height: mixer.meterHeight
                     peak: mixer.masterPeak
                 }
-                Label {
-                    id: masterLabel
-                    anchors.horizontalCenter: parent.horizontalCenter
+                // The master keeps its number, but in a row as tall as the strips' button row: that is
+                // what puts the master's meter on the same line as the deck meters.
+                Item {
+                    id: masterFooter
+                    anchors.left: parent.left
+                    anchors.right: parent.right
                     anchors.bottom: parent.bottom
-                    text: mixer.masterGain > 0.0
-                          ? (mixer.toDb(mixer.masterGain) >= 0 ? "+" : "")
-                            + mixer.toDb(mixer.masterGain).toFixed(1)
-                          : "-∞"
-                    color: UiSettings.themeTextDim
-                    font.pixelSize: 9
+                    height: mixer.stripFooterHeight
+
+                    Label {
+                        id: masterLabel
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: mixer.masterGain > 0.0
+                              ? (mixer.toDb(mixer.masterGain) >= 0 ? "+" : "")
+                                + mixer.toDb(mixer.masterGain).toFixed(1)
+                              : "-∞"
+                        color: UiSettings.themeTextDim
+                        font.pixelSize: 9
+                    }
                 }
             }
             Repeater {
@@ -480,7 +495,7 @@ Pane {
                 objectName: "meter_" + strip.modelData
                 anchors.left: parent.left
                 anchors.right: parent.right
-                anchors.bottom: gainLabel.top
+                anchors.bottom: footer.top
                 anchors.bottomMargin: 2
                 height: mixer.meterHeight
 
@@ -498,17 +513,14 @@ Pane {
                 }
             }
 
-            // The fader's number, under its own meter: the gain already prints itself under its knob.
-            Label {
-                id: gainLabel
-                anchors.horizontalCenter: parent.horizontalCenter
+            // The row under the meter belongs to the monitoring button. The fader's number is drawn on the
+            // fader itself now (owner's decision, 20.11).
+            Item {
+                id: footer
+                anchors.left: parent.left
+                anchors.right: parent.right
                 anchors.bottom: parent.bottom
-                text: strip.fader > 0.0
-                      ? (mixer.toDb(strip.fader) >= 0 ? "+" : "")
-                        + mixer.toDb(strip.fader).toFixed(1)
-                      : "-∞"
-                color: UiSettings.themeTextDim
-                font.pixelSize: 9
+                height: mixer.stripFooterHeight
             }
 
             // Monitoring: the headphones beside this deck. It sits under the meter, in the row the fader number
@@ -520,12 +532,12 @@ Pane {
                 objectName: "headphones_" + strip.modelData
                 /// True when this channel feeds the headphones, as the engine last published it.
                 readonly property bool lit: strip.deck !== null && strip.deck.cue === true
-                anchors.right: gainLabel.left
-                anchors.rightMargin: 3
-                anchors.verticalCenter: gainLabel.verticalCenter
-                width: 16
-                height: 13
-                radius: 2
+                anchors.horizontalCenter: footer.horizontalCenter
+                anchors.verticalCenter: footer.verticalCenter
+                // Square and big enough for a finger: the old 16×13 was a dot (owner's decision, 20.11).
+                width: 32
+                height: 32
+                radius: 3
                 color: lit ? UiSettings.themeAccent : UiSettings.themeSurface
                 border.width: 1
                 border.color: lit ? UiSettings.themeAccent : UiSettings.themeBorder
@@ -537,10 +549,10 @@ Pane {
 
                 HeadphoneGlyph {
                     anchors.centerIn: parent
-                    width: 11
-                    height: 11
+                    width: 20
+                    height: 20
                     colour: cueButton.lit ? UiSettings.themePanel : UiSettings.themeText
-                    stroke: 1
+                    stroke: 2
                 }
 
                 MouseArea {

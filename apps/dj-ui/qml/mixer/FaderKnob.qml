@@ -94,6 +94,30 @@ Item {
         color: UiSettings.themeText
     }
 
+    // The fader's number, on the fader itself (owner's decision, 20.11): under the meter it cost a row that the
+    // monitoring button now uses, and the value belongs where the hand is. The outline keeps it readable over
+    // the meter's colours.
+    Text {
+        readonly property real wanted: knob.handleY - height - 4
+        anchors.horizontalCenter: parent.horizontalCenter
+        // At the top of the travel the number would leave the meter: it stops at the frame instead.
+        y: Math.max(0, Math.min(knob.height - height, wanted))
+        text: knob.dbText()
+        color: UiSettings.themeText
+        font.pixelSize: 8
+        style: Text.Outline
+        styleColor: UiSettings.themePanel
+    }
+
+    /// The fader's position in decibels, the way a DJ reads it: unity is `+0.0`, silence is `-∞`.
+    function dbText() {
+        if (!(knob.fraction > 0.0)) {
+            return "-∞";
+        }
+        const db = 20.0 * Math.log(knob.fraction) / Math.LN10;
+        return (db >= 0 ? "+" : "") + db.toFixed(1);
+    }
+
     // The grip: the part the hand takes. Narrow, so most of the meter stays visible.
     Rectangle {
         width: Math.min(18, parent.width * 0.55)

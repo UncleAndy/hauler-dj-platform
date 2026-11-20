@@ -9,6 +9,8 @@
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QTimer>
+
+#include <cmath>
 #include <QVariantList>
 #include <QVariantMap>
 
@@ -55,7 +57,7 @@ int runCueCheck(QQmlApplicationEngine& engine, std::unique_ptr<BridgeClient>& br
                          qPrintable(id));
             return 1;
         }
-        // Under the meter, not on it: the button shares the row the fader number already uses.
+        // Under the meter, not on it: the button owns the row under the meter now (owner's decision, 20.11).
         const QPointF meterBottom = meter->mapToScene(QPointF(0.0, meter->height()));
         const QPointF buttonCentre = button->mapToScene(QPointF(button->width() / 2.0,
                                                               button->height() / 2.0));
@@ -63,6 +65,26 @@ int runCueCheck(QQmlApplicationEngine& engine, std::unique_ptr<BridgeClient>& br
             std::fprintf(stderr,
                          "dj-ui: the headphone button of deck %s stands at %.1f, above the meter's bottom %.1f\n",
                          qPrintable(id), buttonCentre.y(), meterBottom.y());
+            return 1;
+        }
+        // Square, and at least twice the old 16×13: a finger, not a dot.
+        if (std::abs(button->width() - button->height()) > 1.0 || button->width() < 28.0) {
+            std::fprintf(stderr,
+                         "dj-ui: the headphone button of deck %s is %.1f×%.1f; it must be square and at least 28\n",
+                         qPrintable(id), button->width(), button->height());
+            return 1;
+        }
+        // Centred under the fader: the strip's centre, not the number's left edge.
+        auto* parent = button->parentItem();
+        if (parent == nullptr) {
+            std::fprintf(stderr, "dj-ui: the headphone button of deck %s has no parent\n", qPrintable(id));
+            return 1;
+        }
+        const QPointF stripCentre = parent->mapToScene(QPointF(parent->width() / 2.0, 0.0));
+        if (std::abs(buttonCentre.x() - stripCentre.x()) > 2.0) {
+            std::fprintf(stderr,
+                         "dj-ui: the headphone button of deck %s stands at %.1f, the strip's centre is %.1f\n",
+                         qPrintable(id), buttonCentre.x(), stripCentre.x());
             return 1;
         }
     }
