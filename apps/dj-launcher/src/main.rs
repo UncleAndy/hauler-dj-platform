@@ -100,14 +100,25 @@ fn run(options: &Options) -> Result<u8, String> {
     let engine = options
         .engine
         .clone()
+        .or_else(|| std::env::var_os("HAULER_ENGINE").map(PathBuf::from))
         .unwrap_or_else(|| folder.join(program("dj-engine")));
-    let ui = options
-        .ui
-        .clone()
-        .unwrap_or_else(|| folder.join(program("dj-ui")));
+    let ui = match options.ui.clone() {
+        Some(path) => path,
+        None => match find_shell(&folder, options) {
+            Some(path) => path,
+            None => {
+                return Err(format!(
+                    "no shell: looked for {} next to me, in PATH, in $HAULER_UI and in the build folders. A \
+                     distribution keeps it beside the launcher; in a source tree build it with \
+                     `BUILD_DIR=... bash scripts/ui.sh --build-only` and point $HAULER_UI at it.",
+                    program("dj-ui")
+                ));
+            }
+        },
+    };
     if !engine.is_file() {
         return Err(format!(
-            "no engine at {}: run the launcher from the folder it came in",
+            "no engine at {}: a distribution keeps it beside the launcher; point --engine or $HAULER_ENGINE at it",
             engine.display()
         ));
     }
@@ -317,6 +328,48 @@ impl Drop for LockGuard {
         // The descriptor closes with the guard, and with it the lock; the file itself stays, because removing
         // it would race a launcher that has just opened it.
     }
+}
+
+/// Where the shell is, when the caller did not say.
+///
+/// A distribution keeps it beside the launcher, and that is the first place to look. A source tree builds the
+/// shell with CMake into its own folder, so the launcher looks there too: without this it is only usable from a
+/// package, and `cargo run -p dj-launcher` ends with "no shell" (owner's report, 2026-11-20).
+fn find_shell(folder: &Path, options: &Options) -> Option<PathBuf> {
+    let name = program("dj-ui");
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(named) = std::env::var_os("HAULER_UI") {
+        candidates.push(PathBuf::from(named));
+    }
+    candidates.push(folder.join(&name));
+    for path in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()) {
+        candidates.push(path.join(&name));
+    }
+    // The build trees this project writes: the gate's own, and one made by hand.
+    if let Some(cache) = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
+    {
+        candidates.push(
+            cache
+                .join("dj-platform-ui-build")
+                .join("apps/dj-ui")
+                .join(&name),
+        );
+    }
+    if let Ok(working) = std::env::current_dir() {
+        candidates.push(working.join("build").join("apps/dj-ui").join(&name));
+    }
+    for candidate in &candidates {
+        say(
+            options,
+            &format!("shell: looking at {}", candidate.display()),
+        );
+        if candidate.is_file() {
+            return Some(candidate.clone());
+        }
+    }
+    None
 }
 
 /// `dj-engine` or `dj-engine.exe`, depending on the platform.

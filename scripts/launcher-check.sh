@@ -106,6 +106,21 @@ else
 fi
 wait "$idle_pid" 2>/dev/null
 
+# 5. Оболочка находится и запускается: путь к ней берётся из $HAULER_UI, а запускатор ждёт её и выходит с её
+#    кодом. Заглушка — настоящий бинарь с настоящим интерпретатором: на NixOS /bin/sh нет.
+stub="$run_dir/stub-ui"
+printf '#!%s\nexit 0\n' "$(readlink -f "$(command -v bash)")" > "$stub"
+chmod +x "$stub"
+shell_out="$(HAULER_UI="$stub" "$launcher" --verbose --timeout-ms 15000 2>&1)"
+shell_code=$?
+if [ "$shell_code" -eq 0 ] && printf '%s' "$shell_out" | grep -q "shell: starting"; then
+  echo "launcher-check: the launcher found the shell and waited for it (exit $shell_code)"
+else
+  echo "launcher-check: FAILED — the launcher did not run the shell (exit $shell_code)" >&2
+  printf '%s\n' "$shell_out" | tail -5 >&2
+  failed=1
+fi
+
 if [ "$failed" -eq 0 ]; then
   echo "launcher-check: all cases passed"
 fi
