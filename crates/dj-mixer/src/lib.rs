@@ -114,6 +114,8 @@ pub struct Mixer {
     curve: CrossfaderCurve,
     master_gain: f32,
     cue_gain: f32,
+    /// How much of the headphones is monitoring against the main mix: 1.0 is monitoring only, 0.0 is the room.
+    cue_mix: f32,
     /// The master limiter: lookahead, so the gain is down before the peak arrives.
     limiter: LookaheadLimiter,
     /// The cue bus runs through this to stay level with the master, which the limiter delays: a DJ
@@ -156,6 +158,7 @@ impl Mixer {
             cross_applied: vec![f32::NAN; channels.max(1)],
             master_gain: 1.0,
             cue_gain: 1.0,
+            cue_mix: 1.0,
             limiter: LookaheadLimiter::new(2, 256, 48_000, LIMITER_THRESHOLD),
             cue_delay: Vec::new(),
             cue_delay_pos: 0,
@@ -275,10 +278,17 @@ impl Mixer {
         }
     }
 
-    /// Cue bus gain, linear.
+    /// Headphone volume, linear: applied to what the headphones hear, never to the room.
     pub fn set_cue_gain(&mut self, gain: f32) {
         if gain.is_finite() {
             self.cue_gain = gain.clamp(0.0, 4.0);
+        }
+    }
+
+    /// How much of the headphones is monitoring against the main mix: 1.0 is monitoring only, 0.0 is the room.
+    pub fn set_cue_mix(&mut self, mix: f32) {
+        if mix.is_finite() {
+            self.cue_mix = mix.clamp(0.0, 1.0);
         }
     }
 
@@ -355,7 +365,10 @@ impl Mixer {
                     self.meters.clipped_samples += 1;
                 }
                 if settings.cue {
-                    self.cue[index] += scaled * self.cue_gain;
+                    // Post-gain, pre-fader (owner's decision, 20.11): the deck's own volume knob and the EQ are
+                    // heard in the headphones, the channel fader and the crossfader are not. The headphone volume
+                    // is applied once, where the buses meet in `finish_block`, so it never leaks into the room.
+                    self.cue[index] += sample * trim;
                 }
                 meter.peak = meter.peak.max(scaled.abs());
                 sum_squares += f64::from(scaled) * f64::from(scaled);
@@ -407,6 +420,15 @@ impl Mixer {
             held: self.master_decay.block(peak, frames),
         };
         self.delay_cue(frames);
+        // The headphones hear the proportion knob, taken against the limited main mix: the two buses meet here,
+        // after the delay line that keeps monitoring level with the room, and nothing of this reaches `master`.
+        let mix = self.cue_mix;
+        let gain = self.cue_gain;
+        if mix < 1.0 || gain != 1.0 {
+            for sample in 0..frames * 2 {
+                self.cue[sample] = gain * (mix * self.cue[sample] + (1.0 - mix) * self.master[sample]);
+            }
+        }
         let (peak, rms) = analyse(&self.cue[..frames * 2]);
         self.meters.cue = Meter {
             peak,
