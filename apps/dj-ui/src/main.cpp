@@ -472,6 +472,10 @@ int main(int argc, char *argv[])
                        "metadata. Remembered for the next start; without it the collection lives in "
                        "$XDG_DATA_HOME/hauler-dj/collection."),
         QStringLiteral("path"));
+    const QCommandLineOption cueCheckOption(
+        QStringLiteral("cue-check"),
+        QStringLiteral("Load the shell, find the headphone switch under each deck's meter, press it and "
+                       "require the engine to report the channel as cued and then as not cued."));
     const QCommandLineOption layoutCheckOption(
         QStringLiteral("layout-check"),
         QStringLiteral("Load the shell, print each region's share of the window and fail when it "
@@ -628,6 +632,7 @@ int main(int argc, char *argv[])
     parser.addOption(layoutOption);
     parser.addOption(layoutFileOption);
     parser.addOption(collectionRootOption);
+    parser.addOption(cueCheckOption);
     parser.addOption(layoutCheckOption);
     parser.addOption(channelOrderOption);
     parser.addOption(sessionFileOption);
@@ -1573,6 +1578,18 @@ int main(int argc, char *argv[])
 
     // The arrangement, measured from the objects that were actually built: a layout setting that the
     // shell quietly ignores is worse than no setting at all.
+    if (parser.isSet(cueCheckOption)) {
+        // The engine has to be there: the check is about the round trip, not about the picture. The bridge itself
+        // is the one the QML singleton already holds — replacing it here leaves the scene pointing at a destroyed
+        // object, which reads in QML as "setChannelCue is not a function" (found the hard way, 20.11).
+        if (!bridge) {
+            std::fprintf(stderr, "dj-ui: the cue check needs the bridge the scene was built with\n");
+            return 1;
+        }
+        bridge->connectToEngine(parser.value(connectOption));
+        return runCueCheck(engine, bridge);
+    }
+
     if (parser.isSet(layoutCheckOption)) {
         return runLayoutCheck(engine, layout, settings);
     }

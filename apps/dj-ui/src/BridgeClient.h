@@ -541,6 +541,12 @@ public:
     // The channel fader of a deck, 0 … 1 (1.0 is unity). A different control from the gain: the gain
     // lines a track up before the EQ, the fader is ridden after it.
     Q_INVOKABLE int setChannelFader(const QString &deck, double position);
+    /// Put a channel into the headphones, or take it out.
+    Q_INVOKABLE int setChannelCue(const QString &deck, bool on);
+    /// Headphone volume, linear.
+    Q_INVOKABLE int setCueGain(double gain);
+    /// Proportion between monitoring and the main mix: 1.0 is monitoring only.
+    Q_INVOKABLE int setCueMix(double mix);
 
     // One band of a channel's three-band EQ (A14): "low", "mid" or "high", in decibels. Sent as one
     // command per band, because each knob has its own slot in the engine's queue.

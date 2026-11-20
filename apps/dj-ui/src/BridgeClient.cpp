@@ -2886,6 +2886,34 @@ int BridgeClient::setChannelFader(const QString &deck, double position)
     return sendCommand(deck, command);
 }
 
+int BridgeClient::setChannelCue(const QString &deck, bool on)
+{
+    QJsonObject options;
+    options.insert(QStringLiteral("deck"), deck);
+    options.insert(QStringLiteral("on"), on);
+    QJsonObject command;
+    command.insert(QStringLiteral("SetChannelCue"), options);
+    return sendCommand(deck, command);
+}
+
+int BridgeClient::setCueGain(double gain)
+{
+    QJsonObject options;
+    options.insert(QStringLiteral("linear_gain"), gain);
+    QJsonObject command;
+    command.insert(QStringLiteral("SetCueGain"), options);
+    return sendCommand(QStringLiteral("phones"), command);
+}
+
+int BridgeClient::setCueMix(double mix)
+{
+    QJsonObject options;
+    options.insert(QStringLiteral("mix"), mix);
+    QJsonObject command;
+    command.insert(QStringLiteral("SetCueMix"), options);
+    return sendCommand(QStringLiteral("phones"), command);
+}
+
 int BridgeClient::setChannelEq(const QString &deck, const QString &band, double gainDb)
 {
     QJsonObject options;

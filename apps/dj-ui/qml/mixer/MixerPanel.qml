@@ -477,6 +477,7 @@ Pane {
             // for the meter itself. The line sits across the meter at the fader's height.
             Item {
                 id: meterBand
+                objectName: "meter_" + strip.modelData
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.bottom: gainLabel.top
@@ -508,6 +509,48 @@ Pane {
                       : "-∞"
                 color: UiSettings.themeTextDim
                 font.pixelSize: 9
+            }
+
+            // Monitoring: the headphones beside this deck. It sits under the meter, in the row the fader number
+            // already uses — so the meters keep their line and the button is where the deck is (owner's decision,
+            // 20.11). Drawn, not typed: the shell's font has no headphone glyph on Windows.
+            Rectangle {
+                id: cueButton
+                // `cue_<deck>` is the deck's transport CUE: the monitoring switch needs its own name.
+                objectName: "headphones_" + strip.modelData
+                /// True when this channel feeds the headphones, as the engine last published it.
+                readonly property bool lit: strip.deck !== null && strip.deck.cue === true
+                anchors.right: gainLabel.left
+                anchors.rightMargin: 3
+                anchors.verticalCenter: gainLabel.verticalCenter
+                width: 16
+                height: 13
+                radius: 2
+                color: lit ? UiSettings.themeAccent : UiSettings.themeSurface
+                border.width: 1
+                border.color: lit ? UiSettings.themeAccent : UiSettings.themeBorder
+
+                /// Toggle monitoring for this channel. A check calls this; a hand clicks the area below.
+                function toggle() {
+                    Bridge.setChannelCue(strip.modelData, !cueButton.lit);
+                }
+
+                HeadphoneGlyph {
+                    anchors.centerIn: parent
+                    width: 11
+                    height: 11
+                    colour: cueButton.lit ? UiSettings.themePanel : UiSettings.themeText
+                    stroke: 1
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: cueButton.toggle()
+                    ToolTip.visible: containsMouse
+                    ToolTip.text: qsTr("Headphones: listen to this channel before the fader")
+                }
             }
 
             // The engine has answered: from here the snapshot is the truth again.

@@ -360,6 +360,10 @@ case "${1:-}" in
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
         --collection-root "$run_dir/sort-collection" --sort-check \
         --import-fixture "$analyze_track" --layout-file "$run_dir/sort-layout.json"
+    # Monitoring: the headphone switch stands under each deck's meter and the engine answers it — the button
+    # is pressed twice and the snapshot has to say cued, then not cued (owner's decision, 20.11).
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --cue-check \
+        --layout-file "$run_dir/cue-layout.json"
     # The lock is one switch in two places: the deck's button and the column in the collection, and the
     # collection has to say so the moment it is pressed.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \

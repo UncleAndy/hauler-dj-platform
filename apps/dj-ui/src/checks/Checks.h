@@ -90,6 +90,9 @@ int runGridLines(QQmlApplicationEngine& engine, std::unique_ptr<BridgeClient>& b
                  QCommandLineParser& parser, const QCommandLineOption& connectOption,
                  const QCommandLineOption& loadOption);
 int runLayoutCheck(QQmlApplicationEngine& engine, LayoutSettings& layout, UiSettings& settings);
+
+/// Monitoring: the headphone switch under each deck's meter, and the engine answering it.
+int runCueCheck(QQmlApplicationEngine& engine, std::unique_ptr<BridgeClient>& bridge);
 int runSortCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutSettings& layout,
                  const QString& fixture, const QString& collectionRoot);
 int runCollectionProbe(FileBrowser& browser, const QString& root);

@@ -31,6 +31,7 @@ qt_add_executable(dj-ui
     src/checks/Checks.h
     src/checks/EngineChecks.cpp
     src/checks/DeckViewChecks.cpp
+        src/checks/CueChecks.cpp
     src/checks/BrowserChecks.cpp
     src/checks/LibraryChecks.cpp
     src/checks/PlaylistChecks.cpp
@@ -63,6 +64,7 @@ qt_add_qml_module(dj-ui
         qml/mixer/FaderKnob.qml
         qml/mixer/EqKnob.qml
         qml/mixer/LevelMeter.qml
+        qml/mixer/HeadphoneGlyph.qml
         qml/mixer/PitchFader.qml
         qml/mixer/RefusalButton.qml
 )

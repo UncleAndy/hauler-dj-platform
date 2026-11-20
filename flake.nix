@@ -52,9 +52,104 @@
           LIBCLANG_PATH = { value = "${pkgs.llvmPackages.libclang.lib}/lib", relative = false }
           BINDGEN_EXTRA_CLANG_ARGS = { value = "-isystem ${pkgs.glibc.dev}/include", relative = false }
         '';
+        # One command for both halves of the application: the engine (cargo) and the shell (CMake + Qt). They are
+        # built by different tools into different folders, and the launcher looks for them exactly there, so a
+        # single command leaves the tree ready to start.
+        #
+        #   dj-build              engine and shell, release
+        #   dj-build --debug      engine in debug (the shell has one profile)
+        #   dj-build --engine-only / --ui-only
+        #
+        # Outside `nix develop` the script re-enters the shell itself: the pinned rust and Qt live there, and a
+        # build made with the machine's own toolchain is the class of bug this project already knows.
+        djBuild = pkgs.writeShellScriptBin "dj-build" ''
+          set -eu
+
+          profile=release
+          want_engine=1
+          want_ui=1
+
+          usage() {
+            cat <<'EOF'
+          dj-build — build the engine and the shell.
+
+            --release      engine in release (default)
+            --debug        engine in debug; the shell has one profile
+            --engine-only  only the engine
+            --ui-only      only the shell
+            -h, --help     this text
+
+          Built where the launcher looks for them: the engine in $CARGO_TARGET_DIR/$profile, the shell in
+          $XDG_CACHE_HOME/dj-platform-ui-build. Start it with: cargo run --release -p dj-launcher
+          EOF
+          }
+
+          for arg in "$@"; do
+            case "$arg" in
+              --debug) profile=debug ;;
+              --release) profile=release ;;
+              --engine-only) want_ui=0 ;;
+              --ui-only) want_engine=0 ;;
+              -h|--help) usage; exit 0 ;;
+              *) echo "dj-build: unknown option $arg (try --help)" >&2; exit 2 ;;
+            esac
+          done
+
+          # Outside the dev shell there is no cargo and no Qt: enter it and come back here.
+          if [ -z "''${DJ_PLATFORM_DEVSHELL:-}" ]; then
+            if command -v nix >/dev/null 2>&1; then
+              repo="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+              exec nix develop "$repo" --command dj-build "$@"
+            fi
+            echo "dj-build: run me inside 'nix develop' (cargo and Qt live there)" >&2
+            exit 1
+          fi
+
+          repo="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+          cd "$repo"
+
+          if [ "$want_engine" = 1 ]; then
+            echo "== engine ($profile)"
+            if [ "$profile" = debug ]; then
+              cargo build -p dj-engine
+            else
+              cargo build --release -p dj-engine
+            fi
+            engine_dir="''${CARGO_TARGET_DIR:-$repo/target}/$profile"
+            # ONNX Runtime is loaded from beside the engine, so a copy there is what makes the beat model work
+            # without any environment variable at run time.
+            if [ -n "''${DJ_ORT_LIBRARY:-}" ] && [ -f "$DJ_ORT_LIBRARY" ]; then
+              cp -f "$DJ_ORT_LIBRARY" "$engine_dir/libonnxruntime.so"
+            fi
+            echo "   $engine_dir/dj-engine"
+          fi
+
+          if [ "$want_ui" = 1 ]; then
+            echo "== shell (Qt 6, CMake)"
+            ui_build="''${DJ_UI_BUILD_DIR:-''${XDG_CACHE_HOME:-$HOME/.cache}/dj-platform-ui-build}"
+            BUILD_DIR="$ui_build" bash "$repo/scripts/ui.sh" --build-only
+            echo "   $ui_build/apps/dj-ui/dj-ui"
+          fi
+
+          if [ "$profile" = debug ]; then
+            echo "== ready: cargo run -p dj-launcher"
+          else
+            echo "== ready: cargo run --release -p dj-launcher"
+          fi
+        '';
       in
       {
         formatter = pkgs.nixfmt-rfc-style;
+
+        # `nix run .#build` and `nix run` do the same thing from outside the shell.
+        apps.build = {
+          type = "app";
+          program = "${djBuild}/bin/dj-build";
+        };
+        apps.default = {
+          type = "app";
+          program = "${djBuild}/bin/dj-build";
+        };
 
         devShells.default = pkgs.mkShell {
           name = "dj-platform-dev";
@@ -72,6 +167,7 @@
             rust-analyzer
             llvmPackages.libclang
             qt.qtdeclarative # qmllint, qmlformat, qmltestrunner
+            djBuild
           ];
 
           buildInputs = with pkgs; [
@@ -118,7 +214,7 @@
 
             export DJ_PLATFORM_DEVSHELL=1
             echo "dj-platform dev shell — rust $(rustc --version | cut -d" " -f2), qt ${qt.qtbase.version}, cmake $(cmake --version | head -1 | cut -d" " -f3)"
-            echo "  cargo test --workspace    bash scripts/check.sh    bash scripts/ui.sh --smoke"
+            echo "  dj-build   (движок и оболочка одной командой)    cargo test --workspace    bash scripts/check.sh"
           '';
         };
       })
