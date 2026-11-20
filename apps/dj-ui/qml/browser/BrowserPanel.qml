@@ -312,8 +312,13 @@ Pane {
                         .arg(browser.analysisState.done).arg(browser.analysisState.total)
                         .arg(browser.analysisState.failed)
                         .arg(running ? "running" : "stopped"));
+            // The window closes on the engine's word about this batch: it ran (seen running), it changed the
+            // numbers, or it is over and said so with a count. A batch that measured nothing is still over.
             if (!running && (browser.analyzeSawRunning
-                             || analyzeSignature(browser.analysisState) !== browser.analyzeBaseline)) {
+                             || analyzeSignature(browser.analysisState) !== browser.analyzeBaseline
+                             || (browser.analysisState.total !== undefined
+                                 && browser.analysisState.total > 0
+                                 && browser.analysisState.done >= browser.analysisState.total))) {
                 browser.analyzePending = false;
                 browser.analyzeSawRunning = false;
                 if (browser.section === "collection") {
@@ -1223,7 +1228,7 @@ Pane {
     }
     // A batch that never reports back must not leave a modal window in the way for ever.
     Timer {
-        interval: 300000
+        interval: 120000
         running: browser.analyzePending
         repeat: false
         onTriggered: {
@@ -1313,11 +1318,15 @@ Pane {
             spacing: 8
             Label {
                 objectName: "analyzeProgressText"
+                // Zeros are a number, and a number that is not known yet must not be dressed as one: until the
+                // engine says how many files the batch has, the window says that it is starting.
                 text: browser.batchStopping
                       ? qsTr("Stopping: the files being measured now are finished, nothing new starts")
-                      : qsTr("%1 of %2 measured")
-                            .arg(browser.analysisState !== null ? browser.analysisState.done : 0)
-                            .arg(browser.analysisState !== null ? browser.analysisState.total : 0)
+                      : (browser.analysisState !== null && browser.analysisState.total !== undefined
+                         && browser.analysisState.total > 0
+                         ? qsTr("%1 of %2 measured")
+                           .arg(browser.analysisState.done).arg(browser.analysisState.total)
+                         : qsTr("starting…"))
                 color: UiSettings.themeText
                 font.pixelSize: browser.listFont
             }
@@ -2167,14 +2176,13 @@ Pane {
                     elide: Text.ElideRight
                 }
 
-                Label {
+                LockGlyph {
                     objectName: "collectionHeaderLock"
-                    x: browser.numberWidth
-                    width: browser.lockWidth
-                    text: "\uD83D\uDD12"
-                    horizontalAlignment: Text.AlignHCenter
-                    color: UiSettings.themeHeaderText
-                    font.pixelSize: Math.max(9, browser.listFont - 2)
+                    x: browser.numberWidth + Math.round((browser.lockWidth - width) / 2)
+                    y: Math.round((parent.height - height) / 2)
+                    colour: UiSettings.themeHeaderText
+                    width: browser.listFont
+                    height: Math.round(browser.listFont * 1.15)
                 }
 
                 // One cell per column, made from the settings rather than written out by hand: the
@@ -2528,17 +2536,16 @@ Pane {
                                                          UiSettings.themeTextDim)
                             elide: Text.ElideRight
                         }
-                        Label {
+                        LockGlyph {
                             objectName: "collectionCell_lock_" + row.index
-                            x: browser.numberWidth
-                            width: browser.lockWidth
+                            readonly property bool locked: Browser.lockedPaths.indexOf(row.modelData.path) >= 0
+                            visible: locked
+                            x: browser.numberWidth + Math.round((browser.lockWidth - width) / 2)
+                            width: browser.listFont
+                            height: Math.round(browser.listFont * 1.15)
                             anchors.verticalCenter: parent.verticalCenter
-                            text: Browser.lockedPaths.indexOf(row.modelData.path) >= 0
-                                  ? "\uD83D\uDD12" : ""
-                            horizontalAlignment: Text.AlignHCenter
-                            font: browser.listFace
-                            color: browser.rowTextColour(row.chosen, row.current,
-                                                         UiSettings.themeTextDim)
+                            colour: browser.rowTextColour(row.chosen, row.current,
+                                                          UiSettings.themeTextDim)
                         }
                         Label {
                             objectName: "collectionCell_artist_" + row.index

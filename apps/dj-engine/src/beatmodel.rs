@@ -240,7 +240,7 @@ pub fn analyse(path: &Path) -> Option<Tempo> {
     let (mono, rate) = match dj_analysis::tempo::decode_mono(path) {
         Ok(decoded) => decoded,
         Err(error) => {
-            eprintln!("dj-engine: {}: {error}", path.display());
+            crate::log::error(format!("{}: {error}", path.display()));
             return None;
         }
     };
@@ -250,7 +250,7 @@ pub fn analyse(path: &Path) -> Option<Tempo> {
             |model| match prior_and_beats(model, &mono, rate, &DbnConfig::default()) {
                 Ok(decoded) => decoded,
                 Err(error) => {
-                    eprintln!("dj-engine: {}: {error}", path.display());
+                    crate::log::error(format!("{}: {error}", path.display()));
                     (None, Vec::new())
                 }
             },

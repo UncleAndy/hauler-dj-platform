@@ -341,12 +341,35 @@ pub fn analyze_file(store: &Store, volume: &str, root: &Path, path: &Path, force
             measured = true;
         }
     }
-    if needs_key
-        && let Ok(Some(key)) = dj_analysis::key::analyse(path)
-        && write_key(store, volume, root, path, &key.traktor(), force).is_ok()
-    {
-        measured = true;
+    if needs_key {
+        match dj_analysis::key::analyse(path) {
+            Ok(Some(key)) => {
+                if write_key(store, volume, root, path, &key.traktor(), force).is_ok() {
+                    measured = true;
+                }
+            }
+            Ok(None) => crate::log::info(format!("{}: no key found", path.display())),
+            Err(error) => crate::log::error(format!("{}: key: {error}", path.display())),
+        }
     }
+    // The batch is over a track in a second and the list is what the DJ looks at: one line per file says what was
+    // measured and, when nothing was, which step said so.
+    let kept = store
+        .load(volume, root, path)
+        .ok()
+        .map(|loaded| loaded.meta);
+    crate::log::info(format!(
+        "analysis of {}: measured {}, grid {}, key {}",
+        path.display(),
+        measured,
+        kept.as_ref()
+            .and_then(|meta| meta.beatgrid.as_ref())
+            .map(|grid| format!("{:.2}", grid.bpm))
+            .unwrap_or_else(|| "none".to_string()),
+        kept.as_ref()
+            .and_then(|meta| meta.key.clone())
+            .unwrap_or_else(|| "none".to_string())
+    ));
     measured
 }
 

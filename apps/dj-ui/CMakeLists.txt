@@ -46,6 +46,7 @@ qt_add_qml_module(dj-ui
         qml/shell/GlobalBar.qml
         qml/shell/ModelPanel.qml
         qml/browser/BrowserPanel.qml
+        qml/browser/LockGlyph.qml
         qml/decks/DeckPanel.qml
         qml/decks/ToggleButton.qml
         qml/decks/GridTool.qml
