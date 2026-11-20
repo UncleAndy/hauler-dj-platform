@@ -170,11 +170,15 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
         master: dj_domain::Levels::default(),
         master_gain: 1.0,
         master_latency_frames: 240,
+        // Nothing is cued and the headphone knobs are at their defaults, so neither reaches the wire.
+        cue: dj_domain::Levels::default(),
+        headphones: dj_domain::HeadphoneLevels::default(),
         cache_budget_bytes: 0,
         decks: vec![DeckSnapshot {
             underruns: 0,
             waveform: None,
             deck: DeckId::A,
+            cue: false,
             load: DeckLoad::Ready,
             playing: true,
             analyzing: false,

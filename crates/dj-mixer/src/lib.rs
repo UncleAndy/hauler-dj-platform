@@ -292,6 +292,16 @@ impl Mixer {
         }
     }
 
+    /// Headphone volume in force, linear.
+    pub fn cue_gain(&self) -> f32 {
+        self.cue_gain
+    }
+
+    /// Proportion between monitoring and the main mix in force.
+    pub fn cue_mix(&self) -> f32 {
+        self.cue_mix
+    }
+
     /// Clear the buses and the per-block counters.
     pub fn begin_block(&mut self, frames: usize) {
         let frames = frames.min(self.master.len() / 2);
@@ -426,7 +436,8 @@ impl Mixer {
         let gain = self.cue_gain;
         if mix < 1.0 || gain != 1.0 {
             for sample in 0..frames * 2 {
-                self.cue[sample] = gain * (mix * self.cue[sample] + (1.0 - mix) * self.master[sample]);
+                self.cue[sample] =
+                    gain * (mix * self.cue[sample] + (1.0 - mix) * self.master[sample]);
             }
         }
         let (peak, rms) = analyse(&self.cue[..frames * 2]);

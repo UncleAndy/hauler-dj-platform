@@ -2982,6 +2982,9 @@ impl Deck {
         DeckSnapshot {
             waveform: None,
             deck: self.id,
+            // The deck does not know the mixer: whether this channel is in the headphones is the strip's business,
+            // and the engine fills it in when it publishes.
+            cue: false,
             load: self.load.clone(),
             playing: self.playing,
             analyzing: self.analyzing,

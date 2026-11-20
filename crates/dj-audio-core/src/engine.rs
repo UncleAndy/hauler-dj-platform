@@ -195,6 +195,12 @@ impl Engine {
             | DjCommand::Model { .. } => {
                 Some(Ack::rejected(command_id, RejectReason::NotSupported))
             }
+            // The A01 renderer has no mixer and one tone: there is nothing to monitor.
+            DjCommand::SetChannelCue { .. }
+            | DjCommand::SetCueGain { .. }
+            | DjCommand::SetCueMix { .. } => {
+                Some(Ack::rejected(command_id, RejectReason::NotSupported))
+            }
             DjCommand::Sync { .. } | DjCommand::Master { .. } | DjCommand::MasterOff => Some(Ack {
                 command_id,
                 status: AckStatus::Rejected(RejectReason::NotSupported),
@@ -308,11 +314,15 @@ impl Engine {
             crossfader_curve: dj_domain::CrossfaderCurve::default(),
             master: dj_domain::Levels::default(),
             master_gain: 1.0,
-            // The A01 renderer has no mixer, so there is no limiter and no lookahead.
+            // The A01 renderer has no mixer, so there is no limiter and no lookahead — and no headphones.
             master_latency_frames: 0,
+            cue: dj_domain::Levels::default(),
+            headphones: dj_domain::HeadphoneLevels::default(),
             decks: vec![DeckSnapshot {
                 waveform: None,
                 deck: DeckId::A,
+                // No mixer, no monitoring switch: this renderer plays one tone into one output.
+                cue: false,
                 underruns: 0,
                 // The A01 engine plays a generated tone, not a file: it is ready by construction
                 // and has no track, loop or hotcues. Decks arrive in A03 (`dj-deck`).

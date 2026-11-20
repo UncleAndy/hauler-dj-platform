@@ -759,6 +759,26 @@ pub enum DjCommand {
         /// Fader position, 0.0 … 1.0.
         position: f32,
     },
+    /// Put a channel into the headphones, or take it out (monitoring).
+    ///
+    /// The cued channel is heard in the headphones after its own volume knob and its EQ, before the channel
+    /// fader and before the crossfader: a DJ listens to what is coming next, not to what the room already hears.
+    SetChannelCue {
+        /// Target deck / channel.
+        deck: DeckId,
+        /// True when the channel feeds the headphone bus.
+        on: bool,
+    },
+    /// Headphone volume in linear units (1.0 = unity); applies to the headphones, never to the room.
+    SetCueGain {
+        /// Linear gain.
+        linear_gain: f32,
+    },
+    /// How much of the headphones is monitoring against the main mix: 1.0 is monitoring only, 0.0 is the room.
+    SetCueMix {
+        /// Proportion, 0.0 … 1.0.
+        mix: f32,
+    },
     /// Activate, move or clear a loop.
     SetLoop {
         /// Target deck.
@@ -858,6 +878,9 @@ impl DjCommand {
             | DjCommand::Nudge { .. }
             | DjCommand::SetChannelGain { .. }
             | DjCommand::SetChannelFader { .. }
+            | DjCommand::SetChannelCue { .. }
+            | DjCommand::SetCueGain { .. }
+            | DjCommand::SetCueMix { .. }
             | DjCommand::SetChannelEq { .. }
             | DjCommand::SetCrossfader { .. }
             | DjCommand::SetHamster { .. }
@@ -877,6 +900,7 @@ impl DjCommand {
             | DjCommand::Nudge { deck, .. }
             | DjCommand::SetChannelGain { deck, .. }
             | DjCommand::SetChannelFader { deck, .. }
+            | DjCommand::SetChannelCue { deck, .. }
             | DjCommand::SetChannelEq { deck, .. } => deck.index(),
             _ => 0,
         };
@@ -899,6 +923,9 @@ impl DjCommand {
             DjCommand::Nudge { .. } => Some(CoalesceKey::Nudge),
             DjCommand::SetChannelGain { .. } => Some(CoalesceKey::ChannelGain),
             DjCommand::SetChannelFader { .. } => Some(CoalesceKey::ChannelFader),
+            DjCommand::SetChannelCue { .. } => Some(CoalesceKey::ChannelCue),
+            DjCommand::SetCueGain { .. } => Some(CoalesceKey::CueGain),
+            DjCommand::SetCueMix { .. } => Some(CoalesceKey::CueMix),
             DjCommand::SetChannelEq { .. } => Some(CoalesceKey::ChannelEq),
             DjCommand::SetCrossfader { .. } => Some(CoalesceKey::Crossfader),
             DjCommand::SetCrossfaderCurve { .. } => Some(CoalesceKey::CrossfaderCurve),
@@ -925,6 +952,12 @@ pub enum CoalesceKey {
     ChannelFader,
     /// A nudge of a deck: the last deflection wins.
     Nudge,
+    /// A cued channel: the last press wins.
+    ChannelCue,
+    /// Headphone volume: only the last value matters.
+    CueGain,
+    /// The proportion between monitoring and the main mix: only the last value matters.
+    CueMix,
     /// One band of a deck's equaliser: the last value of that band wins.
     ChannelEq,
 }
@@ -934,7 +967,7 @@ impl CoalesceKey {
     ///
     /// This has to name every variant: it sizes the queue, and it used to say three while five keys
     /// existed, so the master gain landed past the end of the array.
-    pub const COUNT: usize = 8;
+    pub const COUNT: usize = 11;
 
     /// First slot of the EQ block: the deck-wide controls come first, one block of `DeckId::COUNT`
     /// slots each.
@@ -950,9 +983,12 @@ impl CoalesceKey {
             CoalesceKey::MasterGain => 4,
             CoalesceKey::ChannelFader => 5,
             CoalesceKey::Nudge => 6,
-            // The EQ keeps the last index on purpose: its slots are a block of three per deck, and the
-            // block sits after every deck-wide control.
-            CoalesceKey::ChannelEq => 7,
+            // Monitoring's three controls come before the EQ, so the EQ block still sits last: its slots are a
+            // block of three per deck, placed after every deck-wide control.
+            CoalesceKey::ChannelCue => 7,
+            CoalesceKey::CueGain => 8,
+            CoalesceKey::CueMix => 9,
+            CoalesceKey::ChannelEq => 10,
         }
     }
 }
@@ -1170,6 +1206,42 @@ fn is_zero_count(value: &u64) -> bool {
     *value == 0
 }
 
+/// Whether a meter is silent, so a bus nobody listens to says nothing on the wire.
+fn levels_are_silent(levels: &Levels) -> bool {
+    levels.peak_left == 0.0
+        && levels.peak_right == 0.0
+        && levels.held_left == 0.0
+        && levels.held_right == 0.0
+}
+
+/// Whether the headphone knobs are where they start: the document stays as it was for a client that never
+/// touched monitoring.
+fn headphones_are_default(levels: &HeadphoneLevels) -> bool {
+    *levels == HeadphoneLevels::default()
+}
+
+/// What the headphones are set to: the two knobs in the middle of the mixer.
+///
+/// Defaulted, so a snapshot from a build without monitoring still parses here — and so a client can tell
+/// "monitoring is silent" from "this build has no monitoring".
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct HeadphoneLevels {
+    /// Volume, linear.
+    pub gain: f32,
+    /// Proportion between monitoring and the main mix: 1.0 is monitoring only.
+    pub mix: f32,
+}
+
+impl Default for HeadphoneLevels {
+    fn default() -> Self {
+        // The default the mixer starts at: the headphones hear the cued channels, and nothing has been turned down.
+        Self {
+            gain: 1.0,
+            mix: 1.0,
+        }
+    }
+}
+
 /// State of one deck in a snapshot.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeckSnapshot {
@@ -1313,6 +1385,9 @@ pub struct DeckSnapshot {
     /// Channel fader in force, linear: 1.0 is unity, 0.0 is silence.
     #[serde(default = "unity")]
     pub fader: f32,
+    /// True when this channel feeds the headphones (monitoring). Left off the wire when it does not.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub cue: bool,
     /// The three band gains in force on this channel (A14), already on the knob's grid.
     ///
     /// Defaulted so a snapshot from a build without the EQ still parses here.
@@ -1798,6 +1873,15 @@ pub struct Snapshot {
     /// Master gain in force, linear.
     #[serde(default = "unity")]
     pub master_gain: f32,
+    /// What the headphones carry: the monitoring bus, measured where it leaves the mixer.
+    ///
+    /// Left off the wire while nothing is cued, so a snapshot without monitoring stays the document an older
+    /// client already reads.
+    #[serde(default, skip_serializing_if = "levels_are_silent")]
+    pub cue: Levels,
+    /// Headphone volume and the proportion between monitoring and the main mix; off the wire at its defaults.
+    #[serde(default, skip_serializing_if = "headphones_are_default")]
+    pub headphones: HeadphoneLevels,
     /// Frames the master path delays the sound by: the limiter's lookahead.
     ///
     /// Defaulted, so a snapshot from a build without a lookahead still reads as zero.

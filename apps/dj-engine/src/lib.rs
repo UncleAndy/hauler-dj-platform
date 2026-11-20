@@ -330,6 +330,50 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
                 },
             }
         }
+        DjCommand::SetChannelCue { deck, on } => {
+            // The cued channel is heard in the headphones only: the mixer takes it after the channel's own volume
+            // and EQ, before the fader and the crossfader (owner's decision, 20.11).
+            let Some(index) = decks.iter().position(|candidate| candidate.id() == *deck) else {
+                return Ack {
+                    command_id: id,
+                    status: AckStatus::Rejected(RejectReason::InvalidValue),
+                };
+            };
+            let Some(current) = mixer.channel(index).copied() else {
+                return Ack {
+                    command_id: id,
+                    status: AckStatus::Rejected(RejectReason::InvalidValue),
+                };
+            };
+            mixer.set_channel(
+                index,
+                ChannelSettings {
+                    cue: *on,
+                    ..current
+                },
+            );
+            Ack::applied(id, at)
+        }
+        DjCommand::SetCueGain { linear_gain } => {
+            if !linear_gain.is_finite() {
+                return Ack {
+                    command_id: id,
+                    status: AckStatus::Rejected(RejectReason::InvalidValue),
+                };
+            }
+            mixer.set_cue_gain(*linear_gain);
+            Ack::applied(id, at)
+        }
+        DjCommand::SetCueMix { mix } => {
+            if !mix.is_finite() {
+                return Ack {
+                    command_id: id,
+                    status: AckStatus::Rejected(RejectReason::InvalidValue),
+                };
+            }
+            mixer.set_cue_mix(*mix);
+            Ack::applied(id, at)
+        }
         DjCommand::SetChannelFader { deck, position } => {
             // The fader belongs to the mixer's strip; the gain belongs to the deck. Writing a fader
             // into the deck's gain was the old mistake: the slider sprang back and a knob moved the
@@ -426,12 +470,23 @@ pub fn snapshot(
         },
         master_gain: mixer.master_gain(),
         master_latency_frames: mixer.latency_frames(),
+        cue: dj_domain::Levels {
+            peak_left: mixer.meters().cue.peak,
+            peak_right: mixer.meters().cue.peak,
+            held_left: mixer.meters().cue.held,
+            held_right: mixer.meters().cue.held,
+        },
+        headphones: dj_domain::HeadphoneLevels {
+            gain: mixer.cue_gain(),
+            mix: mixer.cue_mix(),
+        },
         decks: published_decks
             .into_iter()
             .enumerate()
             .map(|(index, mut published)| {
-                // The fader is the mixer's, keyed by the strip the deck feeds.
+                // The fader is the mixer's, keyed by the strip the deck feeds; so is the monitoring switch.
                 published.fader = mixer.channel(index).map_or(1.0, |settings| settings.fader);
+                published.cue = mixer.channel(index).is_some_and(|settings| settings.cue);
                 published
             })
             .collect(),
@@ -583,6 +638,8 @@ struct DeckCells {
     eq_high: AtomicU32,
     // The channel fader as applied by the mixer strip.
     fader: AtomicU32,
+    /// True when this channel feeds the headphones (monitoring).
+    cue: AtomicBool,
     // The nudge in force, `-1 … 1`, so the state can say the hand is still on the platter.
     nudge: AtomicU32,
     // Slip and its virtual head: the ghost marker a client draws beside the play head.
@@ -625,6 +682,7 @@ impl DeckCells {
             eq_mid: AtomicU32::new(0),
             eq_high: AtomicU32::new(0),
             fader: AtomicU32::new(1.0f32.to_bits()),
+            cue: AtomicBool::new(false),
             nudge: AtomicU32::new(0.0f32.to_bits()),
             slip: AtomicBool::new(false),
             slip_frame: AtomicU64::new(EMPTY),
@@ -1001,6 +1059,10 @@ pub struct StateCells {
     master_held: AtomicU32,
     master_latency: AtomicU32,
     master_gain: AtomicU32,
+    /// Headphone volume, linear.
+    cue_gain: AtomicU32,
+    /// Proportion between monitoring and the main mix.
+    cue_mix: AtomicU32,
     count: AtomicUsize,
     /// Bytes the whole-track cache may hold: the whole a deck's cost is a fraction of.
     cache_budget: AtomicU64,
@@ -1256,6 +1318,8 @@ impl StateCells {
             master_held: AtomicU32::new(0),
             master_latency: AtomicU32::new(0),
             master_gain: AtomicU32::new(1.0f32.to_bits()),
+            cue_gain: AtomicU32::new(1.0f32.to_bits()),
+            cue_mix: AtomicU32::new(1.0f32.to_bits()),
             count: AtomicUsize::new(0),
             cache_budget: AtomicU64::new(0),
             decks: std::array::from_fn(|_| DeckCells::new()),
@@ -1337,6 +1401,10 @@ impl StateCells {
             .store(mixer.master_gain().to_bits(), Ordering::Relaxed);
         let count = decks.len().min(MAX_DECKS);
         self.count.store(count, Ordering::Release);
+        self.cue_gain
+            .store(mixer.cue_gain().to_bits(), Ordering::Relaxed);
+        self.cue_mix
+            .store(mixer.cue_mix().to_bits(), Ordering::Relaxed);
         for (index, deck) in decks.iter().take(MAX_DECKS).enumerate() {
             let cells = &self.decks[index];
             cells.playing.store(deck.is_playing(), Ordering::Relaxed);
@@ -1401,6 +1469,12 @@ impl StateCells {
                     .to_bits(),
                 Ordering::Relaxed,
             );
+            cells.cue.store(
+                mixer.channel(index).is_some_and(|settings| settings.cue),
+                Ordering::Relaxed,
+            );
+            // The two headphone knobs are the mixer's, not the strip's: written once, outside the per-deck loop.
+
             let eq = deck.eq_gains();
             cells.eq_low.store(eq.low_db.to_bits(), Ordering::Relaxed);
             cells.eq_mid.store(eq.mid_db.to_bits(), Ordering::Relaxed);
@@ -1471,6 +1545,7 @@ impl StateCells {
             decks.push(DeckSnapshot {
                 underruns: cells.underruns.load(Ordering::Relaxed),
                 deck: fixed.deck,
+                cue: cells.cue.load(Ordering::Relaxed),
                 load,
                 playing: cells.playing.load(Ordering::Relaxed),
                 metronome: cells.metronome.load(Ordering::Relaxed),
@@ -1581,6 +1656,13 @@ impl StateCells {
             plays: Vec::new(),
             recent_window_ms: 0,
             frame_hz: 0,
+            // The monitoring bus is measured by the mixer, not by the cells: this snapshot reads the two knobs and
+            // leaves the meter at rest.
+            cue: dj_domain::Levels::default(),
+            headphones: dj_domain::HeadphoneLevels {
+                gain: f32::from_bits(self.cue_gain.load(Ordering::Relaxed)),
+                mix: f32::from_bits(self.cue_mix.load(Ordering::Relaxed)),
+            },
             // The page is not an atomic cell: it is written and read on the engine's own thread, under
             // the mutex that guards the import for the same reason.
             collection: self

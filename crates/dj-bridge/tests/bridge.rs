@@ -53,6 +53,8 @@ fn empty_snapshot(revision: u64) -> Snapshot {
         master: dj_domain::Levels::default(),
         master_gain: 1.0,
         master_latency_frames: 0,
+        cue: dj_domain::Levels::default(),
+        headphones: dj_domain::HeadphoneLevels::default(),
         decks: Vec::new(),
     }
 }
@@ -290,6 +292,8 @@ fn a_split_connection_writes_while_its_reader_is_blocked() {
         master: dj_domain::Levels::default(),
         master_gain: 1.0,
         master_latency_frames: 0,
+        cue: dj_domain::Levels::default(),
+        headphones: dj_domain::HeadphoneLevels::default(),
         decks: Vec::new(),
     }));
     writer

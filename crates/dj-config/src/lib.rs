@@ -595,7 +595,8 @@ mod tests {
         assert!(defaults.audio.headphones.device.is_none());
 
         // What the owner set comes back unchanged.
-        let text = "[audio.headphones]\nmode = \"same_device\"\npair = [2, 3]\ngain = 0.75\nmix = 0.4\n";
+        let text =
+            "[audio.headphones]\nmode = \"same_device\"\npair = [2, 3]\ngain = 0.75\nmix = 0.4\n";
         let parsed: Config = toml::from_str(text).unwrap_or_else(|err| panic!("{err}"));
         assert_eq!(parsed.audio.headphones.mode, HeadphoneMode::SameDevice);
         assert_eq!(parsed.audio.headphones.pair, Some((2, 3)));

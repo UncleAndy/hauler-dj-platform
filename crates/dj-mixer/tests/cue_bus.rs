@@ -23,7 +23,12 @@ fn channel(fader: f32, trim_db: f32, cue: bool) -> ChannelSettings {
 }
 
 /// What the two buses carry once the graph is warm: call it with the channels' settings and the two inputs.
-fn render(channels: &[ChannelSettings], inputs: &[f32], cue_mix: f32, cue_gain: f32) -> (Vec<f32>, Vec<f32>) {
+fn render(
+    channels: &[ChannelSettings],
+    inputs: &[f32],
+    cue_mix: f32,
+    cue_gain: f32,
+) -> (Vec<f32>, Vec<f32>) {
     let mut mixer = Mixer::new(channels.len());
     mixer.prepare(48_000, FRAMES);
     mixer.set_curve(CrossfaderCurve::ConstantPower);
@@ -34,8 +39,18 @@ fn render(channels: &[ChannelSettings], inputs: &[f32], cue_mix: f32, cue_gain: 
     for (index, settings) in channels.iter().enumerate() {
         // The first channel follows the left side of the crossfader, every other one the right side: with the
         // crossfader fully to the left, only the first channel is heard in the room.
-        let assign = if index == 0 { CrossAssign::A } else { CrossAssign::B };
-        mixer.set_channel(index, ChannelSettings { assign, ..*settings });
+        let assign = if index == 0 {
+            CrossAssign::A
+        } else {
+            CrossAssign::B
+        };
+        mixer.set_channel(
+            index,
+            ChannelSettings {
+                assign,
+                ..*settings
+            },
+        );
     }
     for _ in 0..BLOCKS {
         mixer.begin_block(FRAMES);
@@ -48,7 +63,9 @@ fn render(channels: &[ChannelSettings], inputs: &[f32], cue_mix: f32, cue_gain: 
 }
 
 fn peak(block: &[f32]) -> f32 {
-    block.iter().fold(0.0f32, |held, sample| held.max(sample.abs()))
+    block
+        .iter()
+        .fold(0.0f32, |held, sample| held.max(sample.abs()))
 }
 
 #[test]
@@ -81,7 +98,9 @@ fn cue_mix_at_zero_gives_the_main_mix() {
     );
     // Sample for sample, not just in peak: at mix 0 the headphones are the main mix, deck B included in neither.
     assert!(
-        cue.iter().zip(&master).all(|(heard, room)| (heard - room).abs() < 1e-6),
+        cue.iter()
+            .zip(&master)
+            .all(|(heard, room)| (heard - room).abs() < 1e-6),
         "at mix 0 the headphone bus equals the master bus"
     );
 }
