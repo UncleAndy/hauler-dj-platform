@@ -839,6 +839,7 @@ fn run(argv: &[String]) -> Result<(), String> {
             store: store.clone(),
             files: file_requests.clone(),
             analysis_cancel: Arc::clone(&analysis_cancel),
+            analysis_running: Arc::clone(&analysis_running),
             loads: load_requests.clone(),
             analyses: analysis_requests.clone(),
             grids: grid_edits.clone(),
@@ -1668,6 +1669,8 @@ struct Workers {
     files: Sender<AnalysisBatch>,
     /// Stops the running batch between files.
     analysis_cancel: Arc<AtomicBool>,
+    /// Whether a batch is being measured right now: a second press queues behind it, and the journal says so.
+    analysis_running: Arc<AtomicBool>,
     /// Decodes a track and prepares a deck.
     loads: Sender<LoadRequest>,
     /// Measures a deck's tempo again (B02).
@@ -2404,6 +2407,14 @@ fn serve_client(
                         continue;
                     }
                     dj_engine::Routed::AnalyzeFiles { paths, parallel } => {
+                        // A batch is measured one file at a time: a second press waits for the first, and without a
+                        // line of its own that wait looks like a hang (owner's report, Windows, 2026-11-20).
+                        if work.analysis_running.load(Ordering::Relaxed) {
+                            dj_engine::log::info(format!(
+                                "analysis queued behind the batch in hand: {} file(s)",
+                                paths.len()
+                            ));
+                        }
                         let ack = match work.files.send(AnalysisBatch { paths, parallel }) {
                             Ok(()) => dj_domain::Ack::accepted(command.id),
                             Err(_) => dj_domain::Ack::rejected(

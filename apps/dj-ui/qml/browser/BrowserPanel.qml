@@ -1215,6 +1215,20 @@ Pane {
     // Either our own note or the engine's word: a batch started from anywhere still shows its window.
     readonly property bool analyzeShowing: analyzePending
                                            || (analysisState !== null && analysisState.running === true)
+    /// How long the batch has been asked for: a measurement of a long file takes minutes, and a window with a number
+    /// that does not move is a window that looks frozen.
+    property int analyzeSeconds: 0
+    readonly property var analyzeClock: Timer {
+        interval: 1000
+        repeat: true
+        running: browser.analyzePending
+        onTriggered: browser.analyzeSeconds += 1
+    }
+    onAnalyzePendingChanged: {
+        if (browser.analyzePending) {
+            browser.analyzeSeconds = 0;
+        }
+    }
     function analyzeSignature(state) {
         if (state === null || state === undefined) {
             return "";
@@ -1324,8 +1338,9 @@ Pane {
                       ? qsTr("Stopping: the files being measured now are finished, nothing new starts")
                       : (browser.analysisState !== null && browser.analysisState.total !== undefined
                          && browser.analysisState.total > 0
-                         ? qsTr("%1 of %2 measured")
+                         ? qsTr("%1 of %2 measured — %3 s")
                            .arg(browser.analysisState.done).arg(browser.analysisState.total)
+                           .arg(browser.analyzeSeconds)
                          : qsTr("starting…"))
                 color: UiSettings.themeText
                 font.pixelSize: browser.listFont
