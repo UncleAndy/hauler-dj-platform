@@ -16,26 +16,49 @@ Item {
     required property var deckState
 
 
-    // Visible fraction of the track. The default is a tenth — tenfold zoom — so a deck opens on the
-    // seconds around the playhead rather than on the whole track; the overview strip below carries
-    // the whole track.
-    readonly property real defaultSpan: 1.0 / Math.max(1.0, UiSettings.waveformZoom)
-    property real zoomSpan: view.defaultSpan
+    // The window is counted in beats, not in fractions of the track.
+    //
+    // A fraction of the track is a scale nobody can compare: four minutes and eight minutes at the same
+    // fraction show different spans of music, so two decks at one tempo scroll at two speeds and their bars
+    // stand at two widths. Counted in beats, the window is `beats · 60 / BPM` seconds of music on both decks,
+    // and two synced decks show one picture — the tempo is the whole scale (owner's decision, 2026-11-20).
+    readonly property real beatsOnScreen: LayoutState.waveformBeats > 0 ? LayoutState.waveformBeats : 16
 
-    // The zoom is a view setting, so it outlives the track: the deck opens at the scale it was left
-    // at. The guard matters because zoomSpan is initialised (and announced) before the saved value
-    // has been read, and an unguarded write would replace the saved span with the built-in one.
-    property bool zoomRestored: false
-    onZoomSpanChanged: {
-        if (view.zoomRestored) {
-            LayoutState.waveformSpan = view.zoomSpan;
+    // What the window would be if nothing were known about the music: the fallback the strip opens on
+    // before a track is loaded, and the scale the check writes when it wants a known look.
+    readonly property real defaultSpan: 1.0 / Math.max(1.0, UiSettings.waveformZoom)
+
+    /// The tempo the deck is heard at: the measurement under the fader.
+    readonly property real heardBpm: {
+        const state = view.deckState;
+        if (state === undefined || state === null || state.local_bpm === undefined
+                || !(state.local_bpm > 0)) {
+            return 0.0;
         }
+        return state.local_bpm * view.tempoRatio;
     }
-    Component.onCompleted: {
-        if (LayoutState.waveformSpan > 0) {
-            view.zoomSpan = LayoutState.waveformSpan;
+
+    /// Seconds of music on screen, and the same in frames of the track. The material walks
+    /// `source_rate · tempo_ratio` frames a second, so that is what a wall second is worth here.
+    readonly property real spanSeconds: view.heardBpm > 0
+                                        ? view.beatsOnScreen * 60.0 / view.heardBpm : 0.0
+    readonly property real spanFrames: view.spanSeconds * view.sourceRate * view.tempoRatio
+
+    /// The visible fraction of the track: what the painter and every marker already speak in. It is derived,
+    /// never set: the beats are the setting, and this is what they come to on this track.
+    readonly property real zoomSpan: {
+        if (view.spanFrames > 0 && view.totalFrames > 0) {
+            return Math.min(1.0, Math.max(0.0001, view.spanFrames / view.totalFrames));
         }
-        view.zoomRestored = true;
+        return view.defaultSpan;
+    }
+
+    // The zoom is a view setting, so it outlives the track: a deck opens at the number of beats it was left
+    // at. A track with no measurement yet falls back to the old fraction of the track, which is what
+    // `defaultSpan` carries.
+    Component.onCompleted: {
+        // Nothing to restore: the setting is read straight from the layout state, so a deck opened later
+        // sees the same window as the one that was zoomed.
     }
 
     readonly property real columnsPerPixel: (envelope.buckets * zoomSpan) / Math.max(1, width)
@@ -370,14 +393,24 @@ Item {
         return ((ratio - view.windowStart) / view.zoomSpan) * width;
     }
 
-    // Double click returns to the default, not to the whole track: the whole track has its own strip.
+    // Double click returns to the default sixteen beats, not to the whole track: the whole track has its
+    // own strip below.
     function resetZoom() {
-        view.zoomSpan = view.defaultSpan;
+        LayoutState.waveformBeats = 16;
     }
 
-    // Zoom is always about the playhead: it is the centre, so only the span changes.
+    // Zoom is always about the playhead: it is the centre, so only the number of beats changes.
     function zoomBy(factor) {
-        view.zoomSpan = Math.min(1.0, Math.max(0.0025, view.zoomSpan / factor));
+        LayoutState.waveformBeats = Math.min(128, Math.max(1, view.beatsOnScreen / factor));
+    }
+
+    /// Puts a known window on the strip: the number the settings hold, so a check can ask for a window that
+    /// fits inside the track and read what the picture did with it.
+    function zoomToBeats(count) {
+        if (!(count > 0)) {
+            return;
+        }
+        LayoutState.waveformBeats = Math.min(128, Math.max(1, count));
     }
 
 
@@ -524,9 +557,11 @@ Item {
             anchors.top: parent.top
             anchors.margins: 4
             visible: view.zoomSpan < 1.0
+            // Beats are the unit the window is counted in: "16 beats" says more than "3,7×", and two decks
+            // at one tempo show the same number here (owner's decision, 2026-11-20).
             text: view.atEnvelopeLimit
-                  ? qsTr("zoom %1× · envelope limit").arg((1 / view.zoomSpan).toFixed(1))
-                  : qsTr("zoom %1×").arg((1 / view.zoomSpan).toFixed(1))
+                  ? qsTr("%1 beats · envelope limit").arg(view.beatsOnScreen.toFixed(0))
+                  : qsTr("%1 beats").arg(view.beatsOnScreen.toFixed(0))
             color: view.atEnvelopeLimit ? UiSettings.themeDanger : UiSettings.themeWaveOutline
             font.pixelSize: 10
         }

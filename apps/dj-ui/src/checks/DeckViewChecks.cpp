@@ -91,6 +91,18 @@ int runSyncCheck(QQmlApplicationEngine& engine, std::unique_ptr<BridgeClient>& b
         return 1;
     }
 
+    auto* stripA = findItem(window->contentItem(), QStringLiteral("deckDetail_A"));
+    auto* stripB = findItem(window->contentItem(), QStringLiteral("deckDetail_B"));
+    if (stripA == nullptr || stripB == nullptr) {
+        std::fprintf(stderr, "dj-ui: a deck has no zoomed strip to measure\n");
+        return 1;
+    }
+    // A known window, smaller than the fixture: four beats are two seconds at 120 BPM, and a window that fits
+    // inside the track is the only one that can show its tempo.
+    QMetaObject::invokeMethod(stripA, "zoomToBeats", Q_ARG(QVariant, QVariant(4.0)));
+    QMetaObject::invokeMethod(stripB, "zoomToBeats", Q_ARG(QVariant, QVariant(4.0)));
+    QCoreApplication::processEvents();
+
     if (!press(QStringLiteral("syncMaster_A")) || !press(QStringLiteral("syncBeat_B"))) {
         return 1;
     }
@@ -108,6 +120,104 @@ int runSyncCheck(QQmlApplicationEngine& engine, std::unique_ptr<BridgeClient>& b
                      qPrintable(modeOf(QStringLiteral("B"))));
         return 1;
     }
+    // The window is counted in beats, and a beat is `60 / BPM` seconds: two decks that follow one tempo show
+    // one picture, whatever their lengths. This is the whole point of counting in beats — a window that is a
+    // fraction of the track shows a different span of music on every track, and two synced decks then scroll
+    // at two speeds with their bars at two widths (owner's decision, 2026-11-20).
+    const auto heardOf = [&](const QString& id) {
+        const QVariantMap state = deckOf(id);
+        return state.value(QStringLiteral("local_bpm")).toDouble() *
+               state.value(QStringLiteral("tempo_ratio")).toDouble();
+    };
+    const auto windowOf = [](QQuickItem* strip) {
+        const double span = strip->property("zoomSpan").toDouble();
+        const double frames = strip->property("totalFrames").toDouble();
+        const double rate = strip->property("sourceRate").toDouble();
+        const double ratio = strip->property("tempoRatio").toDouble();
+        if (!(span > 0.0) || !(frames > 0.0) || !(rate > 0.0) || !(ratio > 0.0)) {
+            return 0.0;
+        }
+        return span * frames / (rate * ratio);
+    };
+    // The window can never be longer than the track: beats at a slow tempo ask for more music than a short
+    // file holds, and the strip then shows the file.
+    const auto trackSeconds = [](QQuickItem* strip) {
+        const double frames = strip->property("totalFrames").toDouble();
+        const double rate = strip->property("sourceRate").toDouble();
+        return rate > 0.0 ? frames / rate : 0.0;
+    };
+    const auto wantedWindow = [&](QQuickItem* strip, double bpm) {
+        return std::min(strip->property("beatsOnScreen").toDouble() * 60.0 / bpm, trackSeconds(strip));
+    };
+    const bool settled = waitFor(
+        [&]() {
+            return std::abs(heardOf(QStringLiteral("A")) - heardOf(QStringLiteral("B"))) < 0.05 &&
+                   windowOf(stripA) > 0.0 && windowOf(stripB) > 0.0;
+        },
+        15000);
+    const double secondsA = windowOf(stripA);
+    const double secondsB = windowOf(stripB);
+    const double beats = stripA->property("beatsOnScreen").toDouble();
+    const double heard = heardOf(QStringLiteral("A"));
+    std::fprintf(stdout,
+                 "dj-ui: the strips show %.3f and %.3f s of music, %.0f beats at %.2f BPM (%.3f s wanted)\n",
+                 secondsA, secondsB, beats, heard, heard > 0.0 ? beats * 60.0 / heard : 0.0);
+    if (!settled) {
+        std::fprintf(stderr,
+                     "dj-ui: the strips never settled (%.3f and %.3f s, heard %.2f and %.2f BPM)\n", secondsA,
+                     secondsB, heardOf(QStringLiteral("A")), heardOf(QStringLiteral("B")));
+        return 1;
+    }
+    if (!(beats > 0.0) || !(heard > 0.0)) {
+        std::fprintf(stderr, "dj-ui: no beats or no tempo to measure the window against (%.1f, %.2f)\n",
+                     beats, heard);
+        return 1;
+    }
+    // A beat and a half of slack: the window is built from the tempo the engine publishes, and a deck still
+    // trimming its tempo is a deck whose window is a shade off.
+    const double wanted = wantedWindow(stripA, heard);
+    if (std::abs(secondsA - wanted) > wanted * 0.02) {
+        std::fprintf(stderr,
+                     "dj-ui: the master's strip shows %.3f s where %0.f beats at %.2f BPM are %.3f s\n",
+                     secondsA, beats, heard, wanted);
+        return 1;
+    }
+    if (std::abs(secondsA - secondsB) > wanted * 0.02) {
+        std::fprintf(stderr,
+                     "dj-ui: the synced strips show %.3f and %.3f s of music (%.1f %% apart)\n", secondsA,
+                     secondsB, std::abs(secondsA - secondsB) / secondsA * 100.0);
+        return 1;
+    }
+
+    // And the window is counted in beats, not in fractions of the track. A fraction would not move when the
+    // tempo moves — a tenth of a track is a tenth of a track at any speed. A beat is `60 / BPM` seconds, so
+    // the window has to shrink when the master speeds up, and the follower's has to shrink with it.
+    const double before = windowOf(stripB);
+    bridge->setTempo(QStringLiteral("A"), 1.05);
+    const bool followed = waitFor(
+        [&]() {
+            return std::abs(heardOf(QStringLiteral("A")) - heardOf(QStringLiteral("B"))) < 0.05 &&
+                   windowOf(stripB) > 0.0 && std::abs(windowOf(stripB) - before) > before * 0.01;
+        },
+        10000);
+    const double afterB = windowOf(stripB);
+    const double heardAfter = heardOf(QStringLiteral("B"));
+    const double wantedAfter = wantedWindow(stripB, heardAfter);
+    std::fprintf(stdout, "dj-ui: at %.2f BPM the follower's strip shows %.3f s (was %.3f s, %.3f wanted)\n",
+                 heardAfter, afterB, before, wantedAfter);
+    bridge->setTempo(QStringLiteral("A"), 1.0);
+    if (!followed) {
+        std::fprintf(stderr,
+                     "dj-ui: the window did not follow the tempo (%.3f s before, %.3f s after, wanted %.3f)\n",
+                     before, afterB, wantedAfter);
+        return 1;
+    }
+    if (std::abs(afterB - wantedAfter) > wantedAfter * 0.02) {
+        std::fprintf(stderr, "dj-ui: the follower's window shows %.3f s where %.0f beats are %.3f s\n", afterB,
+                     beats, wantedAfter);
+        return 1;
+    }
+
     // A deck that stands still publishes no phase: the distance from a beat that is not moving is a
     // clock, not a phase, and the meter would sweep. So the meter's presence is checked here and
     // the number itself is checked once the deck plays.
@@ -2450,14 +2560,14 @@ int runLayoutCheck(QQmlApplicationEngine& engine, LayoutSettings& layout, UiSett
         }
     }
 
-    // The zoom a deck opens at, measured from the item itself.
+    // The window a deck opens at, measured from the item itself: a number of beats, not a fraction of the
+    // track — a fraction is a scale nobody can compare between two tracks (owner's decision, 2026-11-20).
     if (auto* stripView = findItem(content, QStringLiteral("deckDetail_A")); stripView != nullptr) {
-        const double span = stripView->property("zoomSpan").toDouble();
-        const double factor = span > 0.0 ? 1.0 / span : 0.0;
-        std::fprintf(stdout, "dj-ui: deck A opens at %.1fx zoom (wanted %.1fx)\n", factor,
-                     settings.waveformZoom());
-        if (std::abs(factor - settings.waveformZoom()) > 0.05) {
-            std::fprintf(stderr, "dj-ui: the deck does not open at the zoom setting\n");
+        const double beats = stripView->property("beatsOnScreen").toDouble();
+        std::fprintf(stdout, "dj-ui: deck A opens at %.0f beats on screen (the setting says %.0f)\n", beats,
+                     layout.waveformBeats());
+        if (std::abs(beats - layout.waveformBeats()) > 0.01) {
+            std::fprintf(stderr, "dj-ui: the deck does not open at the beats the setting names\n");
             return 1;
         }
     }
@@ -2746,18 +2856,16 @@ int runLayoutCheck(QQmlApplicationEngine& engine, LayoutSettings& layout, UiSett
         }
     }
 
-    // The wheel has to reach 100x, not 50x: the deepest step is the one a person tries when they
-    // want a single beat across the strip.
+    // The wheel has to reach one beat across the strip, not two: the deepest step is the one a person tries
+    // when they want a single beat under the playhead.
     if (auto* viewA = findItem(content, QStringLiteral("deckDetail_A")); viewA != nullptr) {
         for (int step = 0; step < 16; ++step) {
             QMetaObject::invokeMethod(viewA, "zoomBy", Q_ARG(QVariant, QVariant(2.0)));
         }
-        const double deepest = viewA->property("zoomSpan").toDouble();
-        std::fprintf(stdout, "dj-ui: the wheel reaches %.1fx zoom\n",
-                     deepest > 0.0 ? 1.0 / deepest : 0.0);
-        if (std::abs(deepest - 0.0025) > 1e-9) {
-            std::fprintf(stderr, "dj-ui: the deepest zoom is %.5f, wanted 0.0025 (400x)\n",
-                         deepest);
+        const double deepest = viewA->property("beatsOnScreen").toDouble();
+        std::fprintf(stdout, "dj-ui: the wheel reaches %.1f beats on screen\n", deepest);
+        if (std::abs(deepest - 1.0) > 1e-6) {
+            std::fprintf(stderr, "dj-ui: the deepest zoom shows %.2f beats, wanted one\n", deepest);
             return 1;
         }
         QMetaObject::invokeMethod(viewA, "zoomBy", Q_ARG(QVariant, QVariant(0.000001)));
@@ -7316,7 +7424,7 @@ int runBrowserRestoreCheck(QQmlApplicationEngine& engine, LayoutSettings& layout
     }
     const int rail = panel->property("railWidth").toInt();
     const int font = panel->property("listFont").toInt();
-    const double span = detail->property("zoomSpan").toDouble();
+    const double beats = detail->property("beatsOnScreen").toDouble();
     const double heightShare = panel->height() / shellItem->height() * 100.0;
     if (qAbs(heightShare - layout.browserPercent()) > 2.0) {
         std::fprintf(stderr, "dj-ui: the browser came back %0.1f%% tall instead of %0.1f%%\n",
@@ -7324,19 +7432,19 @@ int runBrowserRestoreCheck(QQmlApplicationEngine& engine, LayoutSettings& layout
         return 1;
     }
     if (rail != layout.browserRailWidth() || font != layout.browserFont() ||
-        qAbs(span - layout.waveformSpan()) > 1e-6) {
+        qAbs(beats - layout.waveformBeats()) > 1e-6) {
         std::fprintf(stderr,
                      "dj-ui: the shell did not come back as it was left (rail %d of %d, font %d "
-                     "of %d, span %.3f of %.3f)\n",
-                     rail, layout.browserRailWidth(), font, layout.browserFont(), span,
-                     layout.waveformSpan());
+                     "of %d, beats %.1f of %.1f)\n",
+                     rail, layout.browserRailWidth(), font, layout.browserFont(), beats,
+                     layout.waveformBeats());
         return 1;
     }
     std::fprintf(stdout,
                  "dj-ui: a new run opens with the rail at %d px, the browser text at %d px, the "
-                 "browser %0.1f%% tall and the deck zoom at a span of %s, the numbers the last run "
+                 "browser %0.1f%% tall and the deck window at %s beats, the numbers the last run "
                  "left\n",
-                 rail, font, heightShare, qPrintable(QString::number(span, 'f', 3)));
+                 rail, font, heightShare, qPrintable(QString::number(beats, 'f', 0)));
     // The modes of the deck are settings too: the last run left snap and quantize off and the scrub
     // audible, and both the runtime and the switches have to say so.
     auto* snapSwitch = findItem(window->contentItem(), QStringLiteral("snapGlobal"));

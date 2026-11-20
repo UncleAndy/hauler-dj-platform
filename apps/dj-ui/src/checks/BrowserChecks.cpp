@@ -396,7 +396,9 @@ int runBrowserCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutS
         std::fprintf(stderr, "dj-ui: the deck has no main waveform to zoom\n");
         return 1;
     }
-    detail->setProperty("zoomSpan", 0.25);
+    // The window is counted in beats now, not in a fraction of the track: the number a deck remembers is the
+    // number of beats on screen (owner's decision, 2026-11-20).
+    layout.setWaveformBeats(7.0);
     QCoreApplication::processEvents();
     if (!layout.save()) {
         std::fprintf(stderr, "dj-ui: the layout file could not be written (%s)\n",
@@ -410,11 +412,11 @@ int runBrowserCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutS
         return 1;
     }
     if (reloaded.browserRailWidth() != 130 || reloaded.browserFont() != 14 ||
-        qAbs(reloaded.waveformSpan() - 0.25) > 1e-9) {
+        qAbs(reloaded.waveformBeats() - 7.0) > 1e-9) {
         std::fprintf(stderr,
-                     "dj-ui: the view did not come back as it was left (rail %d, font %d, span "
-                     "%.3f)\n",
-                     reloaded.browserRailWidth(), reloaded.browserFont(), reloaded.waveformSpan());
+                     "dj-ui: the view did not come back as it was left (rail %d, font %d, beats "
+                     "%.1f)\n",
+                     reloaded.browserRailWidth(), reloaded.browserFont(), reloaded.waveformBeats());
         return 1;
     }
 

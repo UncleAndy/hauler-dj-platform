@@ -46,6 +46,9 @@ class LayoutSettings : public QObject
     // Visible fraction of a track in a deck's main waveform. Zero means "the deck's own default", so a
     // file that has never held a value still opens at the built-in zoom.
     Q_PROPERTY(double waveformSpan READ waveformSpan WRITE setWaveformSpan NOTIFY changed)
+    /// How many beats the zoomed strip shows. A window in beats, not a fraction of the track: two decks
+    /// at one tempo then show one picture, whatever their lengths (owner's decision, 2026-11-20).
+    Q_PROPERTY(double waveformBeats READ waveformBeats WRITE setWaveformBeats NOTIFY changed)
     // The deck's modes that the DJ leaves behind: snap and quantize (global, in the mixer) and the scrub
     // mode (a setting). They live with the other view numbers so the next start comes back the way the
     // last one was left (owner's decision, 14.11).
@@ -98,6 +101,8 @@ public:
     Q_INVOKABLE void moveCollectionColumn(const QString &id, int toIndex);
     Q_INVOKABLE void resetCollectionColumns();
     double waveformSpan() const { return m_waveformSpan; }
+    double waveformBeats() const { return m_waveformBeats; }
+    void setWaveformBeats(double beats);
     bool snapGrid() const { return m_snapGrid; }
     void setSnapGrid(bool on);
     bool quantizeGrid() const { return m_quantizeGrid; }
@@ -177,6 +182,7 @@ private:
         {QStringLiteral("recent"), 0.05},
     };
     double m_waveformSpan = 0.0;
+    double m_waveformBeats = 16.0;
     // The deck's modes, on by default as the deck switches and the mixer's were.
     bool m_snapGrid = true;
     bool m_quantizeGrid = true;

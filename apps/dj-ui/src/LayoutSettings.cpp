@@ -293,6 +293,19 @@ void LayoutSettings::setWaveformSpan(double span)
     scheduleSave();
 }
 
+void LayoutSettings::setWaveformBeats(double beats)
+{
+    // A beat is the unit the DJ zooms in: one is the closest look that still shows a whole beat, and a
+    // hundred and twenty-eight is a couple of minutes of music, which is what the whole-track strip is for.
+    const double bounded = std::clamp(beats, 1.0, 128.0);
+    if (qFuzzyCompare(bounded + 1.0, m_waveformBeats + 1.0)) {
+        return;
+    }
+    m_waveformBeats = bounded;
+    emit changed();
+    scheduleSave();
+}
+
 void LayoutSettings::setSnapGrid(bool on)
 {
     if (m_snapGrid == on) {
@@ -562,6 +575,10 @@ bool LayoutSettings::load()
     m_browserRailWidth =
         std::clamp(root.value(QStringLiteral("browser_rail_width")).toInt(m_browserRailWidth), 72, 260);
     const double span = root.value(QStringLiteral("waveform_span")).toDouble(m_waveformSpan);
+    // A file written before the window was counted in beats has no `waveform_beats`: sixteen beats is the
+    // default a fresh deck opens with, and a fraction of a track is not a look anybody can read.
+    m_waveformBeats = std::clamp(
+        root.value(QStringLiteral("waveform_beats")).toDouble(m_waveformBeats), 1.0, 128.0);
     m_snapGrid = root.value(QStringLiteral("snap_grid")).toBool(m_snapGrid);
     m_quantizeGrid = root.value(QStringLiteral("quantize_grid")).toBool(m_quantizeGrid);
     m_scrubAudible = root.value(QStringLiteral("scrub_audible")).toBool(m_scrubAudible);
@@ -663,6 +680,7 @@ bool LayoutSettings::save() const
     }
     root.insert(QStringLiteral("collection_columns"), columns);
     root.insert(QStringLiteral("waveform_span"), m_waveformSpan);
+    root.insert(QStringLiteral("waveform_beats"), m_waveformBeats);
     root.insert(QStringLiteral("snap_grid"), m_snapGrid);
     root.insert(QStringLiteral("quantize_grid"), m_quantizeGrid);
     root.insert(QStringLiteral("scrub_audible"), m_scrubAudible);
