@@ -35,6 +35,10 @@ Item {
     readonly property real capSide: diameter
 
     readonly property int minimumDb: -40
+    /// How far the cut reaches below unity. Forty decibels on a channel's gain; a knob whose range is symmetric —
+    /// the monitoring proportion — says so, or its left end lands a seventh of the way round instead of at the foot
+    /// (owner's report, 20.11: "влево крайнее положение оказалось сверху слева").
+    property int negativeRangeDb: 40
     readonly property int maximumDb: 6
     readonly property real db: gain > 0.0 ? 20.0 * Math.log(gain) / Math.LN10 : minimumDb
     // Zero up: 135 degrees each way, the cut compressed into 40 dB and the boost into 6.
@@ -56,7 +60,7 @@ Item {
     /// The angle the pointer stands at for a gain. The curve says how much of the range a share of the
     /// travel is worth, so the pointer and the hand agree about where the knob is.
     function angleOf(decibels) {
-        const range = decibels >= 0.0 ? knob.maximumDb : -knob.minimumDb;
+        const range = decibels >= 0.0 ? knob.maximumDb : knob.negativeRangeDb;
         const share = Math.min(1.0, Math.abs(decibels) / range);
         const position = UiSettings.gainCurvePosition(share);
         return decibels >= 0.0 ? 135.0 * position : -135.0 * position;
@@ -65,7 +69,7 @@ Item {
     /// The gain the pointer's angle means, clamped to the ends of the travel.
     function dbOf(angle) {
         const clamped = Math.max(-135.0, Math.min(135.0, angle));
-        const range = clamped >= 0.0 ? knob.maximumDb : -knob.minimumDb;
+        const range = clamped >= 0.0 ? knob.maximumDb : knob.negativeRangeDb;
         const share = UiSettings.gainCurveValue(Math.abs(clamped) / 135.0);
         return clamped >= 0.0 ? share * range : -share * range;
     }

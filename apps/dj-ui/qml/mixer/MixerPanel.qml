@@ -53,9 +53,9 @@ Pane {
     readonly property real eqKnobSide: masterKnobSide
     // The headphone knobs are smaller than the master: two of them and two captions share the column's width.
     // The headphone knobs are the master's size: one column, one class of control (owner's decision, 20.11).
-    // Smaller than the master: two of them and two captions share the column, and at the master's size they
-    // crowded it (owner's decision, 20.11).
-    readonly property real cueKnobSide: Math.max(18, Math.round(masterKnobSide * 0.8))
+    // The knobs are the originals' size (owner's decision, 20.11): the volume is a master knob and the proportion
+    // is a channel gain knob, so they are as big as those two.
+    readonly property real cueKnobSide: masterKnobSide
 
     /// The headphone value the engine published, by knob kind.
     function headphoneValue(kind) {
@@ -196,6 +196,9 @@ Pane {
                         // stands where a channel's trim would (owner's decision, 20.11).
                         deckId: "mix"
                         showNumber: false
+                        // Six decibels each way: the proportion's ends are its ends, not a seventh of a channel
+                        // gain's travel.
+                        negativeRangeDb: 6
                         gain: Math.pow(10.0, ((0.5 - mixer.headphoneValue("mix")) * 12.0) / 20.0)
                         diameter: mixer.cueKnobSide
                     }
