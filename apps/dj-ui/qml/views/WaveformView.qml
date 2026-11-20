@@ -191,6 +191,13 @@ Item {
     /// Where a loop start has been marked but not yet closed, in source frames; negative means none.
     property real pendingLoopStart: -1
 
+    /// The deck's clock, drawn over the playhead: the line the eye already follows carries the number it
+    /// wants, instead of a corner of the header (owner's request, 2026-11-20). The playhead of the zoomed
+    /// strip is always its middle, so the number is centred on the strip.
+    property string clockText: ""
+    /// Whether the clock is drawn on the strip or left to the header: a folded deck has no room for a plate.
+    property bool clockOverPlayhead: true
+
     /// Whether a hand on the strip is heard (a scratch) or only moves the playhead.
     property bool scrubAudio: false
 
@@ -424,6 +431,29 @@ Item {
             accent: UiSettings.themeAccent
             marker: UiSettings.themeMarker
             playhead: UiSettings.themePlayhead
+
+            // The clock sits above the playhead and below every mark: a small plate keeps it readable on a
+            // loud waveform, and the number never moves sideways, because the playhead does not.
+            Rectangle {
+                objectName: "clockPlate_" + view.deckId
+                visible: view.clockOverPlayhead && view.clockText.length > 0
+                anchors.horizontalCenter: parent.horizontalCenter
+                y: 3
+                width: clock.width + 8
+                height: clock.height + 2
+                radius: 2
+                color: UiSettings.themeSurface
+                opacity: 0.72
+
+                Label {
+                    id: clock
+                    objectName: "clock_" + view.deckId
+                    anchors.centerIn: parent
+                    text: view.clockText
+                    color: UiSettings.themeText
+                    font.pixelSize: 10
+                }
+            }
 
             MouseArea {
                 id: hand

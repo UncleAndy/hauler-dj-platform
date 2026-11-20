@@ -745,10 +745,13 @@ Pane {
             }
             RowLayout {
                 spacing: 6
+                // A folded deck keeps the clock here: its strip is the height of a hairline and a plate over it
+                // would cover it. In a full deck the clock stands over the playhead instead (owner's request,
+                // 2026-11-20). Elapsed first, then what is left — a DJ reads the time that is running out, not
+                // the time on the clock (DJP-DECK-002).
                 Label {
-                    objectName: "clock_" + panel.deckId
-                    // Elapsed first, then what is left: a DJ reads the time that is running out, not
-                    // the time on the clock (DJP-DECK-002).
+                    objectName: "clockHeader_" + panel.deckId
+                    visible: panel.compact
                     text: panel.positionLabel() + " / −" + panel.remainingLabel()
                     color: UiSettings.themeTextDim
                     font.pixelSize: 11
@@ -951,6 +954,12 @@ Pane {
                     envelope: envelope
                     scrubAudio: UiSettings.scrubAudible
                     pendingLoopStart: panel.loopPending ? panel.loopStartFrame : -1
+                    // Elapsed first, then what is left (DJP-DECK-002). The strip draws the number over its own
+                    // playhead, which is always the middle of the strip; a folded deck has no room for it and
+                    // keeps the clock in the header instead. The text is always the clock — only its place moves,
+                    // because a check reads it and a label without text is a label that lies.
+                    clockText: panel.positionLabel() + " / −" + panel.remainingLabel()
+                    clockOverPlayhead: !panel.compact
                 }
 
                 // The whole track, with a marker that slides along it; a click here seeks.
