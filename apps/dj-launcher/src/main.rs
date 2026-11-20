@@ -27,14 +27,14 @@ fn main() -> ExitCode {
     let options = match Options::parse(std::env::args().skip(1)) {
         Ok(options) => options,
         Err(message) => {
-            eprintln!("dj-launcher: {message}");
+            append_log("dj-launcher", &message);
             return ExitCode::from(2);
         }
     };
     match run(&options) {
         Ok(code) => ExitCode::from(code),
         Err(message) => {
-            eprintln!("dj-launcher: {message}");
+            append_log("dj-launcher", &message);
             ExitCode::FAILURE
         }
     }
@@ -175,6 +175,8 @@ fn run(options: &Options) -> Result<u8, String> {
     say(options, &format!("shell: starting {}", ui.display()));
     let mut shell = Command::new(&ui)
         .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
         .map_err(|error| format!("the shell did not start: {error}"))?;
     let status = shell
@@ -192,10 +194,11 @@ fn start_engine(engine: &Path) -> Result<Child, String> {
     // on a machine with no console looks exactly like "no sound but the meter is lit".
     command.arg("--device").arg("");
     command.stdin(Stdio::null());
-    if !cfg!(windows) {
-        // The engine's own log is where a fault on a machine we cannot see is found; keep it out of our stderr
-        // only when nobody is reading it.
+    if cfg!(windows) {
+        // Nothing to inherit and nothing to allocate: the engine keeps its own log file, and an inherited console
+        // handle is what makes a windowed launcher grow a console under Wine.
         command.stdout(Stdio::null());
+        command.stderr(Stdio::null());
     }
     #[cfg(windows)]
     {
@@ -410,8 +413,33 @@ fn log_hint() -> String {
 }
 
 fn say(options: &Options, text: &str) {
-    if options.verbose {
+    if !options.verbose {
+        return;
+    }
+    // A windowed program that writes to a console gets one: Windows allocates a console for the write, and Wine
+    // opens a window for it. So the words go into the launcher's own journal, and only a platform that has a
+    // terminal to read them from prints them as well (owner's report, 2026-11-20).
+    append_log("dj-launcher", text);
+    if cfg!(unix) {
         println!("dj-launcher: {text}");
+    }
+}
+
+fn append_log(prefix: &str, text: &str) {
+    let Some(folder) = dj_paths::data_dir() else {
+        return;
+    };
+    let path = folder.join("hauler-dj").join("logs").join("launcher.log");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        use std::io::Write as _;
+        let _ = writeln!(file, "{prefix}: {text}");
     }
 }
 
