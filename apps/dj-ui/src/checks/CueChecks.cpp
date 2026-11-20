@@ -104,19 +104,21 @@ int runCueCheck(QQmlApplicationEngine& engine, std::unique_ptr<BridgeClient>& br
         return 1;
     }
     for (auto* knob : {phones, mix}) {
-        if (std::abs(knob->width() - master->width()) > 1.0 || knob->height() < knob->width()) {
+        // Smaller than the master and not taller than it is wide: two knobs and two captions share the column
+        // (owner's decision, 20.11).
+        if (knob->width() > master->width() + 1.0 || knob->width() < 18.0
+            || std::abs(knob->width() - knob->height()) > 1.0) {
             std::fprintf(stderr,
-                         "dj-ui: a headphone knob is %.1f×%.1f; the master's cap is %.1f and the number must sit\n"
-                         "        under the cap, not beside it\n",
+                         "dj-ui: a headphone knob is %.1f×%.1f; it must be a square cap between 18 and the master's %.1f\n",
                          knob->width(), knob->height(), master->width());
             return 1;
         }
     }
-    if (!QMetaObject::invokeMethod(phones, "ask", Q_ARG(QVariant, 0.25))) {
+    if (!QMetaObject::invokeMethod(phones, "ask", Q_ARG(QVariant, -12.0))) {
         std::fprintf(stderr, "dj-ui: the headphone volume knob takes no value\n");
         return 1;
     }
-    if (!QMetaObject::invokeMethod(mix, "ask", Q_ARG(QVariant, 0.75))) {
+    if (!QMetaObject::invokeMethod(mix, "ask", Q_ARG(QVariant, 3.0))) {
         std::fprintf(stderr, "dj-ui: the proportion knob takes no value\n");
         return 1;
     }
@@ -127,9 +129,11 @@ int runCueCheck(QQmlApplicationEngine& engine, std::unique_ptr<BridgeClient>& br
         const QVariantMap headphones = bridge->snapshot().value(QStringLiteral("headphones")).toMap();
         const double gain = headphones.value(QStringLiteral("gain")).toDouble();
         const double proportion = headphones.value(QStringLiteral("mix")).toDouble();
-        if (std::abs(gain - 0.25) > 0.02 || std::abs(proportion - 0.75) > 0.02) {
+        // −12 dB on the volume knob is a gain of 0.251; +3 dB on the proportion knob is a quarter of the way to the
+        // room, so the proportion is 0.25. Both numbers come from the knobs' own laws, not from a share of a scale.
+        if (std::abs(gain - 0.251) > 0.01 || std::abs(proportion - 0.25) > 0.02) {
             std::fprintf(stderr,
-                         "dj-ui: the engine reports gain %.3f and proportion %.3f, wanted 0.25 and 0.75\n",
+                         "dj-ui: the engine reports gain %.3f and proportion %.3f, wanted 0.251 and 0.25\n",
                          gain, proportion);
             return 1;
         }

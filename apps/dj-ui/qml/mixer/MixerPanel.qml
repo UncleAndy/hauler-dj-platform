@@ -53,7 +53,9 @@ Pane {
     readonly property real eqKnobSide: masterKnobSide
     // The headphone knobs are smaller than the master: two of them and two captions share the column's width.
     // The headphone knobs are the master's size: one column, one class of control (owner's decision, 20.11).
-    readonly property real cueKnobSide: masterKnobSide
+    // Smaller than the master: two of them and two captions share the column, and at the master's size they
+    // crowded it (owner's decision, 20.11).
+    readonly property real cueKnobSide: Math.max(18, Math.round(masterKnobSide * 0.8))
 
     /// The headphone value the engine published, by knob kind.
     function headphoneValue(kind) {
@@ -147,10 +149,10 @@ Pane {
                     diameter: mixer.eqKnobSide
                     gain: mixer.masterGain
                 }
-                // The two headphone knobs, under the master's, one above the other: the volume and the
-                // proportion between monitoring and the main mix (owner's decision, 20.11: "в центральной
-                // колонке под ручкой мастера, но вертикально"). They sit in the void the master's column
-                // already had, so nothing else moves and the column keeps its 48 px.
+                // The two headphone knobs, under the master's, one above the other. They are the components the
+                // mixer already has, not look-alikes: the volume is `MasterKnob` (its scale, its arc, its law) and
+                // the proportion is `TrimKnob` (a channel's gain knob), each wired to its own bus (owner's
+                // instruction, 20.11: "просто повтори дизайн уже имеющихся ручек").
                 Column {
                     id: phonesColumn
                     anchors.horizontalCenter: parent.horizontalCenter
@@ -158,30 +160,44 @@ Pane {
                     anchors.topMargin: 4
                     spacing: 2
 
-                    Repeater {
-                        model: [
-                            { kind: "phones", caption: qsTr("PHONES") },
-                            { kind: "mix", caption: qsTr("MIX") }
-                        ]
-
-                        delegate: Column {
-                            required property var modelData
-                            spacing: 0
-
-                            Text {
-                                anchors.horizontalCenter: parent.horizontalCenter
-                                text: parent.modelData.caption
-                                color: UiSettings.themeTextDim
-                                font.pixelSize: 8
-                            }
-
-                            CueKnob {
-                                kind: parent.modelData.kind
-                                caption: parent.modelData.caption
-                                value: mixer.headphoneValue(parent.modelData.kind)
-                                diameter: mixer.cueKnobSide
-                            }
+                    Item {
+                        width: mixer.cueKnobSide
+                        height: 10
+                        Text {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            text: qsTr("PHONES")
+                            color: UiSettings.themeTextDim
+                            font.pixelSize: 8
                         }
+                    }
+
+                    MasterKnob {
+                        itemName: "cueKnob_phones"
+                        sink: "phones"
+                        gain: mixer.headphoneValue("phones")
+                        diameter: mixer.cueKnobSide
+                    }
+
+                    Item {
+                        width: mixer.cueKnobSide
+                        height: 10
+                        Text {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            text: qsTr("MIX")
+                            color: UiSettings.themeTextDim
+                            font.pixelSize: 8
+                        }
+                    }
+
+                    TrimKnob {
+                        itemName: "cueKnob_mix"
+                        sink: "mix"
+                        // The proportion as a gain knob sees it: 0 dB is even, ±6 dB are its ends, and the pointer
+                        // stands where a channel's trim would (owner's decision, 20.11).
+                        deckId: "mix"
+                        showNumber: false
+                        gain: Math.pow(10.0, ((0.5 - mixer.headphoneValue("mix")) * 12.0) / 20.0)
+                        diameter: mixer.cueKnobSide
                     }
                 }
 

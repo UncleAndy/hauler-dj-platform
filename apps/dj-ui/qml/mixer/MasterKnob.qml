@@ -18,9 +18,16 @@ Item {
     // Diameter of the cap, taken from the channel knobs so the two cannot drift apart.
     required property real diameter
 
+    /// Where this knob sends what the hand does: `master` for the mixer's own gain, `phones` for the
+    /// headphone volume. The picture and the law are the same; only the wire differs, so the two knobs cannot
+    /// look like two different ideas (owner's instruction, 20.11).
+    property string sink: "master"
+    /// Name a check finds this instance by.
+    property string itemName: "masterKnob"
+
     implicitWidth: diameter
     implicitHeight: diameter
-    objectName: "masterKnob"
+    objectName: itemName
 
     // The scale: silence at the foot, unity at the end. A master level does not boost.
     readonly property int floorDb: -60
@@ -59,7 +66,11 @@ Item {
         const wanted = Math.max(knob.floorDb, Math.min(0.0, decibels));
         knob.draggedDb = wanted;
         knob.lastDb = wanted;
-        Bridge.setMasterGain(Math.pow(10.0, wanted / 20.0));
+        if (knob.sink === "phones") {
+            Bridge.setCueGain(Math.pow(10.0, wanted / 20.0));
+        } else {
+            Bridge.setMasterGain(Math.pow(10.0, wanted / 20.0));
+        }
     }
 
 

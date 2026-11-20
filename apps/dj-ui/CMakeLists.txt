@@ -65,7 +65,6 @@ qt_add_qml_module(dj-ui
         qml/mixer/EqKnob.qml
         qml/mixer/LevelMeter.qml
         qml/mixer/HeadphoneGlyph.qml
-        qml/mixer/CueKnob.qml
         qml/mixer/PitchFader.qml
         qml/mixer/RefusalButton.qml
 )

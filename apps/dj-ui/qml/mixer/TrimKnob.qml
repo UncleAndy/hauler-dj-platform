@@ -22,8 +22,16 @@ Item {
     required property real diameter
 
     implicitWidth: diameter
-    implicitHeight: diameter + 11
-    objectName: "trim_" + deckId
+    /// Where this knob sends what the hand does: `gain` for the channel's own gain, `mix` for the proportion
+    /// between monitoring and the main mix. A gain knob is the design the owner asked for; only the wire differs.
+    property string sink: "gain"
+    /// Name a check finds this instance by.
+    property string itemName: "trim_" + deckId
+    /// The number under the cap: a strip has room for it, the middle column does not (owner's decision, 20.11).
+    property bool showNumber: true
+
+    implicitHeight: diameter + (showNumber ? 11 : 0)
+    objectName: itemName
     readonly property real capSide: diameter
 
     readonly property int minimumDb: -40
@@ -68,8 +76,23 @@ Item {
         const wanted = Math.max(knob.minimumDb, Math.min(knob.maximumDb, decibels));
         knob.draggedDb = wanted;
         knob.lastDb = wanted;
-        Bridge.setChannelGain(knob.deckId, Math.pow(10.0, wanted / 20.0));
+        if (knob.sink === "mix") {
+            // The proportion runs the other way: to the left is more monitoring, to the right more of the room, and
+            // the middle is even. Six decibels each way is the whole travel.
+            knob.lastMix = knob.mixOf(wanted);
+            Bridge.setCueMix(knob.lastMix);
+        } else {
+            Bridge.setChannelGain(knob.deckId, Math.pow(10.0, wanted / 20.0));
+        }
     }
+
+    /// The proportion this knob's pointer means: 0 dB is even, −6 dB monitoring only, +6 dB the room only.
+    function mixOf(decibels) {
+        return Math.max(0.0, Math.min(1.0, 0.5 - decibels / 12.0));
+    }
+
+    /// What the last gesture asked for as a proportion, so a check can read it back.
+    property real lastMix: -1
 
     Item {
         id: face
@@ -137,7 +160,9 @@ Item {
 
     Label {
         text: qsTr("GAIN")
-        height: 11
+        // A knob without room for the caption: the middle column says what it is above the cap.
+        visible: knob.showNumber
+        height: knob.showNumber ? 11 : 0
         anchors.top: face.bottom
         anchors.horizontalCenter: parent.horizontalCenter
         verticalAlignment: Text.AlignVCenter
