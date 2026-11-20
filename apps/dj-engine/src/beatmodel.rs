@@ -237,6 +237,10 @@ pub fn measurements() -> usize {
 /// Сетка трека: уровень от модели, если она есть, иначе свой замер.
 pub fn analyse(path: &Path) -> Option<Tempo> {
     MEASURED.fetch_add(1, Ordering::Relaxed);
+    // Which path measured this file: the external model or the built-in detector. Without this line a wrong grid on
+    // a machine we cannot see is indistinguishable from a wrong grid anywhere, and the two have different causes
+    // (owner's report, Windows, 2026-11-20).
+    crate::log::info(format!("{}: grid by {}", path.display(), source()));
     let (mono, rate) = match dj_analysis::tempo::decode_mono(path) {
         Ok(decoded) => decoded,
         Err(error) => {

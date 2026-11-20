@@ -22,6 +22,7 @@ scripts/windows.sh <команда>
   --engine     собрать dist/windows/dj-engine.exe
   --ui         собрать dist/windows/dj-ui.exe (Qt под mingw, скачивается один раз)
   --launcher   собрать dist/windows/hauler-dj.exe (запускатор: движок и оболочка одним действием)
+  --ort        положить onnxruntime.dll (MIT) и, если дан ORT_CRT_DIR, MSVC runtime рядом с бинарями
   --dist       положить рядом с exe всё нужное и собрать zip
   --msi        собрать установочный пакет (нужен готовый дистрибутив)
   --all        --engine --ui --dist --msi
@@ -105,6 +106,61 @@ launcher() {
     '
     cp "${CARGO_TARGET_DIR:-$repo/target}/$target/release/dj-launcher.exe" "$dist/hauler-dj.exe"
     echo "готово: $dist/hauler-dj.exe"
+}
+
+# ONNX Runtime: без него внешняя модель удара не работает, и движок молча считает встроенным детектором —
+# на части треков это другой уровень темпа (96 → 128 на «Любе», замер 2026-11-20). DLL берётся из
+# официального пакета Microsoft (NuGet, MIT), версия и хеш закреплены: другая версия не загрузится, и откат
+# на встроенный детектор будет тихим.
+#
+# `onnxruntime.dll` собран MSVC и требует MSVCP140.dll / MSVCP140_1.dll из Visual C++ Redistributable. Их
+# кладём из каталога, который назван `--crt-dir` (app-local распространение разрешено Microsoft), а если
+# каталога нет — печатаем, чего не хватает: пакет без них запустится не на всякой машине.
+ort_version="1.22.0"
+ort_dll_sha256="579b636403983254346a5c1d80bd28f1519cd1e284cd204f8d4ff41f8d711559"
+crt_dlls="MSVCP140.dll MSVCP140_1.dll VCRUNTIME140.dll VCRUNTIME140_1.dll"
+
+ort() {
+    echo "== onnx runtime $ort_version"
+    mkdir -p "$dist/LICENSES"
+    cache="$repo/.cache/win-ort"
+    mkdir -p "$cache"
+    dll="$cache/onnxruntime.dll"
+    if [ ! -f "$dll" ]; then
+        nix shell nixpkgs#curl nixpkgs#unzip --command bash -c "
+            set -e
+            curl -sSL -o '$cache/ort.nupkg' \
+                'https://www.nuget.org/api/v2/package/Microsoft.ML.OnnxRuntime/$ort_version'
+            unzip -q -o '$cache/ort.nupkg' -d '$cache/nupkg'
+            cp '$cache/nupkg/runtimes/win-x64/native/onnxruntime.dll' '$dll'
+            cp '$cache/nupkg/LICENSE' '$cache/LICENSE'
+            cp '$cache/nupkg/ThirdPartyNotices.txt' '$cache/ThirdPartyNotices.txt'
+        "
+    fi
+    got=$(sha256sum "$dll" | cut -d' ' -f1)
+    if [ "$got" != "$ort_dll_sha256" ]; then
+        echo "onnxruntime.dll не тот: sha256 $got, ожидался $ort_dll_sha256" >&2
+        exit 1
+    fi
+    cp "$dll" "$dist/"
+    cp "$cache/LICENSE" "$dist/LICENSES/onnxruntime-MIT.txt"
+    cp "$cache/ThirdPartyNotices.txt" "$dist/LICENSES/onnxruntime-third-party.txt"
+    echo "готово: $dist/onnxruntime.dll"
+    missing=""
+    for name in $crt_dlls; do
+        if [ -n "${ORT_CRT_DIR:-}" ] && [ -f "$ORT_CRT_DIR/$name" ]; then
+            cp "$ORT_CRT_DIR/$name" "$dist/"
+        else
+            missing="$missing $name"
+        fi
+    done
+    if [ -n "$missing" ]; then
+        echo "внимание: в пакете нет$missing" >&2
+        echo "  onnxruntime.dll без них не загрузится. Возьмите файлы из установленного Visual C++" >&2
+        echo "  Redistributable (C:\\Windows\\System32) и повторите с ORT_CRT_DIR=<каталог>." >&2
+    else
+        echo "готово: MSVC runtime рядом с движком"
+    fi
 }
 
 qt_mingw_tool() {
@@ -337,6 +393,11 @@ Hauler DJ для Windows.
 
 Запуск: hauler-dj.exe (движок и оболочка вместе) или hauler-dj.bat — то же, но с консолью для диагностики.
 
+Темп и сетку считает внешняя модель удара Beat This! (MIT) через ONNX Runtime (MIT). Рядом лежат
+onnxruntime.dll и, если сборка их положила, MSVCP140/VCRUNTIME140 из Visual C++ Redistributable:
+без runtime движок молча считает встроенным детектором, и на части треков это другой уровень темпа.
+Тексты лицензий — в LICENSES/.
+
 Каталоги:
   %APPDATA%\hauler-dj        — настройки, раскладка, зеркало метаданных, модели
   %LOCALAPPDATA%\hauler-dj   — кэш формы волны и PCM
@@ -431,9 +492,10 @@ case "${1:---all}" in
     --engine) engine ;;
     --ui) ui ;;
     --launcher) launcher ;;
+    --ort) ort ;;
     --dist) deploy ;;
     --msi) msi ;;
-    --all) engine; ui; launcher; deploy; msi ;;
+    --all) engine; ui; launcher; ort; deploy; msi ;;
     --clean) rm -rf "$dist" "$qt_root" "$repo/build-windows" "$repo/.cache/msitools-path" ;;
     -h|--help) usage ;;
     *) usage; exit 2 ;;

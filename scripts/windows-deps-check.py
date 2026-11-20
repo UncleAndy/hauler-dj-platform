@@ -89,6 +89,15 @@ def main() -> int:
                 continue
             queue.append(target)
 
+    # Библиотеки, которых в пакете может не быть по делу: MSVC runtime ставится Redistributable-пакетом (Microsoft
+    # разрешает и app-local, тогда их приносит `--ort` с ORT_CRT_DIR), а dbghelp.dll есть в любой Windows.
+    allowed_missing = {"dbghelp.dll", "msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll",
+                       "vcruntime140_1.dll"}
+    for name in sorted(allowed_missing):
+        if name in missing:
+            print(f"DJ Windows deps: {name} — приходит из Visual C++ Redistributable или из Windows")
+            missing.pop(name, None)
+
     if args.only_missing:
         for name in sorted(missing):
             print(name)
