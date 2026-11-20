@@ -3263,6 +3263,19 @@ pub fn run_analysis(
     }
     let paths = open;
     let total = paths.len();
+    // A batch is measured one file at a time and a long lossless file takes as long as it takes. Without these two
+    // numbers a batch that is still working is indistinguishable from one that hung (owner's report, Windows,
+    // 2026-11-20).
+    crate::log::info(format!(
+        "analysis batch: {} file(s), {}{}",
+        total,
+        if parallel {
+            "parallel, "
+        } else {
+            "one at a time, "
+        },
+        paths.first().cloned().unwrap_or_default()
+    ));
     let state = Arc::new(std::sync::Mutex::new(dj_domain::AnalyzeState {
         total,
         done: 0,
@@ -3321,6 +3334,7 @@ pub fn run_analysis(
                     }
                     publish();
                     let file = std::path::PathBuf::from(&path);
+                    let started = std::time::Instant::now();
                     let measured = crate::meta::analyze_file(
                         &target.store,
                         &target.volume,
@@ -3328,6 +3342,11 @@ pub fn run_analysis(
                         &file,
                         true,
                     );
+                    crate::log::info(format!(
+                        "analysis of {} took {} ms",
+                        file.display(),
+                        started.elapsed().as_millis()
+                    ));
                     if measured && let Ok(mut list) = measured_paths.lock() {
                         list.push(path.clone());
                     }

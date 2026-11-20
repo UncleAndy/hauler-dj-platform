@@ -8,6 +8,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import DjPlatform.Ui
 import "../views"
 import "../mixer"
 import "../controls"
@@ -1144,7 +1145,18 @@ Pane {
             // that has to survive the folded panel, because from a locked deck it is the way back (owner's decision).
             ToggleButton {
                 objectName: "gridLock_" + panel.deckId
-                text: "\uD83D\uDD12"
+                // A drawn lock, not a character: the monospace face carries no padlock glyph, and on Windows the
+                // button showed the missing-glyph mark instead (owner's report, 2026-11-20).
+                text: ""
+                contentItem: Item {
+                    LockGlyph {
+                        anchors.centerIn: parent
+                        width: 11
+                        height: 13
+                        colour: panel.analysisLock ? UiSettings.themeTextOnAccent : UiSettings.themeText
+                        opacity: panel.track !== null ? 1.0 : 0.45
+                    }
+                }
                 lit: panel.analysisLock
                 enabled: panel.track !== null
                 font.pixelSize: 11
