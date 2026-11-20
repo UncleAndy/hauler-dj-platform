@@ -779,6 +779,10 @@ pub struct SyncMemory {
     /// The file tempo each deck was last matched against. A deck under a new track has a new tempo, and
     /// the ratio of the track before it is a wrong speed, not a starting point.
     matched_bpm: [f64; MAX_DECKS],
+    /// The ratio the plan asked for at the last step. A plan that asks for a different ratio is a master whose
+    /// tempo has moved, and that is taken in one step; the same ratio asking again is a deck holding a tempo,
+    /// which is what the trim is for.
+    asked_ratio: [f64; MAX_DECKS],
 }
 
 impl Default for SyncMemory {
@@ -789,6 +793,7 @@ impl Default for SyncMemory {
             steps_since_jump: [Self::QUIET_STEPS; MAX_DECKS],
             last_mode: [SyncMode::Off; MAX_DECKS],
             matched_bpm: [0.0; MAX_DECKS],
+            asked_ratio: [0.0; MAX_DECKS],
         }
     }
 }
@@ -902,10 +907,20 @@ pub fn sync_step(decks: &mut [Deck], memory: &mut SyncMemory, seconds: f64) {
         };
         let new_track = (memory.matched_bpm[index] - planned.follower_bpm).abs() > 0.01;
         memory.matched_bpm[index] = planned.follower_bpm;
+        // A plan that asks for a new ratio is a master whose tempo has moved. That is taken in one step: the
+        // deck reaches the new target inside its own thirty-millisecond glide, so the ear hears one new tempo
+        // and the phase stays where it was. Walking to it with the trim is what a hand used to hear as a
+        // stutter — the ratio slides for a second, the phase slides with it, and the beat corrector fires seek
+        // after seek (owner's report, 2026-11-20).
+        let moved = (memory.asked_ratio[index] - planned.ratio).abs() > 1e-6;
+        memory.asked_ratio[index] = planned.ratio;
         if fresh || new_track {
             // The hand asked for this tempo, or the file under the deck changed: the deck goes to the
             // master's tempo in one piece.
             deck.set_tempo_ratio(planned.ratio);
+        } else if moved {
+            // The master moved: the deck takes the new tempo as a step, not as a walk.
+            deck.set_tempo(planned.ratio);
         } else {
             // Holding a tempo is another matter: the trim's travel is slow enough to be inaudible and
             // fast enough to land inside a bar.

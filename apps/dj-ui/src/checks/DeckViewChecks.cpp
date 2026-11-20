@@ -203,6 +203,48 @@ int runSyncCheck(QQmlApplicationEngine& engine, std::unique_ptr<BridgeClient>& b
     const double afterB = windowOf(stripB);
     const double heardAfter = heardOf(QStringLiteral("B"));
     const double wantedAfter = wantedWindow(stripB, heardAfter);
+
+    // And the tempo is taken in one step, not walked to. A master that moves is a follower that has to be at the
+    // new speed before the ear notices the old one: the deck's own glide is thirty milliseconds, so a quarter of
+    // a second is generous. A trim of four percent a second would need a second and a quarter for this jump, and
+    // while it walks, the phase walks too and the beat corrector fires seek after seek (owner's report,
+    // 2026-11-20).
+    const double heardBefore = heardOf(QStringLiteral("A"));
+    bridge->setTempo(QStringLiteral("A"), 1.09);
+    // The command is not the sound: the master has its own glide, and measuring the follower before the master
+    // has moved would compare a new setpoint with an old tempo and call it a step.
+    const bool masterMoved = waitFor(
+        [&]() { return heardOf(QStringLiteral("A")) > heardBefore * 1.02; }, 3000);
+    QElapsedTimer reach;
+    reach.start();
+    bool arrived = false;
+    double ratioB = 0.0;
+    double wantedRatio = 0.0;
+    while (reach.elapsed() < 250) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+        ratioB = deckOf(QStringLiteral("B")).value(QStringLiteral("tempo_ratio")).toDouble();
+        const double localB = deckOf(QStringLiteral("B")).value(QStringLiteral("local_bpm")).toDouble();
+        wantedRatio = localB > 0.0 ? heardOf(QStringLiteral("A")) / localB : 0.0;
+        if (wantedRatio > 0.0 && std::abs(ratioB - wantedRatio) <= wantedRatio * 0.001) {
+            arrived = true;
+            break;
+        }
+        QThread::msleep(2);
+    }
+    std::fprintf(stdout, "dj-ui: the follower reached ratio %.6f of %.6f in %lld ms\n", ratioB,
+                 wantedRatio, static_cast<long long>(reach.elapsed()));
+    if (!masterMoved) {
+        std::fprintf(stderr, "dj-ui: the master's tempo never moved, so nothing was measured\n");
+        return 1;
+    }
+    if (!arrived) {
+        std::fprintf(stderr,
+                     "dj-ui: the follower walked to the tempo instead of taking it (ratio %.6f of %.6f "
+                     "after %lld ms)\n",
+                     ratioB, wantedRatio, static_cast<long long>(reach.elapsed()));
+        return 1;
+    }
+    bridge->setTempo(QStringLiteral("A"), 1.05);
     std::fprintf(stdout, "dj-ui: at %.2f BPM the follower's strip shows %.3f s (was %.3f s, %.3f wanted)\n",
                  heardAfter, afterB, before, wantedAfter);
     bridge->setTempo(QStringLiteral("A"), 1.0);
