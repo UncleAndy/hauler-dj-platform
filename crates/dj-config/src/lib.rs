@@ -116,6 +116,51 @@ impl Default for AnalysisSettings {
     }
 }
 
+/// Where the headphones are and what they hear (owner's decisions, 20.11).
+///
+/// Monitoring always has an output of its own: a headphone signal mixed into the main output would be heard by the
+/// room, which is the one thing monitoring exists to avoid. So the choice is only *which* output it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeadphoneMode {
+    /// Four or more channels on the card: the pair beside the main one. Otherwise nothing, and the UI says so.
+    Auto,
+    /// A named pair of channels on the same card: the two stereo pairs a DJ controller carries.
+    SameDevice,
+    /// Another device altogether, opened as a second stream.
+    Device,
+}
+
+/// Headphone output: mode, pair, device, and the two knobs the mixer shows.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct HeadphoneSettings {
+    /// Which of the three arrangements is in force.
+    pub mode: HeadphoneMode,
+    /// Device name substring for [`HeadphoneMode::Device`]; `None` means the system default.
+    pub device: Option<String>,
+    /// Channel pair for [`HeadphoneMode::SameDevice`]; `None` takes the pair the route plan suggests (2/3).
+    pub pair: Option<(usize, usize)>,
+    /// Volume of the headphones, linear: 1.0 is unity.
+    pub gain: f32,
+    /// Proportion between monitoring and the main mix, 0.0 … 1.0: 1.0 is monitoring only.
+    pub mix: f32,
+}
+
+impl Default for HeadphoneSettings {
+    fn default() -> Self {
+        // Monitoring starts open and on the monitoring side: a DJ puts the headphones on to hear the cued deck,
+        // and the mix knob is there to bring the main mix in, not the other way round.
+        Self {
+            mode: HeadphoneMode::Auto,
+            device: None,
+            pair: None,
+            gain: 1.0,
+            mix: 1.0,
+        }
+    }
+}
+
 /// Output device and block size.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -128,6 +173,8 @@ pub struct AudioSettings {
     pub device: Option<String>,
     /// Prefetch window per deck, seconds.
     pub prefetch_seconds: f64,
+    /// Headphones: where they are and what they hear.
+    pub headphones: HeadphoneSettings,
 }
 
 impl Default for AudioSettings {
@@ -137,6 +184,7 @@ impl Default for AudioSettings {
             block_frames: 256,
             device: None,
             prefetch_seconds: 2.0,
+            headphones: HeadphoneSettings::default(),
         }
     }
 }
@@ -403,6 +451,26 @@ impl Config {
                 self.audio.prefetch_seconds
             )));
         }
+        let headphones = &self.audio.headphones;
+        if !headphones.gain.is_finite() || !(0.0..=2.0).contains(&headphones.gain) {
+            return Err(ConfigError::Invalid(format!(
+                "audio.headphones.gain {} is outside 0..=2",
+                headphones.gain
+            )));
+        }
+        if !headphones.mix.is_finite() || !(0.0..=1.0).contains(&headphones.mix) {
+            return Err(ConfigError::Invalid(format!(
+                "audio.headphones.mix {} is outside 0..=1",
+                headphones.mix
+            )));
+        }
+        if let Some((left, right)) = headphones.pair
+            && left == right
+        {
+            return Err(ConfigError::Invalid(format!(
+                "audio.headphones.pair ({left}, {right}) writes both sides to one channel"
+            )));
+        }
         if !(0.0..=600.0).contains(&self.loop_playback.buffer_max_seconds) {
             return Err(ConfigError::Invalid(format!(
                 "loop_playback.buffer_max_seconds {} is outside 0..=600",
@@ -513,6 +581,53 @@ mod tests {
         assert_eq!(config.display.state_hz, 20);
         assert_eq!(config.display.frame_hz, 20);
         config.validate().unwrap_or_else(|err| panic!("{err}"));
+    }
+
+    #[test]
+    fn headphones_are_settings_not_constants() {
+        // Owner's decisions of 20.11: monitoring is its own output, either another channel pair of the same
+        // card or another device. Nothing about it is a constant in the code.
+        let defaults = Config::default();
+        assert_eq!(defaults.audio.headphones.mode, HeadphoneMode::Auto);
+        assert_eq!(defaults.audio.headphones.gain, 1.0);
+        assert_eq!(defaults.audio.headphones.mix, 1.0);
+        assert!(defaults.audio.headphones.pair.is_none());
+        assert!(defaults.audio.headphones.device.is_none());
+
+        // What the owner set comes back unchanged.
+        let text = "[audio.headphones]\nmode = \"same_device\"\npair = [2, 3]\ngain = 0.75\nmix = 0.4\n";
+        let parsed: Config = toml::from_str(text).unwrap_or_else(|err| panic!("{err}"));
+        assert_eq!(parsed.audio.headphones.mode, HeadphoneMode::SameDevice);
+        assert_eq!(parsed.audio.headphones.pair, Some((2, 3)));
+        assert_eq!(parsed.audio.headphones.gain, 0.75);
+        assert_eq!(parsed.audio.headphones.mix, 0.4);
+
+        // A file written before monitoring existed still loads: the section is missing, not required.
+        let old: Config =
+            toml::from_str("[audio]\nblock_frames = 512\n").unwrap_or_else(|err| panic!("{err}"));
+        assert_eq!(old.audio.block_frames, 512);
+        assert_eq!(old.audio.headphones, HeadphoneSettings::default());
+    }
+
+    #[test]
+    fn headphone_values_out_of_range_are_refused() {
+        // A gain of NaN reaching the mixer is silence nobody can explain later, and a pair of the same channel
+        // twice is a route that writes the same bus to one output.
+        for (gain, mix, pair) in [
+            (f32::NAN, 1.0, None),
+            (2.5, 1.0, None),
+            (1.0, 1.5, None),
+            (1.0, 1.0, Some((3, 3))),
+        ] {
+            let mut config = Config::default();
+            config.audio.headphones.gain = gain;
+            config.audio.headphones.mix = mix;
+            config.audio.headphones.pair = pair;
+            assert!(
+                config.validate().is_err(),
+                "gain {gain}, mix {mix}, pair {pair:?} must be refused"
+            );
+        }
     }
 
     #[test]
