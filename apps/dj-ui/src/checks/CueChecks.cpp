@@ -89,6 +89,43 @@ int runCueCheck(QQmlApplicationEngine& engine, std::unique_ptr<BridgeClient>& br
         }
     }
 
+    // The two headphone knobs: present in the middle column, and wired to the engine.
+    auto* phones = checks::findItem(content, QStringLiteral("cueKnob_phones"));
+    auto* mix = checks::findItem(content, QStringLiteral("cueKnob_mix"));
+    if (phones == nullptr || mix == nullptr) {
+        std::fprintf(stderr, "dj-ui: the mixer has no headphone knobs\n");
+        return 1;
+    }
+    for (auto* knob : {phones, mix}) {
+        if (std::abs(knob->width() - knob->height()) > 1.0 || knob->width() < 16.0) {
+            std::fprintf(stderr, "dj-ui: a headphone knob is %.1f×%.1f; it must be a cap at least 16 px\n",
+                         knob->width(), knob->height());
+            return 1;
+        }
+    }
+    if (!QMetaObject::invokeMethod(phones, "ask", Q_ARG(QVariant, 0.25))) {
+        std::fprintf(stderr, "dj-ui: the headphone volume knob takes no value\n");
+        return 1;
+    }
+    if (!QMetaObject::invokeMethod(mix, "ask", Q_ARG(QVariant, 0.5))) {
+        std::fprintf(stderr, "dj-ui: the proportion knob takes no value\n");
+        return 1;
+    }
+    settle(700);
+    {
+        const QVariantMap headphones = bridge->snapshot().value(QStringLiteral("headphones")).toMap();
+        const double gain = headphones.value(QStringLiteral("gain")).toDouble();
+        const double proportion = headphones.value(QStringLiteral("mix")).toDouble();
+        if (std::abs(gain - 0.5) > 0.02 || std::abs(proportion - 0.5) > 0.02) {
+            std::fprintf(stderr,
+                         "dj-ui: the engine reports gain %.3f and proportion %.3f, wanted 0.5 and 0.5\n",
+                         gain, proportion);
+            return 1;
+        }
+        std::fprintf(stderr, "dj-ui: the headphone knobs reached the engine: gain %.2f, mix %.2f\n",
+                     gain, proportion);
+    }
+
     auto* first = checks::findItem(content, QStringLiteral("headphones_A"));
     if (!QMetaObject::invokeMethod(first, "toggle")) {
         std::fprintf(stderr, "dj-ui: the headphone button has no toggle\n");

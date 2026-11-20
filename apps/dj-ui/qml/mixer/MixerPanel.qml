@@ -51,6 +51,18 @@ Pane {
     // one height, master included: channel meters and the master end on one line at the bottom, and
     // that line is what makes a strip readable at a glance.
     readonly property real eqKnobSide: masterKnobSide
+    // The headphone knobs are smaller than the master: two of them and two captions share the column's width.
+    readonly property real cueKnobSide: Math.max(18, Math.round(masterKnobSide * 0.72))
+
+    /// The headphone value the engine published, by knob kind.
+    function headphoneValue(kind) {
+        const phones = Bridge.snapshot.headphones !== undefined ? Bridge.snapshot.headphones : null;
+        if (phones === null || phones === undefined) {
+            return kind === "phones" ? 1.0 : 1.0;
+        }
+        return kind === "phones" ? (phones.gain !== undefined ? phones.gain : 1.0)
+                                 : (phones.mix !== undefined ? phones.mix : 1.0);
+    }
     readonly property real eqLabelHeight: 11
     readonly property real eqStackHeight: 3 * (eqKnobSide + eqLabelHeight) + 2
     // The gain knob takes one more row of the same size, right under the deck's letter: it belongs
@@ -134,13 +146,51 @@ Pane {
                     diameter: mixer.eqKnobSide
                     gain: mixer.masterGain
                 }
+                // The two headphone knobs, under the master's, one above the other: the volume and the
+                // proportion between monitoring and the main mix (owner's decision, 20.11: "в центральной
+                // колонке под ручкой мастера, но вертикально"). They sit in the void the master's column
+                // already had, so nothing else moves and the column keeps its 48 px.
+                Column {
+                    id: phonesColumn
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.top: masterKnobItem.bottom
+                    anchors.topMargin: 4
+                    spacing: 2
+
+                    Repeater {
+                        model: [
+                            { kind: "phones", caption: qsTr("PHONES") },
+                            { kind: "mix", caption: qsTr("MIX") }
+                        ]
+
+                        delegate: Column {
+                            required property var modelData
+                            spacing: 0
+
+                            Text {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                text: parent.modelData.caption
+                                color: UiSettings.themeTextDim
+                                font.pixelSize: 8
+                            }
+
+                            CueKnob {
+                                kind: parent.modelData.kind
+                                caption: parent.modelData.caption
+                                value: mixer.headphoneValue(parent.modelData.kind)
+                                diameter: mixer.cueKnobSide
+                            }
+                        }
+                    }
+                }
+
                 // The two modes a DJ sets once for the set rather than per deck: snap (a loop point lands
                 // on the grid) and quantize (the loop's end is whole beats after its start). They stand in
                 // the void between the master's knob and its meter, centred on the knob, and the decks
                 // read them (owner's decision, 14.11).
                 ColumnLayout {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    anchors.top: masterKnobItem.bottom
+                    anchors.top: phonesColumn.bottom
                     anchors.topMargin: 6
                     spacing: 4
 
@@ -552,7 +602,6 @@ Pane {
                     width: 20
                     height: 20
                     colour: cueButton.lit ? UiSettings.themePanel : UiSettings.themeText
-                    stroke: 2
                 }
 
                 MouseArea {

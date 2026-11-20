@@ -1,0 +1,4 @@
+[env]
+PKG_CONFIG_PATH = { value = "/nix/store/aaf5r6wxkj6wg7psspqa68ls1z68dkqh-alsa-lib-1.2.15.3-dev/lib/pkgconfig:/nix/store/cibwkkqgygwh2hlf6nzyjd6yqcvb9xvk-pipewire-1.6.6-dev/lib/pkgconfig:/nix/store/f0lcjigadrvilgw2fprzdd96fw055q0b-openssl-3.6.5-dev/lib/pkgconfig", relative = false }
+LIBCLANG_PATH = { value = "/nix/store/3l38rh04ravq1igf7j6a6zwji9048z3f-clang-21.1.8-lib/lib", relative = false }
+BINDGEN_EXTRA_CLANG_ARGS = { value = "-isystem /nix/store/0bxwvycymkb9jxjgn5n4aq0w5gic42cn-glibc-2.42-103-dev/include", relative = false }
