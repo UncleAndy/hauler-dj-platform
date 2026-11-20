@@ -81,8 +81,11 @@ target_link_libraries(dj-ui PRIVATE Qt6::Quick Qt6::Network)
 target_compile_options(dj-ui PRIVATE -Wall -Wextra -Werror=format)
 
 
+# WIN32_EXECUTABLE ON is the Windows GUI subsystem: with it OFF the shell was a console program, and Windows gave
+# it a console window on every start — the "terminal" next to the player (owner's report, 2026-11-20). CMake
+# ignores this property outside Windows, and a build started from cmd still prints into that cmd's console.
 set_target_properties(dj-ui PROPERTIES
-    WIN32_EXECUTABLE OFF
+    WIN32_EXECUTABLE ON
     MACOSX_BUNDLE OFF
 )
 

@@ -9,6 +9,10 @@
 //!
 //! Commands are applied at their `effective_sample`, clamped to the current audio clock: a client
 //! that asks for the past gets now, never a silent no-op.
+// A release build on Windows is a windowed program: a console subsystem binary is given a console window on
+// startup, and that window was the "terminal" seen next to the player. Started from a console (the diagnostic
+// .bat), it still inherits that console and prints there — the flag only decides whether a new one is made.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
