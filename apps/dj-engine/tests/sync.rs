@@ -158,6 +158,59 @@ fn a_follower_takes_the_master_s_tempo() {
 }
 
 #[test]
+fn a_master_that_moves_is_taken_in_one_step() {
+    let seeks = Arc::new(AtomicU32::new(0));
+    let mut decks = vec![
+        deck_with_grid(DeckId::A, 128.0, 0, Arc::clone(&seeks)),
+        deck_with_grid(DeckId::B, 120.0, 0, Arc::clone(&seeks)),
+    ];
+    let mut mixer = mixer();
+    lock_b_to_a(&mut decks, &mut mixer);
+    let mut memory = SyncMemory::default();
+    for _ in 0..4 {
+        sync_step(&mut decks, &mut memory, STEP_SECONDS);
+    }
+    let settled = decks[1].tempo_ratio();
+    assert!(
+        (settled - 128.0 / 120.0).abs() < 1e-6,
+        "the follower did not settle on the master's tempo: {settled:.9}"
+    );
+
+    // The master's tempo moves by ten percent, the way a hand does it on the fader.
+    decks[0].set_tempo(1.10);
+    // The master is heard through its own ratio, which walks to the target inside its thirty-millisecond
+    // glide; the follower is asked for the new tempo at once and told in one piece — no trim, no walking.
+    let mut buffer = vec![0.0f32; 512];
+    decks[0].render(&mut buffer);
+    sync_step(&mut decks, &mut memory, STEP_SECONDS);
+    let asked = decks[1].tempo_target();
+    let wanted = settled * decks[0].tempo_ratio();
+    println!(
+        "after one step the follower was asked for {asked:.6}, the master runs at {:.6}",
+        decks[0].tempo_ratio()
+    );
+    assert!(
+        (asked - wanted).abs() < 2e-3,
+        "the follower was asked for {asked:.6} where the master runs at {wanted:.6}: it is walking there"
+    );
+
+    // And it is there at once: the ratio of the block that follows the step is the asked one, not a value
+    // walking towards it. A deck that still needs its thirty-millisecond glide is a deck heard as a slide.
+    let immediate = decks[1].tempo_ratio();
+    println!("in the same step the follower runs at {immediate:.6}");
+    assert!(
+        (immediate - asked).abs() < 1e-6,
+        "the follower runs at {immediate:.6} where it was asked for {asked:.6} — it is still gliding"
+    );
+    decks[1].render(&mut buffer);
+    let after_block = decks[1].tempo_ratio();
+    assert!(
+        (after_block - asked).abs() < 1e-6,
+        "the first block after the jump moved the ratio to {after_block:.6}"
+    );
+}
+
+#[test]
 fn beat_sync_puts_the_follower_on_the_master_s_beat() {
     let seeks = Arc::new(AtomicU32::new(0));
     let mut decks = vec![

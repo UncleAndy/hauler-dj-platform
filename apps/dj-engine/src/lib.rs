@@ -919,8 +919,10 @@ pub fn sync_step(decks: &mut [Deck], memory: &mut SyncMemory, seconds: f64) {
             // master's tempo in one piece.
             deck.set_tempo_ratio(planned.ratio);
         } else if moved {
-            // The master moved: the deck takes the new tempo as a step, not as a walk.
-            deck.set_tempo(planned.ratio);
+            // The master moved: the deck takes the new tempo in the same block, without its own thirty-
+            // millisecond glide. The resampler is sample-continuous and takes a jump; the owner hears the
+            // glide as a slide and asked for a step, twice (2026-11-20).
+            deck.set_tempo_ratio(planned.ratio);
         } else {
             // Holding a tempo is another matter: the trim's travel is slow enough to be inaudible and
             // fast enough to land inside a bar.
