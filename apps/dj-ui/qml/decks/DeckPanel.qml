@@ -1161,7 +1161,9 @@ Pane {
                 enabled: panel.track !== null
                 font.pixelSize: 11
                 Layout.preferredWidth: 24
-                Layout.preferredHeight: 18
+                // The pads stand in this row at 20 px: a lock two pixels shorter was a button of another make
+                // (owner's request, 2026-11-20).
+                Layout.preferredHeight: 20
                 ToolTip.visible: hovered
                 ToolTip.text: qsTr("Lock the grid: no measurement and no edit may move it")
                 onClicked: {
