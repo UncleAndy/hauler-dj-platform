@@ -122,21 +122,33 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
     }
     auto *root = window->contentItem();
 
-    QQuickItem *settingsWindow = named(root, QStringLiteral("settingsWindow"));
+    // The settings window is a modal popup, so it is not an item in the window's tree: the popup object holds the
+    // visibility and the methods, and its content item holds the rows.
+    QObject *settingsWindow = window->findChild<QObject *>(QStringLiteral("settingsWindow"));
     if (settingsWindow == nullptr) {
         std::fprintf(stderr, "dj-ui: there is no settings window in the shell\n");
         return 1;
     }
+    auto *content = qobject_cast<QQuickItem *>(settingsWindow->property("contentItem").value<QObject *>());
+    if (content == nullptr) {
+        std::fprintf(stderr, "dj-ui: the settings window has no content\n");
+        return 1;
+    }
+    const auto isOpen = [&settingsWindow] { return settingsWindow->property("visible").toBool(); };
+    const auto findInWindow = [&content](const QString &name) { return named(content, name); };
 
     QQuickItem *gear = named(root, QStringLiteral("settingsButton"));
     if (gear == nullptr) {
         std::fprintf(stderr, "dj-ui: there is no button that opens the settings window\n");
         return 1;
     }
-    if (!press(gear) || !settingsWindow->isVisible()) {
+    if (!press(gear) || !isOpen()) {
         std::fprintf(stderr, "dj-ui: the settings button did not open the window\n");
         return 1;
     }
+
+    // A popup lays its content out on the next turn of the loop, and a panel measured before that is a panel of no size.
+    settle(80);
 
     const QStringList sections = {
         QStringLiteral("sound"),    QStringLiteral("analysis"),    QStringLiteral("library"),
@@ -144,13 +156,13 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
         QStringLiteral("diagnostics"), QStringLiteral("about"),
     };
     for (const QString &key : sections) {
-        if (named(root, QStringLiteral("settingsSection_") + key) == nullptr) {
+        if (findInWindow(QStringLiteral("settingsSection_") + key) == nullptr) {
             std::fprintf(stderr, "dj-ui: the settings window has no %s section\n", qPrintable(key));
             return 1;
         }
     }
 
-    QQuickItem *panel = named(root, QStringLiteral("settingsPanel"));
+    QQuickItem *panel = findInWindow(QStringLiteral("settingsPanel"));
     if (panel == nullptr) {
         std::fprintf(stderr, "dj-ui: the settings window has no panel to measure\n");
         return 1;
@@ -169,15 +181,15 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
 
     // The list of sections is a margin, not a page: the parameters the DJ came for need the room (owner's report,
     // 21.11 — the buttons took the whole window and nothing could be set).
-    QQuickItem *nav = named(root, QStringLiteral("settingsNav"));
-    QQuickItem *content = named(root, QStringLiteral("settingsContent"));
-    if (nav == nullptr || content == nullptr) {
+    QQuickItem *nav = findInWindow(QStringLiteral("settingsNav"));
+    QQuickItem *pageArea = findInWindow(QStringLiteral("settingsContent"));
+    if (nav == nullptr || pageArea == nullptr) {
         std::fprintf(stderr, "dj-ui: the settings window has no list and no page to measure\n");
         return 1;
     }
     settle(60);
     const double navWidth = nav->width();
-    const double contentWidth = content->width();
+    const double contentWidth = pageArea->width();
     if (navWidth > 220.0 || contentWidth < panel->width() * 0.55) {
         std::fprintf(stderr,
                      "dj-ui: the sections take %.0f px of a %.0f px panel, leaving %.0f px for the settings\n",
@@ -188,7 +200,7 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
     // The device is chosen from the outputs the engine names, not typed: a text field where a list belongs is what the
     // owner saw on his own machine (report, 21.11).
     {
-        QQuickItem *deviceRow = named(root, QStringLiteral("settingRow_engine_audio_device"));
+        QQuickItem *deviceRow = findInWindow(QStringLiteral("settingRow_engine_audio_device"));
         if (deviceRow == nullptr) {
             std::fprintf(stderr, "dj-ui: the sound page has no device line\n");
             return 1;
@@ -233,14 +245,14 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
     // `device` names another interface. Where the interface has no spare pair the cue is off and both channels read
     // "None".
     {
-        QQuickItem *modeRow = named(root, QStringLiteral("settingRow_engine_audio_headphones_mode"));
-        QQuickItem *deviceRow = named(root, QStringLiteral("settingRow_engine_audio_headphones_device"));
-        QQuickItem *leftRow = named(root, QStringLiteral("settingRow_engine_audio_headphones_pair"));
+        QQuickItem *modeRow = findInWindow(QStringLiteral("settingRow_engine_audio_headphones_mode"));
+        QQuickItem *deviceRow = findInWindow(QStringLiteral("settingRow_engine_audio_headphones_device"));
+        QQuickItem *leftRow = findInWindow(QStringLiteral("settingRow_engine_audio_headphones_pair"));
         if (modeRow == nullptr || deviceRow == nullptr || leftRow == nullptr) {
             std::fprintf(stderr, "dj-ui: the sound page has no headphone lines\n");
             return 1;
         }
-        QQuickItem *mainRow = named(root, QStringLiteral("settingRow_engine_audio_master"));
+        QQuickItem *mainRow = findInWindow(QStringLiteral("settingRow_engine_audio_master"));
         if (mainRow == nullptr) {
             std::fprintf(stderr, "dj-ui: the sound page has no main channel line\n");
             return 1;
@@ -360,7 +372,7 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
 
         // The interface that carries the cue has its own check, and it answers about that device: the point of the line is
         // the second card, not a repeat of the first (owner's decision, 21.11).
-        QQuickItem *checkRow = named(root, QStringLiteral("settingRow_headphoneDeviceCheck"));
+        QQuickItem *checkRow = findInWindow(QStringLiteral("settingRow_headphoneDeviceCheck"));
         if (checkRow == nullptr) {
             std::fprintf(stderr, "dj-ui: the sound page has no check for the headphone device\n");
             return 1;
@@ -380,9 +392,9 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
 
     // A page that exists but shows nothing is the same complaint as a list that takes the window: the rows have to be
     // wide enough to read a name and reach a control (owner's report, 21.11).
-    if (press(named(root, QStringLiteral("settingsSection_interface")))) {
+    if (press(findInWindow(QStringLiteral("settingsSection_interface")))) {
         settle(60);
-        QQuickItem *row = named(root, QStringLiteral("settingRow_layout_waveformBeats"));
+        QQuickItem *row = findInWindow(QStringLiteral("settingRow_layout_waveformBeats"));
         if (row == nullptr) {
             std::fprintf(stderr, "dj-ui: the interface page has no rows\n");
             return 1;
@@ -396,14 +408,14 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
     }
 
     // Choosing a section has to move the page: a list that does nothing is a picture of a list.
-    QQuickItem *pages = named(root, QStringLiteral("settingsPages"));
+    QQuickItem *pages = findInWindow(QStringLiteral("settingsPages"));
     if (pages == nullptr) {
         std::fprintf(stderr, "dj-ui: the settings window has no pages\n");
         return 1;
     }
     int turned = 0;
     for (int index = 1; index < sections.size(); ++index) {
-        QQuickItem *button = named(root, QStringLiteral("settingsSection_") + sections.at(index));
+        QQuickItem *button = findInWindow(QStringLiteral("settingsSection_") + sections.at(index));
         if (!press(button)) {
             std::fprintf(stderr, "dj-ui: the %s section button does not answer a click\n",
                          qPrintable(sections.at(index)));
@@ -449,7 +461,7 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
 
     // The theme is a whole palette at a time, and the promise is that it outlives the window: it is written through
     // its own line, saved into layout.json with the arrangement, and read back by the loader that starts the shell.
-    QQuickItem *themeRow = named(root, QStringLiteral("settingRow_ui_themeSet"));
+    QQuickItem *themeRow = findInWindow(QStringLiteral("settingRow_ui_themeSet"));
     if (themeRow == nullptr) {
         std::fprintf(stderr, "dj-ui: the window has no theme line\n");
         return 1;
@@ -491,6 +503,71 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
         return 1;
     }
 
+    // The wheel over the window belongs to the window: a modal popup must not let it through to the waveform behind, which
+    // zoomed the deck under the DJ's hand (owner's report, 21.11).
+    {
+        auto *layoutState = engine.singletonInstance<QObject *>(QAnyStringView("DjPlatform.Ui"),
+                                                               QAnyStringView("LayoutState"));
+        // Any deck's strip will do: the question is whether the wheel reaches a waveform at all, not which one.
+        QQuickItem *hand = nullptr;
+        std::function<void(QQuickItem *)> findHand = [&](QQuickItem *node) {
+            if (hand == nullptr && node->objectName().startsWith(QStringLiteral("waveformHand_"))) {
+                hand = node;
+                return;
+            }
+            for (QQuickItem *child : node->childItems()) {
+                findHand(child);
+                if (hand != nullptr) {
+                    return;
+                }
+            }
+        };
+        findHand(root);
+        if (layoutState == nullptr || hand == nullptr) {
+            std::fprintf(stderr, "dj-ui: no waveform strip to send the wheel to\n");
+            return 1;
+        }        {
+            const double before = layoutState->property("waveformBeats").toDouble();
+            const QPointF centre = hand->mapToScene(QPointF(hand->width() / 2.0, hand->height() / 2.0));
+            const auto wheel = [&centre](QQuickWindow *target) {
+                QWheelEvent event(centre, target->mapToGlobal(centre.toPoint()), QPoint(0, 0), QPoint(0, 120),
+                                  Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+                QCoreApplication::sendEvent(target, &event);
+            };
+            wheel(window);
+            settle(40);
+            const double during = layoutState->property("waveformBeats").toDouble();
+            if (std::abs(during - before) > 1e-6) {
+                std::fprintf(stderr, "dj-ui: the wheel over the settings window zoomed the waveform: %.1f to %.1f\n",
+                             before, during);
+                return 1;
+            }
+            // And the probe is not vacuous: with the window closed the same event does zoom.
+            if (!press(named(root, QStringLiteral("settingsClose")))) {
+                std::fprintf(stderr, "dj-ui: the close button does not answer before the wheel probe\n");
+                return 1;
+            }
+            settle(60);
+            wheel(window);
+            settle(40);
+            const double after = layoutState->property("waveformBeats").toDouble();
+            if (std::abs(after - before) < 1e-6) {
+                std::fprintf(stderr, "dj-ui: the wheel did not reach the waveform at all, so the probe proves nothing\n");
+                return 1;
+            }
+            // Leave the layout as it was found, and open the window again for the rest of the check.
+            layoutState->setProperty("waveformBeats", before);
+            settle(20);
+            std::fprintf(stderr, "dj-ui: the wheel is blocked by the window (%.1f stayed) and reaches the strip without it\n",
+                         before);
+            if (!press(gear) || !isOpen()) {
+                std::fprintf(stderr, "dj-ui: the window did not reopen after the wheel probe\n");
+                return 1;
+            }
+            settle(40);
+        }
+    }
+
     // The file has to hold what the reader can read: a pair written as text stopped the engine from starting (owner's
     // report, 21.11), so the check looks at the bytes the window left behind.
     if (auto *model = engine.singletonInstance<QObject *>(QAnyStringView("DjPlatform.Ui"), QAnyStringView("Settings"))) {
@@ -512,7 +589,7 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
         }
     }
 
-    if (!press(named(root, QStringLiteral("settingsClose"))) || settingsWindow->isVisible()) {
+    if (!press(named(root, QStringLiteral("settingsClose"))) || isOpen()) {
         std::fprintf(stderr, "dj-ui: the settings window did not close\n");
         return 1;
     }

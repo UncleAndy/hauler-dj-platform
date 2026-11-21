@@ -44,9 +44,8 @@ ApplicationWindow {
     }
 
     // Over everything, under nothing: the settings window takes the whole application, whichever panel asked for it.
+    // A modal popup sizes itself over the overlay: no anchors and no z, both of which a Popup does not have.
     SettingsWindow {
         id: settingsWindow
-        anchors.fill: parent
-        z: 900
     }
 }

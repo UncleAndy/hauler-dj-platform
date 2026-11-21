@@ -9,30 +9,24 @@ import DjPlatform.Ui 1.0
 // it, and the control writes through that owner. Lines that only the engine reads are marked "after restart" — that
 // marker is part of the interface, not a footnote, because a switch that changes nothing until the next start has to
 // say so where it stands.
-Item {
+// A modal popup, not an overlay item: modality is what stops the mouse wheel over this window from reaching the
+// waveform behind it and zooming the deck under the DJ's hand (owner's report, 21.11).
+Popup {
     id: window
     objectName: "settingsWindow"
-    // The window covers the application, not the strip it was declared in: the gear stands in the global bar, and a
-    // panel filling a bar 30 px tall is a panel with no height at all.
-    anchors.fill: parent
-    visible: false
+    modal: true
+    focus: true
+    closePolicy: Popup.CloseOnEscape
+    anchors.centerIn: Overlay.overlay
+    width: Overlay.overlay ? Overlay.overlay.width : 0
+    height: Overlay.overlay ? Overlay.overlay.height : 0
+    padding: 0
 
     // The theme sets belong to UiSettings, which owns the palette; the model only routes writes.
     readonly property var themeNames: UiSettings.themeSets()
 
-    function open() {
-        window.visible = true;
-        window.forceActiveFocus();
-    }
-    function close() {
-        window.visible = false;
-    }
-
-    Keys.onEscapePressed: window.close()
-
-    // A dimmed field: the panels behind stay visible, so the DJ keeps his place.
-    Rectangle {
-        anchors.fill: parent
+    // A dimmed field: the panels behind stay visible, so the DJ keeps his place, and a click on it closes the window.
+    background: Rectangle {
         color: "#99000000"
         MouseArea {
             anchors.fill: parent
@@ -40,12 +34,13 @@ Item {
         }
     }
 
-    Rectangle {
-        id: panel
-        objectName: "settingsPanel"
-        anchors.centerIn: parent
-        width: Math.min(parent.width - 60, 820)
-        height: Math.min(parent.height - 60, 560)
+    contentItem: Item {
+        Rectangle {
+            id: panel
+            objectName: "settingsPanel"
+            anchors.centerIn: parent
+            width: Math.max(320, Math.min(parent.width - 60, 820))
+            height: Math.max(240, Math.min(parent.height - 60, 560))
         color: UiSettings.themeBackground
         border.color: UiSettings.themeTextDim
         border.width: 1
@@ -217,6 +212,7 @@ Item {
                     }
                 }
             }
+        }
         }
     }
 

@@ -460,6 +460,9 @@ Item {
 
             MouseArea {
                 id: hand
+                // Named for the checks: the wheel over the strip zooms it, and that is the thing the settings window has to
+                // stop while it is open.
+                objectName: "waveformHand_" + view.deckId
                 anchors.fill: parent
                 acceptedButtons: Qt.LeftButton
 
