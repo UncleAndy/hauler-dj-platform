@@ -13,11 +13,12 @@ use crate::smooth::OnePole;
 /// The stages: four is the classic number — fewer is a gentle sweep, more is a whoosh without notches.
 const STAGES: usize = 4;
 /// Where the sweep starts and how far it goes, in hertz.
-const LOW_HZ: f32 = 300.0;
-const HIGH_HZ: f32 = 2_000.0;
-/// The sweep's rate.
-const LFO_HZ: f32 = 0.3;
-/// Half and half: a phaser that is 100 % wet is a low-pass wobble, not a phaser.
+const LOW_HZ: f32 = 200.0;
+const HIGH_HZ: f32 = 3_000.0;
+/// The sweep's rate: a phaser is a slow movement, and a rate that grew with the knob turned it into a wobble —
+/// measured as a *smaller* level spread at the top of the travel than at three quarters of it (21.11).
+const LFO_HZ: f32 = 0.30;
+/// Half and half at the far end: a phaser that is 100 % wet is a low-pass wobble, not a phaser.
 const MIX: f32 = 0.5;
 
 /// A swept all-pass chain.
@@ -109,6 +110,12 @@ impl FxUnit for Phaser {
         }
         self.depth.advance(self.amount, frames);
         let depth = self.depth.value();
+        // Nothing of the effect at the bottom of the travel: the deck has to come back untouched.
+        if depth <= 0.0005 {
+            out[..samples].copy_from_slice(&input[..samples]);
+            return;
+        }
+        let mix = MIX * depth;
         // The corner is re-designed once a block: `sin`/`cos` on a block boundary, and never in the sample loop.
         let sweep = (self.phase * std::f32::consts::TAU).sin() * 0.5 + 0.5;
         let corner = LOW_HZ * (HIGH_HZ / LOW_HZ).powf(sweep * depth);
@@ -132,8 +139,8 @@ impl FxUnit for Phaser {
             if self.phase >= 1.0 {
                 self.phase -= 1.0;
             }
-            out[frame * 2] = left * (1.0 - MIX) + wet_left * MIX;
-            out[frame * 2 + 1] = right * (1.0 - MIX) + wet_right * MIX;
+            out[frame * 2] = left * (1.0 - mix) + wet_left * mix;
+            out[frame * 2 + 1] = right * (1.0 - mix) + wet_right * mix;
         }
     }
 }

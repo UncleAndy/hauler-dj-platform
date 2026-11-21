@@ -7,6 +7,12 @@
 //! Base and depth are the two numbers that make it sound like a flanger rather than a chorus or a vibrato: 1.5 ms
 //! is inside the range where the comb sits in the audible band, and 7 ms of travel is a wide sweep without
 //! turning into a pitch wobble.
+//!
+//! What the knob does — and the owner's report of 21.11 is why all four happen together: turning the knob barely
+//! changed the sound when only the depth moved. The amount now drives **depth, feedback, speed and the share of the
+//! effect in the mix**, from nothing at the bottom of the travel to a full sweep at the top. At the bottom the deck
+//! comes through untouched; a mix that stayed at half with a still comb made the low half of the knob sound like a
+//! slightly different deck rather than like an effect.
 
 use crate::FxUnit;
 use crate::delay::DelayLine;
@@ -16,11 +22,12 @@ use crate::smooth::OnePole;
 const BASE_SECONDS: f32 = 0.0015;
 /// How far the sweep moves from there at the far end of the knob.
 const DEPTH_SECONDS: f32 = 0.007;
-/// The sweep's rate: slow enough to hear the comb move, fast enough to be a movement.
-const LFO_HZ: f32 = 0.25;
+/// The sweep's rate at the bottom and at the top of the knob.
+const LFO_HZ_MIN: f32 = 0.15;
+const LFO_HZ_MAX: f32 = 0.75;
 /// Feedback at the far end of the knob.
-const FEEDBACK: f32 = 0.4;
-/// How much of the effect is in the mix: a flanger is a half-and-half effect by nature.
+const FEEDBACK: f32 = 0.45;
+/// How much of the effect is in the mix at the far end: a flanger is a half-and-half effect by nature.
 const MIX: f32 = 0.5;
 const BUFFER_SECONDS: f32 = 0.05;
 
@@ -72,7 +79,7 @@ impl FxUnit for Flanger {
             48_000.0
         };
         self.delay.prepare(self.rate, BUFFER_SECONDS);
-        self.phase_step = LFO_HZ / self.rate;
+        self.phase_step = LFO_HZ_MIN / self.rate;
         self.depth.set_time(self.rate, 0.020);
         self.depth.reset(self.amount);
         self.feedback.set_time(self.rate, 0.020);
@@ -98,6 +105,19 @@ impl FxUnit for Flanger {
         self.feedback.advance(feedback_target, frames);
         let depth = self.depth.value();
         let feedback = self.feedback.value();
+        // The sweep speeds up with the knob too: a slow still-ish comb at the bottom reads as "no effect" even when
+        // the depth is there.
+        self.phase_step = (LFO_HZ_MIN + (LFO_HZ_MAX - LFO_HZ_MIN) * depth) / self.rate;
+        // Nothing of the effect at the bottom of the travel: the deck has to come back untouched.
+        if depth <= 0.0005 {
+            out[..samples].copy_from_slice(&input[..samples]);
+            // The delay still takes material, so switching on has something to read.
+            for frame in 0..samples / 2 {
+                self.delay.push(input[frame * 2], input[frame * 2 + 1]);
+            }
+            return;
+        }
+        let mix = MIX * depth;
 
         let capacity = self.delay.capacity();
         for frame in 0..samples / 2 {
@@ -118,8 +138,8 @@ impl FxUnit for Flanger {
                 left + delayed_left * feedback,
                 right + delayed_right * feedback,
             );
-            out[frame * 2] = left * (1.0 - MIX) + delayed_left * MIX;
-            out[frame * 2 + 1] = right * (1.0 - MIX) + delayed_right * MIX;
+            out[frame * 2] = left * (1.0 - mix) + delayed_left * mix;
+            out[frame * 2 + 1] = right * (1.0 - mix) + delayed_right * mix;
         }
     }
 }
