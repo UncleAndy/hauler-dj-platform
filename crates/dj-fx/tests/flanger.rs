@@ -47,19 +47,27 @@ fn the_comb_moves() {
 
 #[test]
 fn every_step_of_the_knob_is_audible() {
-    // The owner's report of 21.11: turning the knob barely changed the sound. Each quarter of the travel has to be
-    // measurably stronger than the one before it, not only the last one.
-    let mut previous = envelope_spread_db(&run(0.0, 2_000.0), 2_400);
-    for amount in [0.25, 0.5, 0.75, 1.0] {
+    // Two reports from the owner shaped this ladder (21.11): first the travel was too narrow, then its left half was
+    // silent. Measured spreads with the square-root curve, in decibels: 0,05 → 2,1 · 0,1 → 3,1 · 0,25 → 5,6 ·
+    // 0,5 → 8,8 · 0,75 → 11,9 · 1,0 → 14,4. The floors below are those numbers with room for a different tone, and
+    // the ladder may flatten out at the top — an effect cannot grow forever — but it must never fall back.
+    let mut previous = 0.0;
+    for (amount, floor) in [
+        (0.1, 2.5),
+        (0.25, 4.5),
+        (0.5, 7.5),
+        (0.75, 11.0),
+        (1.0, 13.0),
+    ] {
         let spread = envelope_spread_db(&run(amount, 2_000.0), 2_400);
         assert!(
-            spread > previous + 0.5,
-            "at {amount} the effect is {spread:.2} dB of spread, barely more than {previous:.2} at the step before"
+            spread >= floor,
+            "at {amount} the effect is only {spread:.2} dB, wanted {floor}"
+        );
+        assert!(
+            spread >= previous - 0.3,
+            "the effect fell back at {amount}: {spread:.2} dB after {previous:.2}"
         );
         previous = spread;
     }
-    assert!(
-        previous > 4.0,
-        "the far end of the travel is only {previous:.2} dB"
-    );
 }

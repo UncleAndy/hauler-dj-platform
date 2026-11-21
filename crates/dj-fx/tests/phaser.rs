@@ -50,13 +50,25 @@ fn the_notches_move_and_the_level_holds() {
 
 #[test]
 fn every_step_of_the_knob_is_audible() {
-    // Same report as the flanger's: the travel has to be heard step by step.
-    let mut previous = envelope_spread_db(&run(0.0, 800.0), 2_400);
-    for amount in [0.25, 0.5, 0.75, 1.0] {
+    // The same ladder for the phaser (owner's report, 21.11: the left half of the knob changed nothing). Measured:
+    // 0,05 → 1,8 · 0,1 → 2,6 · 0,25 → 5,8 · 0,5 → 10,4 · 0,75 → 13,5 · 1,0 → 13,7. The top flattens out — the share
+    // of the effect is capped at half, which is what a phaser is — and that is allowed; falling back is not.
+    let mut previous = 0.0;
+    for (amount, floor) in [
+        (0.1, 2.0),
+        (0.25, 5.0),
+        (0.5, 9.0),
+        (0.75, 12.5),
+        (1.0, 12.5),
+    ] {
         let spread = envelope_spread_db(&run(amount, 800.0), 2_400);
         assert!(
-            spread > previous + 0.3,
-            "at {amount} the effect is {spread:.2} dB of spread, barely more than {previous:.2} at the step before"
+            spread >= floor,
+            "at {amount} the effect is only {spread:.2} dB, wanted {floor}"
+        );
+        assert!(
+            spread >= previous - 0.3,
+            "the effect fell back at {amount}: {spread:.2} dB after {previous:.2}"
         );
         previous = spread;
     }

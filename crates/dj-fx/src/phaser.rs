@@ -16,8 +16,9 @@ const STAGES: usize = 4;
 const LOW_HZ: f32 = 200.0;
 const HIGH_HZ: f32 = 3_000.0;
 /// The sweep's rate: a phaser is a slow movement, and a rate that grew with the knob turned it into a wobble —
-/// measured as a *smaller* level spread at the top of the travel than at three quarters of it (21.11).
-const LFO_HZ: f32 = 0.30;
+/// measured as a *smaller* level spread at the top of the travel than at three quarters of it (21.11). It is fast
+/// enough (0.45 Hz) that the lower half of the knob is visibly moving rather than standing still.
+const LFO_HZ: f32 = 0.45;
 /// Half and half at the far end: a phaser that is 100 % wet is a low-pass wobble, not a phaser.
 const MIX: f32 = 0.5;
 
@@ -108,7 +109,10 @@ impl FxUnit for Phaser {
         if samples == 0 {
             return;
         }
-        self.depth.advance(self.amount, frames);
+        // `sqrt`, as in the flanger: half a turn is seventy per cent of the effect, so the left half of the travel is
+        // audible at all (owner's report, 21.11).
+        let strength = self.amount.max(0.0).sqrt();
+        self.depth.advance(strength, frames);
         let depth = self.depth.value();
         // Nothing of the effect at the bottom of the travel: the deck has to come back untouched.
         if depth <= 0.0005 {
