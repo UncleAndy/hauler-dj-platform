@@ -51,12 +51,21 @@ pub fn capture_panics() {
 }
 
 pub fn init() {
-    let level = match std::env::var("HAULER_LOG")
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase()
-        .as_str()
-    {
+    init_with(None);
+}
+
+/// Same, with the level the settings file asks for.
+///
+/// The variable wins: a shell that sets `HAULER_LOG` for one run is doing something deliberate, and the file is the
+/// standing choice. Passing the level in rather than writing it into the environment keeps this crate free of
+/// `unsafe`, which the workspace forbids outright.
+pub fn init_with(fallback: Option<&str>) {
+    let requested = std::env::var("HAULER_LOG")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| fallback.map(str::to_string))
+        .unwrap_or_default();
+    let level = match requested.trim().to_ascii_lowercase().as_str() {
         "error" => Level::Error,
         "warn" | "warning" => Level::Warn,
         "debug" => Level::Debug,

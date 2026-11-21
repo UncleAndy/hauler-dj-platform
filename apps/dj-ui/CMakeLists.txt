@@ -33,6 +33,10 @@ qt_add_executable(dj-ui
     src/checks/DeckViewChecks.cpp
         src/checks/CueChecks.cpp
     src/checks/FxChecks.cpp
+    src/EngineSettings.cpp
+    src/EngineSettings.h
+    src/SettingsModel.cpp
+    src/SettingsModel.h
     src/checks/BrowserChecks.cpp
     src/checks/LibraryChecks.cpp
     src/checks/PlaylistChecks.cpp

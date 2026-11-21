@@ -11,6 +11,9 @@ authors.workspace = true
 dj-paths = { path = "../dj-paths" }
 serde.workspace = true
 toml.workspace = true
+# Editing a settings file in place: unknown keys, their order and the comments around them survive a change of one
+# value. `toml` only round-trips the values it knows.
+toml_edit = "0.25"
 
 [lints]
 workspace = true

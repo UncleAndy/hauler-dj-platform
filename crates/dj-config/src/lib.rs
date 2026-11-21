@@ -286,6 +286,12 @@ pub struct DiagnosticsSettings {
     pub stall_threshold_us: u32,
     /// A block costing more than this share of the period is recorded as expensive.
     pub expensive_threshold_percent: f64,
+    /// How much the logs say: `error`, `warn`, `info`, `debug` or `trace`.
+    ///
+    /// `None` keeps the engine's own default; a value here is used only when `HAULER_LOG` is not set, so a shell that
+    /// sets the variable for one run still wins over the file.
+    #[serde(default)]
+    pub log_level: Option<String>,
 }
 
 impl Default for DiagnosticsSettings {
@@ -295,6 +301,21 @@ impl Default for DiagnosticsSettings {
             early_threshold_periods: 0.5,
             stall_threshold_us: 500,
             expensive_threshold_percent: 1.0,
+            log_level: None,
+        }
+    }
+}
+
+impl DiagnosticsSettings {
+    /// The level the file asks for, when it names one the logger understands.
+    ///
+    /// A typo must not silence the log: an unknown word reads as "nothing was asked for", and the engine keeps its
+    /// own default.
+    pub fn level(&self) -> Option<&str> {
+        let level = self.log_level.as_deref()?;
+        match level {
+            "error" | "warn" | "info" | "debug" | "trace" => Some(level),
+            _ => None,
         }
     }
 }
@@ -354,6 +375,83 @@ pub enum ConfigError {
     Parse(String),
     /// A value is outside the range the application can honour.
     Invalid(String),
+}
+
+/// Change one value of a settings file, leaving everything else exactly as it stood.
+///
+/// The settings file is written by hand as much as by the shell: it carries comments that explain why a number is
+/// what it is, and keys a newer build added. Re-serialising the typed [`Config`] would keep the values and lose both,
+/// so the file is edited as a document: the key is looked up by its dotted path (`audio.block_frames`), the value is
+/// replaced where it stands, and a key that is not there yet is created inside its table.
+///
+/// `value` is TOML text on purpose — the caller writes `512`, `"s4"` or `true` and the editor parses it, so a typed
+/// wrapper cannot silently write an integer where the file wants a string.
+pub fn set_value(path: &std::path::Path, key: &str, value: &str) -> Result<(), ConfigError> {
+    let parsed: toml_edit::Value = value
+        .parse()
+        .map_err(|_| ConfigError::Invalid(format!("{value} is not a value TOML understands")))?;
+    write_value(path, key, parsed)
+}
+
+/// Set one value that is a string, taken literally.
+///
+/// The shell has a QString and no business knowing how TOML quotes and escapes one: this takes the text as it is and
+/// lets the document format it, so a device name with a quote in it cannot break the file.
+pub fn set_string(path: &std::path::Path, key: &str, text: &str) -> Result<(), ConfigError> {
+    write_value(path, key, toml_edit::Value::from(text))
+}
+
+fn write_value(path: &std::path::Path, key: &str, value: toml_edit::Value) -> Result<(), ConfigError> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(ConfigError::Io(error.to_string())),
+    };
+    let mut document: toml_edit::DocumentMut =
+        text.parse().map_err(|error: toml_edit::TomlError| ConfigError::Parse(error.to_string()))?;
+
+    let parts: Vec<&str> = key.split('.').collect();
+    let (leaf, tables) = match parts.split_last() {
+        Some(pair) => pair,
+        None => return Err(ConfigError::Invalid(String::from("an empty key names nothing"))),
+    };
+    let mut table = document.as_table_mut();
+    for name in tables {
+        if !table.contains_key(name) {
+            table.insert(name, toml_edit::Item::Table(toml_edit::Table::new()));
+        }
+        table = table
+            .get_mut(name)
+            .and_then(|item| item.as_table_mut())
+            .ok_or_else(|| ConfigError::Invalid(format!("{name} is not a table in {key}")))?;
+    }
+    table.insert(leaf, toml_edit::Item::Value(value));
+
+    // A settings file may not exist yet — that is the normal state of a fresh install, and the first change the
+    // window makes is what creates it.
+    if let Some(folder) = path.parent().filter(|folder| !folder.as_os_str().is_empty()) {
+        std::fs::create_dir_all(folder).map_err(|error| ConfigError::Io(error.to_string()))?;
+    }
+    std::fs::write(path, document.to_string()).map_err(|error| ConfigError::Io(error.to_string()))
+}
+
+/// Read one value of a settings file as TOML text, for a shell that shows what the engine will read.
+pub fn get_value(path: &std::path::Path, key: &str) -> Result<Option<String>, ConfigError> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(ConfigError::Io(error.to_string())),
+    };
+    let document: toml_edit::DocumentMut =
+        text.parse().map_err(|error: toml_edit::TomlError| ConfigError::Parse(error.to_string()))?;
+    let mut item: &toml_edit::Item = document.as_item();
+    for name in key.split('.') {
+        let Some(next) = item.get(name) else {
+            return Ok(None);
+        };
+        item = next;
+    }
+    Ok(Some(item.to_string().trim().to_string()))
 }
 
 impl std::fmt::Display for ConfigError {

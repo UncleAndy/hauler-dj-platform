@@ -157,11 +157,105 @@ impl DeckSource for ToneSource {
 /// The lock is taken by the publisher thread and by client threads, never by the render thread.
 type Subscribers = Arc<Mutex<Vec<Sender<ServerMessage>>>>;
 
+/// Set or read one value of the settings file, then leave.
+///
+/// The shell edits the same file the engine reads, and the editing has to keep comments and keys this build does not
+/// know — which is a document edit, not a serialisation. It lives here, next to `dj-config`, and the shell calls it
+/// with this one flag rather than keeping a second TOML writer of its own.
+fn settings_request(argv: &[String]) -> Option<std::process::ExitCode> {
+    let mut path: Option<String> = None;
+    let mut set: Option<String> = None;
+    let mut set_text: Option<String> = None;
+    let mut get: Option<String> = None;
+    let mut arguments = argv.iter();
+    while let Some(argument) = arguments.next() {
+        match argument.as_str() {
+            "--settings" => path = arguments.next().cloned(),
+            "--set-config" => set = arguments.next().cloned(),
+            "--set-config-string" => set_text = arguments.next().cloned(),
+            "--get-config" => get = arguments.next().cloned(),
+            _ => {}
+        }
+    }
+    if set.is_none() && set_text.is_none() && get.is_none() {
+        return None;
+    }
+    let file = match path.map(std::path::PathBuf::from).or_else(dj_config::Config::default_path) {
+        Some(file) => file,
+        None => {
+            eprintln!("dj-engine: there is no settings file to write on this system");
+            return Some(std::process::ExitCode::from(2));
+        }
+    };
+    if let Some(pair) = set_text {
+        let Some((key, value)) = pair.split_once('=') else {
+            eprintln!("dj-engine: --set-config-string wants key=value, got {pair}");
+            return Some(std::process::ExitCode::from(2));
+        };
+        return match dj_config::set_string(&file, key.trim(), value) {
+            Ok(()) => {
+                println!("{}", file.display());
+                Some(std::process::ExitCode::SUCCESS)
+            }
+            Err(error) => {
+                eprintln!("dj-engine: {error}");
+                Some(std::process::ExitCode::from(2))
+            }
+        };
+    }
+    if let Some(pair) = set {
+        let Some((key, value)) = pair.split_once('=') else {
+            eprintln!("dj-engine: --set-config wants key=value, got {pair}");
+            return Some(std::process::ExitCode::from(2));
+        };
+        match dj_config::set_value(&file, key.trim(), value.trim()) {
+            Ok(()) => {
+                println!("{}", file.display());
+                Some(std::process::ExitCode::SUCCESS)
+            }
+            Err(error) => {
+                eprintln!("dj-engine: {error}");
+                Some(std::process::ExitCode::from(2))
+            }
+        }
+    } else {
+        match dj_config::get_value(&file, get.unwrap_or_default().trim()) {
+            Ok(Some(value)) => {
+                println!("{value}");
+                Some(std::process::ExitCode::SUCCESS)
+            }
+            Ok(None) => Some(std::process::ExitCode::from(3)),
+            Err(error) => {
+                eprintln!("dj-engine: {error}");
+                Some(std::process::ExitCode::from(2))
+            }
+        }
+    }
+}
+
 fn main() -> std::process::ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
+    // A settings edit is not a run: it answers and leaves before the logger, the index or the audio device.
+    if let Some(exit) = settings_request(&argv) {
+        return exit;
+    }
     // Before anything else: the level, then the environment. A report that names the file, the folders and the
     // switches is what tells two installations apart when a fix seems not to have arrived.
-    dj_engine::log::init();
+    // The level can be asked for in the settings file; `HAULER_LOG` still wins when it is set.
+    let mut settings_path: Option<String> = None;
+    let mut arguments = argv.iter();
+    while let Some(argument) = arguments.next() {
+        if argument == "--settings" {
+            settings_path = arguments.next().cloned();
+            break;
+        }
+    }
+    let file_level = settings_path
+        .as_deref()
+        .map(std::path::Path::new)
+        .and_then(|path| dj_config::Config::load_or_default(Some(path)).ok())
+        .and_then(|(config, _used)| config.diagnostics.level().map(str::to_string));
+    dj_engine::log::init_with(file_level.as_deref());
     dj_engine::log::capture_panics();
     dj_engine::log::startup_report(&argv);
     // The writer brings the database up to the current schema, once, at start. A reader no longer does

@@ -2,7 +2,9 @@
 #include "Scenarios.h"
 #include "UiSettings.h"
 #include "LayoutSettings.h"
+#include "EngineSettings.h"
 #include "SessionState.h"
+#include "SettingsModel.h"
 #include "Waveform.h"
 #include "WaveformItem.h"
 #include "WaveformPainter.h"
@@ -481,6 +483,14 @@ int main(int argc, char *argv[])
         QStringLiteral("Press the named crossfader law's button and exit: the session file has to carry the "
                        "choice afterwards."),
         QStringLiteral("law"));
+    const QCommandLineOption settingsFileOption(
+        QStringLiteral("settings-file"),
+        QStringLiteral("The engine's settings file (config.toml). Defaults to the one the engine reads."),
+        QStringLiteral("path"));
+    const QCommandLineOption settingsCheckOption(
+        QStringLiteral("settings-check"),
+        QStringLiteral("Write one engine value and one layout value through the settings model, read them back and "
+                       "exit: the round trip the settings window depends on."));
     const QCommandLineOption fxPickOption(
         QStringLiteral("fx-pick"),
         QStringLiteral("Press the named unit in deck A's effect chooser and exit: the session file has to carry it "
@@ -655,6 +665,8 @@ int main(int argc, char *argv[])
     parser.addOption(collectionRootOption);
     parser.addOption(curvePersistCheckOption);
     parser.addOption(curvePickOption);
+    parser.addOption(settingsFileOption);
+    parser.addOption(settingsCheckOption);
     parser.addOption(fxPickOption);
     parser.addOption(fxPersistCheckOption);
     parser.addOption(cueCheckOption);
@@ -905,6 +917,10 @@ int main(int argc, char *argv[])
             return 2;
         }
     }
+    EngineSettings engineSettings(parser.value(settingsFileOption));
+    SettingsModel settingsModel(layout, settings, session, engineSettings);
+
+    qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "Settings", &settingsModel);
     qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "UiSettings", &settings);
     // Not "Layout": that name belongs to QtQuick.Layouts' attached property.
     qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "LayoutState", &layout);
@@ -1686,6 +1702,47 @@ int main(int argc, char *argv[])
             return 1;
         }
         std::fprintf(stderr, "dj-ui: the effect of deck A survived the restart: %s\n", qPrintable(playing));
+        return 0;
+    }
+
+    if (parser.isSet(settingsCheckOption)) {
+        // Two owners, two files: the engine's TOML and the shell's layout. The point of the check is that a value goes
+        // in and comes back through the same door the window will use.
+        const bool stored = settingsModel.set(QStringLiteral("engine:audio.block_frames"), 512);
+        const QVariant block = settingsModel.value(QStringLiteral("engine:audio.block_frames"));
+        const bool layoutStored = settingsModel.set(QStringLiteral("layout:waveformBeats"), 32.0);
+        const QVariant beats = settingsModel.value(QStringLiteral("layout:waveformBeats"));
+        if (!stored || block.toInt() != 512) {
+            std::fprintf(stderr, "dj-ui: the engine value did not come back: stored %d, read \"%s\"\n", stored,
+                         qPrintable(block.toString()));
+            return 1;
+        }
+        if (!layoutStored || std::abs(beats.toDouble() - 32.0) > 1e-6) {
+            std::fprintf(stderr, "dj-ui: the layout value did not come back: stored %d, read \"%s\"\n",
+                         layoutStored, qPrintable(beats.toString()));
+            return 1;
+        }
+        // In memory is not saved: the shell writes the layout on a timer, and a check that exits before the timer
+        // fires would pass on a value the next run never sees.
+        if (!layout.save()) {
+            std::fprintf(stderr, "dj-ui: the layout refused to be saved\n");
+            return 1;
+        }
+        QFile layoutFile(layout.file());
+        if (!layoutFile.open(QIODevice::ReadOnly)) {
+            std::fprintf(stderr, "dj-ui: the layout file is not there: %s\n", qPrintable(layout.file()));
+            return 1;
+        }
+        const QString saved = QString::fromUtf8(layoutFile.readAll());
+        if (!saved.contains(QStringLiteral("\"waveform_beats\": 32"))
+            && !saved.contains(QStringLiteral("\"waveform_beats\":32"))) {
+            std::fprintf(stderr, "dj-ui: the layout file does not carry the value: %s\n", qPrintable(saved.left(400)));
+            return 1;
+        }
+        std::fprintf(stderr, "dj-ui: the engine value went in and came back: block frames %d\n", block.toInt());
+        std::fprintf(stderr, "dj-ui: the layout value was written to the file: waveform beats %.0f\n",
+                     beats.toDouble());
+        std::fprintf(stderr, "dj-ui: all cases passed\n");
         return 0;
     }
 
