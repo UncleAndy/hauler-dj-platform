@@ -23,6 +23,15 @@ Item {
     property real to: 1
     property int decimals: 2
     property bool restart: Settings ? Settings.needsRestart(path) : false
+    // A line that only makes sense under one setting of another line: the headphone device is chosen by name only in
+    // the "device" mode, and in the other modes the engine picks it. The control stays visible and locked — hiding it
+    // would leave the DJ wondering where the device went (owner's report, 21.11).
+    property string gatePath: ""
+    property var gateValues: []
+    // The gate's value is read in reload(), not inside the binding: a binding cannot see the inside of an invokable, so
+    // `Settings.value()` in a binding would answer once and never again — and the line stayed locked in every mode.
+    property string gateValue: ""
+    readonly property bool open: row.gatePath === "" ? true : row.gateValues.indexOf(row.gateValue) >= 0
     // A list of numbers: the file holds `48000`, and a control that carried the text would write it as a string the
     // engine then refuses to read.
     property bool numeric: false
@@ -63,6 +72,9 @@ Item {
         if (row.path !== "") {
             row.current = Settings.value(row.path);
         }
+        if (row.gatePath !== "") {
+            row.gateValue = String(Settings.value(row.gatePath));
+        }
     }
 
     function write(value) {
@@ -88,7 +100,7 @@ Item {
         Label {
             Layout.preferredWidth: 200
             text: row.label
-            color: UiSettings.themeText
+            color: row.open ? UiSettings.themeText : UiSettings.themeTextDim
             font.pixelSize: 11
             elide: Text.ElideRight
         }
@@ -96,6 +108,7 @@ Item {
         // A switch, for what is on or off.
         Switch {
             visible: row.kind === "switch"
+            enabled: row.open
             Layout.preferredWidth: 60
             checked: row.current === true
             onToggled: row.write(checked)
@@ -105,6 +118,7 @@ Item {
         ComboBox {
             id: choice
             visible: row.asList
+            enabled: row.open
             Layout.fillWidth: true
             Layout.maximumWidth: 320
             model: row.offered
@@ -116,6 +130,7 @@ Item {
         // A slider for a share between two ends, with the number beside it.
         Slider {
             visible: row.kind === "slider"
+            enabled: row.open
             Layout.fillWidth: true
             Layout.maximumWidth: 220
             from: row.from
@@ -136,6 +151,7 @@ Item {
 
         SpinBox {
             visible: row.kind === "number"
+            enabled: row.open
             Layout.preferredWidth: 120
             from: Math.round(row.from)
             to: Math.round(row.to)
@@ -147,6 +163,7 @@ Item {
         // A device the engine is asked about before the DJ commits a name to a file read at start.
         Button {
             visible: row.kind === "check"
+            enabled: row.open
             text: qsTr("Check")
             font.pixelSize: 10
             padding: 3
@@ -164,6 +181,7 @@ Item {
 
         TextField {
             visible: row.kind === "text" || (row.kind === "device" && !row.asList)
+            enabled: row.open
             Layout.fillWidth: true
             Layout.maximumWidth: 300
             font.pixelSize: 11
@@ -176,9 +194,11 @@ Item {
             Layout.fillWidth: true
             // Why a device is typed rather than chosen: the engine could not be asked, and saying so is better than a
             // list that silently is not one.
-            text: row.restart
-                  ? qsTr("after restart")
-                  : (row.kind === "device" && !row.asList ? qsTr("the engine named no outputs; type the name") : "")
+            text: !row.open
+                  ? qsTr("chosen by the mode")
+                  : (row.restart
+                     ? qsTr("after restart")
+                     : (row.kind === "device" && !row.asList ? qsTr("the engine named no outputs; type the name") : ""))
             color: UiSettings.themeTextDim
             font.pixelSize: 9
             elide: Text.ElideRight

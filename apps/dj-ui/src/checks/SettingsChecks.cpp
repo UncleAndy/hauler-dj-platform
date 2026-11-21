@@ -185,6 +185,51 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
         }
     }
 
+    // The headphone device is the same list, locked by the mode: only "device" lets the DJ name it, and a locked line
+    // has to say whose choice it is.
+    {
+        QQuickItem *modeRow = named(root, QStringLiteral("settingRow_engine_audio_headphones_mode"));
+        QQuickItem *headphoneRow = named(root, QStringLiteral("settingRow_engine_audio_headphones_device"));
+        if (modeRow == nullptr || headphoneRow == nullptr) {
+            std::fprintf(stderr, "dj-ui: the sound page has no headphone lines\n");
+            return 1;
+        }
+        const QStringList devices = Settings_devices(engine);
+        if (!devices.isEmpty()) {
+            const QVariantList offered = headphoneRow->property("offered").toList();
+            if (offered.size() < devices.size()) {
+                std::fprintf(stderr, "dj-ui: the headphone line offers %lld of %lld outputs\n",
+                             static_cast<long long>(offered.size()), static_cast<long long>(devices.size()));
+                return 1;
+            }
+        }
+        // Locked in "auto": the engine picks, and the line must not pretend otherwise.
+        if (!QMetaObject::invokeMethod(modeRow, "write", Q_ARG(QVariant, QVariant(QStringLiteral("auto"))))) {
+            std::fprintf(stderr, "dj-ui: the headphone mode line refused to change\n");
+            return 1;
+        }
+        settle(40);
+        if (headphoneRow->property("open").toBool()) {
+            std::fprintf(stderr, "dj-ui: the headphone device is open while the mode is auto\n");
+            return 1;
+        }
+        // Open in "device": the name is the DJ's to choose.
+        if (!QMetaObject::invokeMethod(modeRow, "write", Q_ARG(QVariant, QVariant(QStringLiteral("device"))))) {
+            std::fprintf(stderr, "dj-ui: the headphone mode line refused the device mode\n");
+            return 1;
+        }
+        settle(40);
+        if (!headphoneRow->property("open").toBool()) {
+            std::fprintf(stderr, "dj-ui: the headphone device stays locked in the device mode\n");
+            return 1;
+        }
+        if (!devices.isEmpty() && !headphoneRow->property("asList").toBool()) {
+            std::fprintf(stderr, "dj-ui: the headphone device is not a list, though the engine named outputs\n");
+            return 1;
+        }
+        std::fprintf(stderr, "dj-ui: the headphone device is locked in auto and a list in device mode\n");
+    }
+
     // A page that exists but shows nothing is the same complaint as a list that takes the window: the rows have to be
     // wide enough to read a name and reach a control (owner's report, 21.11).
     if (press(named(root, QStringLiteral("settingsSection_interface")))) {

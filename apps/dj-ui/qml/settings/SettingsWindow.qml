@@ -156,6 +156,9 @@ Item {
                                             path: modelData.path
                                             kind: modelData.kind === undefined ? "text" : modelData.kind
                                             values: modelData.values === undefined ? [] : modelData.values
+                                            gatePath: modelData.gatePath === undefined ? "" : modelData.gatePath
+                                            gateValues: modelData.gateValues === undefined
+                                                        ? [] : modelData.gateValues
                                             numeric: modelData.numeric === true
                                             from: modelData.from === undefined ? 0 : modelData.from
                                             to: modelData.to === undefined ? 1 : modelData.to
@@ -213,7 +216,10 @@ Item {
                   from: 1, to: 30 },
                 { label: qsTr("Headphones"), path: "engine:audio.headphones.mode", kind: "choice",
                   values: ["auto", "same_device", "device"] },
-                { label: qsTr("Headphone device"), path: "engine:audio.headphones.device", kind: "text" },
+                // A device by name only in "device" mode: "auto" and "same_device" pick it themselves, and the line
+                // says so instead of pretending the name is doing something.
+                { label: qsTr("Headphone device"), path: "engine:audio.headphones.device", kind: "device",
+                  gatePath: "engine:audio.headphones.mode", gateValues: ["device"] },
                 { label: qsTr("Headphone channels"), path: "engine:audio.headphones.pair", kind: "choice",
                   values: ["[0, 1]", "[2, 3]"] },
                 { label: qsTr("Headphone gain"), path: "engine:audio.headphones.gain", kind: "slider",
