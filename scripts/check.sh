@@ -16,5 +16,6 @@ bash scripts/check-docs.sh
 bash scripts/launcher-check.sh
 bash scripts/ui.sh --smoke
 bash scripts/ui.sh --engine-check
+bash scripts/curve-check.sh
 
 echo "check.sh: all gates passed"

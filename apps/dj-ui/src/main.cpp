@@ -472,6 +472,15 @@ int main(int argc, char *argv[])
                        "metadata. Remembered for the next start; without it the collection lives in "
                        "$XDG_DATA_HOME/hauler-dj/collection."),
         QStringLiteral("path"));
+    const QCommandLineOption curvePersistCheckOption(
+        QStringLiteral("curve-persist-check"),
+        QStringLiteral("Connect, press nothing and report whether the engine plays the crossfader law the "
+                       "session remembers."));
+    const QCommandLineOption curvePickOption(
+        QStringLiteral("curve-pick"),
+        QStringLiteral("Press the named crossfader law's button and exit: the session file has to carry the "
+                       "choice afterwards."),
+        QStringLiteral("law"));
     const QCommandLineOption cueCheckOption(
         QStringLiteral("cue-check"),
         QStringLiteral("Load the shell, find the headphone switch under each deck's meter, press it and "
@@ -632,6 +641,8 @@ int main(int argc, char *argv[])
     parser.addOption(layoutOption);
     parser.addOption(layoutFileOption);
     parser.addOption(collectionRootOption);
+    parser.addOption(curvePersistCheckOption);
+    parser.addOption(curvePickOption);
     parser.addOption(cueCheckOption);
     parser.addOption(layoutCheckOption);
     parser.addOption(channelOrderOption);
@@ -659,6 +670,8 @@ int main(int argc, char *argv[])
         session.setFile(parser.value(sessionFileOption));
     }
     session.load();
+    // The shell tells the engine which crossfader law the DJ chose, so the session must be reachable from QML.
+    qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "Session", &session);
     // The browser opens where the last track came from; an empty state falls back to the music
     // folder, which is what FileBrowser does when given no path.
     browser.open(session.folder());
@@ -1578,6 +1591,36 @@ int main(int argc, char *argv[])
 
     // The arrangement, measured from the objects that were actually built: a layout setting that the
     // shell quietly ignores is worse than no setting at all.
+    if (parser.isSet(curvePickOption)) {
+        // The law outlives the session, and the path that remembers it is the button's own: this option presses
+        // that button rather than writing the file behind its back (owner's request, 20.11).
+        auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
+        if (window == nullptr) {
+            std::fprintf(stderr, "dj-ui: the curve check needs a window\n");
+            return 1;
+        }
+        // The scene has to exist before a button can be found and the engine has to answer once for the bridge
+        // to hold a snapshot.
+        QEventLoop settle;
+        QTimer::singleShot(900, &settle, &QEventLoop::quit);
+        settle.exec();
+        auto* button = checks::findItem(window->contentItem(),
+                                        QStringLiteral("curveButton_") + parser.value(curvePickOption));
+        if (button == nullptr) {
+            std::fprintf(stderr, "dj-ui: no curve button named %s\n", qPrintable(parser.value(curvePickOption)));
+            return 1;
+        }
+        if (!QMetaObject::invokeMethod(button, "pick")) {
+            std::fprintf(stderr, "dj-ui: the curve button has no pick\n");
+            return 1;
+        }
+        QEventLoop after;
+        QTimer::singleShot(700, &after, &QEventLoop::quit);
+        after.exec();
+        std::fprintf(stderr, "dj-ui: picked the %s crossfader law\n", qPrintable(parser.value(curvePickOption)));
+        return 0;
+    }
+
     if (parser.isSet(cueCheckOption)) {
         // The engine has to be there: the check is about the round trip, not about the picture. The bridge itself
         // is the one the QML singleton already holds — replacing it here leaves the scene pointing at a destroyed
@@ -1588,6 +1631,26 @@ int main(int argc, char *argv[])
         }
         bridge->connectToEngine(parser.value(connectOption));
         return runCueCheck(engine, bridge);
+    }
+
+    if (parser.isSet(curvePersistCheckOption)) {
+        // The law the session remembers has to be the law the engine plays: a restart must not change the feel of
+        // the crossfader (owner's request, 20.11). The engine starts from its own default, and the shell hands the
+        // remembered value over on the first snapshot, so this is the whole round trip — value, command, snapshot.
+        bridge->connectToEngine(parser.value(connectOption));
+        QEventLoop settle;
+        QTimer::singleShot(1200, &settle, &QEventLoop::quit);
+        settle.exec();
+        const QString remembered = session.crossfaderCurve();
+        const QString playing = bridge->snapshot().value(QStringLiteral("crossfader_curve")).toString();
+        if (!remembered.isEmpty() && playing != remembered) {
+            std::fprintf(stderr,
+                         "dj-ui: the engine plays the crossfader as \"%s\", the session remembers \"%s\"\n",
+                         qPrintable(playing), qPrintable(remembered));
+            return 1;
+        }
+        std::fprintf(stderr, "dj-ui: the crossfader law survived the restart: %s\n", qPrintable(playing));
+        return 0;
     }
 
     if (parser.isSet(layoutCheckOption)) {

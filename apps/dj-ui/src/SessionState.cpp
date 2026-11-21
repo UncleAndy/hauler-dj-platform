@@ -91,6 +91,17 @@ bool SessionState::rememberCollectionCursor(const QString &path)
     return true;
 }
 
+bool SessionState::rememberCrossfaderCurve(const QString &curve)
+{
+    if (curve.isEmpty() || curve == m_crossfaderCurve) {
+        return false;
+    }
+    m_crossfaderCurve = curve;
+    save();
+    emit changed();
+    return true;
+}
+
 bool SessionState::load()
 {
     QFile file(m_file);
@@ -119,6 +130,10 @@ bool SessionState::load()
     if (!restoreTo.isEmpty()) {
         any = rememberRestoreTo(restoreTo) || any;
     }
+    const QString curve = root.value(QStringLiteral("crossfader_curve")).toString();
+    if (!curve.isEmpty()) {
+        any = rememberCrossfaderCurve(curve) || any;
+    }
     return any;
 }
 
@@ -133,6 +148,7 @@ bool SessionState::save() const
     root.insert(QStringLiteral("cursor"), m_cursor);
     root.insert(QStringLiteral("collection_cursor"), m_collectionCursor);
     root.insert(QStringLiteral("window"), m_window);
+    root.insert(QStringLiteral("crossfader_curve"), m_crossfaderCurve);
     root.insert(QStringLiteral("restore_to"), m_restoreTo);
     QFile file(m_file);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {

@@ -86,6 +86,25 @@ Pane {
     readonly property real meterHeight: Math.max(
         18, bandHeight - stripKnobsHeight - stripFooterHeight - 3)
 
+    // The law the shell remembers is handed to the engine on the first snapshot: the engine starts from its own
+    // default, and a restarted session must not sound different from the one before (owner's request, 20.11).
+    property bool curveRestored: false
+    Connections {
+        target: Bridge
+        function onSnapshotChanged() {
+            if (mixer.curveRestored) {
+                return;
+            }
+            mixer.curveRestored = true;
+            const saved = Session.crossfaderCurve;
+            const current = Bridge.snapshot.crossfader_curve;
+            if (saved !== undefined && saved !== "" && saved !== current) {
+                Bridge.setCrossfaderCurve(saved);
+                console.log("dj-ui: crossfader curve restored: " + saved);
+            }
+        }
+    }
+
     function deckOf(id) {
         for (let index = 0; index < mixer.decks.length; ++index) {
             if (mixer.decks[index].deck === id) {
@@ -373,14 +392,19 @@ Pane {
                         guide: UiSettings.themeBorder
                     }
 
+                    /// Choose this law. A hand clicks the area below and a check calls this by name, so both go
+                    /// through the remembering path and neither can drift from the other (owner's request, 20.11).
+                    function pick() {
+                        const law = modelData.law === "cut" ? "cut:" + curveRow.cutIn : modelData.law;
+                        Session.rememberCrossfaderCurve(law);
+                        Bridge.setCrossfaderCurve(law);
+                    }
+
                     MouseArea {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: Bridge.setCrossfaderCurve(
-                                       parent.modelData.law === "cut"
-                                       ? "cut:" + curveRow.cutIn
-                                       : parent.modelData.law)
+                        onClicked: parent.pick()
                         ToolTip.visible: containsMouse
                         ToolTip.text: parent.modelData.hint
                     }

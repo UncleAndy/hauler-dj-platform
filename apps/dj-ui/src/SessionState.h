@@ -18,6 +18,9 @@ class SessionState : public QObject
     // "window" or "maximized": what full screen returns to. Kept apart from `window` because a
     // restart in full screen still has to know where it came from.
     Q_PROPERTY(QString restoreTo READ restoreTo NOTIFY changed)
+    // The crossfader law the DJ chose: the engine starts from its own default, and the shell hands this back on
+    // the first snapshot, so the choice survives a restart (owner's request, 20.11).
+    Q_PROPERTY(QString crossfaderCurve READ crossfaderCurve NOTIFY changed)
 
 public:
     explicit SessionState(QObject *parent = nullptr);
@@ -30,6 +33,7 @@ public:
     QString file() const { return m_file; }
     QString window() const { return m_window; }
     QString restoreTo() const { return m_restoreTo; }
+    QString crossfaderCurve() const { return m_crossfaderCurve; }
     void setFile(const QString &path);
 
     // Remember a folder; empty paths and folders that no longer exist are ignored.
@@ -44,6 +48,9 @@ public:
 
     // Remember what full screen returns to; anything but "window" and "maximized" is refused.
     bool rememberRestoreTo(const QString &state);
+
+    // Remember the crossfader law. An empty string is refused: the engine's default is not "nothing".
+    Q_INVOKABLE bool rememberCrossfaderCurve(const QString &curve);
 
     // Read the file; a missing or broken one simply leaves the state empty.
     bool load();
@@ -61,4 +68,5 @@ private:
     QString m_file;
     QString m_window = QStringLiteral("window");
     QString m_restoreTo = QStringLiteral("window");
+    QString m_crossfaderCurve = QStringLiteral("constant_power");
 };
