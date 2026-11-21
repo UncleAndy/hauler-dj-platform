@@ -55,6 +55,31 @@ impl RoutePlan {
         }
     }
 
+    /// The plan with the DJ's own pairs, where they fit the device.
+    ///
+    /// A pair that does not fit is refused and the default kept: a name that reaches past the last channel is a name the
+    /// stream cannot open, and writing silence into a socket is worse than ignoring the setting. A cue pair on the same
+    /// channels as the master is no cue at all — two buses into one socket — so it is dropped.
+    pub fn with_pairs(
+        channels: usize,
+        master: Option<(usize, usize)>,
+        cue: Option<(usize, usize)>,
+    ) -> Self {
+        let base = Self::for_channels(channels);
+        let fits = |pair: (usize, usize)| pair.0 < base.channels && pair.1 < base.channels;
+        let master = master.filter(|pair| fits(*pair)).unwrap_or(base.master);
+        let cue = match cue.filter(|pair| fits(*pair)) {
+            Some(pair) if pair == master => None,
+            Some(pair) => Some(pair),
+            None => base.cue,
+        };
+        Self {
+            master,
+            cue,
+            channels: base.channels,
+        }
+    }
+
     /// Number of channels the plan writes to.
     pub fn channels(&self) -> usize {
         self.channels
@@ -303,6 +328,20 @@ pub fn device_pairs(device: Option<&str>) -> Result<Vec<(usize, usize)>, IoError
     Ok((0..native / 2)
         .map(|pair| (pair * 2, pair * 2 + 1))
         .collect())
+}
+
+/// The routes a device offers: each stereo pair, and each pair with the sides swapped.
+///
+/// Swapping sides is a real choice — a booth whose monitors are wired the other way round needs `[1, 0]`, not a crossed
+/// cable — so both orders are offered for every pair the device has.
+pub fn device_routes(device: Option<&str>) -> Result<Vec<(usize, usize)>, IoError> {
+    let pairs = device_pairs(device)?;
+    let mut routes = Vec::with_capacity(pairs.len() * 2);
+    for (left, right) in pairs {
+        routes.push((left, right));
+        routes.push((right, left));
+    }
+    Ok(routes)
 }
 
 /// Resolve a device by name substring and report its shape.
@@ -1141,6 +1180,23 @@ mod tests {
 
     #[test]
     fn the_route_plan_follows_the_device_width() {
+        // The DJ's own pair, including the swapped sides: a booth wired the other way round.
+        let swapped = RoutePlan::with_pairs(2, Some((1, 0)), None);
+        assert_eq!(swapped.master, (1, 0));
+        assert_eq!(swapped.cue, None, "a two-channel device has no cue pair");
+
+        // A pair that reaches past the device is refused, and the default kept.
+        let past = RoutePlan::with_pairs(2, Some((2, 3)), None);
+        assert_eq!(past.master, (0, 1));
+
+        // Four channels: the cue takes the DJ's pair; the same pair as the master is no cue at all.
+        let four = RoutePlan::with_pairs(4, Some((2, 3)), Some((2, 3)));
+        assert_eq!(four.master, (2, 3));
+        assert_eq!(four.cue, None, "two buses on one pair is not monitoring");
+        let monitored = RoutePlan::with_pairs(4, None, Some((3, 2)));
+        assert_eq!(monitored.master, (0, 1));
+        assert_eq!(monitored.cue, Some((3, 2)));
+
         let two = RoutePlan::for_channels(2);
         assert_eq!(two.master, (0, 1));
         assert_eq!(two.cue, None);

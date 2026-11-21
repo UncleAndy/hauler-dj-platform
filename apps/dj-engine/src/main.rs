@@ -245,17 +245,42 @@ fn device_request(argv: &[String]) -> Option<std::process::ExitCode> {
     let mut list = false;
     let mut check: Option<String> = None;
     let mut pairs: Option<String> = None;
+    let mut routes: Option<Option<String>> = None;
     let mut arguments = argv.iter();
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--list-devices" => list = true,
             "--check-device" => check = arguments.next().cloned(),
             "--device-pairs" => pairs = arguments.next().cloned(),
+            // The value is optional: `--device-routes` alone means "the default device".
+            "--device-routes" => {
+                routes = Some(
+                    argv.iter()
+                        .position(|arg| arg == "--device-routes")
+                        .and_then(|at| argv.get(at + 1))
+                        .filter(|next| !next.starts_with("--"))
+                        .cloned(),
+                )
+            }
             _ => {}
         }
     }
-    if !list && check.is_none() && pairs.is_none() {
+    if !list && check.is_none() && pairs.is_none() && routes.is_none() {
         return None;
+    }
+    if let Some(name) = routes {
+        return match dj_audio_io::device_routes(name.as_deref()) {
+            Ok(found) => {
+                for (left, right) in found {
+                    println!("[{left}, {right}]");
+                }
+                Some(std::process::ExitCode::SUCCESS)
+            }
+            Err(error) => {
+                eprintln!("dj-engine: {error}");
+                Some(std::process::ExitCode::from(3))
+            }
+        };
     }
     if let Some(name) = pairs {
         return match dj_audio_io::device_pairs(Some(name.trim())) {
@@ -424,6 +449,11 @@ fn run(argv: &[String]) -> Result<(), String> {
         .round()
         .max(0.0) as u64;
     let mut cache_lossless = defaults.pcm_cache.lossless;
+    // Which sockets carry which bus: the settings file names them, the plan refuses what the device does not have.
+    let chosen_routes = ChosenRoutes {
+        master: defaults.audio.master,
+        cue: defaults.audio.headphones.pair,
+    };
 
     let mut index = 0;
     while index < argv.len() {
@@ -1600,7 +1630,7 @@ fn run(argv: &[String]) -> Result<(), String> {
 
     let outcome = match (device, device_channels) {
         (Some(requested), Some(channels)) => {
-            let outcome = run_device(graph, &requested, channels, &options, &stop);
+            let outcome = run_device(graph, &requested, channels, &options, chosen_routes, &stop);
             remove_socket(&socket);
             outcome
         }
@@ -1662,12 +1692,23 @@ struct RunOptions {
     published: Arc<std::sync::atomic::AtomicU64>,
 }
 
+/// The sockets the settings file named: the main output's pair and the headphones' pair.
+///
+/// A struct rather than two options in one parameter: a pair of optional pairs reads as noise at the call site, and
+/// clippy rightly calls that type complex.
+#[derive(Debug, Clone, Copy, Default)]
+struct ChosenRoutes {
+    master: Option<(usize, usize)>,
+    cue: Option<(usize, usize)>,
+}
+
 /// The device path: the graph lives inside the callback, which is the only place it may run.
 fn run_device(
     graph: EngineGraph,
     requested: &str,
     channels: usize,
     options: &RunOptions,
+    pairs: ChosenRoutes,
     stop: &Arc<AtomicBool>,
 ) -> Result<(), String> {
     let RunOptions {
@@ -1678,7 +1719,9 @@ fn run_device(
         published,
     } = options;
     let (block, rate, seconds, state_hz) = (*block, *rate, *seconds, *state_hz);
-    let plan = dj_audio_io::RoutePlan::for_channels(channels);
+    // The DJ's own channels, where they fit: `audio.master` for the main output and `audio.headphones.pair` for the
+    // cue. The plan refuses a pair that reaches past the device and keeps its own.
+    let plan = dj_audio_io::RoutePlan::with_pairs(channels, pairs.master, pairs.cue);
     let config = dj_audio_io::LiveConfig {
         device: Some(requested.to_string()),
         sample_rate: rate,

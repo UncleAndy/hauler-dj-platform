@@ -62,7 +62,9 @@ QStringList SettingsModel::devices() const
 QStringList SettingsModel::devicePairs(const QString &device) const
 {
     QStringList pairs;
-    const QString answer = m_engine.ask({QStringLiteral("--device-pairs"), device});
+    // Routes, not pairs: the swapped order is a real choice, and a list without it would send the DJ back to a text
+    // field for the one thing a setting is for.
+    const QString answer = m_engine.ask({QStringLiteral("--device-routes"), device});
     const QStringList lines = answer.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
     for (const QString &line : lines) {
         const QString pair = line.trimmed();

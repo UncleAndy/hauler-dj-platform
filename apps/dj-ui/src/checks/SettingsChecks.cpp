@@ -275,6 +275,40 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
             return 1;
         }
 
+        // The main output is routed by the DJ in every mode, and both orders of a pair are offered: an interface whose
+        // numbering is not the booth's needs `[1, 0]`, not a crossed cable.
+        QQuickItem *mainRow = named(root, QStringLiteral("settingRow_engine_audio_master"));
+        if (mainRow == nullptr) {
+            std::fprintf(stderr, "dj-ui: the sound page has no main channel line\n");
+            return 1;
+        }
+        if (!mainRow->property("open").toBool()) {
+            std::fprintf(stderr, "dj-ui: the main channel line is locked\n");
+            return 1;
+        }
+        const QVariantList mainOffered = mainRow->property("offered").toList();
+        bool forward = false;
+        bool swapped = false;
+        for (const QVariant &one : mainOffered) {
+            const QString text = one.toString();
+            if (text == QStringLiteral("[0, 1]")) {
+                forward = true;
+            }
+            if (text == QStringLiteral("[1, 0]")) {
+                swapped = true;
+            }
+        }
+        if (!forward) {
+            std::fprintf(stderr, "dj-ui: the main channel line does not offer [0, 1]\n");
+            return 1;
+        }
+        if (!pairs.isEmpty() && !swapped) {
+            std::fprintf(stderr, "dj-ui: the main channel line does not offer the swapped order [1, 0]\n");
+            return 1;
+        }
+        std::fprintf(stderr, "dj-ui: the main channels offer %lld routes, the swapped order among them\n",
+                     static_cast<long long>(mainOffered.size()));
+
         std::fprintf(stderr, "dj-ui: the headphone device is locked in auto and a list in device mode\n");
     }
 

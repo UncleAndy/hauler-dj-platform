@@ -209,6 +209,9 @@ Item {
                 // none at all, and then the row says why.
                 { label: qsTr("Device"), path: "engine:audio.device", kind: "device" },
                 { label: qsTr("Device check"), path: "engine:audio.device", kind: "check" },
+                // Which sockets carry the main output, and the swapped order for an interface whose numbering is not
+                // the booth's. Not gated: the main output is always the DJ's to route.
+                { label: qsTr("Main channels"), path: "engine:audio.master", kind: "pair" },
                 { label: qsTr("Sample rate"), path: "engine:audio.sample_rate", kind: "choice",
                   values: ["44100", "48000", "96000"], numeric: true },
                 { label: qsTr("Block, frames"), path: "engine:audio.block_frames", kind: "choice",

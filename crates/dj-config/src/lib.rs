@@ -173,6 +173,12 @@ pub struct AudioSettings {
     pub device: Option<String>,
     /// Prefetch window per deck, seconds.
     pub prefetch_seconds: f64,
+    /// Which channels carry the main output: `[0, 1]` by default, and `[1, 0]` swaps the stereo sides.
+    ///
+    /// An interface is a row of sockets and its numbering is the driver's; a booth whose monitors are wired the other
+    /// way round needs a setting, not a crossed cable (owner's decision, 21.11). `None` keeps the route plan's pair.
+    #[serde(default)]
+    pub master: Option<(usize, usize)>,
     /// Headphones: where they are and what they hear.
     pub headphones: HeadphoneSettings,
 }
@@ -184,6 +190,7 @@ impl Default for AudioSettings {
             block_frames: 256,
             device: None,
             prefetch_seconds: 2.0,
+            master: None,
             headphones: HeadphoneSettings::default(),
         }
     }
