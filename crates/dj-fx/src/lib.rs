@@ -17,10 +17,24 @@
 //! Ownership: dsp (`docs/architecture/crate-map.md`).
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
+pub mod bitcrusher;
+pub mod delay;
+pub mod echo;
 pub mod filter;
+pub mod flanger;
+pub mod noise;
+pub mod phaser;
+pub mod roll;
+pub mod smooth;
 
+pub use bitcrusher::Bitcrusher;
 pub use dj_domain::{FxKind, FxPatch};
+pub use echo::Echo;
 pub use filter::DjFilter;
+pub use flanger::Flanger;
+pub use noise::Noise;
+pub use phaser::Phaser;
+pub use roll::Roll;
 
 /// One effect in the deck's slot: it takes the channel's block and writes what the room should hear.
 ///
@@ -43,6 +57,14 @@ pub trait FxUnit: Send {
     /// written. The mixer keeps them apart so that the dry signal is still available for the crossfade
     /// when an effect is switched on or off.
     fn process(&mut self, input: &[f32], out: &mut [f32], frames: usize);
+
+    /// The switch, for effects whose behaviour depends on *when* it went down rather than on the audio alone.
+    ///
+    /// A roll is the case: it captures the beat fraction that is playing at this moment and freezes it, so it has
+    /// to be told that the switch closed. Everything else keeps the default, which does nothing.
+    fn engage(&mut self, on: bool) {
+        let _ = on;
+    }
 
     /// How much later than the input this effect's output arrives, in frames.
     ///
