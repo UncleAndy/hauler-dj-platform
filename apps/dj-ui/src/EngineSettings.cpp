@@ -8,9 +8,10 @@
 #include <QStandardPaths>
 #include <QStringList>
 
-EngineSettings::EngineSettings(QString file, QObject *parent)
+EngineSettings::EngineSettings(QString file, QString engine, QObject *parent)
     : QObject(parent)
     , m_file(std::move(file))
+    , m_engine(std::move(engine))
 {
 }
 
@@ -45,6 +46,10 @@ QString EngineSettings::resolvedFile() const
 
 QString EngineSettings::engineBinary() const
 {
+    // The launcher's word first: it started the engine, so it knows the file.
+    if (!m_engine.isEmpty()) {
+        return m_engine;
+    }
     const QString named = qEnvironmentVariable("HAULER_ENGINE");
     if (!named.isEmpty()) {
         return named;

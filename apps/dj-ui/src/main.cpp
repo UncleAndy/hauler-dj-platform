@@ -487,6 +487,10 @@ int main(int argc, char *argv[])
         QStringLiteral("settings-file"),
         QStringLiteral("The engine's settings file (config.toml). Defaults to the one the engine reads."),
         QStringLiteral("path"));
+    const QCommandLineOption enginePathOption(
+        QStringLiteral("engine"),
+        QStringLiteral("The engine program, for the settings window's device list. The launcher passes its own."),
+        QStringLiteral("path"));
     const QCommandLineOption settingsWindowCheckOption(
         QStringLiteral("settings-window-check"),
         QStringLiteral("Open the settings window from its button, walk its sections, close it and exit."));
@@ -669,6 +673,7 @@ int main(int argc, char *argv[])
     parser.addOption(curvePersistCheckOption);
     parser.addOption(curvePickOption);
     parser.addOption(settingsFileOption);
+    parser.addOption(enginePathOption);
     parser.addOption(settingsWindowCheckOption);
     parser.addOption(settingsCheckOption);
     parser.addOption(fxPickOption);
@@ -924,7 +929,7 @@ int main(int argc, char *argv[])
     // Before the file is read: the shell's colours live in the same document as the arrangement.
     layout.setUiSettings(&settings);
 
-    EngineSettings engineSettings(parser.value(settingsFileOption));
+    EngineSettings engineSettings(parser.value(settingsFileOption), parser.value(enginePathOption));
     SettingsModel settingsModel(layout, settings, session, engineSettings);
 
     qmlRegisterSingletonInstance("DjPlatform.Ui", 1, 0, "Settings", &settingsModel);

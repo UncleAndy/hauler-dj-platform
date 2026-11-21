@@ -13,7 +13,7 @@ Item {
 
     property string label: ""
     property string path: ""
-    // "switch" | "choice" | "slider" | "number" | "text" | "check"
+    // "switch" | "choice" | "slider" | "number" | "text" | "check" | "device"
     property string kind: "text"
     // What the engine answered about the device (kind "check").
     property string answer: ""
@@ -35,6 +35,25 @@ Item {
     // `engine:audio.block_frames` reads as `settingRow_engine_audio_block_frames`: a check has to find the very line
     // the hand would use, not a copy of it.
     objectName: "settingRow_" + path.replace(/[:.]/g, "_")
+
+    // What the list offers. A device list is asked of the engine every time the model says something changed, because
+    // a list read once at start-up is a list from before the engine was up (owner's report, 21.11).
+    readonly property var choices: row.kind === "device"
+                                   ? (Settings ? Settings.devices() : [])
+                                   : row.values
+    // The value stored in the file stays visible even when the device it names is no longer plugged in: hiding it
+    // would look like the setting had been lost.
+    readonly property var offered: {
+        const list = [];
+        for (let index = 0; index < row.choices.length; ++index) {
+            list.push(String(row.choices[index]));
+        }
+        if (row.currentText !== "" && list.indexOf(row.currentText) < 0) {
+            list.push(row.currentText);
+        }
+        return list;
+    }
+    readonly property bool asList: row.kind === "device" ? row.choices.length > 0 : row.kind === "choice"
 
     property var current: undefined
     readonly property string currentText: row.current === undefined || row.current === null
@@ -85,10 +104,10 @@ Item {
         // A list of named choices. It carries text; the owner writes back the type the file already had.
         ComboBox {
             id: choice
-            visible: row.kind === "choice"
+            visible: row.asList
             Layout.fillWidth: true
-            Layout.maximumWidth: 260
-            model: row.values
+            Layout.maximumWidth: 320
+            model: row.offered
             font.pixelSize: 11
             Component.onCompleted: row.syncChoice()
             onActivated: row.write(row.numeric ? Number(currentText) : currentText)
@@ -144,7 +163,7 @@ Item {
         }
 
         TextField {
-            visible: row.kind === "text"
+            visible: row.kind === "text" || (row.kind === "device" && !row.asList)
             Layout.fillWidth: true
             Layout.maximumWidth: 300
             font.pixelSize: 11
@@ -155,7 +174,11 @@ Item {
 
         Label {
             Layout.fillWidth: true
-            text: row.restart ? qsTr("after restart") : ""
+            // Why a device is typed rather than chosen: the engine could not be asked, and saying so is better than a
+            // list that silently is not one.
+            text: row.restart
+                  ? qsTr("after restart")
+                  : (row.kind === "device" && !row.asList ? qsTr("the engine named no outputs; type the name") : "")
             color: UiSettings.themeTextDim
             font.pixelSize: 9
             elide: Text.ElideRight
@@ -165,10 +188,10 @@ Item {
     // Keeping the list on the value the file has, rather than on the first entry: an unset key must not show as if
     // the first choice had been made.
     function syncChoice() {
-        if (row.kind !== "choice") {
+        if (!row.asList) {
             return;
         }
-        const index = row.values.indexOf(row.currentText);
+        const index = row.offered.indexOf(row.currentText);
         choice.currentIndex = index >= 0 ? index : 0;
     }
 }

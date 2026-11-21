@@ -17,9 +17,6 @@ Item {
     anchors.fill: parent
     visible: false
 
-    // Asked once when the window is built: the list is the engine's answer, and a device list that changes while a
-    // dialog is open is a list nobody can aim at.
-    readonly property var deviceNames: Settings ? Settings.devices() : []
     readonly property var themeNames: Settings ? Settings.themeSets() : []
 
     function open() {
@@ -204,11 +201,9 @@ Item {
             title: qsTr("Sound"),
             about: qsTr("The engine reads these when it starts: the marks say \"after restart\"."),
             rows: [
-                // A list when the engine names its outputs, a field when it has none to name (a bare container):
-                // a choice with nothing in it would be a control that cannot be used at all.
-                { label: qsTr("Device"), path: "engine:audio.device",
-                  kind: window.deviceNames.length > 0 ? "choice" : "text",
-                  values: window.deviceNames },
+                // The outputs the engine can open, asked for when the window opens. Text only when the engine named
+                // none at all, and then the row says why.
+                { label: qsTr("Device"), path: "engine:audio.device", kind: "device" },
                 { label: qsTr("Device check"), path: "engine:audio.device", kind: "check" },
                 { label: qsTr("Sample rate"), path: "engine:audio.sample_rate", kind: "choice",
                   values: ["44100", "48000", "96000"], numeric: true },

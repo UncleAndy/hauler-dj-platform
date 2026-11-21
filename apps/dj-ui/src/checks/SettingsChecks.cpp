@@ -45,6 +45,20 @@ void settle(int milliseconds)
     loop.exec();
 }
 
+/// What the engine says its outputs are, asked the way the window asks.
+QStringList Settings_devices(QQmlApplicationEngine &engine)
+{
+    auto *model = engine.singletonInstance<QObject *>(QAnyStringView("DjPlatform.Ui"), QAnyStringView("Settings"));
+    if (model == nullptr) {
+        return {};
+    }
+    QStringList names;
+    if (!QMetaObject::invokeMethod(model, "devices", Q_RETURN_ARG(QStringList, names))) {
+        return {};
+    }
+    return names;
+}
+
 /// Press a button the way a click does: through the signal its handler is on.
 bool press(QObject *button)
 {
@@ -126,6 +140,49 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
                      "dj-ui: the sections take %.0f px of a %.0f px panel, leaving %.0f px for the settings\n",
                      navWidth, panel->width(), contentWidth);
         return 1;
+    }
+
+    // The device is chosen from the outputs the engine names, not typed: a text field where a list belongs is what the
+    // owner saw on his own machine (report, 21.11).
+    {
+        QQuickItem *deviceRow = named(root, QStringLiteral("settingRow_engine_audio_device"));
+        if (deviceRow == nullptr) {
+            std::fprintf(stderr, "dj-ui: the sound page has no device line\n");
+            return 1;
+        }
+        const QStringList devices = Settings_devices(engine);
+        if (!devices.isEmpty()) {
+            // The row offers what the engine listed: the same names, in the same order, plus the stored one if it is
+            // no longer plugged in.
+            const QVariantList offered = deviceRow->property("offered").toList();
+            if (offered.size() < devices.size()) {
+                std::fprintf(stderr, "dj-ui: the device line offers %lld names and the engine named %lld\n",
+                             static_cast<long long>(offered.size()), static_cast<long long>(devices.size()));
+                return 1;
+            }
+            for (const QString &name : devices) {
+                bool found = false;
+                for (const QVariant &one : offered) {
+                    if (one.toString() == name) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    std::fprintf(stderr, "dj-ui: the device line does not offer %s\n", qPrintable(name));
+                    return 1;
+                }
+            }
+            if (!deviceRow->property("asList").toBool()) {
+                std::fprintf(stderr, "dj-ui: the device line is not a list, though the engine named %lld outputs\n",
+                             static_cast<long long>(devices.size()));
+                return 1;
+            }
+            std::fprintf(stderr, "dj-ui: the device line offers the engine's %lld outputs, the default first\n",
+                         static_cast<long long>(devices.size()));
+        } else {
+            std::fprintf(stderr, "dj-ui: the engine named no outputs here; the device line says so and takes a name\n");
+        }
     }
 
     // A page that exists but shows nothing is the same complaint as a list that takes the window: the rows have to be

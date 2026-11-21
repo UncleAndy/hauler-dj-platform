@@ -174,6 +174,10 @@ fn run(options: &Options) -> Result<u8, String> {
     }
     say(options, &format!("shell: starting {}", ui.display()));
     let mut shell = Command::new(&ui)
+        // The shell asks the engine about audio devices before the DJ commits a name to the settings file, and the
+        // engine's own flags answer that. This process started the engine, so it is the one that knows where it is.
+        .arg("--engine")
+        .arg(&engine)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())

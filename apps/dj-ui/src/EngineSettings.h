@@ -17,7 +17,7 @@ class EngineSettings : public QObject
     Q_PROPERTY(QString file READ file NOTIFY changed)
 
 public:
-    explicit EngineSettings(QString file = QString(), QObject *parent = nullptr);
+    explicit EngineSettings(QString file = QString(), QString engine = QString(), QObject *parent = nullptr);
 
     QString file() const;
 
@@ -43,6 +43,9 @@ private:
     QString resolvedFile() const;
 
     QString m_file;
+    // Named by the launcher, which is the one process that knows where the engine sits: guessing the path from the
+    // shell's own folder is how the device list came back empty on a source-tree build (owner's report, 21.11).
+    QString m_engine;
     mutable QString m_resolved;
 };
 
