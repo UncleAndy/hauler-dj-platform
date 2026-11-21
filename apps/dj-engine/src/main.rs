@@ -453,7 +453,10 @@ fn main() -> std::process::ExitCode {
     match run(&argv) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(message) => {
+            // The same words in both places: the terminal shows them to whoever started the engine, and the log carries
+            // them to the launcher, which reports a start that died and has nothing else to read (owner's report, 21.11).
             eprintln!("dj-engine: {message}");
+            dj_engine::log::error(message.clone());
             std::process::ExitCode::from(2)
         }
     }

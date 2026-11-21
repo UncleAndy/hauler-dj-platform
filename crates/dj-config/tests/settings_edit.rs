@@ -160,3 +160,53 @@ fn the_first_change_on_a_fresh_install_creates_the_folder_and_the_file() {
     assert!(after.contains("block_frames = 1024"), "{after}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_channel_pair_is_read_as_an_array_and_as_the_text_of_one() {
+    // What the engine writes.
+    let path = scratch("pair-array");
+    ok(
+        std::fs::write(&path, "[audio.headphones]\npair = [2, 3]\n"),
+        "the file",
+    );
+    let (config, _used) = ok(
+        dj_config::Config::load_or_default(Some(&path)),
+        "the array form",
+    );
+    assert_eq!(config.audio.headphones.pair, Some((2, 3)));
+
+    // What one afternoon of the shell wrote, and what a file on disk may still hold.
+    let path = scratch("pair-text");
+    ok(
+        std::fs::write(&path, "[audio.headphones]\npair = \"[2, 3]\"\n"),
+        "the file",
+    );
+    let (config, _used) = ok(
+        dj_config::Config::load_or_default(Some(&path)),
+        "the text form has to load, not stop the run",
+    );
+    assert_eq!(config.audio.headphones.pair, Some((2, 3)));
+}
+
+#[test]
+fn writing_a_pair_writes_an_array_not_a_string() {
+    let path = scratch("pair-write");
+    ok(
+        dj_config::set_value(&path, "audio.headphones.pair", "[1, 0]"),
+        "the edit",
+    );
+    let after = ok(std::fs::read_to_string(&path), "the file back");
+    assert!(
+        after.contains("pair = [1, 0]"),
+        "a pair is an array: {after}"
+    );
+    assert!(
+        !after.contains("\"["),
+        "a pair was written as text: {after}"
+    );
+    let (config, _used) = ok(
+        dj_config::Config::load_or_default(Some(&path)),
+        "the file reads",
+    );
+    assert_eq!(config.audio.headphones.pair, Some((1, 0)));
+}

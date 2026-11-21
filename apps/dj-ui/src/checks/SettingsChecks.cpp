@@ -461,6 +461,27 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
         return 1;
     }
 
+    // The file has to hold what the reader can read: a pair written as text stopped the engine from starting (owner's
+    // report, 21.11), so the check looks at the bytes the window left behind.
+    if (auto *model = engine.singletonInstance<QObject *>(QAnyStringView("DjPlatform.Ui"), QAnyStringView("Settings"))) {
+        QString filePath;
+        if (QMetaObject::invokeMethod(model, "fileOf", Q_RETURN_ARG(QString, filePath),
+                                      Q_ARG(QString, QStringLiteral("engine:audio.headphones.pair")))) {
+            QFile config(filePath);
+            if (config.open(QIODevice::ReadOnly)) {
+                const QString text = QString::fromUtf8(config.readAll());
+                if (text.contains(QStringLiteral("pair = \""))) {
+                    std::fprintf(stderr, "dj-ui: the settings file holds a channel pair as text: %s\n",
+                                 qPrintable(text));
+                    return 1;
+                }
+                if (text.contains(QStringLiteral("pair = ["))) {
+                    std::fprintf(stderr, "dj-ui: the channel pair was written as an array, which is what the engine reads\n");
+                }
+            }
+        }
+    }
+
     if (!press(named(root, QStringLiteral("settingsClose"))) || settingsWindow->isVisible()) {
         std::fprintf(stderr, "dj-ui: the settings window did not close\n");
         return 1;

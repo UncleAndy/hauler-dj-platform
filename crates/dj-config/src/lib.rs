@@ -136,6 +136,41 @@ fn yes() -> bool {
     true
 }
 
+/// A channel pair, written either as an array or as the text of one.
+///
+/// The engine only ever writes `[0, 1]`; the shell wrote `"[0, 1]"` for one afternoon, and a file with that in it has to
+/// keep working rather than stop the engine at start (owner's report, 21.11).
+fn pair_or_text<'de, D>(deserializer: D) -> Result<Option<(usize, usize)>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Either {
+        Pair((usize, usize)),
+        Text(String),
+    }
+    let value = Option::<Either>::deserialize(deserializer)?;
+    match value {
+        None => Ok(None),
+        Some(Either::Pair(pair)) => Ok(Some(pair)),
+        Some(Either::Text(text)) => {
+            let body = text.trim();
+            let body = body
+                .strip_prefix('[')
+                .and_then(|rest| rest.strip_suffix(']'))
+                .ok_or_else(|| serde::de::Error::custom(format!("{text} is not a channel pair")))?;
+            let mut numbers = body.split(',').map(|part| part.trim().parse::<usize>());
+            match (numbers.next(), numbers.next()) {
+                (Some(Ok(left)), Some(Ok(right))) => Ok(Some((left, right))),
+                _ => Err(serde::de::Error::custom(format!(
+                    "{text} is not a channel pair"
+                ))),
+            }
+        }
+    }
+}
+
 /// Headphone output: mode, pair, device, and the two knobs the mixer shows.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -145,6 +180,10 @@ pub struct HeadphoneSettings {
     /// Device name substring for [`HeadphoneMode::Device`]; `None` means the system default.
     pub device: Option<String>,
     /// Channel pair for [`HeadphoneMode::SameDevice`]; `None` lets the engine take the first free pair.
+    ///
+    /// Both `[0, 1]` and the quoted `"[0, 1]"` are read: a build from before 21.11 wrote the string form, and a settings
+    /// file an older version wrote must not stop the program from starting.
+    #[serde(default, deserialize_with = "pair_or_text")]
     pub pair: Option<(usize, usize)>,
     /// Whether the cue leaves the engine at all.
     ///

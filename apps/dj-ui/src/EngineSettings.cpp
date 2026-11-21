@@ -101,6 +101,23 @@ bool EngineSettings::store(const QString &key, const QVariant &value)
     if (binary.isEmpty()) {
         return false;
     }
+    // A pair is an array, not the text of one: `pair = "[0, 1]"` made the engine refuse to start (owner's report, 21.11).
+    // Anything that reads as a TOML collection goes through the raw flag, where it stays an array.
+    if (value.typeId() == QMetaType::QString) {
+        const QString text = value.toString().trimmed();
+        if (text.startsWith(QLatin1Char('[')) && text.endsWith(QLatin1Char(']'))) {
+            QProcess raw;
+            raw.start(binary, {QStringLiteral("--settings"), resolvedFile(), QStringLiteral("--set-config"),
+                               key + QStringLiteral("=") + text});
+            if (raw.waitForStarted(3000) && raw.waitForFinished(5000) && raw.exitStatus() == QProcess::NormalExit
+                && raw.exitCode() == 0) {
+                emit changed();
+                return true;
+            }
+            return false;
+        }
+    }
+
     // Numbers and switches go as TOML text; everything else is a string and goes through the string flag, where the
     // engine quotes it. The shell has no business knowing how TOML escapes a quote in a device name.
     QString flag = QStringLiteral("--set-config");

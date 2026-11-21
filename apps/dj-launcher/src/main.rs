@@ -34,7 +34,9 @@ fn main() -> ExitCode {
     match run(&options) {
         Ok(code) => ExitCode::from(code),
         Err(message) => {
-            append_log("dj-launcher", &message);
+            // A failure has to be visible where the program was started, not only in a log file: "it hangs and says
+            // nothing" is what a start that refuses a settings file used to look like (owner's report, 21.11).
+            report("dj-launcher", &message);
             ExitCode::FAILURE
         }
     }
@@ -132,15 +134,11 @@ fn run(options: &Options) -> Result<u8, String> {
     let mut engine_process = match &lock {
         InstanceLock::Held(_guard) => {
             say(options, &format!("engine: starting {}", engine.display()));
-            let process = start_engine(&engine)?;
-            if !wait_for_endpoint(options.timeout) {
-                // The engine prints the reason for a failure to its own log; the launcher names the path.
-                say(options, "engine: the endpoint never answered");
-                return Err(format!(
-                    "the engine did not come up within {:?}; its log is {}",
-                    options.timeout,
-                    log_hint()
-                ));
+            let mut process = start_engine(&engine)?;
+            // Waiting for the socket alone would spend the whole timeout on an engine that has already stopped: a
+            // settings file it cannot read ends it at once, and the message has to say so instead of looking like a hang.
+            if let Err(reason) = wait_for_endpoint_while_alive(&mut process, options.timeout) {
+                return Err(format!("{reason}\n(the log is {})", log_hint()));
             }
             say(options, "engine ready");
             Some(process)
@@ -244,16 +242,56 @@ fn start_engine(engine: &Path) -> Result<Child, String> {
 ///
 /// A socket file appears before the engine listens on it, and an endpoint file appears before the port is
 /// bound: connecting is the only honest question.
-fn wait_for_endpoint(timeout: Duration) -> bool {
+/// Waits for the engine, and stops waiting when it dies.
+///
+/// A settings file the engine cannot read ends the engine immediately; waiting the full twenty seconds for an endpoint
+/// that will never appear looks exactly like a hang, and says nothing about why (owner's report, 21.11).
+fn wait_for_endpoint_while_alive(child: &mut Child, timeout: Duration) -> Result<(), String> {
     let endpoint = dj_paths::default_endpoint();
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
         if endpoint.exists() && connect_once(&endpoint) {
-            return true;
+            return Ok(());
+        }
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("cannot ask after the engine: {error}"))?
+        {
+            return Err(format!(
+                "the engine stopped at start ({status}). Its log ends with:\n{}",
+                engine_log_tail()
+            ));
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    false
+    Err(format!(
+        "the engine did not answer within {:.0} s. Its log ends with:\n{}",
+        timeout.as_secs_f64(),
+        engine_log_tail()
+    ))
+}
+
+/// The last lines the engine wrote, so a start that failed says why without anyone opening a file by hand.
+fn engine_log_tail() -> String {
+    let Some(path) =
+        dj_paths::data_dir().map(|base| base.join("hauler-dj").join("logs").join("dj-engine.log"))
+    else {
+        return String::from("(no log)");
+    };
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return format!("(no log at {})", path.display());
+    };
+    let lines: Vec<&str> = text.lines().rev().take(8).collect();
+    if lines.is_empty() {
+        // A settings file the engine cannot read stops it before the first log line, and the engine's own message is the
+        // one the terminal already shows. Saying "its log ends with:" and nothing after it reads as a bug.
+        return String::from(
+            "(the log is empty: the engine stopped before writing one; its own message is above)",
+        );
+    }
+    let mut tail: Vec<&str> = lines.into_iter().collect();
+    tail.reverse();
+    tail.join("\n")
 }
 
 #[cfg(unix)]
@@ -446,6 +484,17 @@ fn say(options: &Options, text: &str) {
     append_log("dj-launcher", text);
     if cfg!(unix) {
         println!("dj-launcher: {text}");
+    }
+}
+
+/// Write to the launcher's log, and to the terminal when there is one.
+///
+/// Windows is the reason for the split: a windowed program that writes to stderr gets a console allocated for the write,
+/// which is a black window under Wine. A unix start from a shell is a person waiting to read it.
+fn report(prefix: &str, text: &str) {
+    append_log(prefix, text);
+    if cfg!(unix) {
+        eprintln!("{prefix}: {text}");
     }
 }
 
