@@ -6,7 +6,9 @@
 
 #include "Checks.h"
 
+#include <QEventLoop>
 #include <QQmlApplicationEngine>
+#include <QTimer>
 #include <QRectF>
 #include <QQuickWindow>
 
@@ -33,6 +35,14 @@ QQuickItem *named(QQuickItem *root, const QString &name)
         }
     }
     return nullptr;
+}
+
+/// Let the layouts run: a page that has just been turned has no geometry until the event loop has been through once.
+void settle(int milliseconds)
+{
+    QEventLoop loop;
+    QTimer::singleShot(milliseconds, &loop, &QEventLoop::quit);
+    loop.exec();
 }
 
 /// Press a button the way a click does: through the signal its handler is on.
@@ -98,6 +108,41 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
         std::fprintf(stderr, "dj-ui: the settings panel leaves the window: %.0f,%.0f %.0fx%.0f in %.0fx%.0f\n",
                      inside.x(), inside.y(), inside.width(), inside.height(), bounds.width(), bounds.height());
         return 1;
+    }
+
+    // The list of sections is a margin, not a page: the parameters the DJ came for need the room (owner's report,
+    // 21.11 — the buttons took the whole window and nothing could be set).
+    QQuickItem *nav = named(root, QStringLiteral("settingsNav"));
+    QQuickItem *content = named(root, QStringLiteral("settingsContent"));
+    if (nav == nullptr || content == nullptr) {
+        std::fprintf(stderr, "dj-ui: the settings window has no list and no page to measure\n");
+        return 1;
+    }
+    settle(60);
+    const double navWidth = nav->width();
+    const double contentWidth = content->width();
+    if (navWidth > 220.0 || contentWidth < panel->width() * 0.55) {
+        std::fprintf(stderr,
+                     "dj-ui: the sections take %.0f px of a %.0f px panel, leaving %.0f px for the settings\n",
+                     navWidth, panel->width(), contentWidth);
+        return 1;
+    }
+
+    // A page that exists but shows nothing is the same complaint as a list that takes the window: the rows have to be
+    // wide enough to read a name and reach a control (owner's report, 21.11).
+    if (press(named(root, QStringLiteral("settingsSection_interface")))) {
+        settle(60);
+        QQuickItem *row = named(root, QStringLiteral("settingRow_layout_waveformBeats"));
+        if (row == nullptr) {
+            std::fprintf(stderr, "dj-ui: the interface page has no rows\n");
+            return 1;
+        }
+        if (row->width() < 300.0 || row->height() < 20.0) {
+            std::fprintf(stderr, "dj-ui: a row of the interface page is %.0fx%.0f\n", row->width(), row->height());
+            return 1;
+        }
+        std::fprintf(stderr, "dj-ui: a row of the interface page is %.0f px wide and %.0f px tall\n", row->width(),
+                     row->height());
     }
 
     // Choosing a section has to move the page: a list that does nothing is a picture of a list.
@@ -204,6 +249,8 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
     std::fprintf(stderr,
                  "dj-ui: the settings window opens from its button, holds %lld sections, turned %d pages and closed\n",
                  static_cast<long long>(sections.size()), turned);
+    std::fprintf(stderr, "dj-ui: the sections take %.0f px and the settings %.0f px of a %.0f px panel\n", navWidth,
+                 contentWidth, panel->width());
     std::fprintf(stderr, "dj-ui: the panel stays inside the window: %.0fx%.0f in %.0fx%.0f\n", inside.width(),
                  inside.height(), bounds.width(), bounds.height());
     std::fprintf(stderr, "dj-ui: two lines of the window wrote their value: block frames and waveform beats\n");

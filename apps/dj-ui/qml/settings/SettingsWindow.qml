@@ -82,7 +82,13 @@ Item {
 
                 // The sections, on the left.
                 ColumnLayout {
+                    objectName: "settingsNav"
+                    // A set width, not a preference: the list of sections is a margin, and a margin that can grow
+                    // takes the room the parameters need (owner's report, 21.11).
                     Layout.preferredWidth: 176
+                    Layout.minimumWidth: 176
+                    Layout.maximumWidth: 176
+                    Layout.fillWidth: false
                     Layout.fillHeight: true
                     spacing: 2
                     Repeater {
@@ -104,7 +110,9 @@ Item {
                 }
 
                 Rectangle {
+                    objectName: "settingsContent"
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 320
                     Layout.fillHeight: true
                     color: "transparent"
                     border.color: UiSettings.themeTextDim
