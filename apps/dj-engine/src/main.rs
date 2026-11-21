@@ -244,16 +244,32 @@ fn settings_request(argv: &[String]) -> Option<std::process::ExitCode> {
 fn device_request(argv: &[String]) -> Option<std::process::ExitCode> {
     let mut list = false;
     let mut check: Option<String> = None;
+    let mut pairs: Option<String> = None;
     let mut arguments = argv.iter();
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--list-devices" => list = true,
             "--check-device" => check = arguments.next().cloned(),
+            "--device-pairs" => pairs = arguments.next().cloned(),
             _ => {}
         }
     }
-    if !list && check.is_none() {
+    if !list && check.is_none() && pairs.is_none() {
         return None;
+    }
+    if let Some(name) = pairs {
+        return match dj_audio_io::device_pairs(Some(name.trim())) {
+            Ok(found) => {
+                for (left, right) in found {
+                    println!("[{left}, {right}]");
+                }
+                Some(std::process::ExitCode::SUCCESS)
+            }
+            Err(error) => {
+                eprintln!("dj-engine: {error}");
+                Some(std::process::ExitCode::from(3))
+            }
+        };
     }
     if list {
         let devices = match dj_audio_io::output_device_list() {
@@ -266,9 +282,10 @@ fn device_request(argv: &[String]) -> Option<std::process::ExitCode> {
         for device in devices {
             // One device per line, tab separated: name, channels, rate, and a star for the default one.
             println!(
-                "{}\t{}\t{}\t{}",
+                "{}\t{}\t{}\t{}\t{}",
                 device.name,
                 device.channels,
+                device.native_channels,
                 device.sample_rate,
                 if device.default { "*" } else { "" }
             );

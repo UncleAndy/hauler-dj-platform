@@ -13,6 +13,7 @@
 #include <QQuickWindow>
 
 #include <cmath>
+#include <functional>
 #include <cstdio>
 
 namespace {
@@ -43,6 +44,20 @@ void settle(int milliseconds)
     QEventLoop loop;
     QTimer::singleShot(milliseconds, &loop, &QEventLoop::quit);
     loop.exec();
+}
+
+/// The stereo pairs of one device, asked the way the window asks.
+QStringList Settings_pairs(QQmlApplicationEngine &engine, const QString &device)
+{
+    auto *model = engine.singletonInstance<QObject *>(QAnyStringView("DjPlatform.Ui"), QAnyStringView("Settings"));
+    if (model == nullptr) {
+        return {};
+    }
+    QStringList pairs;
+    if (!QMetaObject::invokeMethod(model, "devicePairs", Q_RETURN_ARG(QStringList, pairs), Q_ARG(QString, device))) {
+        return {};
+    }
+    return pairs;
 }
 
 /// What the engine says its outputs are, asked the way the window asks.
@@ -227,7 +242,73 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
             std::fprintf(stderr, "dj-ui: the headphone device is not a list, though the engine named outputs\n");
             return 1;
         }
+        // The channels are the pairs the chosen device really has: the engine is asked about that device, and the row
+        // must offer exactly those numbers.
+        QQuickItem *pairRow = named(root, QStringLiteral("settingRow_engine_audio_headphones_pair"));
+        if (pairRow == nullptr) {
+            std::fprintf(stderr, "dj-ui: the sound page has no headphone channel line\n");
+            return 1;
+        }
+        const QString chosen = QString::fromUtf8(qgetenv("HAULER_CHECK_DEVICE"));
+        const QStringList pairs = Settings_pairs(engine, chosen);
+        if (!pairs.isEmpty()) {
+            const QVariantList offered = pairRow->property("offered").toList();
+            for (const QString &pair : pairs) {
+                bool found = false;
+                for (const QVariant &one : offered) {
+                    if (one.toString() == pair) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    std::fprintf(stderr, "dj-ui: the channel line does not offer %s, which the device has\n",
+                                 qPrintable(pair));
+                    return 1;
+                }
+            }
+            std::fprintf(stderr, "dj-ui: the channel line offers the device's %lld pairs: %s\n",
+                         static_cast<long long>(pairs.size()), qPrintable(pairs.join(QStringLiteral(", "))));
+        }
+        if (!pairRow->property("open").toBool()) {
+            std::fprintf(stderr, "dj-ui: the channel line stays locked in the device mode\n");
+            return 1;
+        }
+
         std::fprintf(stderr, "dj-ui: the headphone device is locked in auto and a list in device mode\n");
+    }
+
+    // Every list in the window has something in it. An empty dropdown is the same defect as a text field where a list
+    // belongs: the theme line was offering nothing at all until the owner's request put a list there (21.11).
+    {
+        int checked = 0;
+        std::function<void(QQuickItem *)> sweep = [&](QQuickItem *node) {
+            const QString name = node->objectName();
+            if (name.startsWith(QStringLiteral("settingRow_"))) {
+                const QString kind = node->property("kind").toString();
+                if (kind == QStringLiteral("choice") || kind == QStringLiteral("device")
+                    || kind == QStringLiteral("pair")) {
+                    const int offered = node->property("offered").toList().size();
+                    if (offered == 0) {
+                        std::fprintf(stderr, "dj-ui: the %s line offers nothing to choose from\n", qPrintable(name));
+                        checked = -1;
+                        return;
+                    }
+                    ++checked;
+                }
+            }
+            for (QQuickItem *child : node->childItems()) {
+                sweep(child);
+                if (checked < 0) {
+                    return;
+                }
+            }
+        };
+        sweep(settingsWindow);
+        if (checked < 0) {
+            return 1;
+        }
+        std::fprintf(stderr, "dj-ui: every list in the window offers something: %d of them\n", checked);
     }
 
     // A page that exists but shows nothing is the same complaint as a list that takes the window: the rows have to be

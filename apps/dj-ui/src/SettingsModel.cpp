@@ -59,6 +59,21 @@ QStringList SettingsModel::devices() const
     return names;
 }
 
+QStringList SettingsModel::devicePairs(const QString &device) const
+{
+    QStringList pairs;
+    const QString answer = m_engine.ask({QStringLiteral("--device-pairs"), device});
+    const QStringList lines = answer.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    for (const QString &line : lines) {
+        const QString pair = line.trimmed();
+        // `[0, 1]` is what the settings file wants; anything else would be the engine's complaint, not a pair.
+        if (pair.startsWith(QLatin1Char('[')) && pair.endsWith(QLatin1Char(']'))) {
+            pairs << pair;
+        }
+    }
+    return pairs;
+}
+
 QString SettingsModel::describeDevice(const QString &name) const
 {
     const QString answer = m_engine.ask({QStringLiteral("--check-device"), name});
@@ -70,7 +85,10 @@ QString SettingsModel::describeDevice(const QString &name) const
         // The engine answers a refusal on stderr, and that text is the explanation.
         return answer.trimmed();
     }
-    return QStringLiteral("%1 — %2 channels, %3 Hz").arg(fields.at(0), fields.at(1), fields.at(2));
+    const QString channels = fields.size() > 3 ? QStringLiteral("%1 (%2 native)").arg(fields.at(1), fields.at(2))
+                                               : fields.at(1);
+    const QString rate = fields.size() > 3 ? fields.at(3) : fields.at(2);
+    return QStringLiteral("%1 — %2 channels, %3 Hz").arg(fields.at(0), channels, rate);
 }
 
 QVariant SettingsModel::value(const QString &path) const

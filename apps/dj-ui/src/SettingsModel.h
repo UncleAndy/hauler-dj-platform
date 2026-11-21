@@ -41,6 +41,9 @@ public:
     /// The outputs the engine can open, as names to choose from rather than a string to guess.
     Q_INVOKABLE QStringList devices() const;
 
+    /// The stereo pairs the device offers — the headphones are a pair or nothing.
+    Q_INVOKABLE QStringList devicePairs(const QString &device) const;
+
     /// Ask the engine about one device: what it opens, or why it cannot.
     Q_INVOKABLE QString describeDevice(const QString &name) const;
 

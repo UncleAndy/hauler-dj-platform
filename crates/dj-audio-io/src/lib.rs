@@ -212,6 +212,9 @@ pub struct OutputDevice {
     pub name: String,
     /// Channels a stream may open on it, as far as the plan cares: 1, 2 or 4 (ADR-0005).
     pub channels: usize,
+    /// Channels the device really has. `channels` is capped at what the route plan uses; this is what the hardware
+    /// offers, and it decides which stereo pairs the DJ can put the headphones on.
+    pub native_channels: usize,
     /// Rate it prefers.
     pub sample_rate: u32,
     /// What a bare run would open.
@@ -240,7 +243,7 @@ pub fn output_device_list() -> Result<Vec<OutputDevice>, IoError> {
         if listed.iter().any(|one| one.name == name) {
             continue;
         }
-        let (channels, sample_rate) = match device.default_output_config() {
+        let (channels, native_channels, sample_rate) = match device.default_output_config() {
             Ok(config) => {
                 let native = usize::from(config.channels());
                 let width = if native >= 4 {
@@ -250,14 +253,15 @@ pub fn output_device_list() -> Result<Vec<OutputDevice>, IoError> {
                 } else {
                     1
                 };
-                (width, config.sample_rate())
+                (width, native, config.sample_rate())
             }
-            Err(_) => (2, 48_000),
+            Err(_) => (2, 2, 48_000),
         };
         let default = default_name.as_deref() == Some(name.as_str());
         listed.push(OutputDevice {
             name,
             channels,
+            native_channels,
             sample_rate,
             default,
         });
@@ -266,6 +270,39 @@ pub fn output_device_list() -> Result<Vec<OutputDevice>, IoError> {
     // question the DJ came with.
     listed.sort_by_key(|device| !device.default);
     Ok(listed)
+}
+
+/// The stereo pairs a device offers, as the settings file writes them: `[0, 1]`, `[2, 3]` and so on.
+///
+/// A cue pair is a stereo pair — the headphones are a stereo pair of channels or they are nothing. Which pairs exist is
+/// the device's business, not the shell's: a two-channel interface has one, an eight-channel one has four, and a list
+/// that offers `[2, 3]` on a stereo card is a list of names the engine cannot open.
+pub fn device_pairs(device: Option<&str>) -> Result<Vec<(usize, usize)>, IoError> {
+    let host = cpal::default_host();
+    let chosen = match device.filter(|needle| !needle.is_empty()) {
+        Some(needle) => {
+            let needle_lower = needle.to_ascii_lowercase();
+            host.output_devices()
+                .map_err(|err| IoError::Unsupported(err.to_string()))?
+                .find(|candidate| {
+                    candidate
+                        .to_string()
+                        .to_ascii_lowercase()
+                        .contains(&needle_lower)
+                })
+                .ok_or_else(|| IoError::DeviceNotFound(needle.to_string()))?
+        }
+        None => host
+            .default_output_device()
+            .ok_or_else(|| IoError::DeviceNotFound("default".to_string()))?,
+    };
+    let native = match chosen.default_output_config() {
+        Ok(config) => usize::from(config.channels()),
+        Err(_) => 2,
+    };
+    Ok((0..native / 2)
+        .map(|pair| (pair * 2, pair * 2 + 1))
+        .collect())
 }
 
 /// Resolve a device by name substring and report its shape.

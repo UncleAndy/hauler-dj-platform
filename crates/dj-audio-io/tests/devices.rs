@@ -27,6 +27,38 @@ fn the_list_names_what_a_resolution_finds() {
             device.sample_rate
         );
     }
+    // The pairs are the device's own: as many stereo pairs as it has channels, and never more.
+    for device in &devices {
+        assert!(
+            device.native_channels >= device.channels,
+            "{} reports {} channels but only {} native ones",
+            device.name,
+            device.channels,
+            device.native_channels
+        );
+        let pairs = dj_audio_io::device_pairs(Some(&device.name));
+        let pairs = match pairs {
+            Ok(pairs) => pairs,
+            Err(error) => panic!("{} has no pairs: {error:?}", device.name),
+        };
+        assert_eq!(
+            pairs.len(),
+            device.native_channels / 2,
+            "{} has {} native channels and {} pairs",
+            device.name,
+            device.native_channels,
+            pairs.len()
+        );
+        if let Some((left, right)) = pairs.first() {
+            assert_eq!(
+                (*left, *right),
+                (0, 1),
+                "the first pair of {} is not the main one",
+                device.name
+            );
+        }
+    }
+
     // At most one default, and it stands first.
     let defaults = devices.iter().filter(|device| device.default).count();
     assert!(defaults <= 1, "{defaults} devices claim to be the default");

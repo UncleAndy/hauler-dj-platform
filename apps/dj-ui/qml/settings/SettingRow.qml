@@ -13,7 +13,7 @@ Item {
 
     property string label: ""
     property string path: ""
-    // "switch" | "choice" | "slider" | "number" | "text" | "check" | "device"
+    // "switch" | "choice" | "slider" | "number" | "text" | "check" | "device" | "pair"
     property string kind: "text"
     // What the engine answered about the device (kind "check").
     property string answer: ""
@@ -27,6 +27,8 @@ Item {
     // the "device" mode, and in the other modes the engine picks it. The control stays visible and locked — hiding it
     // would leave the DJ wondering where the device went (owner's report, 21.11).
     property string gatePath: ""
+    // Which line names the device the pairs belong to.
+    property string pairDevicePath: "engine:audio.device"
     property var gateValues: []
     // The gate's value is read in reload(), not inside the binding: a binding cannot see the inside of an invokable, so
     // `Settings.value()` in a binding would answer once and never again — and the line stayed locked in every mode.
@@ -45,10 +47,12 @@ Item {
     // the hand would use, not a copy of it.
     objectName: "settingRow_" + path.replace(/[:.]/g, "_")
 
-    // What the list offers. A device list is asked of the engine every time the model says something changed, because
-    // a list read once at start-up is a list from before the engine was up (owner's report, 21.11).
-    readonly property var choices: row.kind === "device"
-                                   ? (Settings ? Settings.devices() : [])
+    // What the list offers. The engine is asked in reload(), never inside a binding: a binding cannot see the inside of
+    // an invokable, so a list read in one would be a list from the first moment and never again.
+    property var engineDevices: []
+    property var enginePairs: []
+    readonly property var choices: row.kind === "device" ? row.engineDevices
+                                   : row.kind === "pair" ? row.enginePairs
                                    : row.values
     // The value stored in the file stays visible even when the device it names is no longer plugged in: hiding it
     // would look like the setting had been lost.
@@ -68,12 +72,27 @@ Item {
     readonly property string currentText: row.current === undefined || row.current === null
                                        ? "" : String(row.current)
 
+    // A key the file does not have is "nothing", not the word "undefined": `String(undefined)` in QML is a string, and
+    // it went to the engine as a device name (found by the check, 21.11).
+    function text(path) {
+        const value = Settings.value(path);
+        return value === undefined || value === null ? "" : String(value);
+    }
+
     function reload() {
         if (row.path !== "") {
             row.current = Settings.value(row.path);
         }
         if (row.gatePath !== "") {
-            row.gateValue = String(Settings.value(row.gatePath));
+            row.gateValue = row.text(row.gatePath);
+        }
+        if (row.kind === "device") {
+            row.engineDevices = Settings.devices();
+        } else if (row.kind === "pair") {
+            // The pairs belong to the device the DJ picked above: a pair list that ignores the device is a list of
+            // channel numbers that may not exist on the card.
+            const device = row.pairDevicePath === "" ? "" : row.text(row.pairDevicePath);
+            row.enginePairs = Settings.devicePairs(device);
         }
     }
 

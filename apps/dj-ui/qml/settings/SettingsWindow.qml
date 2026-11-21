@@ -17,7 +17,8 @@ Item {
     anchors.fill: parent
     visible: false
 
-    readonly property var themeNames: Settings ? Settings.themeSets() : []
+    // The theme sets belong to UiSettings, which owns the palette; the model only routes writes.
+    readonly property var themeNames: UiSettings.themeSets()
 
     function open() {
         window.visible = true;
@@ -220,8 +221,10 @@ Item {
                 // says so instead of pretending the name is doing something.
                 { label: qsTr("Headphone device"), path: "engine:audio.headphones.device", kind: "device",
                   gatePath: "engine:audio.headphones.mode", gateValues: ["device"] },
-                { label: qsTr("Headphone channels"), path: "engine:audio.headphones.pair", kind: "choice",
-                  values: ["[0, 1]", "[2, 3]"] },
+                // Only the pairs the chosen device really has: an eight-channel interface has four, a stereo card has
+                // one, and offering [2, 3] on a stereo card would offer a pair the engine cannot open.
+                { label: qsTr("Headphone channels"), path: "engine:audio.headphones.pair", kind: "pair",
+                  gatePath: "engine:audio.headphones.mode", gateValues: ["same_device", "device"] },
                 { label: qsTr("Headphone gain"), path: "engine:audio.headphones.gain", kind: "slider",
                   from: 0, to: 1, decimals: 2 },
                 { label: qsTr("Headphone mix"), path: "engine:audio.headphones.mix", kind: "slider",
