@@ -312,6 +312,32 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
         std::fprintf(stderr, "dj-ui: the headphone device is locked in auto and a list in device mode\n");
     }
 
+    // Every line shows a control. A line whose list is empty and whose field is hidden is a line the DJ cannot see at
+    // all, and that is what "the setting is not in the interface" looks like from the outside (owner's report, 21.11).
+    {
+        int without = 0;
+        std::function<void(QQuickItem *)> walk = [&](QQuickItem *node) {
+            if (node->objectName().startsWith(QStringLiteral("settingRow_"))) {
+                const QString kind = node->property("kind").toString();
+                const bool shows = node->property("asList").toBool() || node->property("asField").toBool()
+                                   || kind == QStringLiteral("switch") || kind == QStringLiteral("slider")
+                                   || kind == QStringLiteral("number") || kind == QStringLiteral("check");
+                if (!shows) {
+                    std::fprintf(stderr, "dj-ui: the %s line shows nothing to change\n",
+                                 qPrintable(node->objectName()));
+                    ++without;
+                }
+            }
+            for (QQuickItem *child : node->childItems()) {
+                walk(child);
+            }
+        };
+        walk(settingsWindow);
+        if (without > 0) {
+            return 1;
+        }
+    }
+
     // Every list in the window has something in it. An empty dropdown is the same defect as a text field where a list
     // belongs: the theme line was offering nothing at all until the owner's request put a list there (21.11).
     {

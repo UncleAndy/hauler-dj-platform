@@ -66,7 +66,13 @@ Item {
         }
         return list;
     }
-    readonly property bool asList: row.kind === "device" ? row.choices.length > 0 : row.kind === "choice"
+    readonly property bool asList: row.kind === "device" || row.kind === "pair"
+                                   ? row.choices.length > 0
+                                   : row.kind === "choice"
+    // A row that shows neither a list nor a field is a row the DJ cannot see: this is what "the setting is not there"
+    // looks like when the engine had no answer (owner's report, 21.11).
+    readonly property bool asField: row.kind === "text"
+                                    || ((row.kind === "device" || row.kind === "pair") && !row.asList)
 
     property var current: undefined
     readonly property string currentText: row.current === undefined || row.current === null
@@ -199,7 +205,7 @@ Item {
         }
 
         TextField {
-            visible: row.kind === "text" || (row.kind === "device" && !row.asList)
+            visible: row.asField
             enabled: row.open
             Layout.fillWidth: true
             Layout.maximumWidth: 300
@@ -217,7 +223,8 @@ Item {
                   ? qsTr("chosen by the mode")
                   : (row.restart
                      ? qsTr("after restart")
-                     : (row.kind === "device" && !row.asList ? qsTr("the engine named no outputs; type the name") : ""))
+                     : (row.asField && row.kind !== "text"
+                        ? qsTr("the engine named nothing; type it") : ""))
             color: UiSettings.themeTextDim
             font.pixelSize: 9
             elide: Text.ElideRight

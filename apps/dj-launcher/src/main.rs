@@ -172,7 +172,14 @@ fn run(options: &Options) -> Result<u8, String> {
             ui.display()
         ));
     }
-    say(options, &format!("shell: starting {}", ui.display()));
+    // Which file is started, and how old it is: "I rebuilt but see the old window" is answered by this one line.
+    let age = std::fs::metadata(&ui)
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|modified| modified.elapsed().ok())
+        .map(|age| format!(", built {} min ago", age.as_secs() / 60))
+        .unwrap_or_default();
+    say(options, &format!("shell: starting {}{age}", ui.display()));
     let mut shell = Command::new(&ui)
         // The shell asks the engine about audio devices before the DJ commits a name to the settings file, and the
         // engine's own flags answer that. This process started the engine, so it is the one that knows where it is.
@@ -381,16 +388,29 @@ fn find_shell(folder: &Path, options: &Options) -> Option<PathBuf> {
     if let Ok(working) = std::env::current_dir() {
         candidates.push(working.join("build").join("apps/dj-ui").join(&name));
     }
+    // The newest of them wins, not the first in the list.
+    //
+    // A build folder from a previous month sits in the tree, and the first match made the launcher start a shell without
+    // the settings the tree had just gained: the DJ rebuilds, runs, and sees the old window (owner's report, 21.11).
+    // `$HAULER_UI` still wins outright — a person naming a file means that file.
+    let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
     for candidate in &candidates {
         say(
             options,
             &format!("shell: looking at {}", candidate.display()),
         );
-        if candidate.is_file() {
-            return Some(candidate.clone());
+        let Ok(meta) = std::fs::metadata(candidate) else {
+            continue;
+        };
+        if !meta.is_file() {
+            continue;
+        }
+        let modified = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+        if best.as_ref().is_none_or(|(newest, _)| modified > *newest) {
+            best = Some((modified, candidate.clone()));
         }
     }
-    None
+    best.map(|(_, path)| path)
 }
 
 /// `dj-engine` or `dj-engine.exe`, depending on the platform.
