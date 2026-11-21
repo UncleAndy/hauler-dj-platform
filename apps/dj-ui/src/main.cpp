@@ -487,6 +487,9 @@ int main(int argc, char *argv[])
         QStringLiteral("settings-file"),
         QStringLiteral("The engine's settings file (config.toml). Defaults to the one the engine reads."),
         QStringLiteral("path"));
+    const QCommandLineOption settingsWindowCheckOption(
+        QStringLiteral("settings-window-check"),
+        QStringLiteral("Open the settings window from its button, walk its sections, close it and exit."));
     const QCommandLineOption settingsCheckOption(
         QStringLiteral("settings-check"),
         QStringLiteral("Write one engine value and one layout value through the settings model, read them back and "
@@ -666,6 +669,7 @@ int main(int argc, char *argv[])
     parser.addOption(curvePersistCheckOption);
     parser.addOption(curvePickOption);
     parser.addOption(settingsFileOption);
+    parser.addOption(settingsWindowCheckOption);
     parser.addOption(settingsCheckOption);
     parser.addOption(fxPickOption);
     parser.addOption(fxPersistCheckOption);
@@ -1703,6 +1707,10 @@ int main(int argc, char *argv[])
         }
         std::fprintf(stderr, "dj-ui: the effect of deck A survived the restart: %s\n", qPrintable(playing));
         return 0;
+    }
+
+    if (parser.isSet(settingsWindowCheckOption)) {
+        return checks::runSettingsWindowCheck(engine, bridge);
     }
 
     if (parser.isSet(settingsCheckOption)) {

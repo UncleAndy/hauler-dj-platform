@@ -5,6 +5,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 
 import "shell"
+import "settings"
 
 ApplicationWindow {
     id: root
@@ -39,5 +40,13 @@ ApplicationWindow {
     ShellLayout {
         anchors.fill: parent
         anchors.margins: 6
+        onSettingsAsked: settingsWindow.open()
+    }
+
+    // Over everything, under nothing: the settings window takes the whole application, whichever panel asked for it.
+    SettingsWindow {
+        id: settingsWindow
+        anchors.fill: parent
+        z: 900
     }
 }

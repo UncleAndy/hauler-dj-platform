@@ -1,0 +1,154 @@
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import DjPlatform.Ui 1.0
+
+// One line of the settings window: a name, a control, and where the value lands.
+//
+// The value is never copied into the window as its own truth: it is read from the owner every time the model says
+// something changed, and written through the owner when the DJ moves the control. A control that keeps its own copy
+// drifts from the file the engine reads, and the drift is only noticed at the next start.
+Item {
+    id: row
+
+    property string label: ""
+    property string path: ""
+    // "switch" | "choice" | "slider" | "number" | "text"
+    property string kind: "text"
+    property var values: []
+    property string hint: ""
+    property real from: 0
+    property real to: 1
+    property int decimals: 2
+    property bool restart: Settings ? Settings.needsRestart(path) : false
+    // A list of numbers: the file holds `48000`, and a control that carried the text would write it as a string the
+    // engine then refuses to read.
+    property bool numeric: false
+
+    signal edited(var value)
+
+    implicitHeight: 30
+    implicitWidth: 600
+
+    // `engine:audio.block_frames` reads as `settingRow_engine_audio_block_frames`: a check has to find the very line
+    // the hand would use, not a copy of it.
+    objectName: "settingRow_" + path.replace(/[:.]/g, "_")
+
+    property var current: undefined
+    readonly property string currentText: row.current === undefined || row.current === null
+                                       ? "" : String(row.current)
+
+    function reload() {
+        if (row.path !== "") {
+            row.current = Settings.value(row.path);
+        }
+    }
+
+    function write(value) {
+        if (row.path === "" || !Settings) {
+            return;
+        }
+        if (Settings.set(row.path, value)) {
+            row.reload();
+            row.syncChoice();
+        }
+    }
+
+    Component.onCompleted: row.reload()
+    Connections {
+        target: Settings
+        function onChanged() { row.reload() }
+    }
+
+    RowLayout {
+        anchors.fill: parent
+        spacing: 8
+
+        Label {
+            Layout.preferredWidth: 200
+            text: row.label
+            color: UiSettings.themeText
+            font.pixelSize: 11
+            elide: Text.ElideRight
+        }
+
+        // A switch, for what is on or off.
+        Switch {
+            visible: row.kind === "switch"
+            Layout.preferredWidth: 60
+            checked: row.current === true
+            onToggled: row.write(checked)
+        }
+
+        // A list of named choices. It carries text; the owner writes back the type the file already had.
+        ComboBox {
+            id: choice
+            visible: row.kind === "choice"
+            Layout.fillWidth: true
+            Layout.maximumWidth: 260
+            model: row.values
+            font.pixelSize: 11
+            Component.onCompleted: row.syncChoice()
+            onActivated: row.write(row.numeric ? Number(currentText) : currentText)
+        }
+
+        // A slider for a share between two ends, with the number beside it.
+        Slider {
+            visible: row.kind === "slider"
+            Layout.fillWidth: true
+            Layout.maximumWidth: 220
+            from: row.from
+            to: row.to
+            stepSize: 1 / Math.pow(10, row.decimals)
+            value: row.current === undefined ? row.from : Number(row.current)
+            onMoved: row.write(value)
+        }
+
+        Label {
+            visible: row.kind === "slider"
+            Layout.preferredWidth: 48
+            horizontalAlignment: Text.AlignRight
+            text: row.current === undefined ? "" : Number(row.current).toFixed(row.decimals)
+            color: UiSettings.themeTextDim
+            font.pixelSize: 11
+        }
+
+        SpinBox {
+            visible: row.kind === "number"
+            Layout.preferredWidth: 120
+            from: Math.round(row.from)
+            to: Math.round(row.to)
+            value: row.current === undefined ? Math.round(row.from) : Math.round(Number(row.current))
+            editable: true
+            onValueModified: row.write(value)
+        }
+
+        TextField {
+            visible: row.kind === "text"
+            Layout.fillWidth: true
+            Layout.maximumWidth: 300
+            font.pixelSize: 11
+            text: row.currentText
+            placeholderText: qsTr("by default")
+            onEditingFinished: row.write(text)
+        }
+
+        Label {
+            Layout.fillWidth: true
+            text: row.restart ? qsTr("after restart") : ""
+            color: UiSettings.themeTextDim
+            font.pixelSize: 9
+            elide: Text.ElideRight
+        }
+    }
+
+    // Keeping the list on the value the file has, rather than on the first entry: an unset key must not show as if
+    // the first choice had been made.
+    function syncChoice() {
+        if (row.kind !== "choice") {
+            return;
+        }
+        const index = row.values.indexOf(row.currentText);
+        choice.currentIndex = index >= 0 ? index : 0;
+    }
+}

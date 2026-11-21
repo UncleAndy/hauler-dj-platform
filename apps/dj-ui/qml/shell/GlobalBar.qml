@@ -6,6 +6,10 @@ import QtQuick.Layouts
 Pane {
     id: bar
 
+    // The settings window covers the whole application, so it cannot live inside this strip: this bar only asks for
+    // it, and the window that owns the arrangement puts it up.
+    signal settingsAsked()
+
     background: Rectangle { color: UiSettings.themeBackground }
 
     /// The name a layout wears in the menu and on the button. The stored value stays short and stable;
@@ -92,6 +96,18 @@ Pane {
         }
         // Справа от счётчика и с постоянной шириной: текст состояния меняется каждую секунду, и
         // кнопка, стоящая слева от него, ездила бы под рукой.
+        // One door to everything the three files hold. The gear stands next to the model button, where the
+        // other window-wide actions live.
+        Button {
+            objectName: "settingsButton"
+            Layout.preferredWidth: 92
+            text: qsTr("Settings")
+            font.pixelSize: 10
+            padding: 4
+            ToolTip.text: qsTr("Sound, library, effects, interface")
+            ToolTip.visible: hovered
+            onClicked: bar.settingsAsked()
+        }
         Button {
             objectName: "modelButton"
             Layout.preferredWidth: 112
@@ -207,4 +223,5 @@ Pane {
     ModelPanel {
         id: modelPanel
     }
+
 }

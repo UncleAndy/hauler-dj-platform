@@ -368,6 +368,13 @@ case "${1:-}" in
     # meter is a number in the report and not an opinion in the plan (owner's decision, 21.11).
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --fx-check \
         --layout-file "$run_dir/fx-layout.json"
+    # The settings window: opens from its gear, holds the eight sections, turns its pages, writes through two lines
+    # into the engine's file and the layout's file, and closes (owner's decision, 21.11).
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --settings-window-check \
+        --settings-file "$run_dir/settings/config.toml" --layout-file "$run_dir/settings-layout.json"
+    # And the round trip through the model alone, on both files, for a run that cannot open a window.
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --settings-check \
+        --settings-file "$run_dir/settings-round/config.toml" --layout-file "$run_dir/settings-round-layout.json"
     # The lock is one switch in two places: the deck's button and the column in the collection, and the
     # collection has to say so the moment it is pressed.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \

@@ -5,7 +5,9 @@
 #include "SessionState.h"
 #include "UiSettings.h"
 
+#include <QClipboard>
 #include <QCoreApplication>
+#include <QGuiApplication>
 #include <QMetaObject>
 #include <QPixmap>
 #include <QStandardPaths>
@@ -129,4 +131,11 @@ QString SettingsModel::report() const
     lines << QStringLiteral("block frames: %1").arg(m_engine.value(QStringLiteral("audio.block_frames")).toString());
     lines << QStringLiteral("device: %1").arg(m_engine.value(QStringLiteral("audio.device")).toString());
     return lines.join(QLatin1Char('\n'));
+}
+
+void SettingsModel::copyReport() const
+{
+    if (QClipboard *clipboard = QGuiApplication::clipboard()) {
+        clipboard->setText(report());
+    }
 }

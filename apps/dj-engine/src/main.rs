@@ -180,7 +180,10 @@ fn settings_request(argv: &[String]) -> Option<std::process::ExitCode> {
     if set.is_none() && set_text.is_none() && get.is_none() {
         return None;
     }
-    let file = match path.map(std::path::PathBuf::from).or_else(dj_config::Config::default_path) {
+    let file = match path
+        .map(std::path::PathBuf::from)
+        .or_else(dj_config::Config::default_path)
+    {
         Some(file) => file,
         None => {
             eprintln!("dj-engine: there is no settings file to write on this system");

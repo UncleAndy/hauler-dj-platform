@@ -41,6 +41,9 @@ public:
     /// A short report for the clipboard: versions, the files, the audio shape.
     Q_INVOKABLE QString report() const;
 
+    /// Put that report on the clipboard, for a message to whoever is helping.
+    Q_INVOKABLE void copyReport() const;
+
 signals:
     void changed();
 

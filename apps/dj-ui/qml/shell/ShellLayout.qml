@@ -14,6 +14,8 @@ import "../browser"
 
 Item {
     id: shell
+
+    signal settingsAsked()
     objectName: "shellLayout"
 
     // Which deck the browser loads into; shown there, never guessed.
@@ -132,6 +134,7 @@ Item {
 
         // Global strip: what belongs to the whole set, not to a deck.
         GlobalBar {
+            onSettingsAsked: shell.settingsAsked()
             id: globalBar
             objectName: "globalBar"
             SplitView.preferredHeight: shell.height * LayoutState.globalPercent / 100.0

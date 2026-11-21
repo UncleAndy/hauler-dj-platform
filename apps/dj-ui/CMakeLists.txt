@@ -33,6 +33,7 @@ qt_add_executable(dj-ui
     src/checks/DeckViewChecks.cpp
         src/checks/CueChecks.cpp
     src/checks/FxChecks.cpp
+    src/checks/SettingsChecks.cpp
     src/EngineSettings.cpp
     src/EngineSettings.h
     src/SettingsModel.cpp
@@ -65,6 +66,8 @@ qt_add_qml_module(dj-ui
         qml/mixer/MasterKnob.qml
         qml/mixer/MasterMeter.qml
         qml/mixer/MixerPanel.qml
+        qml/settings/SettingsWindow.qml
+        qml/settings/SettingRow.qml
         qml/mixer/TrimKnob.qml
         qml/mixer/FaderKnob.qml
         qml/mixer/EqKnob.qml

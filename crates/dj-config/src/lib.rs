@@ -401,19 +401,28 @@ pub fn set_string(path: &std::path::Path, key: &str, text: &str) -> Result<(), C
     write_value(path, key, toml_edit::Value::from(text))
 }
 
-fn write_value(path: &std::path::Path, key: &str, value: toml_edit::Value) -> Result<(), ConfigError> {
+fn write_value(
+    path: &std::path::Path,
+    key: &str,
+    value: toml_edit::Value,
+) -> Result<(), ConfigError> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(error) => return Err(ConfigError::Io(error.to_string())),
     };
-    let mut document: toml_edit::DocumentMut =
-        text.parse().map_err(|error: toml_edit::TomlError| ConfigError::Parse(error.to_string()))?;
+    let mut document: toml_edit::DocumentMut = text
+        .parse()
+        .map_err(|error: toml_edit::TomlError| ConfigError::Parse(error.to_string()))?;
 
     let parts: Vec<&str> = key.split('.').collect();
     let (leaf, tables) = match parts.split_last() {
         Some(pair) => pair,
-        None => return Err(ConfigError::Invalid(String::from("an empty key names nothing"))),
+        None => {
+            return Err(ConfigError::Invalid(String::from(
+                "an empty key names nothing",
+            )));
+        }
     };
     let mut table = document.as_table_mut();
     for name in tables {
@@ -429,7 +438,10 @@ fn write_value(path: &std::path::Path, key: &str, value: toml_edit::Value) -> Re
 
     // A settings file may not exist yet — that is the normal state of a fresh install, and the first change the
     // window makes is what creates it.
-    if let Some(folder) = path.parent().filter(|folder| !folder.as_os_str().is_empty()) {
+    if let Some(folder) = path
+        .parent()
+        .filter(|folder| !folder.as_os_str().is_empty())
+    {
         std::fs::create_dir_all(folder).map_err(|error| ConfigError::Io(error.to_string()))?;
     }
     std::fs::write(path, document.to_string()).map_err(|error| ConfigError::Io(error.to_string()))
@@ -442,8 +454,9 @@ pub fn get_value(path: &std::path::Path, key: &str) -> Result<Option<String>, Co
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(ConfigError::Io(error.to_string())),
     };
-    let document: toml_edit::DocumentMut =
-        text.parse().map_err(|error: toml_edit::TomlError| ConfigError::Parse(error.to_string()))?;
+    let document: toml_edit::DocumentMut = text
+        .parse()
+        .map_err(|error: toml_edit::TomlError| ConfigError::Parse(error.to_string()))?;
     let mut item: &toml_edit::Item = document.as_item();
     for name in key.split('.') {
         let Some(next) = item.get(name) else {

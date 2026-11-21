@@ -242,6 +242,9 @@ int runAnalyzeBatchCheck(QQmlApplicationEngine& engine, FileBrowser& browser, La
 /// switch and the chooser, each confirmed by the snapshot the engine publishes (owner's decision, 21.11).
 int runFxCheck(QQmlApplicationEngine& engine, std::unique_ptr<BridgeClient>& bridge);
 
+/// `--settings-window-check`: the window, its sections and its geometry.
+int runSettingsWindowCheck(QQmlApplicationEngine& engine, std::unique_ptr<BridgeClient>& bridge);
+
 /// The shell meets an engine that starts after it: one attempt at startup used to be the whole story.
 int runReconnectCheck(BridgeClient& bridge, const QString& endpoint);
 int runPathsCheck();
