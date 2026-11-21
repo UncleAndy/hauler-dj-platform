@@ -10,7 +10,9 @@
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-dist="$repo/dist/windows"
+# Куда складывать пакет. DJ_WIN_DIST перекрывает dist/windows: в общем дереве этот каталог может принадлежать
+# другому пользователю, и тогда его не переписать — собранное можно сложить в свой.
+dist="${DJ_WIN_DIST:-$repo/dist/windows}"
 target=x86_64-pc-windows-gnu
 qt_version="${HAULER_QT_VERSION:-6.8.1}"
 qt_root="${HAULER_QT_ROOT:-$repo/.cache/qt-windows}"
@@ -292,6 +294,10 @@ qt_download() {
     '
 }
 
+# Каталог сборки оболочки, названный в одном месте. Перекрывается DJ_WIN_BUILD_DIR: если build-windows собран
+# другим пользователем, чужие файлы не переписать — и спорить за них нечего, можно собрать в своём каталоге.
+ui_build="${DJ_WIN_BUILD_DIR:-$repo/build-windows}"
+
 ui() {
     qt_download
     host_prefix="$(qt_host_download | tail -1)"
@@ -302,7 +308,7 @@ ui() {
         exit 1
     fi
     echo "== оболочка: Qt из $prefix"
-    REPO="$repo" PREFIX="$prefix" HOST_PREFIX="$host_prefix" nix shell "nixpkgs#pkgsCross.mingwW64.stdenv.cc" \
+    REPO="$repo" PREFIX="$prefix" HOST_PREFIX="$host_prefix" UI_BUILD="$ui_build" nix shell "nixpkgs#pkgsCross.mingwW64.stdenv.cc" \
         nixpkgs#cmake nixpkgs#ninja nixpkgs#gcc nixpkgs#binutils nixpkgs#lld nixpkgs#pkg-config --command bash -c '
         set -eu
         cd "$REPO"
@@ -316,7 +322,7 @@ ui() {
         if [ -z "$mcfg_lib" ]; then echo "нет mcfgthread: оболочка не соберётся" >&2; exit 1; fi
         # Инструменты Qt (qmlimportscanner и прочие) — программы хоста: Windows-копии здесь не запускаются.
         export QT_HOST_PATH="$HOST_PREFIX"
-        cmake -S . -B build-windows -G Ninja \
+        cmake -S . -B "$UI_BUILD" -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-mingw64.cmake \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH="$PREFIX" \
@@ -326,10 +332,10 @@ ui() {
             -DCMAKE_CXX_FLAGS="-I$mcfg_inc" \
             -DCMAKE_EXE_LINKER_FLAGS="-L$mcfg_lib" \
             -DCMAKE_SHARED_LINKER_FLAGS="-L$mcfg_lib"
-        cmake --build build-windows --target dj-ui
+        cmake --build "$UI_BUILD" --target dj-ui
     '
     mkdir -p "$dist"
-    cp "$repo/build-windows/apps/dj-ui/dj-ui.exe" "$dist/"
+    cp "$ui_build/apps/dj-ui/dj-ui.exe" "$dist/"
     echo "готово: $dist/dj-ui.exe"
 }
 
@@ -476,11 +482,13 @@ msi() {
     fi
     tools="$(msi_tools)"
     echo "== пакет msi"
-    REPO="$repo" MSITOOLS="$tools" nix shell nixpkgs#python3 --command bash -c '
+    REPO="$repo" DIST="$dist" MSITOOLS="$tools" nix shell nixpkgs#python3 --command bash -c '
         set -eu
         export PATH="$MSITOOLS/bin:$PATH"
         cd "$REPO"
-        python3 scripts/windows-msi.py --dist dist/windows
+        # Каталог тот же, что у --dist, а не всегда dist/windows: иначе msi собирается из одного каталога, а zip и
+        # проверка смотрят в другой.
+        python3 scripts/windows-msi.py --dist "$DIST"
     '
     # Проверка: в пакете должно быть ровно столько файлов, сколько в дистрибутиве, без самого zip и без msi.
     package="$dist/hauler-dj-$(grep -m1 "^version" "$repo/Cargo.toml" | cut -d'"' -f2)-x64.msi"
@@ -507,7 +515,7 @@ case "${1:---all}" in
     --dist) deploy ;;
     --msi) msi ;;
     --all) engine; ui; launcher; ort; deploy; msi ;;
-    --clean) rm -rf "$dist" "$qt_root" "$repo/build-windows" "$repo/.cache/msitools-path" ;;
+    --clean) rm -rf "$dist" "$qt_root" "$ui_build" "$repo/.cache/msitools-path" ;;
     -h|--help) usage ;;
     *) usage; exit 2 ;;
 esac

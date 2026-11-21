@@ -182,6 +182,46 @@
           fi
           exec bash "$repo/scripts/windows.sh" "$@"
         '';
+        # dj-release — one word for a whole release: the packages, the notes, the GitHub draft.
+        #
+        # The work is `scripts/release.sh`; this wrapper only puts it in the dev shell (cargo and Qt live there) and hands
+        # it the repository. It publishes a *draft*: the tag appears when the owner presses Publish.
+        djRelease = pkgs.writeShellScriptBin "dj-release" ''
+          set -eu
+
+          case "''${1:-}" in
+            -h|--help)
+              cat <<'EOF'
+          dj-release — build the release: packages for Linux and Windows, notes, a GitHub draft.
+
+            (no arguments)  all of it: --linux --windows --notes --github
+            --linux         this machine's package: tar.gz with .desktop, icons, licences
+            --windows       Windows zip and MSI through scripts/windows.sh --all
+            --notes         docs/release-notes-<version>.md from a template, if absent
+            --github        gh release create --draft with every file and SHA256SUMS
+            --version X.Y.Z must match Cargo.toml
+            --dry-run       build and sum, do not send anything to GitHub
+            -h, --help      this text
+
+          The draft becomes a release when you press Publish; this script makes neither a tag nor a push.
+          EOF
+              exit 0
+              ;;
+          esac
+
+          # Outside the dev shell there is no cargo and no Qt: enter it and come back here.
+          if [ -z "''${DJ_PLATFORM_DEVSHELL:-}" ]; then
+            if command -v nix >/dev/null 2>&1; then
+              repo="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+              exec nix develop "$repo" --command dj-release "$@"
+            fi
+            echo "dj-release: run me inside 'nix develop' (cargo and Qt live there)" >&2
+            exit 1
+          fi
+
+          repo="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+          exec bash "$repo/scripts/release.sh" "$@"
+        '';
       in
       {
         formatter = pkgs.nixfmt-rfc-style;
@@ -194,6 +234,10 @@
         apps.windows = {
           type = "app";
           program = "${djBuildWin}/bin/dj-build-win";
+        };
+        apps.release = {
+          type = "app";
+          program = "${djRelease}/bin/dj-release";
         };
         apps.default = {
           type = "app";
@@ -218,6 +262,7 @@
             qt.qtdeclarative # qmllint, qmlformat, qmltestrunner
             djBuild
             djBuildWin
+            djRelease
           ];
 
           buildInputs = with pkgs; [
