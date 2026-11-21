@@ -779,6 +779,17 @@ pub enum DjCommand {
         /// Proportion, 0.0 … 1.0.
         mix: f32,
     },
+    /// Set one deck's effect: which unit, how much of it, and whether it is in the path at all.
+    ///
+    /// The patch travels whole on every change — a knob sends the amount, a switch sends the same patch with
+    /// `enabled` turned around — because a partial patch makes the engine guess which field the DJ meant, and a guess
+    /// that is wrong is a knob that springs back.
+    SetDeckFx {
+        /// Target deck.
+        deck: DeckId,
+        /// The whole patch.
+        patch: FxPatch,
+    },
     /// Activate, move or clear a loop.
     SetLoop {
         /// Target deck.
@@ -879,6 +890,7 @@ impl DjCommand {
             | DjCommand::SetChannelGain { .. }
             | DjCommand::SetChannelFader { .. }
             | DjCommand::SetChannelCue { .. }
+            | DjCommand::SetDeckFx { .. }
             | DjCommand::SetCueGain { .. }
             | DjCommand::SetCueMix { .. }
             | DjCommand::SetChannelEq { .. }
@@ -901,6 +913,7 @@ impl DjCommand {
             | DjCommand::SetChannelGain { deck, .. }
             | DjCommand::SetChannelFader { deck, .. }
             | DjCommand::SetChannelCue { deck, .. }
+            | DjCommand::SetDeckFx { deck, .. }
             | DjCommand::SetChannelEq { deck, .. } => deck.index(),
             _ => 0,
         };
@@ -923,6 +936,7 @@ impl DjCommand {
             DjCommand::Nudge { .. } => Some(CoalesceKey::Nudge),
             DjCommand::SetChannelGain { .. } => Some(CoalesceKey::ChannelGain),
             DjCommand::SetChannelFader { .. } => Some(CoalesceKey::ChannelFader),
+            DjCommand::SetDeckFx { .. } => Some(CoalesceKey::DeckFx),
             DjCommand::SetChannelCue { .. } => Some(CoalesceKey::ChannelCue),
             DjCommand::SetCueGain { .. } => Some(CoalesceKey::CueGain),
             DjCommand::SetCueMix { .. } => Some(CoalesceKey::CueMix),
@@ -950,6 +964,9 @@ pub enum CoalesceKey {
     MasterGain,
     /// Channel fader of a deck: the last position wins.
     ChannelFader,
+    /// Deck effect: a knob turned quickly must not queue up, and a switch pressed twice must end where the hand left
+    /// it.
+    DeckFx,
     /// A nudge of a deck: the last deflection wins.
     Nudge,
     /// A cued channel: the last press wins.
@@ -967,7 +984,7 @@ impl CoalesceKey {
     ///
     /// This has to name every variant: it sizes the queue, and it used to say three while five keys
     /// existed, so the master gain landed past the end of the array.
-    pub const COUNT: usize = 11;
+    pub const COUNT: usize = 12;
 
     /// First slot of the EQ block: the deck-wide controls come first, one block of `DeckId::COUNT`
     /// slots each.
@@ -988,7 +1005,10 @@ impl CoalesceKey {
             CoalesceKey::ChannelCue => 7,
             CoalesceKey::CueGain => 8,
             CoalesceKey::CueMix => 9,
-            CoalesceKey::ChannelEq => 10,
+            // The deck's effect is a whole patch, so it holds one slot per deck like the fader does; the EQ block
+            // still comes last, because its three bands need a block of their own.
+            CoalesceKey::ChannelEq => 11,
+            CoalesceKey::DeckFx => 10,
         }
     }
 }
@@ -1246,10 +1266,14 @@ impl Default for HeadphoneLevels {
 ///
 /// One at a time: the DJ asked for a knob and a switch per deck, and a chain of effects is a separate
 /// piece of work (DJP-FX-002). The names are wire format — see `dj-fx/tests/kinds.rs`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FxKind {
     /// Bipolar DJ filter: the centre is the signal itself, one way cuts the highs, the other the lows.
+    ///
+    /// The default: a fresh slot is the signal itself, so the first thing a DJ sees is not a deck that already
+    /// sounds changed.
+    #[default]
     Filter,
     /// Delay line locked to the track's beat, with feedback and a damped tail.
     Echo,
@@ -1266,6 +1290,24 @@ pub enum FxKind {
 }
 
 impl FxKind {
+    /// The number the state cell and the shell's lists use.
+    pub fn index(self) -> u8 {
+        match self {
+            Self::Filter => 0,
+            Self::Echo => 1,
+            Self::Roll => 2,
+            Self::Flanger => 3,
+            Self::Phaser => 4,
+            Self::Bitcrusher => 5,
+            Self::Noise => 6,
+        }
+    }
+
+    /// The kind a number stands for, or `None` if the number is not one of ours.
+    pub fn from_index(index: u8) -> Option<Self> {
+        Self::ALL.get(usize::from(index)).copied()
+    }
+
     /// Every effect, in the order the shell offers them.
     pub const ALL: [Self; 7] = [
         Self::Filter,
@@ -1342,6 +1384,9 @@ pub struct DeckSnapshot {
     /// True when the DJ locked this track's beat grid: the editor and the measurement both stand down.
     #[serde(default, skip_serializing_if = "is_false")]
     pub analysis_lock: bool,
+    /// The deck's effect as the engine has it. Defaulted, so a snapshot from a build without effects still parses.
+    #[serde(default)]
+    pub fx: FxPatch,
     /// Active loop region, if any.
     pub loop_region: Option<FrameRange>,
     /// Stored hotcues; slot order is stable across snapshots.

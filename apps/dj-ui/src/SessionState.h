@@ -6,6 +6,7 @@
 #pragma once
 
 #include <QObject>
+#include <QVariantMap>
 #include <QString>
 
 class SessionState : public QObject
@@ -21,6 +22,9 @@ class SessionState : public QObject
     // The crossfader law the DJ chose: the engine starts from its own default, and the shell hands this back on
     // the first snapshot, so the choice survives a restart (owner's request, 20.11).
     Q_PROPERTY(QString crossfaderCurve READ crossfaderCurve NOTIFY changed)
+    // The effect each deck had in its slot: the kind, not the amount. The unit is a habit, the amount is a track's
+    // business (owner's decision, 21.11).
+    Q_PROPERTY(QVariantMap deckFx READ deckFx NOTIFY changed)
 
 public:
     explicit SessionState(QObject *parent = nullptr);
@@ -34,6 +38,7 @@ public:
     QString window() const { return m_window; }
     QString restoreTo() const { return m_restoreTo; }
     QString crossfaderCurve() const { return m_crossfaderCurve; }
+    QVariantMap deckFx() const { return m_deckFx; }
     void setFile(const QString &path);
 
     // Remember a folder; empty paths and folders that no longer exist are ignored.
@@ -52,6 +57,9 @@ public:
     // Remember the crossfader law. An empty string is refused: the engine's default is not "nothing".
     Q_INVOKABLE bool rememberCrossfaderCurve(const QString &curve);
 
+    // Remember the effect of one deck. An empty kind is refused for the same reason.
+    Q_INVOKABLE bool rememberDeckFx(const QString &deck, const QString &kind);
+
     // Read the file; a missing or broken one simply leaves the state empty.
     bool load();
     bool save() const;
@@ -69,4 +77,5 @@ private:
     QString m_window = QStringLiteral("window");
     QString m_restoreTo = QStringLiteral("window");
     QString m_crossfaderCurve = QStringLiteral("constant_power");
+    QVariantMap m_deckFx;
 };

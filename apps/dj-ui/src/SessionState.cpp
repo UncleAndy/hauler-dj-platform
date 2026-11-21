@@ -1,5 +1,8 @@
 #include "SessionState.h"
 
+#include <QJsonObject>
+#include <QVariantMap>
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -102,6 +105,17 @@ bool SessionState::rememberCrossfaderCurve(const QString &curve)
     return true;
 }
 
+bool SessionState::rememberDeckFx(const QString &deck, const QString &kind)
+{
+    if (deck.isEmpty() || kind.isEmpty() || m_deckFx.value(deck).toString() == kind) {
+        return false;
+    }
+    m_deckFx.insert(deck, kind);
+    save();
+    emit changed();
+    return true;
+}
+
 bool SessionState::load()
 {
     QFile file(m_file);
@@ -134,6 +148,13 @@ bool SessionState::load()
     if (!curve.isEmpty()) {
         any = rememberCrossfaderCurve(curve) || any;
     }
+    const QJsonObject deckFx = root.value(QStringLiteral("deck_fx")).toObject();
+    for (auto it = deckFx.constBegin(); it != deckFx.constEnd(); ++it) {
+        const QString kind = it.value().toString();
+        if (!kind.isEmpty()) {
+            any = rememberDeckFx(it.key(), kind) || any;
+        }
+    }
     return any;
 }
 
@@ -149,6 +170,11 @@ bool SessionState::save() const
     root.insert(QStringLiteral("collection_cursor"), m_collectionCursor);
     root.insert(QStringLiteral("window"), m_window);
     root.insert(QStringLiteral("crossfader_curve"), m_crossfaderCurve);
+    QJsonObject deckFx;
+    for (auto it = m_deckFx.constBegin(); it != m_deckFx.constEnd(); ++it) {
+        deckFx.insert(it.key(), it.value().toString());
+    }
+    root.insert(QStringLiteral("deck_fx"), deckFx);
     root.insert(QStringLiteral("restore_to"), m_restoreTo);
     QFile file(m_file);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {

@@ -222,6 +222,7 @@ impl Engine {
             | DjCommand::SetCrossfaderCurve { .. }
             | DjCommand::SetMasterGain { .. }
             | DjCommand::SetChannelEq { .. }
+            | DjCommand::SetDeckFx { .. }
             | DjCommand::SetChannelFader { .. } => {
                 Some(Ack::rejected(command_id, RejectReason::NotSupported))
             }
@@ -319,6 +320,7 @@ impl Engine {
             cue: dj_domain::Levels::default(),
             headphones: dj_domain::HeadphoneLevels::default(),
             decks: vec![DeckSnapshot {
+                fx: dj_domain::FxPatch::default(),
                 waveform: None,
                 deck: DeckId::A,
                 // No mixer, no monitoring switch: this renderer plays one tone into one output.

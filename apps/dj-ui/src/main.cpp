@@ -481,6 +481,14 @@ int main(int argc, char *argv[])
         QStringLiteral("Press the named crossfader law's button and exit: the session file has to carry the "
                        "choice afterwards."),
         QStringLiteral("law"));
+    const QCommandLineOption fxPickOption(
+        QStringLiteral("fx-pick"),
+        QStringLiteral("Press the named unit in deck A's effect chooser and exit: the session file has to carry it "
+                       "afterwards."),
+        QStringLiteral("kind"));
+    const QCommandLineOption fxPersistCheckOption(
+        QStringLiteral("fx-persist-check"),
+        QStringLiteral("Connect, press nothing and report whether the engine plays the effect the session remembers."));
     const QCommandLineOption cueCheckOption(
         QStringLiteral("cue-check"),
         QStringLiteral("Load the shell, find the headphone switch under each deck's meter, press it and "
@@ -647,6 +655,8 @@ int main(int argc, char *argv[])
     parser.addOption(collectionRootOption);
     parser.addOption(curvePersistCheckOption);
     parser.addOption(curvePickOption);
+    parser.addOption(fxPickOption);
+    parser.addOption(fxPersistCheckOption);
     parser.addOption(cueCheckOption);
     parser.addOption(fxCheckOption);
     parser.addOption(layoutCheckOption);
@@ -1626,6 +1636,59 @@ int main(int argc, char *argv[])
         return 0;
     }
 
+    if (parser.isSet(fxPickOption)) {
+        // The unit the DJ picks has to outlive the session, and the path that remembers it is the chooser's own.
+        auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
+        if (window == nullptr || !bridge) {
+            std::fprintf(stderr, "dj-ui: the fx pick needs a window and a bridge\n");
+            return 1;
+        }
+        bridge->connectToEngine(parser.value(connectOption));
+        QEventLoop settle;
+        QTimer::singleShot(900, &settle, &QEventLoop::quit);
+        settle.exec();
+        auto* picker = checks::findItem(window->contentItem(), QStringLiteral("fxPick_A"));
+        if (picker == nullptr) {
+            std::fprintf(stderr, "dj-ui: deck A has no effect chooser\n");
+            return 1;
+        }
+        if (!QMetaObject::invokeMethod(picker, "pick", Q_ARG(QVariant, parser.value(fxPickOption)))) {
+            std::fprintf(stderr, "dj-ui: the effect chooser has no pick\n");
+            return 1;
+        }
+        QEventLoop after;
+        QTimer::singleShot(700, &after, &QEventLoop::quit);
+        after.exec();
+        std::fprintf(stderr, "dj-ui: picked the %s effect\n", qPrintable(parser.value(fxPickOption)));
+        return 0;
+    }
+
+    if (parser.isSet(fxPersistCheckOption)) {
+        // Nothing is pressed here: the whole point is that the shell hands the remembered unit over by itself.
+        bridge->connectToEngine(parser.value(connectOption));
+        QEventLoop settle;
+        QTimer::singleShot(1200, &settle, &QEventLoop::quit);
+        settle.exec();
+        const QString remembered = session.deckFx().value(QStringLiteral("A")).toString();
+        const QVariantList decks = bridge->snapshot().value(QStringLiteral("decks")).toList();
+        // Deck A, not the first of the list: the mixer draws C A B D, and "the first deck" is C.
+        QString playing;
+        for (const QVariant& entry : decks) {
+            const QVariantMap deck = entry.toMap();
+            if (deck.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
+                playing = deck.value(QStringLiteral("fx")).toMap().value(QStringLiteral("kind")).toString();
+                break;
+            }
+        }
+        if (!remembered.isEmpty() && playing != remembered) {
+            std::fprintf(stderr, "dj-ui: the engine plays \"%s\" and the session remembers \"%s\"\n",
+                         qPrintable(playing), qPrintable(remembered));
+            return 1;
+        }
+        std::fprintf(stderr, "dj-ui: the effect of deck A survived the restart: %s\n", qPrintable(playing));
+        return 0;
+    }
+
     if (parser.isSet(fxCheckOption)) {
         // The strips are built from the engine's decks, so this is measured on a live pair, not on an empty scene.
         if (!bridge) {
@@ -1633,7 +1696,7 @@ int main(int argc, char *argv[])
             return 1;
         }
         bridge->connectToEngine(parser.value(connectOption));
-        return runFxCheck(engine);
+        return runFxCheck(engine, bridge);
     }
 
     if (parser.isSet(cueCheckOption)) {

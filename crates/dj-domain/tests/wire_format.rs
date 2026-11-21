@@ -175,6 +175,7 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
         headphones: dj_domain::HeadphoneLevels::default(),
         cache_budget_bytes: 0,
         decks: vec![DeckSnapshot {
+            fx: dj_domain::FxPatch::default(),
             underruns: 0,
             waveform: None,
             deck: DeckId::A,
@@ -313,7 +314,9 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
             r#""decks":[{"deck":"A","#,
             r#""load":"Ready","playing":true,"source_frame":4800,"remaining_frames":120000,"#,
             r#""position_ratio":0.0384,"track":{"title":"Track","artist":"Artist","#,
-            r#""duration_frames":124800,"bpm":128.0,"key":"8A"},"loop_region":null,"#,
+            r#""duration_frames":124800,"bpm":128.0,"key":"8A"},"#,
+            // The deck's effect sits right after the track: published whole, so the shell draws the engine's state.
+            r#""fx":{"kind":"filter","amount":0.5,"enabled":false},"loop_region":null,"#,
             r#""hotcues":[1000,null,null,null,null,null,null,null],"#,
             r##""pad_loops":[null,{"start":4800,"end":9600},null,null,null,null,null,null],"##,
             r#""active_loops":[],"#,

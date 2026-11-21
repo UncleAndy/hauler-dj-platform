@@ -27,6 +27,11 @@ Item {
     property string sink: "gain"
     /// Name a check finds this instance by.
     property string itemName: "trim_" + deckId
+    /// The amount a hand asked for while this knob is wired to a deck's effect, 0.0 … 1.0.
+    ///
+    /// The knob does not know what a patch is: it says how far it was turned, and the strip builds the command.
+    signal fxAmountAsked(real amount)
+
     /// The number under the cap: a strip has room for it, the middle column does not (owner's decision, 20.11).
     property bool showNumber: true
     /// Fill of the cap. A channel strip's knob sits in its own well; the same knob standing beside the master's
@@ -83,7 +88,11 @@ Item {
         const wanted = Math.max(knob.minimumDb, Math.min(knob.maximumDb, decibels));
         knob.draggedDb = wanted;
         knob.lastDb = wanted;
-        if (knob.sink === "mix") {
+        if (knob.sink === "fx") {
+            // The travel is the decibels: −40 dB is nothing, 0 dB is the whole effect. The knob keeps its own law and
+            // the amount is read off it, so the strip and the engine agree on where the hand is.
+            knob.fxAmountAsked(Math.max(0.0, Math.min(1.0, (wanted - knob.minimumDb) / (0.0 - knob.minimumDb))));
+        } else if (knob.sink === "mix") {
             // The proportion runs the other way: to the left is more monitoring, to the right more of the room, and
             // the middle is even. Six decibels each way is the whole travel.
             knob.lastMix = knob.mixOf(wanted);

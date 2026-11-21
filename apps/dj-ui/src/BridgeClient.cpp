@@ -2914,6 +2914,20 @@ int BridgeClient::setCueMix(double mix)
     return sendCommand(QStringLiteral("phones"), command);
 }
 
+int BridgeClient::setDeckFx(const QString &deck, const QString &kind, double amount, bool enabled)
+{
+    QJsonObject patch;
+    patch.insert(QStringLiteral("kind"), kind);
+    patch.insert(QStringLiteral("amount"), amount);
+    patch.insert(QStringLiteral("enabled"), enabled);
+    QJsonObject options;
+    options.insert(QStringLiteral("deck"), deck);
+    options.insert(QStringLiteral("patch"), patch);
+    QJsonObject command;
+    command.insert(QStringLiteral("SetDeckFx"), options);
+    return sendCommand(deck, command);
+}
+
 int BridgeClient::setChannelEq(const QString &deck, const QString &band, double gainDb)
 {
     QJsonObject options;

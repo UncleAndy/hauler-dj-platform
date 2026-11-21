@@ -7,6 +7,8 @@
 
 #include "Checks.h"
 
+#include "BridgeClient.h"
+
 #include <QEventLoop>
 #include <QPointF>
 #include <QQuickItem>
@@ -35,11 +37,11 @@ double bottomOf(QQuickItem* item)
 
 namespace checks {
 
-int runFxCheck(QQmlApplicationEngine& engine)
+int runFxCheck(QQmlApplicationEngine& engine, std::unique_ptr<BridgeClient>& bridge)
 {
     auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
-    if (window == nullptr) {
-        std::fprintf(stderr, "dj-ui: the fx check needs a window\n");
+    if (window == nullptr || !bridge) {
+        std::fprintf(stderr, "dj-ui: the fx check needs a window and a bridge\n");
         return 1;
     }
     // The strips are built from the engine's decks: without them there is no strip to measure.
@@ -111,6 +113,74 @@ int runFxCheck(QQmlApplicationEngine& engine)
         std::fprintf(stdout, "dj-ui: the EQ block of A has no name of its own, so the spare height is the meter's "
                              "top minus the strip's top (see above)\n");
     }
+
+    // The three controls of the block, and what each of them does to the engine.
+    auto* knob = checks::findItem(content, QStringLiteral("fxKnob_A"));
+    auto* switchItem = checks::findItem(content, QStringLiteral("fx_A"));
+    auto* picker = checks::findItem(content, QStringLiteral("fxPick_A"));
+    if (knob == nullptr || switchItem == nullptr || picker == nullptr) {
+        std::fprintf(stderr, "dj-ui: the strip of A has no effect block (knob %s, switch %s, chooser %s)\n",
+                     knob != nullptr ? "yes" : "missing", switchItem != nullptr ? "yes" : "missing",
+                     picker != nullptr ? "yes" : "missing");
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: the effect block stands under the EQ, the meter keeps %.1f px\n", meter->height());
+
+    // The knob: −20 dB of its travel is half the amount, and the engine has to say so.
+    if (!QMetaObject::invokeMethod(knob, "ask", Q_ARG(QVariant, -20.0))) {
+        std::fprintf(stderr, "dj-ui: the effect knob takes no value\n");
+        return 1;
+    }
+    settle(500);
+    const auto patchOf = [&bridge]() {
+        const QVariantList decks = bridge->snapshot().value(QStringLiteral("decks")).toList();
+        if (decks.isEmpty()) {
+            return QVariantMap();
+        }
+        return decks.at(0).toMap().value(QStringLiteral("fx")).toMap();
+    };
+    double amount = patchOf().value(QStringLiteral("amount")).toDouble();
+    if (std::abs(amount - 0.5) > 0.03) {
+        std::fprintf(stderr, "dj-ui: the effect knob asked for half and the engine has %.3f\n", amount);
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: the effect knob reached the engine: amount %.2f\n", amount);
+
+    // The switch: pressed once, the engine has the deck's effect in the path.
+    if (!QMetaObject::invokeMethod(switchItem, "toggle")) {
+        std::fprintf(stderr, "dj-ui: the effect switch has no toggle\n");
+        return 1;
+    }
+    settle(500);
+    if (!patchOf().value(QStringLiteral("enabled")).toBool()) {
+        std::fprintf(stderr, "dj-ui: the effect switch did not reach the engine\n");
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: the switch put the effect in the path\n");
+
+    // The chooser: the menu's own function, so the check walks the path a hand walks.
+    if (!QMetaObject::invokeMethod(picker, "pick", Q_ARG(QVariant, QStringLiteral("echo")))) {
+        std::fprintf(stderr, "dj-ui: the effect chooser has no pick\n");
+        return 1;
+    }
+    settle(500);
+    const QString kind = patchOf().value(QStringLiteral("kind")).toString();
+    if (kind != QStringLiteral("echo")) {
+        std::fprintf(stderr, "dj-ui: the choir asked for echo and the engine plays \"%s\"\n", qPrintable(kind));
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: the chooser put echo in the slot, and the engine says so\n");
+
+    // And the switch again, back out: the engine must say the effect is out of the path.
+    if (!QMetaObject::invokeMethod(switchItem, "toggle")) {
+        return 1;
+    }
+    settle(500);
+    if (patchOf().value(QStringLiteral("enabled")).toBool()) {
+        std::fprintf(stderr, "dj-ui: the effect stayed in the path after the second press\n");
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: all cases passed\n");
     return 0;
 }
 

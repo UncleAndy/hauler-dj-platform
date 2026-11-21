@@ -306,6 +306,12 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
             mixer.set_hamster(*on);
             Ack::applied(id, at)
         }
+        DjCommand::SetDeckFx { deck, patch } => {
+            // Whole patch, one place: the shell sends what the snapshot said plus its own change, so the engine
+            // never has to guess which field moved.
+            mixer.set_deck_fx(deck.index(), *patch);
+            Ack::applied(id, at)
+        }
         DjCommand::SetMasterGain { linear_gain } => {
             mixer.set_master_gain(*linear_gain);
             Ack::applied(id, at)
@@ -624,6 +630,11 @@ struct DeckCells {
     frame: AtomicU64,
     gain: AtomicU32,
     tempo: AtomicU64,
+    /// The deck's effect as the mixer has it: kind, amount and switch, published so the shell draws the engine's
+    /// state and not its own last click.
+    fx_kind: AtomicU8,
+    fx_amount: AtomicU32,
+    fx_enabled: AtomicBool,
     peak_left: AtomicU32,
     peak_right: AtomicU32,
     held_left: AtomicU32,
@@ -662,6 +673,9 @@ struct DeckCells {
 impl DeckCells {
     fn new() -> Self {
         Self {
+            fx_kind: AtomicU8::new(0),
+            fx_amount: AtomicU32::new(0.5f32.to_bits()),
+            fx_enabled: AtomicBool::new(false),
             playing: AtomicBool::new(false),
             metronome: AtomicBool::new(false),
             clicks: AtomicU64::new(0),
@@ -1473,6 +1487,12 @@ impl StateCells {
                 mixer.channel(index).is_some_and(|settings| settings.cue),
                 Ordering::Relaxed,
             );
+            let fx = mixer.deck_fx(index);
+            cells.fx_kind.store(fx.kind.index(), Ordering::Relaxed);
+            cells
+                .fx_amount
+                .store(fx.amount.to_bits(), Ordering::Relaxed);
+            cells.fx_enabled.store(fx.enabled, Ordering::Relaxed);
             // The two headphone knobs are the mixer's, not the strip's: written once, outside the per-deck loop.
 
             let eq = deck.eq_gains();
@@ -1543,6 +1563,14 @@ impl StateCells {
                 _ => (None, None),
             };
             decks.push(DeckSnapshot {
+                // The effect as the strip has it: the patch is the mixer's, and it is published with the deck so the
+                // shell reads the engine's state rather than its own last click.
+                fx: dj_domain::FxPatch {
+                    kind: dj_domain::FxKind::from_index(cells.fx_kind.load(Ordering::Relaxed))
+                        .unwrap_or_default(),
+                    amount: f32::from_bits(cells.fx_amount.load(Ordering::Relaxed)),
+                    enabled: cells.fx_enabled.load(Ordering::Relaxed),
+                },
                 underruns: cells.underruns.load(Ordering::Relaxed),
                 deck: fixed.deck,
                 cue: cells.cue.load(Ordering::Relaxed),
@@ -3009,6 +3037,17 @@ impl EngineGraph {
             *stood = self.decks[index].position();
             let deck = &mut self.decks[index];
             deck.render(&mut self.scratch[..frames * 2]);
+            // The beat the echo and the roll live on: the deck's own tempo and pitch, in output seconds. Without a
+            // grid there is still a beat — 120 BPM — and the log says so once per deck.
+            let beat =
+                Mixer::beat_seconds(deck.local_bpm().unwrap_or(120.0), deck.tempo_ratio() as f32);
+            if let Some(seconds) = beat {
+                self.mixer.set_deck_beat(index, seconds);
+            }
+            // The effect sits before the trim and before the fader: what the headphones hear is what it does, and the
+            // fader still owns the room (DJP-FX-003, insert).
+            self.mixer
+                .process_fx(index, &mut self.scratch[..frames * 2], frames);
             self.mixer.mix_channel(index, &self.scratch[..frames * 2]);
         }
         self.click_on_the_beat(&before, frames);

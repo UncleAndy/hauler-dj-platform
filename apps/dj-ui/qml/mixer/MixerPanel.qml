@@ -83,8 +83,15 @@ Pane {
     readonly property real stripKnobsHeight: stripHeaderHeight + trimKnobHeight + 2 + eqStackHeight + 2
     // Three pixels of air between the EQ labels and the meter: without them the meter starts exactly where the
     // knobs end, and the check that guards the arrangement reads a sub-pixel overlap as a collision.
+    /// The effect block under the EQ: a knob, the switch and the chooser, one above the other (owner's decision,
+    /// 21.11: «ручка и кнопка — по вертикали»). It is paid for out of the meter, which the owner accepted with every
+    /// price known: the meter of a deck loses these 51 px.
+    readonly property real fxKnobSide: eqKnobSide
+    readonly property real fxButtonHeight: 14
+    readonly property real fxBlockHeight: fxKnobSide + fxButtonHeight * 2 + 5
+
     readonly property real meterHeight: Math.max(
-        18, bandHeight - stripKnobsHeight - stripFooterHeight - 3)
+        18, bandHeight - stripKnobsHeight - stripFooterHeight - 3 - fxBlockHeight)
 
     // The law the shell remembers is handed to the engine on the first snapshot: the engine starts from its own
     // default, and a restarted session must not sound different from the one before (owner's request, 20.11).
@@ -101,6 +108,31 @@ Pane {
             if (saved !== undefined && saved !== "" && saved !== current) {
                 Bridge.setCrossfaderCurve(saved);
                 console.log("dj-ui: crossfader curve restored: " + saved);
+            }
+        }
+    }
+
+    // The effect each deck was left on is handed back to the engine on the first snapshot: the engine starts from
+    // its own default, and the slot a DJ uses every night must not have to be chosen again every night.
+    property bool fxRestored: false
+    Connections {
+        target: Bridge
+        function onSnapshotChanged() {
+            if (mixer.fxRestored) {
+                return;
+            }
+            mixer.fxRestored = true;
+            const remembered = Session.deckFx;
+            const decks = Bridge.snapshot.decks !== undefined ? Bridge.snapshot.decks : [];
+            for (let index = 0; index < decks.length; ++index) {
+                const deck = decks[index];
+                const want = remembered[deck.deck];
+                const current = deck.fx !== undefined ? deck.fx : null;
+                if (want === undefined || current === null || want === current.kind) {
+                    continue;
+                }
+                Bridge.setDeckFx(deck.deck, want, current.amount, current.enabled);
+                Bridge.note("fx of deck " + deck.deck + " restored: " + want);
             }
         }
     }
@@ -517,6 +549,31 @@ Pane {
                 return eq[key] !== undefined ? eq[key] : 0.0;
             }
 
+            // The deck's effect as the engine has it. A strip built against an older engine has no `fx` field at
+            // all, which reads here as the slot at its centre and switched out.
+            readonly property var fx: strip.deck !== null && strip.deck.fx !== undefined ? strip.deck.fx : null
+            readonly property string fxKind: strip.fx !== null && strip.fx.kind !== undefined
+                                            ? strip.fx.kind : "filter"
+            readonly property real fxAmount: strip.fx !== null && strip.fx.amount !== undefined
+                                             ? strip.fx.amount : 0.5
+            readonly property bool fxEnabled: strip.fx !== null && strip.fx.enabled !== undefined
+                                              ? strip.fx.enabled : false
+            /// The three letters the switch wears: the unit's own abbreviation, not a translated word.
+            readonly property string fxCode: {
+                const codes = { filter: "FLT", echo: "ECH", roll: "ROL", flanger: "FLG",
+                                phaser: "PHS", bitcrusher: "BIT", noise: "NSE" };
+                return codes[strip.fxKind] !== undefined ? codes[strip.fxKind] : "FLT";
+            }
+
+            /// Send the whole patch: the engine never has to guess which part of it moved.
+            ///
+            /// The unit is remembered as a habit — a deck that was on echo yesterday is on echo again today — while
+            /// the amount stays with the track (owner's decision, 21.11).
+            function setFx(kind, amount, enabled) {
+                Session.rememberDeckFx(strip.modelData, kind);
+                Bridge.setDeckFx(strip.modelData, kind, amount, enabled);
+            }
+
             // The channel fader as the engine published it: 1.0 is unity, 0.0 is silence.
             readonly property real fader: strip.deck !== null && strip.deck.fader !== undefined
                                           ? strip.deck.fader : 1.0
@@ -591,6 +648,116 @@ Pane {
                         letter: modelData.letter
                         diameter: mixer.eqKnobSide
                         value: strip.bandValue(modelData.band)
+                    }
+                }
+            }
+
+            // The deck's effect: a knob (how much), a switch (whether it is in the path) and a chooser (which of the
+            // seven), one above the other. It stands on the meter's top edge, so the meter and the master's still end
+            // on the same line while this block takes its height — the owner's layout of 21.11.
+            Column {
+                id: fxColumn
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: meterBand.top
+                anchors.bottomMargin: 2
+                spacing: 1
+
+                TrimKnob {
+                    id: fxKnob
+                    objectName: "fxKnob_" + strip.modelData
+                    itemName: "fxKnob_" + strip.modelData
+                    sink: "fx"
+                    deckId: strip.modelData
+                    showNumber: false
+                    capColor: UiSettings.themeSurface
+                    diameter: mixer.fxKnobSide
+                    // The knob shows the amount the engine published, on its own −40 … 0 dB travel.
+                    gain: Math.pow(10.0, (strip.fxAmount - 1.0) * 40.0 / 20.0)
+                    onFxAmountAsked: function (amount) {
+                        strip.setFx(strip.fxKind, amount, strip.fxEnabled);
+                    }
+                }
+
+                Rectangle {
+                    objectName: "fx_" + strip.modelData
+                    readonly property bool lit: strip.fxEnabled
+                    width: mixer.fxKnobSide
+                    height: mixer.fxButtonHeight
+                    radius: 2
+                    color: lit ? UiSettings.themeAccent : UiSettings.themeRaised
+                    border.width: 1
+                    border.color: UiSettings.themeBorder
+
+                    /// The switch, callable by name so a check presses the same path a hand does.
+                    function toggle() {
+                        strip.setFx(strip.fxKind, strip.fxAmount, !strip.fxEnabled);
+                    }
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: strip.fxCode
+                        font.pixelSize: 8
+                        color: parent.lit ? UiSettings.themeTextOnAccent : UiSettings.themeText
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: parent.toggle()
+                    }
+                }
+
+                Rectangle {
+                    id: fxPickButton
+                    objectName: "fxPick_" + strip.modelData
+                    width: mixer.fxKnobSide
+                    height: mixer.fxButtonHeight
+                    radius: 2
+                    color: UiSettings.themeSurface
+                    border.width: 1
+                    border.color: UiSettings.themeBorder
+
+                    /// Choose the unit in the slot. The menu is below; a check calls this by name.
+                    function pick(kind) {
+                        strip.setFx(kind, strip.fxAmount, strip.fxEnabled);
+                    }
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "\u25be"
+                        font.pixelSize: 9
+                        color: UiSettings.themeText
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: fxMenu.open()
+                    }
+
+                    Menu {
+                        id: fxMenu
+                        objectName: "fxMenu_" + strip.modelData
+                        parent: fxPickButton
+                        y: parent.height
+                        // Seven rows, the current one marked: the panel is narrow, and a row of seven buttons would
+                        // not fit a strip (owner's decision, 21.11).
+                        Repeater {
+                            model: [
+                                { kind: "filter", label: qsTr("Filter") },
+                                { kind: "echo", label: qsTr("Echo") },
+                                { kind: "roll", label: qsTr("Roll") },
+                                { kind: "flanger", label: qsTr("Flanger") },
+                                { kind: "phaser", label: qsTr("Phaser") },
+                                { kind: "bitcrusher", label: qsTr("Bitcrusher") },
+                                { kind: "noise", label: qsTr("Noise") }
+                            ]
+                            MenuItem {
+                                required property var modelData
+                                text: (strip.fxKind === modelData.kind ? "\u2713 " : "   ") + modelData.label
+                                onTriggered: strip.setFx(modelData.kind, strip.fxAmount, strip.fxEnabled)
+                            }
+                        }
                     }
                 }
             }

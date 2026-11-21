@@ -548,6 +548,12 @@ public:
     /// Proportion between monitoring and the main mix: 1.0 is monitoring only.
     Q_INVOKABLE int setCueMix(double mix);
 
+    /// The deck's effect: `kind` is one of the seven protocol names ("filter", "echo", "roll", "flanger",
+    /// "phaser", "bitcrusher", "noise"), `amount` is 0 … 1 and `enabled` is the switch.
+    ///
+    /// The whole patch travels on every change, so the engine never has to guess which field the hand moved.
+    Q_INVOKABLE int setDeckFx(const QString &deck, const QString &kind, double amount, bool enabled);
+
     // One band of a channel's three-band EQ (A14): "low", "mid" or "high", in decibels. Sent as one
     // command per band, because each knob has its own slot in the engine's queue.
     Q_INVOKABLE int setChannelEq(const QString &deck, const QString &band, double gain_db);

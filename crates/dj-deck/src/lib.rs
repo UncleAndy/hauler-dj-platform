@@ -1761,6 +1761,16 @@ impl Deck {
     }
 
     /// Current tempo ratio, without building a snapshot.
+    /// The tempo of this deck's grid at the play head, when it has a grid.
+    ///
+    /// The effects that live on the beat take it from here: the grid is in source frames and so is the head, so the
+    /// deck is the only place that knows both.
+    pub fn local_bpm(&self) -> Option<f32> {
+        self.grid
+            .as_ref()
+            .map(|grid| grid.bpm_at(self.position()) as f32)
+    }
+
     pub fn tempo_ratio(&self) -> f64 {
         self.tempo_ratio
     }
@@ -2980,6 +2990,9 @@ impl Deck {
         let beat = self.grid.as_ref().map(|grid| grid.beat_at(heard, rate));
         let local_bpm = self.grid.as_ref().map(|grid| grid.bpm_at(heard));
         DeckSnapshot {
+            // The deck renders the material; the effect sits in its channel strip, so this field is only carried
+            // through by whoever publishes the deck snapshot with a mixer behind it.
+            fx: dj_domain::FxPatch::default(),
             waveform: None,
             deck: self.id,
             // The deck does not know the mixer: whether this channel is in the headphones is the strip's business,
