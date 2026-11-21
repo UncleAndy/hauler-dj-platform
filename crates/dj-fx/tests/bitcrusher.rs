@@ -67,6 +67,14 @@ fn the_step_is_the_quantum() {
 }
 
 #[test]
+fn a_knob_at_zero_is_the_dry_signal() {
+    // Sixteen bits still round a signal that was never quantised, so «no crushing» has to be the input itself.
+    let input = ramp(2_048);
+    let out = run(0.0, &input);
+    assert_eq!(out, input, "a crusher at zero changed the signal");
+}
+
+#[test]
 fn the_hold_repeats() {
     // At the far end the hold is 32 frames, so the output can only change once every 32 frames.
     let input = ramp(4_096);

@@ -89,9 +89,13 @@ Item {
         knob.draggedDb = wanted;
         knob.lastDb = wanted;
         if (knob.sink === "fx") {
-            // The travel is the decibels: −40 dB is nothing, 0 dB is the whole effect. The knob keeps its own law and
-            // the amount is read off it, so the strip and the engine agree on where the hand is.
-            knob.fxAmountAsked(Math.max(0.0, Math.min(1.0, (wanted - knob.minimumDb) / (0.0 - knob.minimumDb))));
+            // The whole travel is the amount, both ways: the bottom of the left half is 0, the top is half, the bottom
+            // of the right half is 1 (owner's report, 21.11: a knob that only turned through its left half read as a
+            // broken one). The instance sets `negativeRangeDb` to match its own positive range, so the pointer's ends
+            // and the amount's ends are the same two places.
+            const span = knob.maximumDb + knob.negativeRangeDb;
+            const amount = span > 0.0 ? (wanted + knob.negativeRangeDb) / span : 0.0;
+            knob.fxAmountAsked(Math.max(0.0, Math.min(1.0, amount)));
         } else if (knob.sink === "mix") {
             // The proportion runs the other way: to the left is more monitoring, to the right more of the room, and
             // the middle is even. Six decibels each way is the whole travel.

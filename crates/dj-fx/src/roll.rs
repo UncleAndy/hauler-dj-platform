@@ -12,8 +12,12 @@ use crate::FxUnit;
 use crate::delay::DelayLine;
 use crate::smooth::equal_power;
 
-/// The fractions of a beat the knob chooses between.
-const SHARES: [f32; 4] = [1.0 / 16.0, 1.0 / 8.0, 1.0 / 4.0, 1.0 / 2.0];
+/// The shortest and the longest fraction of a beat the knob can capture.
+///
+/// The travel between them is continuous on purpose (owner's report, 21.11: four steps read as a knob that does
+/// nothing for most of its turn). Sixteenth to half a beat is the range a beat repeat is used in.
+const SHARE_MIN: f32 = 1.0 / 16.0;
+const SHARE_MAX: f32 = 0.5;
 /// The seam's crossfade: 8 ms is long enough to hide a jump and short enough not to smear the loop.
 const FADE_SECONDS: f32 = 0.008;
 /// The capture buffer: half a beat at the slowest tempo the shell allows, with room to spare.
@@ -86,9 +90,15 @@ impl Roll {
         self.length
     }
 
+    /// The share of a beat this amount asks for: a sixteenth at the bottom, half at the top, geometric in between so
+    /// that equal turns of the knob are equal musical steps.
+    fn share_for(amount: f32) -> f32 {
+        let travel = amount.clamp(0.0, 1.0);
+        SHARE_MIN * (SHARE_MAX / SHARE_MIN).powf(travel)
+    }
+
     fn length_for(&self, amount: f32) -> usize {
-        let index = ((amount * SHARES.len() as f32) as usize).min(SHARES.len() - 1);
-        ((self.beat * SHARES[index] * self.rate).round() as usize).max(1)
+        ((self.beat * Self::share_for(amount) * self.rate).round() as usize).max(1)
     }
 }
 

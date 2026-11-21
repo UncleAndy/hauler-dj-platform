@@ -67,7 +67,8 @@ fn the_loop_length_follows_the_knob() {
     let mut roll = Roll::new();
     roll.prepare(RATE, BLOCK);
     roll.set_beat(0.5);
-    let cases = [(0.0, 1_500), (0.5, 6_000), (1.0, 12_000)];
+    // A sixteenth, the geometric middle (1/16 · 8^0,5 ≈ 0.177 of a beat) and half: continuous, not four steps.
+    let cases = [(0.0, 1_500), (0.5, 4_243), (1.0, 12_000)];
     for (amount, expected) in cases {
         roll.set_amount(amount);
         assert_eq!(

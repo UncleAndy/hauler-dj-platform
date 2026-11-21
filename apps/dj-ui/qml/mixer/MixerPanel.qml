@@ -671,8 +671,10 @@ Pane {
                     showNumber: false
                     capColor: UiSettings.themeSurface
                     diameter: mixer.fxKnobSide
-                    // The knob shows the amount the engine published, on its own −40 … 0 dB travel.
-                    gain: Math.pow(10.0, (strip.fxAmount - 1.0) * 40.0 / 20.0)
+                    // Six decibels each side of the top: the pointer's two ends are the amount's two ends, and the top is
+                    // half the effect (owner's report, 21.11).
+                    negativeRangeDb: 6
+                    gain: Math.pow(10.0, ((strip.fxAmount * 12.0) - 6.0) / 20.0)
                     onFxAmountAsked: function (amount) {
                         strip.setFx(strip.fxKind, amount, strip.fxEnabled);
                     }
@@ -693,6 +695,25 @@ Pane {
                         strip.setFx(strip.fxKind, strip.fxAmount, !strip.fxEnabled);
                     }
 
+                    /// Press and release. A roll is held — it captures the beat fraction on the way down and gives
+                    /// the live signal back on the way up — while every other unit is switched on and off by a
+                    /// click (owner's decision 21.11: the roll is momentary).
+                    function press() {
+                        if (strip.fxKind === "roll") {
+                            strip.setFx(strip.fxKind, strip.fxAmount, true);
+                        } else {
+                            toggle();
+                        }
+                    }
+
+                    function release() {
+                        if (strip.fxKind === "roll") {
+                            strip.setFx(strip.fxKind, strip.fxAmount, false);
+                        }
+                    }
+
+                    readonly property bool held: strip.fxKind === "roll"
+
                     Text {
                         anchors.centerIn: parent
                         text: strip.fxCode
@@ -703,7 +724,11 @@ Pane {
                     MouseArea {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: parent.toggle()
+                        // A held roll must not latch: `onReleased` is the way back to the live signal, and it fires
+                        // even when the pointer leaves the button.
+                        onPressed: parent.press()
+                        onReleased: parent.release()
+                        onCanceled: parent.release()
                     }
                 }
 

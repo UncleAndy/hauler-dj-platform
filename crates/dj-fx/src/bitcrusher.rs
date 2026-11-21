@@ -3,6 +3,11 @@
 //! Both halves are what Zölzer calls *sound degradation* (*DAFX*): quantising the amplitude to a coarse grid, and
 //! holding each sample for several frames — the second is what folds the spectrum back and gives the sound its
 //! metallic edge. There is no filter here on purpose: the aliasing is the effect.
+//!
+//! The knob drives both together, and its law is written here so the sound is predictable: sixteen bits and a hold
+//! of one frame at the bottom of the travel (the signal, bit for bit), four bits and thirty-two frames at the top,
+//! ten bits and sixteen frames halfway. The two are one control because a crusher is one idea — coarser steps in
+//! level *and* in time.
 
 use crate::FxUnit;
 use crate::smooth::OnePole;
@@ -87,6 +92,13 @@ impl FxUnit for Bitcrusher {
         self.level.advance(self.amount, frames);
         self.hold
             .advance(1.0 + (HOLD_MAX - 1.0) * self.amount, frames);
+        // A knob at zero is the effect switched out by the hand, not "the effect at its finest": sixteen bits still
+        // round a signal that was never quantised, and the deck must come back untouched (owner's report, 21.11).
+        if self.level.value() <= 0.0005 {
+            out[..samples].copy_from_slice(&input[..samples]);
+            self.counter = 0;
+            return;
+        }
         let quantum = Self::quantum(self.level.value());
         let hold = (self.hold.value().round() as usize).max(1);
 

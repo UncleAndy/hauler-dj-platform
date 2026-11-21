@@ -126,12 +126,42 @@ int runFxCheck(QQmlApplicationEngine& engine, std::unique_ptr<BridgeClient>& bri
     }
     std::fprintf(stdout, "dj-ui: the effect block stands under the EQ, the meter keeps %.1f px\n", meter->height());
 
-    // The knob: −20 dB of its travel is half the amount, and the engine has to say so.
-    if (!QMetaObject::invokeMethod(knob, "ask", Q_ARG(QVariant, -20.0))) {
-        std::fprintf(stderr, "dj-ui: the effect knob takes no value\n");
+    // The knob's travel, both halves: the bottom of the left half is nothing, the top is half, the bottom of the
+    // right half is the whole effect — the pointer's ends are the amount's ends (owner's report, 21.11).
+    const auto askAndRead = [&](double decibels, const char* what) {
+        if (!QMetaObject::invokeMethod(knob, "ask", Q_ARG(QVariant, decibels))) {
+            std::fprintf(stderr, "dj-ui: the effect knob takes no value (%s)\n", what);
+            return false;
+        }
+        settle(500);
+        return true;
+    };
+    const auto angleOf = [&knob]() { return knob->property("angle").toDouble(); };
+    if (!askAndRead(-6.0, "bottom of the left half")) {
         return 1;
     }
-    settle(500);
+    const double leftAngle = angleOf();
+    if (leftAngle > -125.0) {
+        std::fprintf(stderr, "dj-ui: the knob at its bottom-left stands at %.1f degrees, not near −135\n",
+                     leftAngle);
+        return 1;
+    }
+    if (!askAndRead(6.0, "bottom of the right half")) {
+        return 1;
+    }
+    const double rightAngle = angleOf();
+    if (rightAngle < 125.0) {
+        std::fprintf(stderr, "dj-ui: the knob at its bottom-right stands at %.1f degrees, not near +135\n",
+                     rightAngle);
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: the effect knob turns through both halves: %.0f … %.0f degrees\n", leftAngle,
+                 rightAngle);
+
+    // And the amount: −3 dB of the travel is a quarter of the effect, and the engine has to say so.
+    if (!askAndRead(-3.0, "a quarter of the travel")) {
+        return 1;
+    }
     const auto patchOf = [&bridge]() {
         const QVariantList decks = bridge->snapshot().value(QStringLiteral("decks")).toList();
         if (decks.isEmpty()) {
@@ -140,8 +170,8 @@ int runFxCheck(QQmlApplicationEngine& engine, std::unique_ptr<BridgeClient>& bri
         return decks.at(0).toMap().value(QStringLiteral("fx")).toMap();
     };
     double amount = patchOf().value(QStringLiteral("amount")).toDouble();
-    if (std::abs(amount - 0.5) > 0.03) {
-        std::fprintf(stderr, "dj-ui: the effect knob asked for half and the engine has %.3f\n", amount);
+    if (std::abs(amount - 0.25) > 0.03) {
+        std::fprintf(stderr, "dj-ui: the effect knob asked for a quarter and the engine has %.3f\n", amount);
         return 1;
     }
     std::fprintf(stdout, "dj-ui: the effect knob reached the engine: amount %.2f\n", amount);
@@ -171,13 +201,46 @@ int runFxCheck(QQmlApplicationEngine& engine, std::unique_ptr<BridgeClient>& bri
     }
     std::fprintf(stdout, "dj-ui: the chooser put echo in the slot, and the engine says so\n");
 
-    // And the switch again, back out: the engine must say the effect is out of the path.
+    // A roll is held, not latched: pressing puts the loop in the path, releasing gives the live signal back
+    // (owner's decision 21.11 — a latched roll repeats a short cut of the beat for as long as nobody remembers to
+    // press it again, which is exactly what the owner heard as "constant very short loops").
+    if (!QMetaObject::invokeMethod(picker, "pick", Q_ARG(QVariant, QStringLiteral("roll")))) {
+        return 1;
+    }
+    settle(400);
+    if (!QMetaObject::invokeMethod(switchItem, "press")) {
+        std::fprintf(stderr, "dj-ui: the effect switch has no press\n");
+        return 1;
+    }
+    settle(400);
+    if (!patchOf().value(QStringLiteral("enabled")).toBool()) {
+        std::fprintf(stderr, "dj-ui: holding the roll did not put the loop in the path\n");
+        return 1;
+    }
+    if (!QMetaObject::invokeMethod(switchItem, "release")) {
+        std::fprintf(stderr, "dj-ui: the effect switch has no release\n");
+        return 1;
+    }
+    settle(400);
+    if (patchOf().value(QStringLiteral("enabled")).toBool()) {
+        std::fprintf(stderr, "dj-ui: the roll stayed latched after the hand let go\n");
+        return 1;
+    }
+    std::fprintf(stdout, "dj-ui: the roll is held, not latched: down puts the loop in, up gives the deck back\n");
+
+    // Back to echo for the last press: the switch itself, once more, out of the path.
+    if (!QMetaObject::invokeMethod(picker, "pick", Q_ARG(QVariant, QStringLiteral("echo")))) {
+        return 1;
+    }
+    settle(300);
+    // And the switch once more: it must turn the deck's effect around, whatever state the hand left it in.
+    const bool before = patchOf().value(QStringLiteral("enabled")).toBool();
     if (!QMetaObject::invokeMethod(switchItem, "toggle")) {
         return 1;
     }
     settle(500);
-    if (patchOf().value(QStringLiteral("enabled")).toBool()) {
-        std::fprintf(stderr, "dj-ui: the effect stayed in the path after the second press\n");
+    if (patchOf().value(QStringLiteral("enabled")).toBool() == before) {
+        std::fprintf(stderr, "dj-ui: the switch did not turn the effect around\n");
         return 1;
     }
     std::fprintf(stdout, "dj-ui: all cases passed\n");
