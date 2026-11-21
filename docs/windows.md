@@ -11,6 +11,11 @@ bash scripts/windows.sh --ui        # dist/windows/dj-ui.exe (Qt скачива�
 bash scripts/windows.sh --dist      # рядом с exe: Qt, плагины, mingw-runtime, qt.conf, hauler-dj.bat, zip
 bash scripts/windows.sh --msi       # установочный пакет hauler-dj-<версия>-x64.msi
 bash scripts/windows.sh --all       # всё подряд
+
+# То же одной командой из flake — она и есть `scripts/windows.sh`, но с рабочим каталогом и умолчанием «всё»:
+nix develop --command dj-build-win          # движок, оболочка, запускатор, runtime, zip, MSI
+nix develop --command dj-build-win --engine # только dist/windows/dj-engine.exe
+nix run .#windows -- --help                 # то же снаружи оболочки
 ```
 
 Переменные: `HAULER_QT_VERSION` (по умолчанию 6.8.1), `HAULER_QT_ROOT` (кэш Qt), `HAULER_ORT_DLL` (путь к

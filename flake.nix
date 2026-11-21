@@ -137,6 +137,51 @@
             echo "== ready: cargo run --release -p dj-launcher"
           fi
         '';
+        # dj-build-win — the Windows build, one word.
+        #
+        # The work is `scripts/windows.sh`, which brings its own toolchains (mingw-w64 and rustup from nix, Qt for
+        # mingw from the official binaries) and touches nothing outside dist/windows and the caches. This wrapper only
+        # gives it a name, the repository as the working directory, and a default of "everything": engine, shell,
+        # launcher, runtime, package.
+        djBuildWin = pkgs.writeShellScriptBin "dj-build-win" ''
+          set -eu
+
+          usage() {
+            cat <<'EOF'
+          dj-build-win — build the Windows version.
+
+            (no arguments)  the whole package: engine, shell, launcher, runtime, zip and MSI
+            --engine        only dj-engine.exe
+            --ui            only dj-ui.exe (Qt for mingw downloads once)
+            --launcher      only hauler-dj.exe
+            --ort           place onnxruntime.dll (MIT) and, with ORT_CRT_DIR, the MSVC runtime
+            --dist          gather the files beside the exes and build the zip
+            --msi           build the installer (needs a ready distribution)
+            --all           the same as no arguments
+            --clean         remove dist/windows, the Qt cache and the Windows shell build
+            -h, --help      this text
+
+          Writes to dist/windows. Variables: HAULER_QT_VERSION (6.8.1), HAULER_QT_ROOT, HAULER_ORT_DLL.
+          The Linux build is untouched: this reads the tree and writes only into dist/windows and the caches.
+          EOF
+          }
+
+          case "''${1:-}" in
+            -h|--help) usage; exit 0 ;;
+          esac
+
+          repo="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+          if [ ! -f "$repo/scripts/windows.sh" ]; then
+            echo "dj-build-win: run me inside the repository (scripts/windows.sh not found)" >&2
+            exit 2
+          fi
+          cd "$repo"
+
+          if [ "$#" -eq 0 ]; then
+            exec bash "$repo/scripts/windows.sh" --all
+          fi
+          exec bash "$repo/scripts/windows.sh" "$@"
+        '';
       in
       {
         formatter = pkgs.nixfmt-rfc-style;
@@ -145,6 +190,10 @@
         apps.build = {
           type = "app";
           program = "${djBuild}/bin/dj-build";
+        };
+        apps.windows = {
+          type = "app";
+          program = "${djBuildWin}/bin/dj-build-win";
         };
         apps.default = {
           type = "app";
@@ -168,6 +217,7 @@
             llvmPackages.libclang
             qt.qtdeclarative # qmllint, qmlformat, qmltestrunner
             djBuild
+            djBuildWin
           ];
 
           buildInputs = with pkgs; [
