@@ -168,10 +168,17 @@ Item {
                                             alsoValue: modelData.alsoValue === undefined
                                                        ? "" : modelData.alsoValue
                                             onEdited: function (value) {
-                                                // A mode is a decision about the other lines: the engine says what it
-                                                // means, and the window stores that answer.
-                                                if (modelData.path === "engine:audio.headphones.mode") {
-                                                    Settings.applyHeadphoneMode(String(value));
+                                                // The headphones are a decision about other lines: the mode, and in
+                                                // "device" mode the device itself, decide which channels are free. The
+                                                // engine says what they mean, and the window stores that answer — a
+                                                // device chosen without asking left the channels greyed out (owner's
+                                                // report, 21.11).
+                                                const changed = modelData.path;
+                                                if (changed === "engine:audio.headphones.mode"
+                                                    || changed === "engine:audio.headphones.device") {
+                                                    const mode = String(Settings.value(
+                                                                        "engine:audio.headphones.mode"));
+                                                    Settings.applyHeadphoneMode(mode);
                                                 }
                                             }
                                             numeric: modelData.numeric === true

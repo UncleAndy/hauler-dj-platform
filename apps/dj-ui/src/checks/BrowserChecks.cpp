@@ -1228,11 +1228,38 @@ int runSortCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutSett
                      static_cast<int>(rows.size()));
         return 1;
     }
-    const QString deep = rows.at(30).toMap().value(QStringLiteral("path")).toString();
+    QString deep = rows.at(30).toMap().value(QStringLiteral("path")).toString();
     browser.setCursor(deep);
     for (int tick = 0; tick < 8; ++tick) {
         QCoreApplication::processEvents();
         QThread::msleep(20);
+    }
+    // The collection refreshes under the check: a row read a moment ago can be gone by the time it is asked for, and
+    // `rowOf` then answers -1 for a row the list itself had just handed over. Wait for the row to be there, and if the
+    // refresh really took it away, take the row that stands in its place now (reported twice, 21.11).
+    {
+        int attempts = 0;
+        while (browser.rowOf(deep) < 0 && attempts < 50) {
+            QCoreApplication::processEvents();
+            QThread::msleep(20);
+            ++attempts;
+        }
+        if (browser.rowOf(deep) < 0) {
+            const QVariantList fresh = browser.entries();
+            if (fresh.size() > 30) {
+                deep = fresh.at(30).toMap().value(QStringLiteral("path")).toString();
+                browser.setCursor(deep);
+                for (int tick = 0; tick < 8; ++tick) {
+                    QCoreApplication::processEvents();
+                    QThread::msleep(20);
+                }
+            }
+        }
+        if (browser.rowOf(deep) < 0) {
+            std::fprintf(stderr, "dj-ui: the collection does not hold the row it just listed: %s\n",
+                         qPrintable(deep));
+            return 1;
+        }
     }
     // A row that arrives without a key must land in the middle too: that is what the DJ sees when a
     // section opens at the remembered row, or when a click lands on a row the window had lost.

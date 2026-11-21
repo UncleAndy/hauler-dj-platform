@@ -278,6 +278,46 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
                 return 1;
             }
             if (wantedDeviceOpen) {
+                // Choosing a device has to give channels: the rows were greyed out and empty after the device was picked,
+                // which is the owner's report of 21.11.
+                const QStringList devices = Settings_devices(engine);
+                QString cueDevice;
+                for (const QString &name : devices) {
+                    if (name != mainDevice) {
+                        cueDevice = name;
+                        break;
+                    }
+                }
+                if (cueDevice.isEmpty() && !devices.isEmpty()) {
+                    cueDevice = devices.first();
+                }
+                if (!cueDevice.isEmpty()
+                    && QMetaObject::invokeMethod(deviceRow, "write", Q_ARG(QVariant, QVariant(cueDevice)))) {
+                    settle(80);
+                    if (!leftRow->property("open").toBool()) {
+                        std::fprintf(stderr,
+                                     "dj-ui: after choosing the device %s the cue channels stayed locked\n",
+                                     qPrintable(cueDevice));
+                        return 1;
+                    }
+                    const QVariantMap cueShape = Settings_shape(engine, cueDevice);
+                    const int cueChannels = cueShape.value(QStringLiteral("channels")).toInt();
+                    const int offered = leftRow->property("offered").toList().size();
+                    // Every channel of the chosen device plus "None": a cue interface has all of them free.
+                    if (cueChannels > 0 && offered < cueChannels) {
+                        std::fprintf(stderr, "dj-ui: the cue line offers %d channels of %s, which has %d\n", offered,
+                                     qPrintable(cueDevice), cueChannels);
+                        return 1;
+                    }
+                    if (leftRow->property("currentText").toString() == QStringLiteral("None")) {
+                        std::fprintf(stderr, "dj-ui: the cue channels read None right after a device with channels\n");
+                        return 1;
+                    }
+                    std::fprintf(stderr,
+                                 "dj-ui: choosing %s gave %d cue channels, and the line reads channel %s\n",
+                                 qPrintable(cueDevice), offered,
+                                 qPrintable(leftRow->property("currentText").toString()));
+                }
                 std::fprintf(stderr, "dj-ui: the %s mode leaves the device and the channels to the DJ\n", mode);
                 continue;
             }

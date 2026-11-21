@@ -89,6 +89,9 @@ Item {
     // looks like when the engine had no answer (owner's report, 21.11).
     readonly property bool asField: row.kind === "text"
                                     || ((row.kind === "device" || row.kind === "pair") && !row.asList)
+                                    // A channel row with no device to ask still takes a number by hand: an organ that
+                                    // shows neither a list nor a field is a row that is not there at all.
+                                    || (row.pairSide >= 0 && !row.asList)
 
     property var current: undefined
     readonly property string currentText: row.current === undefined || row.current === null
