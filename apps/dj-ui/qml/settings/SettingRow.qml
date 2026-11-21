@@ -13,8 +13,10 @@ Item {
 
     property string label: ""
     property string path: ""
-    // "switch" | "choice" | "slider" | "number" | "text"
+    // "switch" | "choice" | "slider" | "number" | "text" | "check"
     property string kind: "text"
+    // What the engine answered about the device (kind "check").
+    property string answer: ""
     property var values: []
     property string hint: ""
     property real from: 0
@@ -121,6 +123,24 @@ Item {
             value: row.current === undefined ? Math.round(row.from) : Math.round(Number(row.current))
             editable: true
             onValueModified: row.write(value)
+        }
+
+        // A device the engine is asked about before the DJ commits a name to a file read at start.
+        Button {
+            visible: row.kind === "check"
+            text: qsTr("Check")
+            font.pixelSize: 10
+            padding: 3
+            onClicked: row.answer = Settings.describeDevice(String(row.current !== undefined
+                                                                 ? row.current : ""))
+        }
+        Label {
+            visible: row.kind === "check"
+            Layout.fillWidth: true
+            text: row.answer
+            color: row.answer.startsWith(qsTr("no answer")) ? UiSettings.themeWarning : UiSettings.themeTextDim
+            font.pixelSize: 10
+            elide: Text.ElideRight
         }
 
         TextField {

@@ -131,3 +131,21 @@ bool EngineSettings::store(const QString &key, const QVariant &value)
     return true;
 }
 
+
+QString EngineSettings::ask(const QStringList &arguments) const
+{
+    const QString binary = engineBinary();
+    if (binary.isEmpty()) {
+        return {};
+    }
+    QProcess process;
+    process.start(binary, arguments);
+    if (!process.waitForStarted(3000) || !process.waitForFinished(5000)) {
+        return {};
+    }
+    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+        // The reason matters more than the code here: "no device matching" is the answer the DJ needs.
+        return QString::fromUtf8(process.readAllStandardError()).trimmed();
+    }
+    return QString::fromUtf8(process.readAllStandardOutput());
+}

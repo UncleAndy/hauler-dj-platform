@@ -205,6 +205,69 @@ pub struct DeviceShape {
     pub sample_rate: u32,
 }
 
+/// One output the backend offers, as the settings window lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OutputDevice {
+    /// Name as the backend spells it — the very string `audio.device` takes.
+    pub name: String,
+    /// Channels a stream may open on it, as far as the plan cares: 1, 2 or 4 (ADR-0005).
+    pub channels: usize,
+    /// Rate it prefers.
+    pub sample_rate: u32,
+    /// What a bare run would open.
+    pub default: bool,
+}
+
+/// Every output the backend offers, the default one first.
+///
+/// The settings window lists these instead of asking the DJ to spell a name: a device name is
+/// whatever the driver calls itself, and guessing one has never been a setting. The order is
+/// stable — the default first, then the backend's own order — so a list that is read twice for the
+/// same machine reads the same.
+pub fn output_device_list() -> Result<Vec<OutputDevice>, IoError> {
+    let host = cpal::default_host();
+    let default_name = host
+        .default_output_device()
+        .map(|device| device.to_string());
+    let devices = host
+        .output_devices()
+        .map_err(|err| IoError::Unsupported(err.to_string()))?;
+
+    let mut listed: Vec<OutputDevice> = Vec::new();
+    for device in devices {
+        let name = device.to_string();
+        // The same name twice is one device: some backends repeat an interface for every stream it offers.
+        if listed.iter().any(|one| one.name == name) {
+            continue;
+        }
+        let (channels, sample_rate) = match device.default_output_config() {
+            Ok(config) => {
+                let native = usize::from(config.channels());
+                let width = if native >= 4 {
+                    4
+                } else if native >= 2 {
+                    2
+                } else {
+                    1
+                };
+                (width, config.sample_rate())
+            }
+            Err(_) => (2, 48_000),
+        };
+        let default = default_name.as_deref() == Some(name.as_str());
+        listed.push(OutputDevice {
+            name,
+            channels,
+            sample_rate,
+            default,
+        });
+    }
+    // The default first: a list that opens on what a bare run would pick is a list that answers the
+    // question the DJ came with.
+    listed.sort_by_key(|device| !device.default);
+    Ok(listed)
+}
+
 /// Resolve a device by name substring and report its shape.
 ///
 /// The plan has to match what the device offers, so this runs before [`LiveOutput::start`]: a

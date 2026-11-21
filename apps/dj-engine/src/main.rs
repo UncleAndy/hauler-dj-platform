@@ -236,10 +236,65 @@ fn settings_request(argv: &[String]) -> Option<std::process::ExitCode> {
     }
 }
 
+/// Answer a question about the audio devices, then leave.
+///
+/// The settings window offers a list instead of a text field, and asks one device to describe itself before the DJ
+/// commits a name to a file the engine reads at start. Both answers come from the same backend the run will use, so a
+/// name that looks plausible in a dialog cannot turn out to be unknown to the engine.
+fn device_request(argv: &[String]) -> Option<std::process::ExitCode> {
+    let mut list = false;
+    let mut check: Option<String> = None;
+    let mut arguments = argv.iter();
+    while let Some(argument) = arguments.next() {
+        match argument.as_str() {
+            "--list-devices" => list = true,
+            "--check-device" => check = arguments.next().cloned(),
+            _ => {}
+        }
+    }
+    if !list && check.is_none() {
+        return None;
+    }
+    if list {
+        let devices = match dj_audio_io::output_device_list() {
+            Ok(devices) => devices,
+            Err(error) => {
+                eprintln!("dj-engine: {error}");
+                return Some(std::process::ExitCode::from(2));
+            }
+        };
+        for device in devices {
+            // One device per line, tab separated: name, channels, rate, and a star for the default one.
+            println!(
+                "{}\t{}\t{}\t{}",
+                device.name,
+                device.channels,
+                device.sample_rate,
+                if device.default { "*" } else { "" }
+            );
+        }
+        return Some(std::process::ExitCode::SUCCESS);
+    }
+    let needle = check.unwrap_or_default();
+    match dj_audio_io::resolve_device(Some(needle.trim())) {
+        Ok(shape) => {
+            println!("{}\t{}\t{}", shape.name, shape.channels, shape.sample_rate);
+            Some(std::process::ExitCode::SUCCESS)
+        }
+        Err(error) => {
+            eprintln!("dj-engine: {error}");
+            Some(std::process::ExitCode::from(3))
+        }
+    }
+}
+
 fn main() -> std::process::ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     // A settings edit is not a run: it answers and leaves before the logger, the index or the audio device.
     if let Some(exit) = settings_request(&argv) {
+        return exit;
+    }
+    if let Some(exit) = device_request(&argv) {
         return exit;
     }
     // Before anything else: the level, then the environment. A report that names the file, the folders and the

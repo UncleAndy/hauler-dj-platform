@@ -29,6 +29,12 @@ public:
     /// Write one value, keeping everything else in the file — comments, order, unknown keys.
     bool store(const QString &key, const QVariant &value);
 
+    /// Ask the engine something and take its words: the same binary answers `--list-devices` and `--check-device`.
+    ///
+    /// Empty when the engine could not be started or refused the question; the caller shows that as "no answer"
+    /// rather than inventing one.
+    QString ask(const QStringList &arguments) const;
+
 signals:
     void changed();
 

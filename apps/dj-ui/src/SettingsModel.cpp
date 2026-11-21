@@ -44,10 +44,42 @@ QObject *SettingsModel::ownerOf(const QString &path, QString *name) const
     return nullptr;
 }
 
+QStringList SettingsModel::devices() const
+{
+    QStringList names;
+    const QString answer = m_engine.ask({QStringLiteral("--list-devices")});
+    const QStringList lines = answer.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    for (const QString &line : lines) {
+        // name, channels, rate, and a star for the default one.
+        const QString name = line.section(QLatin1Char('\t'), 0, 0).trimmed();
+        if (!name.isEmpty()) {
+            names << name;
+        }
+    }
+    return names;
+}
+
+QString SettingsModel::describeDevice(const QString &name) const
+{
+    const QString answer = m_engine.ask({QStringLiteral("--check-device"), name});
+    if (answer.isEmpty()) {
+        return QStringLiteral("no answer");
+    }
+    const QStringList fields = answer.trimmed().split(QLatin1Char('\t'));
+    if (fields.size() < 3) {
+        // The engine answers a refusal on stderr, and that text is the explanation.
+        return answer.trimmed();
+    }
+    return QStringLiteral("%1 — %2 channels, %3 Hz").arg(fields.at(0), fields.at(1), fields.at(2));
+}
+
 QVariant SettingsModel::value(const QString &path) const
 {
     if (path.startsWith(QStringLiteral("engine:"))) {
         return m_engine.value(path.mid(7));
+    }
+    if (path == QStringLiteral("ui:themeSet")) {
+        return m_ui.themeSet();
     }
     if (path == QStringLiteral("session:deckFx")) {
         return m_session.deckFx();
@@ -68,6 +100,13 @@ bool SettingsModel::set(const QString &path, const QVariant &value)
             emit changed();
         }
         return stored;
+    }
+    if (path == QStringLiteral("ui:themeSet")) {
+        const bool applied = m_ui.applyThemeSet(value.toString());
+        if (applied) {
+            emit changed();
+        }
+        return applied;
     }
     // The deck's effect is remembered by name, not as a property: the session stores a map.
     if (path.startsWith(QStringLiteral("session:deckFx."))) {

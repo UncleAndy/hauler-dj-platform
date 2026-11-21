@@ -152,6 +152,50 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
         }
     }
 
+    // The theme is a whole palette at a time, and the promise is that it outlives the window: it is written through
+    // its own line, saved into layout.json with the arrangement, and read back by the loader that starts the shell.
+    QQuickItem *themeRow = named(root, QStringLiteral("settingRow_ui_themeSet"));
+    if (themeRow == nullptr) {
+        std::fprintf(stderr, "dj-ui: the window has no theme line\n");
+        return 1;
+    }
+    auto *ui = engine.singletonInstance<QObject *>(QAnyStringView("DjPlatform.Ui"), QAnyStringView("UiSettings"));
+    auto *layout = engine.singletonInstance<QObject *>(QAnyStringView("DjPlatform.Ui"), QAnyStringView("LayoutState"));
+    if (ui == nullptr || layout == nullptr) {
+        std::fprintf(stderr, "dj-ui: the shell's settings are not reachable from the check\n");
+        return 1;
+    }
+    const QString before = ui->property("themeBackground").toString();
+    if (!QMetaObject::invokeMethod(themeRow, "write", Q_ARG(QVariant, QVariant(QStringLiteral("graphite"))))) {
+        std::fprintf(stderr, "dj-ui: the theme line refused to change the set\n");
+        return 1;
+    }
+    const QString after = ui->property("themeBackground").toString();
+    if (after == before) {
+        std::fprintf(stderr, "dj-ui: choosing a theme set changed nothing (still %s)\n", qPrintable(before));
+        return 1;
+    }
+    if (!QMetaObject::invokeMethod(layout, "save")) {
+        std::fprintf(stderr, "dj-ui: the arrangement refused to be saved\n");
+        return 1;
+    }
+    // A restart in the same process: read the file back through the loader, then look at the colours again.
+    if (!QMetaObject::invokeMethod(layout, "load")) {
+        std::fprintf(stderr, "dj-ui: the arrangement refused to be read back\n");
+        return 1;
+    }
+    const QString reloaded = ui->property("themeBackground").toString();
+    if (reloaded != after) {
+        std::fprintf(stderr, "dj-ui: the theme did not survive being read back: %s became %s\n", qPrintable(after),
+                     qPrintable(reloaded));
+        return 1;
+    }
+    const double beats = layout->property("waveformBeats").toDouble();
+    if (std::abs(beats - 48.0) > 1e-6) {
+        std::fprintf(stderr, "dj-ui: the layout value did not survive being read back: %.0f\n", beats);
+        return 1;
+    }
+
     if (!press(named(root, QStringLiteral("settingsClose"))) || settingsWindow->isVisible()) {
         std::fprintf(stderr, "dj-ui: the settings window did not close\n");
         return 1;
@@ -163,6 +207,8 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
     std::fprintf(stderr, "dj-ui: the panel stays inside the window: %.0fx%.0f in %.0fx%.0f\n", inside.width(),
                  inside.height(), bounds.width(), bounds.height());
     std::fprintf(stderr, "dj-ui: two lines of the window wrote their value: block frames and waveform beats\n");
+    std::fprintf(stderr, "dj-ui: the theme set outlived a reload: %s to %s, and %s to %s\n", qPrintable(before),
+                 qPrintable(after), "graphite", qPrintable(reloaded));
     std::fprintf(stderr, "dj-ui: all cases passed\n");
     return 0;
 }

@@ -15,6 +15,8 @@
 #include <QStringList>
 #include <QTimer>
 
+class UiSettings;
+
 class LayoutSettings : public QObject
 {
     Q_OBJECT
@@ -116,6 +118,10 @@ public:
     bool setChannelOrder(const QString &order);
 
     QString file() const { return m_file; }
+
+    // The shell's own settings ride in the same file: layout.json already belongs to the shell, and a fourth file
+    // would be a fourth thing to explain when someone asks where a colour lives (owner's decision, 21.11).
+    void setUiSettings(UiSettings *settings) { m_ui = settings; }
     void setFile(const QString &path);
 
     /// Read the file if it exists; a missing or broken file leaves the preset in place.
@@ -188,5 +194,6 @@ private:
     bool m_quantizeGrid = true;
     bool m_scrubAudible = false;
     QTimer *m_saveTimer = nullptr;
+    UiSettings *m_ui = nullptr;
     QString m_file;
 };

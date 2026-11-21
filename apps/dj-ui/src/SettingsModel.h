@@ -38,6 +38,12 @@ public:
     /// The deck's effect, as `session:deckFx.A` names it.
     Q_INVOKABLE QString deckFx(const QString &deck) const;
 
+    /// The outputs the engine can open, as names to choose from rather than a string to guess.
+    Q_INVOKABLE QStringList devices() const;
+
+    /// Ask the engine about one device: what it opens, or why it cannot.
+    Q_INVOKABLE QString describeDevice(const QString &name) const;
+
     /// A short report for the clipboard: versions, the files, the audio shape.
     Q_INVOKABLE QString report() const;
 

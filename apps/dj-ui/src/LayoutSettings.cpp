@@ -1,4 +1,6 @@
 #include "LayoutSettings.h"
+
+#include "UiSettings.h"
 #include "BridgeClient.h"
 
 #include <QDir>
@@ -535,6 +537,9 @@ bool LayoutSettings::load()
     // The numbers of every layout, written by this build; a file without them keeps the single set
     // it has, and that set belongs to the layout the file names.
     m_numbers.clear();
+    if (m_ui != nullptr) {
+        m_ui->fromJson(root.value(QStringLiteral("ui")).toObject());
+    }
     const QJsonObject storedNumbers = root.value(QStringLiteral("numbers")).toObject();
     for (auto entry = storedNumbers.begin(); entry != storedNumbers.end(); ++entry) {
         const QJsonObject numbers = entry.value().toObject();
@@ -635,6 +640,11 @@ bool LayoutSettings::save() const
         return false;
     }
     QJsonObject root;
+    if (m_ui != nullptr) {
+        // One writer on this file: the shell's colours are saved by whoever saves the arrangement, so the two cannot
+        // overwrite each other's half of the document.
+        root.insert(QStringLiteral("ui"), m_ui->toJson());
+    }
     root.insert(QStringLiteral("preset"), m_preset);
     root.insert(QStringLiteral("arrangement"), m_arrangement);
     root.insert(QStringLiteral("mixer_edge"), m_mixerEdge);

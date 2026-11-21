@@ -17,6 +17,11 @@ Item {
     anchors.fill: parent
     visible: false
 
+    // Asked once when the window is built: the list is the engine's answer, and a device list that changes while a
+    // dialog is open is a list nobody can aim at.
+    readonly property var deviceNames: Settings ? Settings.devices() : []
+    readonly property var themeNames: Settings ? Settings.themeSets() : []
+
     function open() {
         window.visible = true;
         window.forceActiveFocus();
@@ -191,7 +196,12 @@ Item {
             title: qsTr("Sound"),
             about: qsTr("The engine reads these when it starts: the marks say \"after restart\"."),
             rows: [
-                { label: qsTr("Device"), path: "engine:audio.device", kind: "text" },
+                // A list when the engine names its outputs, a field when it has none to name (a bare container):
+                // a choice with nothing in it would be a control that cannot be used at all.
+                { label: qsTr("Device"), path: "engine:audio.device",
+                  kind: window.deviceNames.length > 0 ? "choice" : "text",
+                  values: window.deviceNames },
+                { label: qsTr("Device check"), path: "engine:audio.device", kind: "check" },
                 { label: qsTr("Sample rate"), path: "engine:audio.sample_rate", kind: "choice",
                   values: ["44100", "48000", "96000"], numeric: true },
                 { label: qsTr("Block, frames"), path: "engine:audio.block_frames", kind: "choice",
@@ -275,7 +285,22 @@ Item {
                   from: 40, to: 260 },
                 { label: qsTr("Snap to beats"), path: "layout:snapGrid", kind: "switch" },
                 { label: qsTr("Quantize on release"), path: "layout:quantizeGrid", kind: "switch" },
-                { label: qsTr("Audible scrubbing"), path: "layout:scrubAudible", kind: "switch" }
+                { label: qsTr("Audible scrubbing"), path: "layout:scrubAudible", kind: "switch" },
+                { label: qsTr("Theme"), path: "ui:themeSet", kind: "choice", values: window.themeNames },
+                { label: qsTr("Frames per second"), path: "ui:frameHz", kind: "number", from: 5, to: 240 },
+                { label: qsTr("Pitch range, percent"), path: "ui:pitchRangePercent", kind: "number",
+                  from: 1, to: 50 },
+                { label: qsTr("Level knob law"), path: "ui:gainCurve", kind: "choice",
+                  values: ["linear", "cubic"] },
+                { label: qsTr("Knob law, middle"), path: "ui:gainCurveMiddle", kind: "slider", decimals: 2 },
+                { label: qsTr("Fader law"), path: "ui:faderCurve", kind: "choice",
+                  values: ["linear", "logarithmic"] },
+                { label: qsTr("Fader law, middle"), path: "ui:faderCurveMiddle", kind: "slider", decimals: 2 },
+                { label: qsTr("Waveform style"), path: "ui:waveformStyle", kind: "choice",
+                  values: ["coloured", "plain"] },
+                { label: qsTr("Waveform zoom"), path: "ui:waveformZoom", kind: "number", from: 1, to: 400 },
+                { label: qsTr("Waveform bar, px"), path: "ui:waveformBarWidth", kind: "number", from: 1, to: 8 },
+                { label: qsTr("Waveform gap, px"), path: "ui:waveformBarGap", kind: "number", from: 0, to: 4 }
             ]
         },
         {

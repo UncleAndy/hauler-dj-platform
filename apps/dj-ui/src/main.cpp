@@ -921,6 +921,9 @@ int main(int argc, char *argv[])
             return 2;
         }
     }
+    // Before the file is read: the shell's colours live in the same document as the arrangement.
+    layout.setUiSettings(&settings);
+
     EngineSettings engineSettings(parser.value(settingsFileOption));
     SettingsModel settingsModel(layout, settings, session, engineSettings);
 
