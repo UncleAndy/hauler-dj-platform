@@ -93,9 +93,21 @@ bool SettingsModel::applyHeadphoneMode(const QString &mode)
     // reading the old one (found by the check, 21.11).
     bool stored = set(QStringLiteral("engine:audio.headphones.mode"), mode);
     if (mode == QStringLiteral("device")) {
-        // A second device is a second stream this build does not open: the mode is stored, and the DJ's own device and
-        // channels stay exactly as he left them instead of being overwritten with a guess.
-        return stored;
+        // A device of its own: the engine opens a second stream there, so the channels it can take are that device's, and
+        // the mode is the DJ's — his device is kept, and its own channels follow.
+        const QVariantMap answer = resolveCue(mode);
+        const QString wanted = answer.value(QStringLiteral("device")).toString();
+        if (wanted.isEmpty()) {
+            return stored;
+        }
+        const int left = answer.value(QStringLiteral("left")).toInt();
+        const int right = answer.value(QStringLiteral("right")).toInt();
+        if (left < 0 || right < 0) {
+            return set(QStringLiteral("engine:audio.headphones.enabled"), false) && stored;
+        }
+        bool ok = stored;
+        ok = set(QStringLiteral("engine:audio.headphones.pair"), QStringLiteral("[%1, %2]").arg(left).arg(right)) && ok;
+        return set(QStringLiteral("engine:audio.headphones.enabled"), true) && ok;
     }
     const QVariantMap answer = resolveCue(mode);
     if (answer.isEmpty()) {

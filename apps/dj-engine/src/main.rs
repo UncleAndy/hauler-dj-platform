@@ -280,9 +280,25 @@ fn cue_request(argv: &[String]) -> Option<std::process::ExitCode> {
             dj_audio_io::cue_channels(shape.channels, master, headphones.pair, headphones.enabled),
         ),
         // A second device is a second stream with its own clock; this build mixes one graph into one interface.
-        // The DJ's own device, or nothing at all: a mode that does not open a second stream has no business naming one
-        // for him.
-        "device" => (headphones.device.clone().unwrap_or_default(), None),
+        // A device of its own: every channel on it is free, because the main output is not there.
+        "device" => {
+            let name = headphones.device.clone().unwrap_or_default();
+            if name.trim().is_empty() {
+                (name, None)
+            } else {
+                let cue_shape = dj_audio_io::resolve_device(Some(&name));
+                let pair = cue_shape
+                    .map(|shape| dj_audio_io::free_pair_on(shape.channels, headphones.pair))
+                    .unwrap_or(None);
+                // The DJ's own channels are kept when they exist; a cue device with room for them gets them, not 0/1.
+                let pair = if pair.is_none() && !headphones.enabled {
+                    None
+                } else {
+                    pair
+                };
+                (name, pair)
+            }
+        }
         other => {
             eprintln!("dj-engine: --resolve-cue does not know the mode {other:?}");
             return Some(std::process::ExitCode::from(2));
@@ -522,6 +538,7 @@ fn run(argv: &[String]) -> Result<(), String> {
         cue: defaults.audio.headphones.pair,
         mode: defaults.audio.headphones.mode,
         cue_enabled: defaults.audio.headphones.enabled,
+        cue_device: defaults.audio.headphones.device.clone(),
     };
 
     let mut index = 0;
@@ -1765,7 +1782,7 @@ struct RunOptions {
 ///
 /// A struct rather than two options in one parameter: a pair of optional pairs reads as noise at the call site, and
 /// clippy rightly calls that type complex.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct ChosenRoutes {
     master: Option<(usize, usize)>,
     cue: Option<(usize, usize)>,
@@ -1773,6 +1790,8 @@ struct ChosenRoutes {
     mode: dj_config::HeadphoneMode,
     /// The switch the window shows as "None".
     cue_enabled: bool,
+    /// The interface the headphones are on, when the mode puts them on another one.
+    cue_device: Option<String>,
 }
 
 /// The device path: the graph lives inside the callback, which is the only place it may run.
@@ -1797,6 +1816,11 @@ fn run_device(
     // Which channels the cue gets is a decision, not a number: `auto` takes the first free pair of the main interface,
     // `same_device` the DJ's pair when it is free, `device` would need a second stream this build does not open.
     let master_pair = pairs.master.unwrap_or((0, 1));
+    // On a second interface the cue does not go into this device at all: it leaves through the ring, and the other stream
+    // plays it at its own rate. The two clocks are held together by `cue::CuePull`, not by a shared buffer size.
+    let mut cue_ring: Option<std::sync::Arc<dj_audio_io::cue::CueRing>> = None;
+    let mut cue_output: Option<dj_audio_io::CueOutput> = None;
+    let mut cue_telemetry: Option<std::sync::Arc<dj_audio_io::cue::CueTelemetry>> = None;
     let cue = match pairs.mode {
         dj_config::HeadphoneMode::Auto => {
             dj_audio_io::cue_channels(channels, master_pair, None, pairs.cue_enabled)
@@ -1804,12 +1828,54 @@ fn run_device(
         dj_config::HeadphoneMode::SameDevice => {
             dj_audio_io::cue_channels(channels, master_pair, pairs.cue, pairs.cue_enabled)
         }
-        dj_config::HeadphoneMode::Device => None,
+        dj_config::HeadphoneMode::Device => {
+            let name = pairs.cue_device.clone().unwrap_or_default();
+            if !pairs.cue_enabled || name.trim().is_empty() {
+                dj_engine::log::info(
+                    "monitoring is on another device but none is named: the cue stays off",
+                );
+                None
+            } else {
+                // What rate the other interface likes, not what this one asked for: they are separate clocks.
+                let cue_rate = dj_audio_io::resolve_device(Some(&name))
+                    .map(|shape| shape.sample_rate)
+                    .unwrap_or(rate);
+                let ring =
+                    dj_audio_io::cue::CueRing::new(usize::try_from(rate.max(1)).unwrap_or(48_000));
+                let pair = pairs.cue.unwrap_or((0, 1));
+                let telemetry = std::sync::Arc::new(dj_audio_io::cue::CueTelemetry::default());
+                match dj_audio_io::CueOutput::start(
+                    &name,
+                    cue_rate,
+                    block,
+                    pair,
+                    dj_audio_io::cue::CuePull::new(std::sync::Arc::clone(&ring), rate, cue_rate)
+                        .with_telemetry(std::sync::Arc::clone(&telemetry)),
+                ) {
+                    Ok(output) => {
+                        dj_engine::log::info(format!(
+                            "monitoring on {} at {cue_rate} Hz, cue on {}/{}, the main device at {rate} Hz",
+                            output.device(),
+                            pair.0,
+                            pair.1
+                        ));
+                        cue_ring = Some(ring);
+                        cue_output = Some(output);
+                        cue_telemetry = Some(telemetry);
+                        None
+                    }
+                    Err(error) => {
+                        dj_engine::log::warn(format!(
+                            "the headphone interface did not open: {error}"
+                        ));
+                        None
+                    }
+                }
+            }
+        }
     };
     match (pairs.mode, cue) {
-        (dj_config::HeadphoneMode::Device, _) => dj_engine::log::info(
-            "monitoring on a second device is not opened by this build: the cue stays off",
-        ),
+        (dj_config::HeadphoneMode::Device, _) => {}
         (_, Some((left, right))) => {
             dj_engine::log::info(format!("monitoring on channels {left}/{right}"))
         }
@@ -1817,7 +1883,10 @@ fn run_device(
             dj_engine::log::info("no spare channels for monitoring: the cue is mixed but silent")
         }
     }
-    let plan = dj_audio_io::RoutePlan::with_pairs(channels, pairs.master, cue);
+    let mut plan = dj_audio_io::RoutePlan::with_pairs(channels, pairs.master, cue);
+    // The decision is final:  fills an empty cue with the plan.s own pair, which is right for a device with
+    // four channels and wrong when the cue left for another interface, or when the DJ said None.
+    plan.cue = cue;
     let config = dj_audio_io::LiveConfig {
         device: Some(requested.to_string()),
         sample_rate: rate,
@@ -1826,8 +1895,9 @@ fn run_device(
         thresholds: dj_audio_io::Thresholds::default(),
     };
 
-    let output = dj_audio_io::LiveOutput::start(&config, plan, Box::new(graph))
-        .map_err(|err| format!("cannot open {requested:?}: {err}"))?;
+    let output =
+        dj_audio_io::LiveOutput::start_with_cue(&config, plan, Box::new(graph), cue_ring.clone())
+            .map_err(|err| format!("cannot open {requested:?}: {err}"))?;
     let report = output.snapshot();
     // What the backend actually gave: a request for 256 frames can come back as 480, and a rate the device does
     // not support is quietly replaced. Silence and crackle both start here.
@@ -1908,6 +1978,9 @@ fn run_device(
             "{}",
             serde_json::to_string(&json).unwrap_or_else(|_| "{}".to_string())
         );
+        // A run that ends on its own clock still has to say what the two clocks did.
+        log_cue_link(cue_telemetry.as_ref(), rate);
+        drop(cue_output);
         return Ok(());
     }
 
@@ -1924,7 +1997,35 @@ fn run_device(
         "dj-engine: stopping — {} callbacks, {} frames, late {}, render p99 {:.1} us",
         report.callbacks, report.frames, report.late_callbacks, report.render_p99_us
     );
+    log_cue_link(cue_telemetry.as_ref(), rate);
+    drop(cue_output);
     Ok(())
+}
+
+/// What the two clocks did with each other: the cushion, the lean of the read pointer, and how often the cue had to hold
+/// a sample. A large or growing correction is a pair of crystals worth telling the DJ about.
+fn log_cue_link(telemetry: Option<&std::sync::Arc<dj_audio_io::cue::CueTelemetry>>, rate: u32) {
+    let Some(telemetry) = telemetry else {
+        return;
+    };
+    let stats = telemetry.read();
+    let produced = telemetry.produced().max(1);
+    // More than a percent of held frames is not a cushion problem: the other device is not keeping the same time at all,
+    // and the DJ has to hear about it before the set rather than during it.
+    if stats.starved * 100 > produced {
+        dj_engine::log::warn(format!(
+            "cue link: {} of {} frames were held — the headphone interface is not keeping time",
+            stats.starved, produced
+        ));
+    }
+    dj_engine::log::info(format!(
+        "cue link: {:.0} ms of cushion, correction {:+.1} ppm, {} held, {} dropped, {} frames played",
+        stats.fill as f64 * 1000.0 / f64::from(rate.max(1)),
+        stats.correction * 1_000_000.0,
+        stats.starved,
+        stats.dropped,
+        telemetry.produced()
+    ));
 }
 
 /// The null path: same graph, same rules, paced by a clock instead of a sound card.

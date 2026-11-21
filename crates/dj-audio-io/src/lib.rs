@@ -16,6 +16,8 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 #[cfg(unix)]
 use rustix::time::{ClockId, clock_gettime};
 
+pub mod cue;
+
 /// Which physical channels carry which bus (ADR-0005).
 ///
 /// Channels are addressed by position, never by name: the S4 descriptor says `FL FR FC LFE` while
@@ -337,6 +339,21 @@ pub fn cue_channels(
         return Some((spare[0], spare[1]));
     }
     None
+}
+
+/// The pair a cue-only device can take: the DJ's own when it fits, otherwise its first two channels.
+///
+/// A device that carries nothing but the cue has every channel free — there is no main output to leave alone.
+pub fn free_pair_on(channels: usize, requested: Option<(usize, usize)>) -> Option<(usize, usize)> {
+    if channels < 2 {
+        return None;
+    }
+    if let Some(pair) =
+        requested.filter(|pair| pair.0 != pair.1 && pair.0 < channels && pair.1 < channels)
+    {
+        return Some(pair);
+    }
+    Some((0, 1))
 }
 
 /// The stereo pairs a device offers, as the settings file writes them: `[0, 1]`, `[2, 3]` and so on.
@@ -890,6 +907,99 @@ pub struct LiveOutput {
     block_frames: usize,
 }
 
+/// The headphones' own interface, fed from the ring the main stream fills.
+///
+/// It is a second `cpal` stream with its own callback and its own block size: the two devices agree on nothing but the
+/// audio they are played, and `cue::CuePull` is what keeps them on speaking terms.
+pub struct CueOutput {
+    _stream: cpal::Stream,
+    device: String,
+    channels: usize,
+    sample_rate: u32,
+}
+
+impl CueOutput {
+    /// Open `device` and play the cue on `pair` from `pull`.
+    pub fn start(
+        device: &str,
+        sample_rate: u32,
+        block_frames: usize,
+        pair: (usize, usize),
+        pull: cue::CuePull,
+    ) -> Result<Self, IoError> {
+        let host = cpal::default_host();
+        let needle = device.trim().to_ascii_lowercase();
+        let mut found = None;
+        for candidate in host
+            .output_devices()
+            .map_err(|err| IoError::Unsupported(err.to_string()))?
+        {
+            let name = candidate.to_string().to_ascii_lowercase();
+            if name.contains(&needle) {
+                found = Some(candidate);
+                break;
+            }
+        }
+        let chosen = found.ok_or_else(|| IoError::DeviceNotFound(device.to_string()))?;
+        let name = chosen.to_string();
+        // Two channels carry the cue, so the device has to be opened with at least as many as the pair reaches.
+        let wanted = u16::try_from(pair.0.max(pair.1) + 1).unwrap_or(2).max(2);
+        let stream_config = cpal::StreamConfig {
+            channels: wanted,
+            sample_rate,
+            buffer_size: cpal::BufferSize::Fixed(u32::try_from(block_frames.max(1)).unwrap_or(256)),
+        };
+
+        let mut pull = pull;
+        let (cue_l, cue_r) = pair;
+        let channels = usize::from(wanted);
+        let data_fn = move |buffer: &mut [f32], _: &cpal::OutputCallbackInfo| {
+            let frames = buffer.len() / channels;
+            for frame in 0..frames {
+                let (left, right) = pull.next_frame();
+                for channel in 0..channels {
+                    buffer[frame * channels + channel] = if channel == cue_l {
+                        left
+                    } else if channel == cue_r {
+                        right
+                    } else {
+                        0.0
+                    };
+                }
+            }
+        };
+        let stream = chosen
+            .build_output_stream(
+                stream_config,
+                data_fn,
+                |err| eprintln!("dj-audio-io: cue stream error: {err}"),
+                None,
+            )
+            .map_err(|err| IoError::Unsupported(err.to_string()))?;
+        stream
+            .play()
+            .map_err(|err| IoError::Start(err.to_string()))?;
+        Ok(Self {
+            _stream: stream,
+            device: name,
+            channels,
+            sample_rate,
+        })
+    }
+
+    pub fn device(&self) -> &str {
+        &self.device
+    }
+
+    pub fn channels(&self) -> usize {
+        self.channels
+    }
+
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+}
+
 /// How many output channels a device offers, as the backend enumerates them.
 ///
 /// Capped at `limit`, because the graph has at most two output pairs (master and cue); a wider
@@ -947,6 +1057,20 @@ impl LiveOutput {
         plan: RoutePlan,
         renderer: Box<dyn Renderer>,
     ) -> Result<Self, IoError> {
+        Self::start_with_cue(config, plan, renderer, None)
+    }
+
+    /// Same, with the cue leaving this device for another one through `cue`.
+    ///
+    /// The main callback keeps its own clock: it produces the cue and hands it over; the second stream reads at its own
+    /// rate and corrects for the difference between the two crystals. Nothing waits for the other device inside this
+    /// callback — a blocked callback is a broken main output.
+    pub fn start_with_cue(
+        config: &LiveConfig,
+        plan: RoutePlan,
+        renderer: Box<dyn Renderer>,
+        cue: Option<Arc<cue::CueRing>>,
+    ) -> Result<Self, IoError> {
         let host = cpal::default_host();
         // An empty name is the system's own choice, exactly as in `output_channels`.
         let device_config = config.device.as_deref().filter(|needle| !needle.is_empty());
@@ -979,6 +1103,7 @@ impl LiveOutput {
             buffer_size: cpal::BufferSize::Fixed(u32::try_from(config.block_frames).unwrap_or(256)),
         };
 
+        let cue_ring = cue;
         let counters = Arc::new(Counters::new(usize::from(channels)));
         let callback_counters = Arc::clone(&counters);
         let mut renderer = renderer;
@@ -1051,6 +1176,13 @@ impl LiveOutput {
 
             let (master_l, master_r) = plan.master;
             let cue_channels = plan.cue;
+            // When the headphones are on another interface the cue does not go into this device at all: it goes into the
+            // ring the other stream reads, and `plan.cue` is None here.
+            if let Some(ring) = cue_ring.as_ref() {
+                for frame in 0..frames {
+                    ring.push(cue[frame * 2], cue[frame * 2 + 1]);
+                }
+            }
             for frame in 0..frames {
                 let base = frame * 2;
                 for channel in 0..usize::from(channels) {
