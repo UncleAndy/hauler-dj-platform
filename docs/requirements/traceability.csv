@@ -43,13 +43,13 @@ DJP-ENV-004,architect,P1,R1,DJP-SRS-001 §2,,,unverified,,,
 DJP-ENV-005,architect,P1,R1,DJP-SRS-001 §2,,,unverified,,,
 DJP-ENV-006,architect,P1,R1,DJP-SRS-001 §2,настройки между запусками: устройство; микшер; деки,crates/dj-session::store; tests/session.rs::a_session_round_trips,review,docs/qa/evidence/A08/summary.md,,2026-11-06
 DJP-ENV-007,architect,P2,R2,DJP-SRS-001 §2,,,unverified,docs/adr/0005-audio-devices-and-routes.md,,2026-11-05
-DJP-FX-001,dsp,P1,R1,DJP-SRS-001 §5,,,unverified,,,
+DJP-FX-001,dsp,P1,R1,DJP-SRS-001 §5,нейтральный трейт FxUnit в crates/dj-fx: prepare/reset/process/engage/latency_frames; ноль аллокаций в process; сквозной путь «команда - полка - снапшот» в dj-mixer и dj-engine,cargo test -p dj-fx; cargo test -p dj-mixer --test fx_in_strip; cargo test -p dj-engine --test fx,passing,docs/qa/evidence/FX/summary.md,,2026-11-21
 DJP-FX-002,dsp,P1,R1,DJP-SRS-001 §5,,,unverified,,,
-DJP-FX-003,dsp,P1,R1,DJP-SRS-001 §5,,,unverified,,,
-DJP-FX-004,dsp,P1,R1,DJP-SRS-001 §5,,,unverified,,,
+DJP-FX-003,dsp,P1,R1,DJP-SRS-001 §5,реализован только режим insert: Mixer::process_fx вызывается до trim и мониторинг снимается после него; post-fader и send не реализованы,crates/dj-mixer/tests/fx_in_strip.rs::the_effect_sits_before_the_fader_and_under_the_monitoring,passing,docs/qa/evidence/FX/summary.md,,2026-11-21
+DJP-FX-004,dsp,P1,R1,DJP-SRS-001 §5,семь эффектов: filter; echo; roll; flanger; phaser; bitcrusher; noise. gater; reverb; distortion; EQ как эффект не сделаны: начало набора закрыто; полный список DJP-FX-004 ещё нет,cargo test -p dj-fx (17 тестов); bash scripts/ui.sh --fx-check,passing,docs/qa/evidence/FX/summary.md,,2026-11-21
 DJP-FX-005,dsp,P2,R3,DJP-SRS-001 §5,,,unverified,,,
 DJP-FX-006,dsp,P2,R3,DJP-SRS-001 §5,,,unverified,,,
-DJP-FX-007,dsp,P2,R2,DJP-SRS-001 §5,,,unverified,,,
+DJP-FX-007,dsp,P2,R2,DJP-SRS-001 §5,BPM-привязка эха и roll через Mixer::beat_seconds из темпа и питча деки; пересчёт длины на ходу через равномощный кроссфейд 20 мс; хвост не рвётся на границе блока,crates/dj-fx/tests/echo.rs::the_beat_change_retimes_the_tail; crates/dj-mixer/tests/fx_in_strip.rs,passing,docs/qa/evidence/FX/summary.md,,2026-11-21
 DJP-FX-008,dsp,P2,R3,DJP-SRS-001 §5,,,unverified,,,
 DJP-GOAL-001,architect,,,DJP-SRS-001 §1,,,unverified,,,
 DJP-GOAL-002,architect,,,DJP-SRS-001 §1,демо R0: две деки; микшер с кроссфейдером; волны; cue и loop переживают перезапуск,ui.sh --engine-check (self/wheel/curve/strip/master/cue-write+cue-read); dj-headless: два прогона совпадают побайтово,review,docs/qa/evidence/A13/summary.md,,2026-11-06
