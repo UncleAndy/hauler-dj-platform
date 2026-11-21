@@ -556,6 +556,7 @@ name = "dj-mixer"
 version = "0.1.0"
 dependencies = [
  "dj-domain",
+ "dj-fx",
  "dj-signalsmith-sys",
  "dj-testkit",
 ]

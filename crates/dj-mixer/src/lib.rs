@@ -11,6 +11,11 @@
 //! Ownership: dsp (`docs/architecture/crate-map.md`).
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
+mod fx;
+
+use dj_domain::FxPatch;
+use fx::FxRack;
+
 /// Which side of the crossfader a channel follows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CrossAssign {
@@ -122,6 +127,8 @@ pub struct Mixer {
     /// mixing by ear must not hear the two buses a few milliseconds apart.
     cue_delay: Vec<f32>,
     cue_delay_pos: usize,
+    /// One effect slot per channel: the deck's block goes through it before the trim (DJP-FX-003, insert).
+    fx: Vec<FxRack>,
     /// One fall-back filter per metered signal: the channels, the master and the cue bus.
     channel_decay: Vec<PeakDecay>,
     master_decay: PeakDecay,
@@ -167,6 +174,7 @@ impl Mixer {
                 .collect(),
             master_decay: PeakDecay::new(48_000, DEFAULT_FALL_SECONDS),
             cue_decay: PeakDecay::new(48_000, DEFAULT_FALL_SECONDS),
+            fx: (0..channels.max(1)).map(|_| FxRack::new()).collect(),
             meters: Meters {
                 channels: vec![Meter::default(); channels.max(1)],
                 master: Meter::default(),
@@ -182,6 +190,12 @@ impl Mixer {
     pub fn prepare(&mut self, sample_rate: u32, max_block_frames: usize) {
         self.sample_rate = sample_rate.max(1);
         self.block_frames = 0;
+        // Every effect of every strip is allocated here and only here: switching between them on the render path
+        // moves an index and cannot fail (DJP-NFR-001).
+        for (index, rack) in self.fx.iter_mut().enumerate() {
+            rack.prepare(self.sample_rate as f32, max_block_frames);
+            let _ = index;
+        }
         self.master = vec![0.0; max_block_frames * 2];
         self.cue = vec![0.0; max_block_frames * 2];
         self.reference = vec![0.0; max_block_frames * 2];
@@ -313,6 +327,47 @@ impl Mixer {
             // The bar keeps its value across the block boundary: only the per-block numbers start over.
             meter.peak = 0.0;
             meter.rms = 0.0;
+        }
+    }
+
+    /// Set one channel's effect. The patch is whole: the shell sends what the snapshot says plus its own change, so
+    /// no field is ever guessed.
+    pub fn set_deck_fx(&mut self, index: usize, patch: FxPatch) {
+        if let Some(rack) = self.fx.get_mut(index) {
+            rack.set_patch(patch);
+        }
+    }
+
+    /// What a channel's effect is set to, as the snapshot will publish it.
+    pub fn deck_fx(&self, index: usize) -> FxPatch {
+        self.fx.get(index).map(FxRack::patch).unwrap_or_default()
+    }
+
+    /// The channel's beat in seconds of output: the echo and the roll live on it.
+    pub fn set_deck_beat(&mut self, index: usize, seconds_per_beat: f32) {
+        if let Some(rack) = self.fx.get_mut(index) {
+            rack.set_beat(seconds_per_beat);
+        }
+    }
+
+    /// How long a beat of this channel lasts in output seconds, from the deck's own tempo.
+    ///
+    /// Kept here so the engine has one place to ask: `60 / bpm` seconds of material, divided by the deck's tempo
+    /// ratio, because a deck playing at 1.08 puts its beats out 8 % faster than the file holds them.
+    pub fn beat_seconds(bpm: f32, tempo_ratio: f32) -> Option<f32> {
+        if !bpm.is_finite() || bpm <= 0.0 || !tempo_ratio.is_finite() || tempo_ratio <= 0.0 {
+            return None;
+        }
+        Some(60.0 / bpm / tempo_ratio)
+    }
+
+    /// Run one channel's block through its effect, in place.
+    ///
+    /// Called by the engine with the block the deck rendered, before [`Mixer::mix_channel`]: the effect is then in
+    /// the monitoring bus and under the channel fader, which is what `insert` means (DJP-FX-003).
+    pub fn process_fx(&mut self, index: usize, block: &mut [f32], frames: usize) {
+        if let Some(rack) = self.fx.get_mut(index) {
+            rack.process(block, frames);
         }
     }
 
