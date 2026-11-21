@@ -164,6 +164,8 @@ Item {
                                             gatePath: modelData.gatePath === undefined ? "" : modelData.gatePath
                                             gateValues: modelData.gateValues === undefined
                                                         ? [] : modelData.gateValues
+                                            itemName: modelData.name === undefined ? "" : modelData.name
+                                            onlyWhenDistinct: modelData.onlyWhenDistinct === true
                                             alsoPath: modelData.alsoPath === undefined ? "" : modelData.alsoPath
                                             alsoValue: modelData.alsoValue === undefined
                                                        ? "" : modelData.alsoValue
@@ -248,6 +250,12 @@ Item {
                   gatePath: "engine:audio.headphones.mode", gateValues: ["device"] },
                 // The cue takes one channel per row too, and it may have none: an interface whose every socket carries
                 // the main output has nothing left for monitoring, and "None" says so instead of offering a lie.
+                // The same characteristics for the interface that carries the cue, shown only when it is a device of its
+                // own: on the main interface the line above has already answered.
+                { label: qsTr("Headphone device check"), path: "engine:audio.headphones.device", kind: "check",
+                  name: "settingRow_headphoneDeviceCheck",
+                  gatePath: "engine:audio.headphones.mode", gateValues: ["device"],
+                  onlyWhenDistinct: true },
                 // Editable where the interface has spare channels and the DJ is the one choosing; locked to "None" when
                 // it does not, because monitoring that cannot exist must not offer a choice.
                 { label: qsTr("Headphone channel L"), path: "engine:audio.headphones.pair", kind: "choice",

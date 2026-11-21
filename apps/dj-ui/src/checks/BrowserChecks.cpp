@@ -1289,7 +1289,26 @@ int runSortCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutSett
         QCoreApplication::sendEvent(list, &press);
         QCoreApplication::processEvents();
     }
-    const int row = browser.rowOf(browser.cursor());
+    // The collection refreshes under the check, and a refresh can empty the cursor between the presses and this read:
+    // `rowOf` then answers -1, which is not "the row is not centred" but "the cursor is gone". Put the cursor back on the
+    // row the presses were walking from and read again (reported twice, 21.11).
+    int row = browser.rowOf(browser.cursor());
+    if (row < 0) {
+        const QVariantList fresh = browser.entries();
+        if (!fresh.isEmpty()) {
+            const int wanted = std::min(30, static_cast<int>(fresh.size()) - 1);
+            browser.setCursor(fresh.at(wanted).toMap().value(QStringLiteral("path")).toString());
+            for (int tick = 0; tick < 8; ++tick) {
+                QCoreApplication::processEvents();
+                QThread::msleep(20);
+            }
+            row = browser.rowOf(browser.cursor());
+        }
+        if (row < 0) {
+            std::fprintf(stderr, "dj-ui: the list lost its cursor and would not take it back\n");
+            return 1;
+        }
+    }
     const double settled = list->property("contentY").toDouble();
     // An animation would still be running: give it the frames and require the window not to move.
     for (int tick = 0; tick < 8; ++tick) {

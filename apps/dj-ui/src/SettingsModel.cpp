@@ -205,6 +205,18 @@ QStringList SettingsModel::devices() const
     return names;
 }
 
+bool SettingsModel::headphoneDeviceDiffers() const
+{
+    const QString main = value(QStringLiteral("engine:audio.device")).toString().trimmed();
+    const QString phones = value(QStringLiteral("engine:audio.headphones.device")).toString().trimmed();
+    // An empty main name means "the system's choice", which is not a name to compare against: only two named interfaces
+    // can be told apart, and anything else is "not distinct" — the main check already covers that device.
+    if (main.isEmpty() || phones.isEmpty()) {
+        return false;
+    }
+    return main.compare(phones, Qt::CaseInsensitive) != 0;
+}
+
 QStringList SettingsModel::devicePairs(const QString &device) const
 {
     QStringList pairs;

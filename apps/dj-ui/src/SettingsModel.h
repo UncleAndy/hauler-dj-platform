@@ -61,6 +61,9 @@ public:
     /// The outputs the engine can open, as names to choose from rather than a string to guess.
     Q_INVOKABLE QStringList devices() const;
 
+    /// Whether the headphones are on an interface of their own, rather than on the main one.
+    Q_INVOKABLE bool headphoneDeviceDiffers() const;
+
     /// The stereo pairs the device offers — the headphones are a pair or nothing.
     Q_INVOKABLE QStringList devicePairs(const QString &device) const;
 

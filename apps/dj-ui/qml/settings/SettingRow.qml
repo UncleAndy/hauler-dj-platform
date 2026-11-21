@@ -13,6 +13,8 @@ Item {
 
     property string label: ""
     property string path: ""
+    // Two lines can point at one path — a choice and a check of the same device — so a line may name itself.
+    property string itemName: ""
     // "switch" | "choice" | "slider" | "number" | "text" | "check" | "device" | "pair"
     property string kind: "text"
     // What the engine answered about the device (kind "check").
@@ -41,6 +43,10 @@ Item {
     // "None" is offered for the cue, never for the main output: silence on the main output is not a route.
     property bool allowNone: false
     property var channelChoices: []
+    // A check is worth its own line only when there is a second device to ask about: the main line already answers for the
+    // main one (owner's decision, 21.11).
+    property bool onlyWhenDistinct: false
+    property bool distinct: true
     property var gateValues: []
     // The gate's value is read in reload(), not inside the binding: a binding cannot see the inside of an invokable, so
     // `Settings.value()` in a binding would answer once and never again — and the line stayed locked in every mode.
@@ -56,10 +62,11 @@ Item {
 
     implicitHeight: 30
     implicitWidth: 600
+    visible: !row.onlyWhenDistinct || row.distinct
 
     // `engine:audio.block_frames` reads as `settingRow_engine_audio_block_frames`: a check has to find the very line
     // the hand would use, not a copy of it.
-    objectName: "settingRow_" + path.replace(/[:.]/g, "_")
+    objectName: itemName !== "" ? itemName : ("settingRow_" + path.replace(/[:.]/g, "_"))
 
     // What the list offers. The engine is asked in reload(), never inside a binding: a binding cannot see the inside of
     // an invokable, so a list read in one would be a list from the first moment and never again.
@@ -124,6 +131,9 @@ Item {
         }
         if (row.gatePath !== "") {
             row.gateValue = row.text(row.gatePath);
+        }
+        if (row.onlyWhenDistinct) {
+            row.distinct = Settings.headphoneDeviceDiffers();
         }
         if (row.alsoPath !== "") {
             // Read here, not in the binding: an invokable called from a binding answers once and never again.

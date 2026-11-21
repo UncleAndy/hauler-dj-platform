@@ -60,6 +60,20 @@ QVariantMap Settings_shape(QQmlApplicationEngine &engine, const QString &device)
     return shape;
 }
 
+/// What the engine says about one device, the way the window's Check button asks.
+QString Settings_describe(QQmlApplicationEngine &engine, const QString &device)
+{
+    auto *model = engine.singletonInstance<QObject *>(QAnyStringView("DjPlatform.Ui"), QAnyStringView("Settings"));
+    if (model == nullptr) {
+        return {};
+    }
+    QString answer;
+    if (!QMetaObject::invokeMethod(model, "describeDevice", Q_RETURN_ARG(QString, answer), Q_ARG(QString, device))) {
+        return {};
+    }
+    return answer;
+}
+
 /// The stereo pairs of one device, asked the way the window asks.
 QStringList Settings_pairs(QQmlApplicationEngine &engine, const QString &device)
 {
@@ -343,6 +357,22 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
             std::fprintf(stderr, "dj-ui: the %s mode keeps the main device, %s\n", mode,
                          spare ? "the spare pair for the cue" : "and has no spare pair, so the cue is None");
         }
+
+        // The interface that carries the cue has its own check, and it answers about that device: the point of the line is
+        // the second card, not a repeat of the first (owner's decision, 21.11).
+        QQuickItem *checkRow = named(root, QStringLiteral("settingRow_headphoneDeviceCheck"));
+        if (checkRow == nullptr) {
+            std::fprintf(stderr, "dj-ui: the sound page has no check for the headphone device\n");
+            return 1;
+        }
+        const QString asked = checkRow->property("currentText").toString();
+        const QString report = Settings_describe(engine, asked);
+        if (report.isEmpty() || report.contains(asked, Qt::CaseInsensitive)) {
+            std::fprintf(stderr, "dj-ui: the headphone check answered \"%s\" about %s\n", qPrintable(report),
+                         qPrintable(asked));
+            return 1;
+        }
+        std::fprintf(stderr, "dj-ui: the headphone check answers characteristics only: %s\n", qPrintable(report));
 
         std::fprintf(stderr, "dj-ui: the headphones follow their mode: device %s, channels %s\n",
                      "locked outside device mode", "None when nothing is spare");
