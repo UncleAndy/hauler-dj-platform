@@ -236,6 +236,65 @@ fn settings_request(argv: &[String]) -> Option<std::process::ExitCode> {
     }
 }
 
+/// What the headphones would get in each mode, so the window can show the decision instead of guessing it.
+///
+/// The rules live here, next to the audio device: `auto` takes the first free pair of the main interface, `same_device`
+/// takes the DJ's pair when it is free, `device` would need a second stream — which this build does not open, so the cue
+/// stays off and the answer says so.
+fn cue_request(argv: &[String]) -> Option<std::process::ExitCode> {
+    let mut mode: Option<String> = None;
+    let mut path: Option<String> = None;
+    let mut arguments = argv.iter();
+    while let Some(argument) = arguments.next() {
+        match argument.as_str() {
+            "--resolve-cue" => mode = arguments.next().cloned(),
+            "--settings" => path = arguments.next().cloned(),
+            _ => {}
+        }
+    }
+    let mode = mode?;
+    let (config, _used) =
+        match dj_config::Config::load_or_default(path.as_deref().map(std::path::Path::new)) {
+            Ok(pair) => pair,
+            Err(error) => {
+                eprintln!("dj-engine: settings: {error}");
+                return Some(std::process::ExitCode::from(2));
+            }
+        };
+    let master = config.audio.master.unwrap_or((0, 1));
+    let shape = match dj_audio_io::resolve_device(config.audio.device.as_deref()) {
+        Ok(shape) => shape,
+        Err(error) => {
+            eprintln!("dj-engine: {error}");
+            return Some(std::process::ExitCode::from(3));
+        }
+    };
+    let headphones = &config.audio.headphones;
+    let (device, cue) = match mode.trim() {
+        "auto" => (
+            shape.name.clone(),
+            dj_audio_io::cue_channels(shape.channels, master, None, true),
+        ),
+        "same_device" => (
+            shape.name.clone(),
+            dj_audio_io::cue_channels(shape.channels, master, headphones.pair, headphones.enabled),
+        ),
+        // A second device is a second stream with its own clock; this build mixes one graph into one interface.
+        // The DJ's own device, or nothing at all: a mode that does not open a second stream has no business naming one
+        // for him.
+        "device" => (headphones.device.clone().unwrap_or_default(), None),
+        other => {
+            eprintln!("dj-engine: --resolve-cue does not know the mode {other:?}");
+            return Some(std::process::ExitCode::from(2));
+        }
+    };
+    match cue {
+        Some((left, right)) => println!("{device}\t{left}\t{right}"),
+        None => println!("{device}\tnone\tnone"),
+    }
+    Some(std::process::ExitCode::SUCCESS)
+}
+
 /// Answer a question about the audio devices, then leave.
 ///
 /// The settings window offers a list instead of a text field, and asks one device to describe itself before the DJ
@@ -320,7 +379,12 @@ fn device_request(argv: &[String]) -> Option<std::process::ExitCode> {
     let needle = check.unwrap_or_default();
     match dj_audio_io::resolve_device(Some(needle.trim())) {
         Ok(shape) => {
-            println!("{}\t{}\t{}", shape.name, shape.channels, shape.sample_rate);
+            // Characteristics only: the window already shows the name it asked about, and repeating it wastes the one
+            // line the DJ reads (owner's decision, 21.11).
+            println!(
+                "{}\t{}\t{}\t{}",
+                shape.sample_rate, shape.bits, shape.channels, shape.format
+            );
             Some(std::process::ExitCode::SUCCESS)
         }
         Err(error) => {
@@ -337,6 +401,9 @@ fn main() -> std::process::ExitCode {
         return exit;
     }
     if let Some(exit) = device_request(&argv) {
+        return exit;
+    }
+    if let Some(exit) = cue_request(&argv) {
         return exit;
     }
     // Before anything else: the level, then the environment. A report that names the file, the folders and the
@@ -453,6 +520,8 @@ fn run(argv: &[String]) -> Result<(), String> {
     let chosen_routes = ChosenRoutes {
         master: defaults.audio.master,
         cue: defaults.audio.headphones.pair,
+        mode: defaults.audio.headphones.mode,
+        cue_enabled: defaults.audio.headphones.enabled,
     };
 
     let mut index = 0;
@@ -1696,10 +1765,14 @@ struct RunOptions {
 ///
 /// A struct rather than two options in one parameter: a pair of optional pairs reads as noise at the call site, and
 /// clippy rightly calls that type complex.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 struct ChosenRoutes {
     master: Option<(usize, usize)>,
     cue: Option<(usize, usize)>,
+    /// Which arrangement the headphones are in: the cue's channels are a consequence of it.
+    mode: dj_config::HeadphoneMode,
+    /// The switch the window shows as "None".
+    cue_enabled: bool,
 }
 
 /// The device path: the graph lives inside the callback, which is the only place it may run.
@@ -1721,7 +1794,30 @@ fn run_device(
     let (block, rate, seconds, state_hz) = (*block, *rate, *seconds, *state_hz);
     // The DJ's own channels, where they fit: `audio.master` for the main output and `audio.headphones.pair` for the
     // cue. The plan refuses a pair that reaches past the device and keeps its own.
-    let plan = dj_audio_io::RoutePlan::with_pairs(channels, pairs.master, pairs.cue);
+    // Which channels the cue gets is a decision, not a number: `auto` takes the first free pair of the main interface,
+    // `same_device` the DJ's pair when it is free, `device` would need a second stream this build does not open.
+    let master_pair = pairs.master.unwrap_or((0, 1));
+    let cue = match pairs.mode {
+        dj_config::HeadphoneMode::Auto => {
+            dj_audio_io::cue_channels(channels, master_pair, None, pairs.cue_enabled)
+        }
+        dj_config::HeadphoneMode::SameDevice => {
+            dj_audio_io::cue_channels(channels, master_pair, pairs.cue, pairs.cue_enabled)
+        }
+        dj_config::HeadphoneMode::Device => None,
+    };
+    match (pairs.mode, cue) {
+        (dj_config::HeadphoneMode::Device, _) => dj_engine::log::info(
+            "monitoring on a second device is not opened by this build: the cue stays off",
+        ),
+        (_, Some((left, right))) => {
+            dj_engine::log::info(format!("monitoring on channels {left}/{right}"))
+        }
+        (_, None) => {
+            dj_engine::log::info("no spare channels for monitoring: the cue is mixed but silent")
+        }
+    }
+    let plan = dj_audio_io::RoutePlan::with_pairs(channels, pairs.master, cue);
     let config = dj_audio_io::LiveConfig {
         device: Some(requested.to_string()),
         sample_rate: rate,

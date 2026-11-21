@@ -131,6 +131,11 @@ pub enum HeadphoneMode {
     Device,
 }
 
+/// Serde's `default` for a switch that is on unless the file says otherwise.
+fn yes() -> bool {
+    true
+}
+
 /// Headphone output: mode, pair, device, and the two knobs the mixer shows.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -139,8 +144,14 @@ pub struct HeadphoneSettings {
     pub mode: HeadphoneMode,
     /// Device name substring for [`HeadphoneMode::Device`]; `None` means the system default.
     pub device: Option<String>,
-    /// Channel pair for [`HeadphoneMode::SameDevice`]; `None` takes the pair the route plan suggests (2/3).
+    /// Channel pair for [`HeadphoneMode::SameDevice`]; `None` lets the engine take the first free pair.
     pub pair: Option<(usize, usize)>,
+    /// Whether the cue leaves the engine at all.
+    ///
+    /// `false` is the "None" the settings window shows when the device has no spare pair: the cue is mixed but goes
+    /// nowhere, which is honest — monitoring that cannot exist must not pretend to (owner's decision, 21.11).
+    #[serde(default = "yes")]
+    pub enabled: bool,
     /// Volume of the headphones, linear: 1.0 is unity.
     pub gain: f32,
     /// Proportion between monitoring and the main mix, 0.0 … 1.0: 1.0 is monitoring only.
@@ -155,6 +166,7 @@ impl Default for HeadphoneSettings {
             mode: HeadphoneMode::Auto,
             device: None,
             pair: None,
+            enabled: true,
             gain: 1.0,
             mix: 1.0,
         }

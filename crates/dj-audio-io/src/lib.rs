@@ -228,6 +228,10 @@ pub struct DeviceShape {
     pub channels: usize,
     /// Rate the device prefers.
     pub sample_rate: u32,
+    /// Bits per sample the device takes by default.
+    pub bits: u16,
+    /// The sample format as the backend spells it: `f32`, `i16`, `u16`.
+    pub format: String,
 }
 
 /// One output the backend offers, as the settings window lists it.
@@ -295,6 +299,44 @@ pub fn output_device_list() -> Result<Vec<OutputDevice>, IoError> {
     // question the DJ came with.
     listed.sort_by_key(|device| !device.default);
     Ok(listed)
+}
+
+/// The channels the cue can take: the first pair the main output does not use.
+///
+/// Monitoring lives on the same interface as the main output or it does not live here at all — two devices drift and
+/// their clocks differ (ADR-0005). So the cue gets the first free stereo pair: 2/3 on a four-channel interface, nothing
+/// on a stereo one. The DJ's own pair wins when it is free, because a booth's numbering is the driver's.
+pub fn cue_channels(
+    channels: usize,
+    master: (usize, usize),
+    requested: Option<(usize, usize)>,
+    enabled: bool,
+) -> Option<(usize, usize)> {
+    if !enabled {
+        return None;
+    }
+    let free = |pair: (usize, usize)| {
+        pair.0 != pair.1
+            && pair.0 < channels
+            && pair.1 < channels
+            && pair.0 != master.0
+            && pair.0 != master.1
+            && pair.1 != master.0
+            && pair.1 != master.1
+    };
+    if let Some(pair) = requested.filter(|pair| free(*pair)) {
+        return Some(pair);
+    }
+    // The first free pair, in the device's own order: 2/3 before 3/2, so the channel a DJ expects is the one that
+    // answers first.
+    let mut spare: Vec<usize> = (0..channels)
+        .filter(|channel| *channel != master.0 && *channel != master.1)
+        .collect();
+    if spare.len() >= 2 {
+        spare.truncate(2);
+        return Some((spare[0], spare[1]));
+    }
+    None
 }
 
 /// The stereo pairs a device offers, as the settings file writes them: `[0, 1]`, `[2, 3]` and so on.
@@ -376,8 +418,18 @@ pub fn resolve_device(device: Option<&str>) -> Result<DeviceShape, IoError> {
     };
 
     let name = device.to_string();
+    let mut bits = 32;
+    let mut format = String::from("f32");
     let (channels, sample_rate) = match device.default_output_config() {
         Ok(config) => {
+            bits = match config.sample_format() {
+                cpal::SampleFormat::I8 | cpal::SampleFormat::U8 => 8,
+                cpal::SampleFormat::I16 | cpal::SampleFormat::U16 => 16,
+                cpal::SampleFormat::I32 | cpal::SampleFormat::U32 | cpal::SampleFormat::F32 => 32,
+                cpal::SampleFormat::I64 | cpal::SampleFormat::U64 | cpal::SampleFormat::F64 => 64,
+                _ => 32,
+            };
+            format = format!("{:?}", config.sample_format()).to_ascii_lowercase();
             let native = usize::from(config.channels());
             // Only the widths the route plan knows how to use: stereo, or master + cue.
             let width = if native >= 4 {
@@ -396,6 +448,8 @@ pub fn resolve_device(device: Option<&str>) -> Result<DeviceShape, IoError> {
         name,
         channels,
         sample_rate,
+        bits,
+        format,
     })
 }
 

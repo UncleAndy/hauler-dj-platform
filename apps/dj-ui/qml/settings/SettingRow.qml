@@ -27,13 +27,27 @@ Item {
     // the "device" mode, and in the other modes the engine picks it. The control stays visible and locked — hiding it
     // would leave the DJ wondering where the device went (owner's report, 21.11).
     property string gatePath: ""
+    // A second condition, for a line whose openness depends on two things at once: the cue has channels only where the
+    // mode lets the DJ choose and the interface has a spare pair to give.
+    property string alsoPath: ""
+    property string alsoValue: ""
     // Which line names the device the pairs belong to.
     property string pairDevicePath: "engine:audio.device"
+    // Which half of a pair this row is: 0 or 1. A pair is written by two rows, one channel each — a DJ in a booth with
+    // an odd interface numbers his sockets, not pairs (owner's decision, 21.11).
+    property int pairSide: -1
+    // Which device's channel count the list is built from.
+    property string channelDevicePath: "engine:audio.device"
+    // "None" is offered for the cue, never for the main output: silence on the main output is not a route.
+    property bool allowNone: false
+    property var channelChoices: []
     property var gateValues: []
     // The gate's value is read in reload(), not inside the binding: a binding cannot see the inside of an invokable, so
     // `Settings.value()` in a binding would answer once and never again — and the line stayed locked in every mode.
     property string gateValue: ""
-    readonly property bool open: row.gatePath === "" ? true : row.gateValues.indexOf(row.gateValue) >= 0
+    property string alsoCurrent: ""
+    readonly property bool open: (row.gatePath === "" ? true : row.gateValues.indexOf(row.gateValue) >= 0)
+                                 && (row.alsoPath === "" ? true : row.alsoCurrent === row.alsoValue)
     // A list of numbers: the file holds `48000`, and a control that carried the text would write it as a string the
     // engine then refuses to read.
     property bool numeric: false
@@ -51,7 +65,8 @@ Item {
     // an invokable, so a list read in one would be a list from the first moment and never again.
     property var engineDevices: []
     property var enginePairs: []
-    readonly property var choices: row.kind === "device" ? row.engineDevices
+    readonly property var choices: row.pairSide >= 0 ? row.channelChoices
+                                   : row.kind === "device" ? row.engineDevices
                                    : row.kind === "pair" ? row.enginePairs
                                    : row.values
     // The value stored in the file stays visible even when the device it names is no longer plugged in: hiding it
@@ -66,7 +81,8 @@ Item {
         }
         return list;
     }
-    readonly property bool asList: row.kind === "device" || row.kind === "pair"
+    readonly property bool asList: row.pairSide >= 0 ? row.channelChoices.length > 0
+                                   : row.kind === "device" || row.kind === "pair"
                                    ? row.choices.length > 0
                                    : row.kind === "choice"
     // A row that shows neither a list nor a field is a row the DJ cannot see: this is what "the setting is not there"
@@ -86,11 +102,29 @@ Item {
     }
 
     function reload() {
-        if (row.path !== "") {
+        if (row.pairSide >= 0) {
+            // One channel of a pair: the number the file holds, or "None" when there is none.
+            const channel = Settings.channelAt(row.path, row.pairSide);
+            row.current = channel < 0 ? "None" : channel;
+            const shape = Settings.deviceShape(row.text(row.channelDevicePath));
+            const count = shape.channels === undefined ? 0 : Number(shape.channels);
+            const list = [];
+            for (let index = 0; index < count; ++index) {
+                list.push(String(index));
+            }
+            if (row.allowNone) {
+                list.push("None");
+            }
+            row.channelChoices = list;
+        } else if (row.path !== "") {
             row.current = Settings.value(row.path);
         }
         if (row.gatePath !== "") {
             row.gateValue = row.text(row.gatePath);
+        }
+        if (row.alsoPath !== "") {
+            // Read here, not in the binding: an invokable called from a binding answers once and never again.
+            row.alsoCurrent = row.text(row.alsoPath);
         }
         if (row.kind === "device") {
             row.engineDevices = Settings.devices();
@@ -106,9 +140,19 @@ Item {
         if (row.path === "" || !Settings) {
             return;
         }
+        if (row.pairSide >= 0) {
+            const channel = String(value) === "None" ? -1 : Number(value);
+            if (Settings.setChannelAt(row.path, row.pairSide, channel)) {
+                row.reload();
+                row.syncChoice();
+                row.edited(value);
+            }
+            return;
+        }
         if (Settings.set(row.path, value)) {
             row.reload();
             row.syncChoice();
+            row.edited(value);
         }
     }
 
@@ -239,5 +283,9 @@ Item {
         }
         const index = row.offered.indexOf(row.currentText);
         choice.currentIndex = index >= 0 ? index : 0;
+        if (row.pairSide >= 0 && row.current !== undefined) {
+            // A channel row shows what it has, and "None" when it has nothing: an empty list is not a state.
+            choice.currentIndex = row.offered.indexOf(row.currentText);
+        }
     }
 }

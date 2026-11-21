@@ -46,6 +46,20 @@ void settle(int milliseconds)
     loop.exec();
 }
 
+/// One device's shape, asked the way the window asks.
+QVariantMap Settings_shape(QQmlApplicationEngine &engine, const QString &device)
+{
+    auto *model = engine.singletonInstance<QObject *>(QAnyStringView("DjPlatform.Ui"), QAnyStringView("Settings"));
+    if (model == nullptr) {
+        return {};
+    }
+    QVariantMap shape;
+    if (!QMetaObject::invokeMethod(model, "deviceShape", Q_RETURN_ARG(QVariantMap, shape), Q_ARG(QString, device))) {
+        return {};
+    }
+    return shape;
+}
+
 /// The stereo pairs of one device, asked the way the window asks.
 QStringList Settings_pairs(QQmlApplicationEngine &engine, const QString &device)
 {
@@ -200,175 +214,98 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
         }
     }
 
-    // The headphone device is the same list, locked by the mode: only "device" lets the DJ name it, and a locked line
-    // has to say whose choice it is.
+    // The headphones: three modes, and the engine decides what each of them means (owner's decision, 21.11).
+    // `auto` takes the main interface and its spare channels; `same_device` keeps that interface and lets the DJ pick;
+    // `device` names another interface. Where the interface has no spare pair the cue is off and both channels read
+    // "None".
     {
         QQuickItem *modeRow = named(root, QStringLiteral("settingRow_engine_audio_headphones_mode"));
-        QQuickItem *headphoneRow = named(root, QStringLiteral("settingRow_engine_audio_headphones_device"));
-        if (modeRow == nullptr || headphoneRow == nullptr) {
+        QQuickItem *deviceRow = named(root, QStringLiteral("settingRow_engine_audio_headphones_device"));
+        QQuickItem *leftRow = named(root, QStringLiteral("settingRow_engine_audio_headphones_pair"));
+        if (modeRow == nullptr || deviceRow == nullptr || leftRow == nullptr) {
             std::fprintf(stderr, "dj-ui: the sound page has no headphone lines\n");
             return 1;
         }
-        const QStringList devices = Settings_devices(engine);
-        if (!devices.isEmpty()) {
-            const QVariantList offered = headphoneRow->property("offered").toList();
-            if (offered.size() < devices.size()) {
-                std::fprintf(stderr, "dj-ui: the headphone line offers %lld of %lld outputs\n",
-                             static_cast<long long>(offered.size()), static_cast<long long>(devices.size()));
-                return 1;
-            }
-        }
-        // Locked in "auto": the engine picks, and the line must not pretend otherwise.
-        if (!QMetaObject::invokeMethod(modeRow, "write", Q_ARG(QVariant, QVariant(QStringLiteral("auto"))))) {
-            std::fprintf(stderr, "dj-ui: the headphone mode line refused to change\n");
-            return 1;
-        }
-        settle(40);
-        if (headphoneRow->property("open").toBool()) {
-            std::fprintf(stderr, "dj-ui: the headphone device is open while the mode is auto\n");
-            return 1;
-        }
-        // Open in "device": the name is the DJ's to choose.
-        if (!QMetaObject::invokeMethod(modeRow, "write", Q_ARG(QVariant, QVariant(QStringLiteral("device"))))) {
-            std::fprintf(stderr, "dj-ui: the headphone mode line refused the device mode\n");
-            return 1;
-        }
-        settle(40);
-        if (!headphoneRow->property("open").toBool()) {
-            std::fprintf(stderr, "dj-ui: the headphone device stays locked in the device mode\n");
-            return 1;
-        }
-        if (!devices.isEmpty() && !headphoneRow->property("asList").toBool()) {
-            std::fprintf(stderr, "dj-ui: the headphone device is not a list, though the engine named outputs\n");
-            return 1;
-        }
-        // The channels are the pairs the chosen device really has: the engine is asked about that device, and the row
-        // must offer exactly those numbers.
-        QQuickItem *pairRow = named(root, QStringLiteral("settingRow_engine_audio_headphones_pair"));
-        if (pairRow == nullptr) {
-            std::fprintf(stderr, "dj-ui: the sound page has no headphone channel line\n");
-            return 1;
-        }
-        const QString chosen = QString::fromUtf8(qgetenv("HAULER_CHECK_DEVICE"));
-        const QStringList pairs = Settings_pairs(engine, chosen);
-        if (!pairs.isEmpty()) {
-            const QVariantList offered = pairRow->property("offered").toList();
-            for (const QString &pair : pairs) {
-                bool found = false;
-                for (const QVariant &one : offered) {
-                    if (one.toString() == pair) {
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    std::fprintf(stderr, "dj-ui: the channel line does not offer %s, which the device has\n",
-                                 qPrintable(pair));
-                    return 1;
-                }
-            }
-            std::fprintf(stderr, "dj-ui: the channel line offers the device's %lld pairs: %s\n",
-                         static_cast<long long>(pairs.size()), qPrintable(pairs.join(QStringLiteral(", "))));
-        }
-        if (!pairRow->property("open").toBool()) {
-            std::fprintf(stderr, "dj-ui: the channel line stays locked in the device mode\n");
-            return 1;
-        }
-
-        // The main output is routed by the DJ in every mode, and both orders of a pair are offered: an interface whose
-        // numbering is not the booth's needs `[1, 0]`, not a crossed cable.
         QQuickItem *mainRow = named(root, QStringLiteral("settingRow_engine_audio_master"));
         if (mainRow == nullptr) {
             std::fprintf(stderr, "dj-ui: the sound page has no main channel line\n");
             return 1;
         }
+        auto *model = engine.singletonInstance<QObject *>(QAnyStringView("DjPlatform.Ui"),
+                                                          QAnyStringView("Settings"));
+        if (model == nullptr) {
+            std::fprintf(stderr, "dj-ui: the settings model is not reachable from the check\n");
+            return 1;
+        }
+        const QString mainDevice = QString::fromUtf8(qgetenv("HAULER_CHECK_DEVICE"));
+        const QVariantMap shape = Settings_shape(engine, mainDevice);
+        const int channels = shape.value(QStringLiteral("channels")).toInt();
+
+        // The main output is one channel per row, and the list is the device's own numbering — never "None", because a
+        // main output with a hole is not a route.
         if (!mainRow->property("open").toBool()) {
             std::fprintf(stderr, "dj-ui: the main channel line is locked\n");
             return 1;
         }
         const QVariantList mainOffered = mainRow->property("offered").toList();
-        bool forward = false;
-        bool swapped = false;
+        if (channels > 0 && mainOffered.size() < channels) {
+            std::fprintf(stderr, "dj-ui: the main channel line offers %lld of %d channels\n",
+                         static_cast<long long>(mainOffered.size()), channels);
+            return 1;
+        }
         for (const QVariant &one : mainOffered) {
-            const QString text = one.toString();
-            if (text == QStringLiteral("[0, 1]")) {
-                forward = true;
-            }
-            if (text == QStringLiteral("[1, 0]")) {
-                swapped = true;
+            if (one.toString() == QStringLiteral("None")) {
+                std::fprintf(stderr, "dj-ui: the main channel line offers None\n");
+                return 1;
             }
         }
-        if (!forward) {
-            std::fprintf(stderr, "dj-ui: the main channel line does not offer [0, 1]\n");
-            return 1;
-        }
-        if (!pairs.isEmpty() && !swapped) {
-            std::fprintf(stderr, "dj-ui: the main channel line does not offer the swapped order [1, 0]\n");
-            return 1;
-        }
-        std::fprintf(stderr, "dj-ui: the main channels offer %lld routes, the swapped order among them\n",
-                     static_cast<long long>(mainOffered.size()));
 
-        std::fprintf(stderr, "dj-ui: the headphone device is locked in auto and a list in device mode\n");
-    }
-
-    // Every line shows a control. A line whose list is empty and whose field is hidden is a line the DJ cannot see at
-    // all, and that is what "the setting is not in the interface" looks like from the outside (owner's report, 21.11).
-    {
-        int without = 0;
-        std::function<void(QQuickItem *)> walk = [&](QQuickItem *node) {
-            if (node->objectName().startsWith(QStringLiteral("settingRow_"))) {
-                const QString kind = node->property("kind").toString();
-                const bool shows = node->property("asList").toBool() || node->property("asField").toBool()
-                                   || kind == QStringLiteral("switch") || kind == QStringLiteral("slider")
-                                   || kind == QStringLiteral("number") || kind == QStringLiteral("check");
-                if (!shows) {
-                    std::fprintf(stderr, "dj-ui: the %s line shows nothing to change\n",
-                                 qPrintable(node->objectName()));
-                    ++without;
+        // `auto`: the interface picks for itself, so nothing here is the DJ's to change.
+        for (const char *mode : { "auto", "same_device", "device" }) {
+            bool applied = false;
+            if (!QMetaObject::invokeMethod(model, "applyHeadphoneMode", Q_RETURN_ARG(bool, applied),
+                                           Q_ARG(QString, QString::fromLatin1(mode)))) {
+                std::fprintf(stderr, "dj-ui: the engine refused to resolve the %s mode\n", mode);
+                return 1;
+            }
+            settle(60);
+            const bool deviceOpen = deviceRow->property("open").toBool();
+            const bool leftOpen = leftRow->property("open").toBool();
+            const bool wantedDeviceOpen = QString::fromLatin1(mode) == QStringLiteral("device");
+            if (deviceOpen != wantedDeviceOpen) {
+                std::fprintf(stderr, "dj-ui: in the %s mode the headphone device is %s\n", mode,
+                             deviceOpen ? "open" : "locked");
+                return 1;
+            }
+            if (wantedDeviceOpen) {
+                std::fprintf(stderr, "dj-ui: the %s mode leaves the device and the channels to the DJ\n", mode);
+                continue;
+            }
+            // The spare-pair question is the engine's: a stereo interface has none, and then the channels read "None".
+            const bool spare = leftOpen;
+            if (channels >= 4 && !spare) {
+                std::fprintf(stderr, "dj-ui: in the %s mode %d channels were left without a cue\n", mode, channels);
+                return 1;
+            }
+            if (channels < 4) {
+                if (spare) {
+                    std::fprintf(stderr, "dj-ui: in the %s mode a stereo interface offered cue channels\n", mode);
+                    return 1;
                 }
-            }
-            for (QQuickItem *child : node->childItems()) {
-                walk(child);
-            }
-        };
-        walk(settingsWindow);
-        if (without > 0) {
-            return 1;
-        }
-    }
-
-    // Every list in the window has something in it. An empty dropdown is the same defect as a text field where a list
-    // belongs: the theme line was offering nothing at all until the owner's request put a list there (21.11).
-    {
-        int checked = 0;
-        std::function<void(QQuickItem *)> sweep = [&](QQuickItem *node) {
-            const QString name = node->objectName();
-            if (name.startsWith(QStringLiteral("settingRow_"))) {
-                const QString kind = node->property("kind").toString();
-                if (kind == QStringLiteral("choice") || kind == QStringLiteral("device")
-                    || kind == QStringLiteral("pair")) {
-                    const int offered = node->property("offered").toList().size();
-                    if (offered == 0) {
-                        std::fprintf(stderr, "dj-ui: the %s line offers nothing to choose from\n", qPrintable(name));
-                        checked = -1;
-                        return;
+                for (QQuickItem *row : { leftRow }) {
+                    if (row->property("currentText").toString() != QStringLiteral("None")) {
+                        std::fprintf(stderr, "dj-ui: in the %s mode the cue channel reads %s, not None\n", mode,
+                                     qPrintable(row->property("currentText").toString()));
+                        return 1;
                     }
-                    ++checked;
                 }
             }
-            for (QQuickItem *child : node->childItems()) {
-                sweep(child);
-                if (checked < 0) {
-                    return;
-                }
-            }
-        };
-        sweep(settingsWindow);
-        if (checked < 0) {
-            return 1;
+            std::fprintf(stderr, "dj-ui: the %s mode keeps the main device, %s\n", mode,
+                         spare ? "the spare pair for the cue" : "and has no spare pair, so the cue is None");
         }
-        std::fprintf(stderr, "dj-ui: every list in the window offers something: %d of them\n", checked);
+
+        std::fprintf(stderr, "dj-ui: the headphones follow their mode: device %s, channels %s\n",
+                     "locked outside device mode", "None when nothing is spare");
     }
 
     // A page that exists but shows nothing is the same complaint as a list that takes the window: the rows have to be

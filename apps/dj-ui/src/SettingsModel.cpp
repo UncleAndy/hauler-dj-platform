@@ -44,6 +44,140 @@ QObject *SettingsModel::ownerOf(const QString &path, QString *name) const
     return nullptr;
 }
 
+namespace {
+
+/// `[0, 1]` as TOML writes a pair, and nothing at all for anything else.
+QList<int> parsePair(const QVariant &value)
+{
+    const QString text = value.toString().trimmed();
+    if (!text.startsWith(QLatin1Char('[')) || !text.endsWith(QLatin1Char(']'))) {
+        return {};
+    }
+    QList<int> numbers;
+    const QStringList parts = text.mid(1, text.size() - 2).split(QLatin1Char(','));
+    for (const QString &part : parts) {
+        bool ok = false;
+        const int number = part.trimmed().toInt(&ok);
+        if (!ok) {
+            return {};
+        }
+        numbers << number;
+    }
+    return numbers;
+}
+
+} // namespace
+
+int SettingsModel::channelAt(const QString &path, int side) const
+{
+    // A switched-off cue has no channels, whatever the pair still says: the window shows "None" because that is what
+    // the engine will do.
+    if (path.startsWith(QStringLiteral("engine:audio.headphones."))) {
+        const QVariant enabled = value(QStringLiteral("engine:audio.headphones.enabled"));
+        if (enabled.isValid() && !enabled.toBool()) {
+            return -1;
+        }
+    }
+    const QList<int> pair = parsePair(value(path));
+    if (pair.isEmpty() && path == QStringLiteral("engine:audio.master")) {
+        // Nothing in the file yet: the main output is on 0/1, which is the route plan's own default, and the window has
+        // to show that rather than "None" (which the main output can never be).
+        return side;
+    }
+    return side >= 0 && side < pair.size() ? pair.at(side) : -1;
+}
+
+bool SettingsModel::applyHeadphoneMode(const QString &mode)
+{
+    // The mode itself is part of the decision: a caller that asks for a mode and does not store it leaves the window
+    // reading the old one (found by the check, 21.11).
+    bool stored = set(QStringLiteral("engine:audio.headphones.mode"), mode);
+    if (mode == QStringLiteral("device")) {
+        // A second device is a second stream this build does not open: the mode is stored, and the DJ's own device and
+        // channels stay exactly as he left them instead of being overwritten with a guess.
+        return stored;
+    }
+    const QVariantMap answer = resolveCue(mode);
+    if (answer.isEmpty()) {
+        return false;
+    }
+    const QString device = answer.value(QStringLiteral("device")).toString();
+    const int left = answer.value(QStringLiteral("left")).toInt();
+    const int right = answer.value(QStringLiteral("right")).toInt();
+    bool ok = stored;
+    if (!device.isEmpty()) {
+        ok = set(QStringLiteral("engine:audio.headphones.device"), device) && ok;
+    }
+    if (left < 0 || right < 0) {
+        // No spare pair: the cue is off, and the channels keep their numbers so that turning the mode back on does not
+        // have to be re-entered by hand.
+        return set(QStringLiteral("engine:audio.headphones.enabled"), false) && ok;
+    }
+    ok = set(QStringLiteral("engine:audio.headphones.pair"), QStringLiteral("[%1, %2]").arg(left).arg(right)) && ok;
+    ok = set(QStringLiteral("engine:audio.headphones.enabled"), true) && ok;
+    return ok;
+}
+
+bool SettingsModel::setChannelAt(const QString &path, int side, int channel)
+{
+    if (side < 0 || side > 1) {
+        return false;
+    }
+    QList<int> pair = parsePair(value(path));
+    while (pair.size() < 2) {
+        pair << pair.size();
+    }
+    if (channel < 0) {
+        // No channel means no route: for the cue that is the "None" the window shows when the interface has no spare
+        // pair, and a pair with a missing side is not something the engine could open.
+        if (path.startsWith(QStringLiteral("engine:audio.headphones."))) {
+            return set(QStringLiteral("engine:audio.headphones.enabled"), false);
+        }
+        return false;
+    }
+    pair[side] = channel;
+    const QString text = QStringLiteral("[%1, %2]").arg(pair.at(0)).arg(pair.at(1));
+    if (!set(path, text)) {
+        return false;
+    }
+    // Writing a channel means the cue is wanted: the switch that turned it off has to come back on, or the value would
+    // sit in the file doing nothing.
+    if (path.startsWith(QStringLiteral("engine:audio.headphones."))) {
+        set(QStringLiteral("engine:audio.headphones.enabled"), true);
+    }
+    return true;
+}
+
+QVariantMap SettingsModel::deviceShape(const QString &device) const
+{
+    QVariantMap shape;
+    const QString answer = m_engine.ask({QStringLiteral("--check-device"), device});
+    const QStringList fields = answer.trimmed().split(QLatin1Char('\t'));
+    if (fields.size() < 4) {
+        return shape;
+    }
+    shape.insert(QStringLiteral("rate"), fields.at(0).toInt());
+    shape.insert(QStringLiteral("bits"), fields.at(1).toInt());
+    shape.insert(QStringLiteral("channels"), fields.at(2).toInt());
+    shape.insert(QStringLiteral("format"), fields.at(3));
+    return shape;
+}
+
+QVariantMap SettingsModel::resolveCue(const QString &mode) const
+{
+    QVariantMap answer;
+    const QString text = m_engine.ask({QStringLiteral("--resolve-cue"), mode, QStringLiteral("--settings"),
+                                       m_engine.file()});
+    const QStringList fields = text.trimmed().split(QLatin1Char('\t'));
+    if (fields.size() < 3) {
+        return answer;
+    }
+    answer.insert(QStringLiteral("device"), fields.at(0));
+    answer.insert(QStringLiteral("left"), fields.at(1) == QStringLiteral("none") ? -1 : fields.at(1).toInt());
+    answer.insert(QStringLiteral("right"), fields.at(2) == QStringLiteral("none") ? -1 : fields.at(2).toInt());
+    return answer;
+}
+
 QStringList SettingsModel::devices() const
 {
     QStringList names;
@@ -83,14 +217,14 @@ QString SettingsModel::describeDevice(const QString &name) const
         return QStringLiteral("no answer");
     }
     const QStringList fields = answer.trimmed().split(QLatin1Char('\t'));
-    if (fields.size() < 3) {
+    if (fields.size() < 4) {
         // The engine answers a refusal on stderr, and that text is the explanation.
         return answer.trimmed();
     }
-    const QString channels = fields.size() > 3 ? QStringLiteral("%1 (%2 native)").arg(fields.at(1), fields.at(2))
-                                               : fields.at(1);
-    const QString rate = fields.size() > 3 ? fields.at(3) : fields.at(2);
-    return QStringLiteral("%1 — %2 channels, %3 Hz").arg(fields.at(0), channels, rate);
+    // Characteristics, not the name: the DJ already sees which device he asked about, and what he needs to know is what
+    // the interface will give him (owner's decision, 21.11).
+    return QStringLiteral("%1 Hz, %2-bit %3, %4 channels")
+        .arg(fields.at(0), fields.at(1), fields.at(3), fields.at(2));
 }
 
 QVariant SettingsModel::value(const QString &path) const

@@ -157,9 +157,23 @@ Item {
                                             path: modelData.path
                                             kind: modelData.kind === undefined ? "text" : modelData.kind
                                             values: modelData.values === undefined ? [] : modelData.values
+                                            pairSide: modelData.pairSide === undefined ? -1 : modelData.pairSide
+                                            allowNone: modelData.allowNone === true
+                                            channelDevicePath: modelData.channelDevicePath === undefined
+                                                               ? "engine:audio.device" : modelData.channelDevicePath
                                             gatePath: modelData.gatePath === undefined ? "" : modelData.gatePath
                                             gateValues: modelData.gateValues === undefined
                                                         ? [] : modelData.gateValues
+                                            alsoPath: modelData.alsoPath === undefined ? "" : modelData.alsoPath
+                                            alsoValue: modelData.alsoValue === undefined
+                                                       ? "" : modelData.alsoValue
+                                            onEdited: function (value) {
+                                                // A mode is a decision about the other lines: the engine says what it
+                                                // means, and the window stores that answer.
+                                                if (modelData.path === "engine:audio.headphones.mode") {
+                                                    Settings.applyHeadphoneMode(String(value));
+                                                }
+                                            }
                                             numeric: modelData.numeric === true
                                             from: modelData.from === undefined ? 0 : modelData.from
                                             to: modelData.to === undefined ? 1 : modelData.to
@@ -209,9 +223,10 @@ Item {
                 // none at all, and then the row says why.
                 { label: qsTr("Device"), path: "engine:audio.device", kind: "device" },
                 { label: qsTr("Device check"), path: "engine:audio.device", kind: "check" },
-                // Which sockets carry the main output, and the swapped order for an interface whose numbering is not
-                // the booth's. Not gated: the main output is always the DJ's to route.
-                { label: qsTr("Main channels"), path: "engine:audio.master", kind: "pair" },
+                // One channel per row: a booth with an odd interface numbers its sockets, not pairs, and a main output
+                // that can only be chosen in twos cannot express [0, 2] (owner's decision, 21.11).
+                { label: qsTr("Main channel L"), path: "engine:audio.master", kind: "choice", pairSide: 0 },
+                { label: qsTr("Main channel R"), path: "engine:audio.master", kind: "choice", pairSide: 1 },
                 { label: qsTr("Sample rate"), path: "engine:audio.sample_rate", kind: "choice",
                   values: ["44100", "48000", "96000"], numeric: true },
                 { label: qsTr("Block, frames"), path: "engine:audio.block_frames", kind: "choice",
@@ -224,10 +239,18 @@ Item {
                 // says so instead of pretending the name is doing something.
                 { label: qsTr("Headphone device"), path: "engine:audio.headphones.device", kind: "device",
                   gatePath: "engine:audio.headphones.mode", gateValues: ["device"] },
-                // Only the pairs the chosen device really has: an eight-channel interface has four, a stereo card has
-                // one, and offering [2, 3] on a stereo card would offer a pair the engine cannot open.
-                { label: qsTr("Headphone channels"), path: "engine:audio.headphones.pair", kind: "pair",
-                  gatePath: "engine:audio.headphones.mode", gateValues: ["same_device", "device"] },
+                // The cue takes one channel per row too, and it may have none: an interface whose every socket carries
+                // the main output has nothing left for monitoring, and "None" says so instead of offering a lie.
+                // Editable where the interface has spare channels and the DJ is the one choosing; locked to "None" when
+                // it does not, because monitoring that cannot exist must not offer a choice.
+                { label: qsTr("Headphone channel L"), path: "engine:audio.headphones.pair", kind: "choice",
+                  pairSide: 0, allowNone: true, channelDevicePath: "engine:audio.headphones.device",
+                  gatePath: "engine:audio.headphones.mode", gateValues: ["same_device", "device"],
+                  alsoPath: "engine:audio.headphones.enabled", alsoValue: "true" },
+                { label: qsTr("Headphone channel R"), path: "engine:audio.headphones.pair", kind: "choice",
+                  pairSide: 1, allowNone: true, channelDevicePath: "engine:audio.headphones.device",
+                  gatePath: "engine:audio.headphones.mode", gateValues: ["same_device", "device"],
+                  alsoPath: "engine:audio.headphones.enabled", alsoValue: "true" },
                 { label: qsTr("Headphone gain"), path: "engine:audio.headphones.gain", kind: "slider",
                   from: 0, to: 1, decimals: 2 },
                 { label: qsTr("Headphone mix"), path: "engine:audio.headphones.mix", kind: "slider",
