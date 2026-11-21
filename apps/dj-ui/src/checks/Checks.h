@@ -238,6 +238,10 @@ int runWholeListCheck(QQmlApplicationEngine& engine, FileBrowser& browser, Bridg
 int runAnalyzeBatchCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutSettings& layout,
                          BridgeClient& bridge, const QString& fixture, const QString& collectionRoot);
 
+/// Where the effect block of a deck stands, and what the strip has to pay for it: the numbers before the
+/// controls (owner's decision, 21.11).
+int runFxCheck(QQmlApplicationEngine& engine);
+
 /// The shell meets an engine that starts after it: one attempt at startup used to be the whole story.
 int runReconnectCheck(BridgeClient& bridge, const QString& endpoint);
 int runPathsCheck();

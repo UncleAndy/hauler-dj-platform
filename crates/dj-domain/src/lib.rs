@@ -1242,6 +1242,81 @@ impl Default for HeadphoneLevels {
     }
 }
 
+/// Which effect stands in the deck's slot (DJP-FX-004: the initial set).
+///
+/// One at a time: the DJ asked for a knob and a switch per deck, and a chain of effects is a separate
+/// piece of work (DJP-FX-002). The names are wire format — see `dj-fx/tests/kinds.rs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FxKind {
+    /// Bipolar DJ filter: the centre is the signal itself, one way cuts the highs, the other the lows.
+    Filter,
+    /// Delay line locked to the track's beat, with feedback and a damped tail.
+    Echo,
+    /// Beat repeat: the last fraction of a beat loops while the switch is held.
+    Roll,
+    /// Short modulated delay with feedback: the comb that sweeps.
+    Flanger,
+    /// Cascaded all-pass stages swept by an oscillator: the notches that move.
+    Phaser,
+    /// Quantised amplitude and sample-and-hold: the dirty digital sound.
+    Bitcrusher,
+    /// Noise through a resonant band-pass, its centre on the knob: the sweep.
+    Noise,
+}
+
+impl FxKind {
+    /// Every effect, in the order the shell offers them.
+    pub const ALL: [Self; 7] = [
+        Self::Filter,
+        Self::Echo,
+        Self::Roll,
+        Self::Flanger,
+        Self::Phaser,
+        Self::Bitcrusher,
+        Self::Noise,
+    ];
+}
+
+/// Everything the engine needs to know about one deck's effect.
+///
+/// It travels whole on every change: the shell sends what the snapshot says plus its own change, so the
+/// engine never has to guess which field the DJ meant, and a stale knob cannot win over a snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct FxPatch {
+    /// Which effect is in the slot.
+    pub kind: FxKind,
+    /// How much of it, 0.0 … 1.0. What "more" means belongs to the effect: depth, feedback, cut.
+    pub amount: f32,
+    /// Whether the deck's signal goes through the effect or around it.
+    pub enabled: bool,
+}
+
+impl Default for FxPatch {
+    fn default() -> Self {
+        // A fresh slot: the filter at its centre (which is the signal itself) and switched out, so the
+        // first thing a DJ sees cannot be a deck that already sounds changed.
+        Self {
+            kind: FxKind::Filter,
+            amount: 0.5,
+            enabled: false,
+        }
+    }
+}
+
+impl FxPatch {
+    /// The patch with its numbers made safe: the amount saturates into 0.0 … 1.0, and a non-finite one
+    /// becomes the centre rather than silence.
+    pub fn clamped(self) -> Self {
+        let amount = if self.amount.is_finite() {
+            self.amount.clamp(0.0, 1.0)
+        } else {
+            0.5
+        };
+        Self { amount, ..self }
+    }
+}
+
 /// State of one deck in a snapshot.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeckSnapshot {

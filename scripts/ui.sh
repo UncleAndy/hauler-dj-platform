@@ -364,6 +364,10 @@ case "${1:-}" in
     # is pressed twice and the snapshot has to say cued, then not cued (owner's decision, 20.11).
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --cue-check \
         --layout-file "$run_dir/cue-layout.json"
+    # The effect block's place in the strip: measured before the controls exist, so the height it costs the
+    # meter is a number in the report and not an opinion in the plan (owner's decision, 21.11).
+    QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --fx-check \
+        --layout-file "$run_dir/fx-layout.json"
     # The lock is one switch in two places: the deck's button and the column in the collection, and the
     # collection has to say so the moment it is pressed.
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \

@@ -1,0 +1,19 @@
+[package]
+name = "dj-fx"
+description = "Deck effects: bipolar DJ filter, echo, roll, flanger, phaser, bitcrusher and a noise sweep."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+dj-domain = { path = "../dj-domain" }
+dj-dsp = { path = "../dj-dsp" }
+
+[dev-dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

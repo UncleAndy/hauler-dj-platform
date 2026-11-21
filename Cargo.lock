@@ -484,6 +484,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dj-fx"
+version = "0.1.0"
+dependencies = [
+ "dj-domain",
+ "dj-dsp",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "dj-headless"
 version = "0.1.0"
 dependencies = [

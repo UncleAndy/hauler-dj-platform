@@ -485,6 +485,10 @@ int main(int argc, char *argv[])
         QStringLiteral("cue-check"),
         QStringLiteral("Load the shell, find the headphone switch under each deck's meter, press it and "
                        "require the engine to report the channel as cued and then as not cued."));
+    const QCommandLineOption fxCheckOption(
+        QStringLiteral("fx-check"),
+        QStringLiteral("Measure the strip the effect block has to fit into: its width, the height above the "
+                       "meter, and whether the deck's meter still ends on the master's line."));
     const QCommandLineOption layoutCheckOption(
         QStringLiteral("layout-check"),
         QStringLiteral("Load the shell, print each region's share of the window and fail when it "
@@ -644,6 +648,7 @@ int main(int argc, char *argv[])
     parser.addOption(curvePersistCheckOption);
     parser.addOption(curvePickOption);
     parser.addOption(cueCheckOption);
+    parser.addOption(fxCheckOption);
     parser.addOption(layoutCheckOption);
     parser.addOption(channelOrderOption);
     parser.addOption(sessionFileOption);
@@ -1619,6 +1624,16 @@ int main(int argc, char *argv[])
         after.exec();
         std::fprintf(stderr, "dj-ui: picked the %s crossfader law\n", qPrintable(parser.value(curvePickOption)));
         return 0;
+    }
+
+    if (parser.isSet(fxCheckOption)) {
+        // The strips are built from the engine's decks, so this is measured on a live pair, not on an empty scene.
+        if (!bridge) {
+            std::fprintf(stderr, "dj-ui: the fx check needs the bridge the scene was built with\n");
+            return 1;
+        }
+        bridge->connectToEngine(parser.value(connectOption));
+        return runFxCheck(engine);
     }
 
     if (parser.isSet(cueCheckOption)) {
