@@ -567,6 +567,19 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
                      tableRect.width(), tableRect.height(), rowRect.width(), rowRect.height());
         return 1;
     }
+    // A button the DJ cannot reach is not a button: both have to lie inside the panel, not past its right edge
+    // (owner's report, 22.11: Add and Remove were outside the window).
+    const QRectF panelRect(panel->mapToScene(QPointF(0, 0)), panel->size());
+    for (QQuickItem *button : {addButton, removeButton}) {
+        const QRectF buttonRect(button->mapToScene(QPointF(0, 0)), button->size());
+        if (!panelRect.contains(buttonRect)) {
+            std::fprintf(stderr,
+                         "dj-ui: the %s button is outside the panel: x %.0f..%.0f where the panel ends at %.0f\n",
+                         button == addButton ? "Add" : "Remove", buttonRect.left(), buttonRect.right(),
+                         panelRect.right());
+            return 1;
+        }
+    }
     QQuickItem *nextRow = findInWindow(QStringLiteral("settingRow_engine_library_history_min_seconds"));
     if (nextRow != nullptr) {
         const QRectF nextRect(nextRow->mapToScene(QPointF(0, 0)), nextRow->size());
