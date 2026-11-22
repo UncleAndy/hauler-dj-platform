@@ -5977,34 +5977,55 @@ int runScratchCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, QComman
         std::fprintf(stderr, "dj-ui: taking the record in hand did not stop the transport\n");
         return 1;
     }
+    // A single reading here is a lie in one of two ways. Taking the record moves the reported position *back* by the
+    // stretcher's lead — the deck hands out heard frames, and the read head was ahead of them — and that correction
+    // lands a snapshot or two after the transport stops, so a reading is either the old point or the corrected one
+    // (2880 frames apart in measurement, 22.11: a hand twice accused, once of moving backwards, once of moving
+    // nothing). What the hand does is a *lift* in the number, and a lift is measured from the floor it settled on.
     const qint64 grabbed = frame();
 
-    // Twelve moves to the left: the material goes forward, as the picture says it does.
-    for (int step = 1; step <= 12; ++step) {
+    // A drag across most of the strip, not a nudge: how many frames a pixel carries depends on the zoom, and at the
+    // whole-track zoom a hundred and twenty pixels is a few hundred frames — below what a snapshot can show, which made
+    // a moving hand look still (measured, 22.11: ten runs out of twenty read "went nowhere").
+    const int steps = std::clamp(static_cast<int>(std::lround(strip->width() * 0.6 / 10.0)), 12, 60);
+    for (int step = 1; step <= steps; ++step) {
         send(QEvent::MouseMove, at - QPointF(10.0 * step, 0.0));
         (void)waitFor([&]() { return false; }, 15);
     }
+    // What counts as movement: two hundred frames is five milliseconds of audio. A hand that moved nothing leaves the
+    // number flat, and the stretcher's correction only lowers the floor, so it cannot reach this by itself.
+    const qint64 wanted = 200;
     // The position read here is the engine's, published some twenty times a second: a drag of two hundred
     // milliseconds can finish between two snapshots, and reading the older one says the hand moved nothing
     // (measured, 22.11 — the check accused the hand of a fault that was a stale picture). Ask until a snapshot
     // carries the drag, then measure it.
-    if (!waitFor([&]() { return frame() != grabbed; }, 1000)) {
-        std::fprintf(stderr, "dj-ui: the hand moved left but the material went nowhere (%lld)\n",
-                     static_cast<long long>(grabbed));
-        return 1;
+    // The measurement is the lift: the lowest number the deck reports after the drag, and the highest, following the
+    // snapshots for two seconds. The stretcher's correction can only lower the floor, so it cannot fake a lift, and a
+    // hand that moved nothing leaves the number flat.
+    qint64 floor = frame();
+    qint64 lifted = floor;
+    for (int tick = 0; tick < 20; ++tick) {
+        (void)waitFor([&]() { return false; }, 100);
+        const qint64 now = frame();
+        floor = std::min(floor, now);
+        lifted = std::max(lifted, now);
+        if (lifted - floor >= wanted) {
+            break;
+        }
     }
-    const qint64 moved = frame();
-    if (moved <= grabbed) {
+    if (lifted - floor < wanted) {
         std::fprintf(stderr,
-                     "dj-ui: the hand moved left but the material went backwards (%lld -> %lld)\n",
-                     static_cast<long long>(grabbed), static_cast<long long>(moved));
+                     "dj-ui: the hand moved left but the material went nowhere (%lld from a floor of %lld)\n",
+                     static_cast<long long>(lifted), static_cast<long long>(floor));
         return 1;
     }
-    // A hand, not a jump: 120 px of a zoomed strip is a fraction of a second of material, and the
-    // whole file is eight.
-    const qint64 travelled = moved - grabbed;
-    if (travelled > 48'000 * 2) {
-        std::fprintf(stderr, "dj-ui: the drag jumped %lld frames instead of moving the material\n",
+    const qint64 moved = lifted;
+    // A hand, not a jump: the material under the hand was moved, not replaced by a seek to somewhere else. Twice what
+    // the geometry says is already generous — a seek to the end of an eight-second file would not fit.
+    const qint64 travelled = lifted - floor;
+    if (travelled > 48'000 * 8) {
+        std::fprintf(stderr,
+                     "dj-ui: the drag jumped %lld frames instead of moving the material\n",
                      static_cast<long long>(travelled));
         return 1;
     }
