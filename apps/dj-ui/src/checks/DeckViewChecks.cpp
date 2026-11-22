@@ -5933,9 +5933,15 @@ int runScratchCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, QComman
         std::fprintf(stderr, "dj-ui: the deck never finished loading for the scratch\n");
         return 1;
     }
-    // The measurement re-attaches the material and puts the deck back at the start: play from the
-    // frame it settled on, not from the one it was heading to.
-    waitFor([&]() { return false; }, 300);
+    // The deck is shared with the checks that ran before this one, and a track played to its end leaves the play
+    // head where nothing follows: a hand that turns forward from there moves no material, and the motor has nothing
+    // to carry when the hand lets go. The check puts the head a second into the file first and says where it stands.
+    bridge->seek(QStringLiteral("A"), 48'000);
+    if (!waitFor([&]() { return std::llabs(frame() - 48'000) < 4'800; }, 3000)) {
+        std::fprintf(stderr, "dj-ui: the deck would not stand a second into the file for the scratch (%lld)\n",
+                     static_cast<long long>(frame()));
+        return 1;
+    }
 
     bridge->play(QStringLiteral("A"), true);
     if (!waitFor(playing, 5000)) {
@@ -5994,11 +6000,29 @@ int runScratchCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, QComman
         return 1;
     }
 
-    // A hand that stops moving comes to rest: the record has the speed it was last given until the
-    // hand's silence reaches the deck, and then it stands still. So the check asks that it *stops*,
-    // not that it never moved after the last event.
-    (void)waitFor([&]() { return false; }, 200);
-    const qint64 rested = frame();
+    // A hand that stops moving comes to rest: the record has the speed it was last given until the hand's silence
+    // reaches the deck, and then it stands still. The shell's idle timer is twenty milliseconds and the deck's own
+    // silence is a quarter of a second, so waiting a fixed two hundred and hoping was a coin toss on a busy machine
+    // (three different messages out of one cause, 22.11). The check waits for the rest to arrive — at most a second,
+    // which is four times the contract — and then requires it to last.
+    qint64 rested = frame();
+    bool cameToRest = false;
+    QElapsedTimer silence;
+    silence.start();
+    while (silence.elapsed() < 1000) {
+        (void)waitFor([&]() { return false; }, 100);
+        const qint64 now = frame();
+        if (now == rested) {
+            cameToRest = true;
+            break;
+        }
+        rested = now;
+    }
+    if (!cameToRest) {
+        std::fprintf(stderr, "dj-ui: a still hand kept moving the record (%lld after a second of silence)\n",
+                     static_cast<long long>(rested));
+        return 1;
+    }
     (void)waitFor([&]() { return false; }, 300);
     if (frame() != rested) {
         std::fprintf(stderr, "dj-ui: a still hand kept moving the record (%lld -> %lld)\n",
@@ -6023,6 +6047,12 @@ int runScratchCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, QComman
     (void)waitFor([&]() { return false; }, 100);
     const qint64 carriedAt = frame();
     const double rate = deckA().value(QStringLiteral("source_rate")).toDouble();
+    // The release fade is the deck's own business and takes a few blocks: the measurement starts once the record is
+    // actually moving again, so a slow start is not read as a slow motor.
+    if (!waitFor([&]() { return frame() > carriedAt + static_cast<qint64>(rate * 0.02); }, 1000)) {
+        std::fprintf(stderr, "dj-ui: the record did not start moving again after the hand let go\n");
+        return 1;
+    }
     (void)waitFor([&]() { return false; }, 400);
     const qint64 carriedTo = frame();
     const double expected = rate * 0.4;

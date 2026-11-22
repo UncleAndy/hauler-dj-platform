@@ -670,8 +670,10 @@ TOML
         --metronome-check --load "$metronome_file"
     # The waveform is the record: a drag on it takes the deck in hand, the material follows the hand and
     # stops with it, and letting go gives the record back to the motor.
+    scratch_file="$run_dir/scratch-track.wav"
+    cp crates/dj-codec/tests/fixtures/audio/drums-8s-48000.wav "$scratch_file"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" \
-        --scratch-check --load "$metronome_file"
+        --scratch-check --load "$scratch_file"
     QT_QPA_PLATFORM=offscreen "$build_dir/apps/dj-ui/dj-ui" --connect "$socket" --eq-check
     # A double click is the way back to neutral on every mouse-driven control, and each control has its
     # own neutral: a gain or a band goes flat, a fader opens, the master stands at three quarters of its
