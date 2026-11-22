@@ -637,8 +637,9 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
             return 1;
         }
         const QRectF rect(inside->mapToScene(QPointF(0, 0)), inside->size());
-        // Not merely inside the page: with room to spare at its right edge, or the table reads as cut off by it.
-        if (rect.right() > pageRect.right() - 16 || rect.left() < pageRect.left() - 0.5) {
+        // Inside the page, and no further: the block spans the row, so its right edge sits a margin away from the
+        // page's edge — the same margin it keeps on the left.
+        if (rect.right() > pageRect.right() - 8 || rect.left() < pageRect.left() - 0.5) {
             std::fprintf(stderr,
                          "dj-ui: %s spans x %.0f..%.0f where the page ends at %.0f (page %.0f wide)\n",
                          qPrintable(inside->objectName()), rect.left(), rect.right(), pageRect.right(),

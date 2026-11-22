@@ -303,9 +303,10 @@ Item {
             objectName: "folderBlock"
             visible: row.kind === "folders"
             // Plain width and height, not Layout.*: in this row the layout left the block zero-sized (measured:
-            // block x 481..481, y 170..170) while the children kept their own geometry. Numbers hold, and the row is
-            // 200 px of label plus 8 px of spacing, with 28 px left for the page's scrollbar.
-            width: parent.width - 236
+            // block x 481..481, y 170..170) while the children kept their own geometry. The block spans the whole row:
+            // its own label lives inside the frame, so there is no 200 px label column to leave room for, and the table
+            // ends at the same 8 px from the frame as it starts (owner's report, 22.11).
+            width: parent.width
             height: 184
             color: UiSettings.themeRaised
             border.color: UiSettings.themeTextDim
