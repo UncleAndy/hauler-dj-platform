@@ -19,6 +19,8 @@ process that talks to the engine over a socket, so audio never waits for the int
 - **Keep your work.** Eight hotcues per deck and sample-exact loops. Both are written next to the music in
   `.djmeta/<file name>.json`, so copying a folder takes the work with it, and rebuilding the library index brings every
   cue back.
+- **Three-band EQ on every channel.** Low, mid and high, each with its own knob; past the end of the ordinary cut there
+  is a detent that removes the band instead of cutting it. The knobs show what the engine published, not a local guess.
 - **Seven effects.** Flanger, phaser, echo, filter, bitcrusher, noise and roll. Each has an amount knob and an on/off
   button; the chosen effect is remembered in `session.json`.
 - **Listen on headphones.** Monitoring goes to spare channels of the main device, or to a second device with its own
@@ -64,7 +66,6 @@ so they do not care which glibc, Qt or library versions your distribution ships.
 - **The second sound card path is covered by unit tests, not by a measurement on real hardware.** The tests feed the
   second stream at 48 kHz into a 44.1 kHz consumer, add 200 ppm of drift, and check that the ring holds; a live two-card
   session has not been recorded here.
-- **Three-band EQ is not in this build.** It is the next step (A14).
 - **One gate is flaky.** `--scroll-check` occasionally reports "the remembered row -1 is not in the middle" in the
   headless UI run; the same code passes on a rerun. It is a known defect, not a claim about this build.
 

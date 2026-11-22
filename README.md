@@ -8,8 +8,9 @@ Instruments or Mixxx code, graphics, samples or firmware are used or copied.
 the mixer has channel strips with a gain pointer on the meter, a crossfader with four laws and a
 master knob with its own coloured meter; waveforms zoom to 400×, and cue points and loops survive a
 restart because they are written next to the music (`.djmeta`). The engine talks to the UI over a
-unix socket; the UI is a separate process by design (ADR-003). Next: three-band EQ on every channel
-(A14).
+unix socket; the UI is a separate process by design (ADR-003). Three-band EQ is done (A14) — low, mid
+and high on every channel. Next: the R0 demo close-out (A13) and the S4 MK3 controller skeleton (A09),
+which needs the hardware on the desk.
 
 | Area | State |
 |---|---|
