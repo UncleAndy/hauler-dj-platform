@@ -195,7 +195,7 @@
           dj-release — build the release: packages for Linux and Windows, notes, a GitHub draft.
 
             (no arguments)  all of it: --linux --windows --notes --github
-            --linux         this machine's package: tar.gz with .desktop, icons, licences
+            --linux         Linux packages: tar.gz with .desktop and licences, plus deb, rpm and AppImage
             --windows       Windows zip and MSI through scripts/windows.sh --all
             --notes         docs/release-notes-<version>.md from a template, if absent
             --github        gh release create --draft with every file and SHA256SUMS
@@ -260,6 +260,15 @@
             rust-analyzer
             llvmPackages.libclang
             qt.qtdeclarative # qmllint, qmlformat, qmltestrunner
+            # Упаковка для дистрибутивов: deb, rpm и AppImage собираются этими инструментами.
+            dpkg
+            rpm
+            squashfsTools
+            curl
+            patchelf
+            # Самопроверка пакетов ставит статический busybox под /bin/sh для rpmbuild внутри песочницы. В PATH его
+            # быть не должно: его апплеты перекрывают find и остальные утилиты, а `find -printf` busybox не знает.
+            bubblewrap
             djBuild
             djBuildWin
             djRelease

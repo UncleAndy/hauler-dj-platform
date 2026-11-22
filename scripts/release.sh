@@ -28,7 +28,7 @@ usage() {
 scripts/release.sh [шаги] [--version X.Y.Z] [--dry-run]
 
   --all        всё: --linux --windows --notes --github (по умолчанию)
-  --linux      пакет для этой системы: tar.gz с .desktop, иконками, лицензиями
+  --linux      пакеты для Linux: tar.gz, а также deb, rpm и AppImage
   --windows    пакет для Windows: zip и MSI через scripts/windows.sh --all
   --notes      создать docs/release-notes-<версия>.md из шаблона, если его нет
   --github     черновик релиза на GitHub (gh release create --draft)
@@ -87,6 +87,7 @@ echo "== релиз $version"
 
 flavour="linux"
 linux_artefact=""
+linux_extra=()
 
 build_linux() {
     echo "== пакет для этой системы"
@@ -179,6 +180,25 @@ EOF
     (cd "$out" && sha256sum -- "$(basename "$linux_artefact")" > "$(basename "$linux_artefact").sha256")
     echo "   $linux_artefact"
     echo "   ${interpreter:-интерпретатор не прочитан}"
+
+    # Пакеты для дистрибутивов: deb, rpm и AppImage из одного набора. Каждый несёт свои библиотеки, поэтому работает
+    # не только там, где совпали версии.
+    if [ "${HAULER_SKIP_DISTRO_PACKAGES:-0}" != "1" ]; then
+        echo "   пакеты для дистрибутивов"
+        if ! bash "$repo/scripts/linux-packages.sh" --all > "$out/packages.log" 2>&1; then
+            echo "release: пакеты для дистрибутивов не собрались, хвост журнала:" >&2
+            tail -12 "$out/packages.log" >&2
+            exit 1
+        fi
+        for package in "$repo/dist/packages/hauler-dj_${version}_amd64.deb" \
+            "$repo/dist/packages/hauler-dj-${version}-1.x86_64.rpm" \
+            "$repo/dist/packages/hauler-dj-${version}-x86_64.AppImage"; do
+            if [ -f "$package" ]; then
+                linux_extra+=("$package")
+            fi
+        done
+        echo "   пакетов для дистрибутивов: ${#linux_extra[@]}"
+    fi
 }
 
 windows_artefacts=()
@@ -218,6 +238,15 @@ build_windows() {
     done
 }
 
+package_kind() {
+    case "$1" in
+        *.deb) echo "Debian, Ubuntu и родня" ;;
+        *.rpm) echo "Fedora, openSUSE и родня" ;;
+        *.AppImage) echo "один файл, любой дистрибутив" ;;
+        *) echo "Linux x86_64" ;;
+    esac
+}
+
 notes_file="$repo/docs/release-notes-$version.md"
 
 write_notes() {
@@ -243,6 +272,9 @@ write_notes() {
             fi
         fi
         local file
+        for file in "${linux_extra[@]:-}"; do
+            [ -n "$file" ] && echo "- \`$(basename "$file")\` — $(package_kind "$file")"
+        done
         for file in "${windows_artefacts[@]:-}"; do
             [ -n "$file" ] && echo "- \`$(basename "$file")\` — Windows x86_64"
         done
@@ -270,6 +302,9 @@ publish() {
     rm -rf "$upload"
     mkdir -p "$upload"
     [ -n "$linux_artefact" ] && cp "$linux_artefact" "$linux_artefact.sha256" "$upload/"
+    for package in "${linux_extra[@]:-}"; do
+        [ -n "$package" ] && cp "$package" "$upload/"
+    done
     local file
     for file in "${windows_artefacts[@]:-}"; do
         [ -n "$file" ] && cp "$file" "$upload/"
