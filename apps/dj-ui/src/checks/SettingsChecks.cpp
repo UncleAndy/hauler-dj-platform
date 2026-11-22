@@ -554,10 +554,28 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
         std::fprintf(stderr, "dj-ui: the collection table is %.0f px tall, less than four rows\n", tableHeight);
         return 1;
     }
-    const double addTop = addButton->mapToScene(QPointF(0, 0)).y();
-    const double removeTop = removeButton->mapToScene(QPointF(0, 0)).y();
-    if (addTop >= removeTop) {
-        std::fprintf(stderr, "dj-ui: Add sits at y %.0f and Remove at %.0f — Add has to be first\n", addTop, removeTop);
+    // The buttons live in one row under the path field: Add first, Remove to its right (owner's order, 22.11).
+    const QRectF addRect(addButton->mapToScene(QPointF(0, 0)), addButton->size());
+    const QRectF removeRect(removeButton->mapToScene(QPointF(0, 0)), removeButton->size());
+    QQuickItem *fieldForButtons = findInWindow(QStringLiteral("folderAddField"));
+    if (fieldForButtons == nullptr) {
+        std::fprintf(stderr, "dj-ui: the collection row has no path field\n");
+        return 1;
+    }
+    const QRectF fieldAbove(fieldForButtons->mapToScene(QPointF(0, 0)), fieldForButtons->size());
+    if (addRect.top() < fieldAbove.bottom()) {
+        std::fprintf(stderr, "dj-ui: Add at y %.0f is not under the path field, which ends at %.0f\n", addRect.top(),
+                     fieldAbove.bottom());
+        return 1;
+    }
+    if (std::abs(addRect.top() - removeRect.top()) > 2.0) {
+        std::fprintf(stderr, "dj-ui: Add and Remove are not on one line: y %.0f and %.0f\n", addRect.top(),
+                     removeRect.top());
+        return 1;
+    }
+    if (addRect.left() >= removeRect.left()) {
+        std::fprintf(stderr, "dj-ui: Add at x %.0f is not first (Remove at %.0f)\n", addRect.left(),
+                     removeRect.left());
         return 1;
     }
     const QRectF rowRect(foldersRow->mapToScene(QPointF(0, 0)), foldersRow->size());
@@ -643,9 +661,9 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
         }
     }
     std::fprintf(stderr,
-                 "dj-ui: the collection folders are a table %.0f px tall with Add above Remove, and nothing drawn over "
-                 "it: %lld shown, one removed, the rest kept in the file (page %.0f px, table x %.0f..%.0f, "
-                 "panel right %.0f)\n",
+                 "dj-ui: the collection folders are a table %.0f px tall, with the path field and a row of Add/Remove "
+                 "under it, nothing drawn over anything: %lld shown, one removed, the rest kept in the file "
+                 "(page %.0f px, table x %.0f..%.0f, panel right %.0f)\n",
                  tableHeight, static_cast<long long>(shownFolders.size()), pageRect.width(),
                  tableRect.left(), tableRect.right(), panelRect.right());
 

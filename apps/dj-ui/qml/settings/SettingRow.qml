@@ -305,7 +305,7 @@ Item {
             width: parent.width - 208 - 28
             // The table (108), the gap and the path field (4 + 24), then the buttons stacked below it: Add first,
             // Remove under it (owner's order).
-            height: 108 + 4 + 26 + 4 + 26 + 4 + 26
+            height: 108 + 4 + 26 + 4 + 26
 
             Rectangle {
                 id: folderFrame
@@ -431,36 +431,39 @@ Item {
                 onAccepted: folderField.text = folderDialog.selectedFolder.toString()
             }
 
-            // The buttons sit under the list, not beside it: beside it they were pushed past the panel's edge and
-            // could not be reached (owner's report, 22.11). Add first, Remove under it (owner's order).
-            Button {
-                id: folderAddButton
-                objectName: "folderAdd"
+            // The buttons in one row under the path field: Add first, Remove next to it (owner's order, 22.11). The
+            // anchor is the field's row, not the field itself — the field lives inside that row, and its `bottom` is
+            // measured in the row's coordinates, which put the buttons on top of the table.
+            Row {
+                id: folderButtons
                 anchors.left: parent.left
-                anchors.top: folderField.bottom
+                anchors.top: folderPathRow.bottom
                 anchors.topMargin: 4
-                text: qsTr("Add")
-                font.pixelSize: 9
-                enabled: folderField.text.trim() !== ""
-                onClicked: {
-                    row.addFolder(folderField.text);
-                    folderField.text = "";
-                }
-            }
+                spacing: 8
 
-            Button {
-                id: folderRemoveButton
-                objectName: "folderRemove"
-                anchors.left: parent.left
-                anchors.top: folderAddButton.bottom
-                anchors.topMargin: 4
-                text: qsTr("Remove")
-                font.pixelSize: 9
-                enabled: folderList.currentIndex >= 0
-                onClicked: {
-                    if (folderList.currentIndex >= 0) {
-                        row.removeFolder(row.folders[folderList.currentIndex]);
-                        folderList.currentIndex = -1;
+                Button {
+                    id: folderAddButton
+                    objectName: "folderAdd"
+                    text: qsTr("Add")
+                    font.pixelSize: 9
+                    enabled: folderField.text.trim() !== ""
+                    onClicked: {
+                        row.addFolder(folderField.text);
+                        folderField.text = "";
+                    }
+                }
+
+                Button {
+                    id: folderRemoveButton
+                    objectName: "folderRemove"
+                    text: qsTr("Remove")
+                    font.pixelSize: 9
+                    enabled: folderList.currentIndex >= 0
+                    onClicked: {
+                        if (folderList.currentIndex >= 0) {
+                            row.removeFolder(row.folders[folderList.currentIndex]);
+                            folderList.currentIndex = -1;
+                        }
                     }
                 }
             }
