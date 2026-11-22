@@ -283,6 +283,25 @@ int FileBrowser::rowOf(const QString &path) const
     return -1;
 }
 
+/// How long a page question may stay unanswered before it is asked again, in milliseconds.
+constexpr int kAnswerWatchdogMs = 1500;
+/// How many times a question is asked again before its silence is accepted and written to the log.
+constexpr int kAnswerWatchdogTries = 3;
+
+/// How many times an empty answer to a page question is asked again before it is taken as the truth.
+///
+/// Four asks over roughly six seconds: shorter than a DJ's patience with a list that is filling, longer than the
+/// scan of a folder that was just imported. After that the empty answer is the collection's own answer.
+constexpr int EMPTY_ANSWER_RETRIES = 4;
+
+void FileBrowser::askAgainAfterEmpty()
+{
+    ++m_emptyRetries;
+    // 400, 800, 1600, 3200 ms: an index that is building finishes inside this, and the last answer is taken as final.
+    const int delay = 400 << (m_emptyRetries - 1);
+    QTimer::singleShot(delay, this, [this]() { askPage(0); });
+}
+
 void FileBrowser::refreshCollection()
 {
     if (m_mode != QLatin1String("collection")) {
@@ -347,7 +366,8 @@ void FileBrowser::openCollection(const QStringList &roots)
     m_genreList.clear();
     m_genreFallback.clear();
     m_censusAsked = false;
-    m_retriedEmpty = false;
+    m_emptyRetries = 0;
+    m_missingAnswers = 0;
     // The interface does not walk the disks: the walk is how the database is prepared, not how it is
     // read. An empty answer here is an empty collection, and it is shown as such.
     if (!sameRoots) {
@@ -499,6 +519,31 @@ void FileBrowser::askPage(int offset, int limit)
         m_askedSignatures.erase(oldest);
     }
     m_droppedAnswers.remove(id);
+    sendQuestion(id, offset, limit);
+}
+
+/// Sends one page question and arranges for its answer to be watched.
+///
+/// Separate from [`askPage`] because a question that is never answered has to be asked again with a new number: the
+/// dedupe above deliberately refuses to repeat a question that is still outstanding, which is right for a panel that
+/// re-asks on every tick and wrong for an answer that was lost.
+void FileBrowser::sendQuestion(int id, int offset, int limit)
+{
+    // Every question is written down by its number before it leaves, this one included: the answer is matched by the
+    // number and the signature together, and a question the book does not know is answered into the void.
+    const QString signature = pageSignature();
+    m_askedSignature = signature;
+    m_askedSignatures.insert(id, signature);
+    while (m_askedSignatures.size() > 8) {
+        auto oldest = m_askedSignatures.begin();
+        for (auto it = m_askedSignatures.begin(); it != m_askedSignatures.end(); ++it) {
+            if (it.key() < oldest.key()) {
+                oldest = it;
+            }
+        }
+        m_askedSignatures.erase(oldest);
+    }
+    m_droppedAnswers.remove(id);
     QVariantMap query;
     query.insert(QStringLiteral("id"), id);
     QVariantList order;
@@ -523,6 +568,32 @@ void FileBrowser::askPage(int offset, int limit)
     m_askedOffset = offset;
     m_askedLimit = limit;
     m_bridge->queryCollection(query);
+    // An answer that never comes leaves the list empty with nothing to click, and silence is not an answer the
+    // shell can see. The engine answers on its own thread and drops an answer it cannot deliver, so a lost answer
+    // is a real possibility (measured, 22.11: question 20 asked, question 18's answer dropped as stale, and the
+    // list held nothing half a minute later). The watchdog asks the same question again — at most three times —
+    // and then says in the log that the silence stood.
+    const int watched = id;
+    QTimer::singleShot(kAnswerWatchdogMs, this, [this, watched]() { watchAnswer(watched); });
+}
+
+void FileBrowser::watchAnswer(int id)
+{
+    if (id != m_pageQuery || m_pageAnsweredFor == id || m_bridge == nullptr) {
+        return;
+    }
+    if (m_missingAnswers >= kAnswerWatchdogTries) {
+        uiLog(QStringLiteral("question %1 was never answered; the list keeps its last answer (%2 rows)")
+                  .arg(id)
+                  .arg(m_all.size()));
+        return;
+    }
+    ++m_missingAnswers;
+    uiLog(QStringLiteral("question %1 was not answered in time; asking again (%2 of %3)")
+              .arg(id)
+              .arg(m_missingAnswers)
+              .arg(kAnswerWatchdogTries));
+    sendQuestion(++m_pageQuery, m_askedOffset, m_askedLimit);
 }
 
 void FileBrowser::askCensus()
@@ -758,9 +829,8 @@ void FileBrowser::takePage()
         m_total = 0;
         applyFilter();
         publishGenres();
-        if (!m_retriedEmpty && !m_roots.isEmpty()) {
-            m_retriedEmpty = true;
-            QTimer::singleShot(400, this, [this]() { askPage(0); });
+        if (m_emptyRetries < EMPTY_ANSWER_RETRIES && !m_roots.isEmpty()) {
+            askAgainAfterEmpty();
         }
         return;
     }
@@ -820,12 +890,13 @@ void FileBrowser::takePage()
         m_wholeAsked = true;
         askPage(0, m_pageTotal);
     }
-    if (offset == 0 && tracks.isEmpty() && !m_retriedEmpty && !m_roots.isEmpty()) {
+    if (offset == 0 && tracks.isEmpty() && m_emptyRetries < EMPTY_ANSWER_RETRIES && !m_roots.isEmpty()) {
         // The index can be empty on the first question because it is being built from the folders at that very
-        // moment. One retry turns "an empty collection" into "a collection that took a moment" — and a DJ who
-        // opens the section sees rows instead of an empty table.
-        m_retriedEmpty = true;
-        QTimer::singleShot(400, this, [this]() { askPage(0); });
+        // moment. Retrying once turned "an empty collection" into "a collection that took a moment" — but an index
+        // that is still building answers the retry empty as well, and then the list stayed empty until someone
+        // pressed refresh (measured, 22.11). The ladder below is the honest version: a few asks, each further
+        // apart, and then the answer stands.
+        askAgainAfterEmpty();
     }
 }
 

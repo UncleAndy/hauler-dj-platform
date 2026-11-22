@@ -4,6 +4,9 @@
 
 #include "Checks.h"
 
+#include <QDir>
+#include <QDirIterator>
+
 namespace checks {
 
 bool writeShortWav(const QString& path, double seconds) {
@@ -55,6 +58,27 @@ int runScrollCheck(QQmlApplicationEngine& engine, FileBrowser& browser, BridgeCl
         std::fprintf(stderr, "dj-ui: cannot make %s\n", qPrintable(collectionRoot));
         return 1;
     }
+    // The check writes its own forty fillers into this root and then reads the list as the DJ's collection. That
+    // reading is only true on an empty root: a second run finds the first run's imported copies (`Scroll 01 (2).wav`)
+    // and the page stops being the forty it put there, which surfaces much later as a cursor that names no row
+    // (22.11 — an hour lost to a wrong instrument). The precondition is stated before a single file is written.
+    {
+        int alreadyThere = 0;
+        QDirIterator existing(collectionRoot, {QStringLiteral("*.wav")}, QDir::Files,
+                              QDirIterator::Subdirectories);
+        while (existing.hasNext()) {
+            (void)existing.next();
+            ++alreadyThere;
+        }
+        if (alreadyThere > 0) {
+            std::fprintf(stderr,
+                         "dj-ui: the collection root already holds %d tracks — this check wants an empty folder, "
+                         "or the row it remembers is a row it never imported\n",
+                         alreadyThere);
+            return 1;
+        }
+    }
+
     // Forty files of forty lengths: the list has to be longer than the window for a scroll to exist
     // at all.
     QStringList fillers;
@@ -145,10 +169,24 @@ int runScrollCheck(QQmlApplicationEngine& engine, FileBrowser& browser, BridgeCl
     const double rowTop = aimed * rowHeight;
     const bool rowOnScreen = rowTop + rowHeight > after && rowTop < after + windowHeight;
     if (after <= rowHeight || !rowOnScreen) {
+        // What the failure has to say: where the view stands, and what the cursor is at that moment. A cursor of
+        // row -1 is a list whose rows were replaced but whose cursor has not come back yet, which is a different
+        // fault from a cursor that is there and a view that ignored it.
+        const int cursorRow = browser.rowOf(browser.cursor());
+        const QVariantList nowEntries = browser.entries();
+        const QString firstNow = nowEntries.isEmpty()
+                                     ? QString()
+                                     : nowEntries.first().toMap().value(QStringLiteral("path")).toString();
+        const QString sameRowNow =
+            nowEntries.size() > aimed
+                ? nowEntries.at(aimed).toMap().value(QStringLiteral("path")).toString()
+                : QString();
         std::fprintf(stderr,
                      "dj-ui: the refresh left the list at %.0f px of %.0f and row %d at %.0f %s "
-                     "the window\n",
-                     after, before, aimed, rowTop, rowOnScreen ? "inside" : "outside");
+                     "the window (cursor row %d of %d, cursor '%s'; first row now '%s', row %d now '%s')\n",
+                     after, before, aimed, rowTop, rowOnScreen ? "inside" : "outside", cursorRow,
+                     list->property("count").toInt(), qPrintable(browser.cursor()), qPrintable(firstNow),
+                     aimed, qPrintable(sameRowNow));
         return 1;
     }
     return 0;

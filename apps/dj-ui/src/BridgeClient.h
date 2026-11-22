@@ -135,6 +135,15 @@ public:
     /// Read the collection again without losing the search: an analysis that lands while the DJ is
     /// looking at a filtered list must not throw the list away.
     Q_INVOKABLE void refreshCollection();
+
+    /// Asks the current page question again after an empty answer, further apart each time.
+    void askAgainAfterEmpty();
+
+    /// Sends one page question, with its number, and watches for its answer.
+    void sendQuestion(int id, int offset, int limit);
+
+    /// Asks a question that got no answer again, until the tries run out and the silence is written down.
+    void watchAnswer(int id);
     /// Remember where a load came from: the file list opens there next time, and a load made from the
     /// collection does not throw the list out of the collection.
     Q_INVOKABLE void rememberFolder(const QString &folder);
@@ -319,7 +328,10 @@ private:
     /// The census question has been asked: it is a question of the session, not of every page.
     bool m_censusAsked = false;
     /// An empty first page has been asked about once already: the index may be building.
-    bool m_retriedEmpty = false;
+    /// How many times an empty page answer has been asked again for the current question.
+    int m_emptyRetries = 0;
+    /// How many times the current question has been asked again because no answer came at all.
+    int m_missingAnswers = 0;
     /// The boxes as the panel last saw them: an unchanged list is not republished, so the delegates stay put.
     QVariantList m_publishedGenres;
     /// The offset of the question in flight: the answer does not carry it, the question does.

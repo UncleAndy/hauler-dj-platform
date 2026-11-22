@@ -1378,26 +1378,41 @@ int runSortCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutSett
         QCoreApplication::processEvents();
         browser.setCursor(remembered);
         browser.openCollection({scrollRoot});
+        // The rows of the previous section are still in the list at this moment, so "the list holds forty rows"
+        // proves nothing — and the index answers a page only when it has one, which can be a moment after the
+        // import that filled it (the shell retries an empty answer once, 400 ms later, for exactly this reason).
+        // The question asked here is a different one: does the remembered row come back? Wait for that row, with a
+        // ceiling, and say what the list held when it did not — the assertion below then measures the place in the
+        // middle, which is its own promise (measured flake, 22.11: the assertion fired on a list that was still
+        // empty, not on a wrongly placed row).
         clock.restart();
-        while (browser.entries().size() < 40 && clock.elapsed() < 10000) {
+        while (browser.rowOf(remembered) < 0 && clock.elapsed() < 15000) {
             QCoreApplication::processEvents();
             QThread::msleep(20);
         }
-        for (int tick = 0; tick < 12; ++tick) {
+        const int rememberedRow = browser.rowOf(remembered);
+        if (rememberedRow < 0) {
+            std::fprintf(stderr,
+                         "dj-ui: the remembered row '%s' never came back: the list holds %d rows of a "
+                         "collection under '%s'\n",
+                         qPrintable(remembered), static_cast<int>(browser.entries().size()),
+                         qPrintable(scrollRoot));
+            return 1;
+        }
+        // The list centres the row over a turn or two of its own, and those turns cost what the machine can spare.
+        clock.restart();
+        double windowCentre = 0.0;
+        double rowCentre = 0.0;
+        while (clock.elapsed() < 3000) {
+            windowCentre = list->property("contentY").toDouble() + list->height() / 2.0;
+            rowCentre = rememberedRow * rowHeight + rowHeight / 2.0;
+            if (std::abs(windowCentre - rowCentre) <= rowHeight) {
+                break;
+            }
             QCoreApplication::processEvents();
             QThread::msleep(20);
         }
-        // The rows, not only the opening: the index answers a page when it has one, and a page that
-        // came back empty has no row to remember — the cursor then reads -1 and a working panel
-        // looks broken.
-        for (int tick = 0; tick < 250 && browser.entries().isEmpty(); ++tick) {
-            QCoreApplication::processEvents();
-            QThread::msleep(20);
-        }
-        const int rememberedRow = browser.rowOf(browser.cursor());
-        const double windowCentre = list->property("contentY").toDouble() + list->height() / 2.0;
-        const double rowCentre = rememberedRow * rowHeight + rowHeight / 2.0;
-        if (rememberedRow < 0 || std::abs(windowCentre - rowCentre) > rowHeight) {
+        if (std::abs(windowCentre - rowCentre) > rowHeight) {
             std::fprintf(stderr,
                          "dj-ui: the remembered row %d is not in the middle (row centre %.1f, "
                          "window centre %.1f)\n",
