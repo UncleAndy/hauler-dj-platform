@@ -1,0 +1,13 @@
+[package]
+name = "dj-hid"
+description = "HID transport: find the operating system's HID nodes and read their reports."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

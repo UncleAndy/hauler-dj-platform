@@ -423,8 +423,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "dj-controller"
+version = "0.1.0"
+dependencies = [
+ "dj-config",
+ "dj-controller-core",
+ "dj-controller-s4mk3",
+ "dj-hid",
+]
+
+[[package]]
 name = "dj-controller-core"
 version = "0.1.0"
+
+[[package]]
+name = "dj-controller-s4mk3"
+version = "0.1.0"
+dependencies = [
+ "dj-controller-core",
+]
 
 [[package]]
 name = "dj-deck"
@@ -510,9 +527,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "dj-hid"
+version = "0.1.0"
+
+[[package]]
 name = "dj-launcher"
 version = "0.1.0"
 dependencies = [
+ "dj-config",
  "dj-paths",
  "rustix",
 ]

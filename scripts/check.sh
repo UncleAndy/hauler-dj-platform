@@ -18,5 +18,6 @@ bash scripts/ui.sh --smoke
 bash scripts/ui.sh --engine-check
 bash scripts/curve-check.sh
 bash scripts/fx-check.sh
+bash scripts/controller-check.sh
 
 echo "check.sh: all gates passed"

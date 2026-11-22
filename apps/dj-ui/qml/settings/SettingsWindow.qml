@@ -405,6 +405,23 @@ Popup {
             ]
         },
         {
+            key: "controller",
+            title: qsTr("Controller"),
+            about: qsTr("A DJ controller is optional. With the switch off nothing else starts: no service, no device "
+                        + "opened, and the program is the mouse-and-keyboard one you already know."),
+            rows: [
+                { label: qsTr("Use a DJ controller"),
+                  hint: qsTr("Whether the controller service runs at all. Off is the way a fresh install behaves: no extra process is started and no HID node is opened. Turning it on takes effect the next time the program starts."),
+                  path: "engine:controller.enabled", kind: "switch" },
+                { label: qsTr("Driver"),
+                  hint: qsTr("Which device the service should read. None means the switch is on but nothing is claimed, and the log says so instead of failing quietly."),
+                  path: "engine:controller.driver", kind: "choice", values: ["none", "s4mk3"] },
+                { label: qsTr("Device"),
+                  hint: qsTr("The HID node to open, when the driver should not search for it by itself. Empty means search: the service looks for the vendor and product the driver knows."),
+                  path: "engine:controller.device", kind: "text" }
+            ]
+        },
+        {
             key: "diagnostics",
             title: qsTr("Diagnostics"),
             about: qsTr("The logs and the thresholds that decide when a run is reported as struggling."),

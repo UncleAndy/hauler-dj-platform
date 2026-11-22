@@ -114,10 +114,13 @@ launcher() {
         export RUSTFLAGS="-L native=$REPO/.cache/win-shims -C link-arg=$REPO/.cache/win-icon/app-icon.o"
         rustup toolchain install stable --profile minimal --target x86_64-pc-windows-gnu --no-self-update
         cd "$REPO"
-        rustup run stable cargo build --release --target x86_64-pc-windows-gnu -p dj-launcher
+        rustup run stable cargo build --release --target x86_64-pc-windows-gnu -p dj-launcher -p dj-controller
     '
     cp "${CARGO_TARGET_DIR:-$repo/target}/$target/release/dj-launcher.exe" "$dist/hauler-dj.exe"
-    echo "готово: $dist/hauler-dj.exe"
+    # The controller service stays optional, but it has to be there to be switched on: the launcher looks for it
+    # beside itself and says so in the log when it is missing.
+    cp "${CARGO_TARGET_DIR:-$repo/target}/$target/release/dj-controller.exe" "$dist/dj-controller.exe"
+    echo "готово: $dist/hauler-dj.exe и $dist/dj-controller.exe"
 }
 
 # ONNX Runtime: без него внешняя модель удара не работает, и движок молча считает встроенным детектором —

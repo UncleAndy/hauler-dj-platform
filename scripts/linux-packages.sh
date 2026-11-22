@@ -89,9 +89,10 @@ echo "== набор файлов для пакетов $version"
 # ------------------------------------------------------------------ двоичные файлы
 engine_dir="${CARGO_TARGET_DIR:-$repo/target}/release"
 ui_build="${DJ_UI_BUILD_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/dj-platform-ui-build}"
-if [ ! -x "$engine_dir/dj-engine" ] || [ ! -x "$ui_build/apps/dj-ui/dj-ui" ] || [ ! -x "$engine_dir/dj-launcher" ]; then
-    echo "   собираю движок, оболочку и запускатор"
-    cargo build --release -p dj-engine -p dj-launcher
+if [ ! -x "$engine_dir/dj-engine" ] || [ ! -x "$ui_build/apps/dj-ui/dj-ui" ] || [ ! -x "$engine_dir/dj-launcher" ] \
+    || [ ! -x "$engine_dir/dj-controller" ]; then
+    echo "   собираю движок, оболочку, запускатор и службу контроллера"
+    cargo build --release -p dj-engine -p dj-launcher -p dj-controller
     BUILD_DIR="$ui_build" bash "$repo/scripts/ui.sh" --build-only
 fi
 
@@ -102,9 +103,9 @@ bin="$root/usr/bin"
 lib="$root/usr/lib/hauler-dj"
 
 # Настоящие двоичные файлы — в lib/bin; в usr/bin запускатор и скрипты-обёртки.
-cp "$engine_dir/dj-engine" "$ui_build/apps/dj-ui/dj-ui" "$lib/bin/"
+cp "$engine_dir/dj-engine" "$ui_build/apps/dj-ui/dj-ui" "$engine_dir/dj-controller" "$lib/bin/"
 cp "$engine_dir/dj-launcher" "$bin/"
-chmod +x "$lib/bin/dj-engine" "$lib/bin/dj-ui" "$bin/dj-launcher"
+chmod +x "$lib/bin/dj-engine" "$lib/bin/dj-ui" "$lib/bin/dj-controller" "$bin/dj-launcher"
 
 # ------------------------------------------------------------------ библиотеки
 # Замыкание берётся у того, что двоичные файлы действительно связали: 11 ГБ оболочки разработчика в пакет не едут, а

@@ -167,9 +167,9 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
     settle(80);
 
     const QStringList sections = {
-        QStringLiteral("sound"),    QStringLiteral("analysis"),    QStringLiteral("library"),
-        QStringLiteral("mixer"),    QStringLiteral("effects"),     QStringLiteral("interface"),
-        QStringLiteral("diagnostics"), QStringLiteral("about"),
+        QStringLiteral("sound"),       QStringLiteral("analysis"), QStringLiteral("library"),
+        QStringLiteral("mixer"),       QStringLiteral("effects"),  QStringLiteral("interface"),
+        QStringLiteral("controller"),  QStringLiteral("diagnostics"), QStringLiteral("about"),
     };
     for (const QString &key : sections) {
         if (findInWindow(QStringLiteral("settingsSection_") + key) == nullptr) {
@@ -511,6 +511,38 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
         QMetaObject::invokeMethod(sliderRow, "write", Q_ARG(QVariant, QVariant(before)));
     }
     std::fprintf(stderr, "dj-ui: %lld sliders reach the values they write\n", static_cast<long long>(slides.size()));
+
+    // The owner's rule: a controller is off unless the DJ turns it on, and turning it on is a line in the settings file.
+    // The switch is the only place that decides whether the service ever starts, so it is checked in both directions.
+    QQuickItem *controllerSwitch = findInWindow(QStringLiteral("settingRow_engine_controller_enabled"));
+    if (controllerSwitch == nullptr) {
+        std::fprintf(stderr, "dj-ui: the window has no switch for the controller\n");
+        return 1;
+    }
+    const QVariant controllerBefore = controllerSwitch->property("current");
+    if (controllerBefore.toBool()) {
+        std::fprintf(stderr, "dj-ui: a controller is on in a fresh settings file — it must be off until asked for\n");
+        return 1;
+    }
+    if (!QMetaObject::invokeMethod(controllerSwitch, "write", Q_ARG(QVariant, QVariant(true)))) {
+        std::fprintf(stderr, "dj-ui: the controller switch did not answer\n");
+        return 1;
+    }
+    settle(60);
+    const bool turnedOn = Settings_value(engine, QStringLiteral("engine:controller.enabled")) > 0.5;
+    if (!QMetaObject::invokeMethod(controllerSwitch, "write", Q_ARG(QVariant, QVariant(false)))) {
+        std::fprintf(stderr, "dj-ui: the controller switch did not turn back off\n");
+        return 1;
+    }
+    settle(60);
+    const bool turnedOff = Settings_value(engine, QStringLiteral("engine:controller.enabled")) < 0.5;
+    if (!turnedOn || !turnedOff) {
+        std::fprintf(stderr, "dj-ui: the controller switch wrote %s and turned back %s\n",
+                     turnedOn ? "on" : "nothing", turnedOff ? "off" : "nothing");
+        return 1;
+    }
+    std::fprintf(stderr,
+                 "dj-ui: the controller is off until asked for, and the switch writes it: on, then off again\n");
 
     if (seenRows.size() < 30) {
         std::fprintf(stderr, "dj-ui: only %lld lines were seen while the pages turned — the hint check proves little\n",

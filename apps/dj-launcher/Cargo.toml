@@ -8,6 +8,7 @@ authors.workspace = true
 description = "Starts the engine and the shell as one application, on Windows and Linux."
 
 [dependencies]
+dj-config = { path = "../../crates/dj-config" }
 dj-paths = { path = "../../crates/dj-paths" }
 
 [target.'cfg(unix)'.dependencies]

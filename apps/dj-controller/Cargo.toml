@@ -1,0 +1,17 @@
+[package]
+name = "dj-controller"
+description = "The controller service: a separate process that reads a device and sends nothing back."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+dj-config = { path = "../../crates/dj-config" }
+dj-controller-core = { path = "../../crates/dj-controller-core" }
+dj-controller-s4mk3 = { path = "../../crates/dj-controller-s4mk3" }
+dj-hid = { path = "../../crates/dj-hid" }
+
+[lints]
+workspace = true

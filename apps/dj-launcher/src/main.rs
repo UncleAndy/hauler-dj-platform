@@ -131,6 +131,9 @@ fn run(options: &Options) -> Result<u8, String> {
     }
 
     let lock = InstanceLock::acquire(&folder);
+    // The controller is optional down to the process: when settings do not ask for it, nothing is started, and the run
+    // is the one this program has always had (owner's rule, 22.11: "if the controller is off, everything works as now").
+    let mut controller_process: Option<Child> = None;
     let mut engine_process = match &lock {
         InstanceLock::Held(_guard) => {
             say(options, &format!("engine: starting {}", engine.display()));
@@ -141,6 +144,10 @@ fn run(options: &Options) -> Result<u8, String> {
                 return Err(format!("{reason}\n(the log is {})", log_hint()));
             }
             say(options, "engine ready");
+            // `--engine-only` means exactly that: a check asking for the engine gets the engine and nothing else.
+            if !options.engine_only {
+                controller_process = start_controller(&folder, options);
+            }
             Some(process)
         }
         InstanceLock::Taken => {
@@ -191,7 +198,9 @@ fn run(options: &Options) -> Result<u8, String> {
     let status = shell
         .wait()
         .map_err(|error| format!("the shell could not be waited for: {error}"))?;
-    // The engine leaves by its own idle exit once the shell's connection is gone; nothing to kill here.
+    // The engine leaves by its own idle exit once the shell's connection is gone; nothing to kill here. The controller
+    // service holds no device state worth saving, so it goes the same way.
+    drop(controller_process.take());
     drop(engine_process.take());
     Ok(status.code().unwrap_or(0).clamp(0, 255) as u8)
 }
@@ -218,25 +227,93 @@ fn start_engine(engine: &Path) -> Result<Child, String> {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NO_WINDOW);
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        #[allow(unsafe_code)]
-        // SAFETY: `pre_exec` runs between fork and exec; the only call is `prctl`, which is async-signal-safe
-        // and touches nothing this process owns.
-        unsafe {
-            command.pre_exec(|| {
-                rustix::process::set_parent_process_death_signal(Some(
-                    rustix::process::Signal::TERM,
-                ))
-                .map_err(std::io::Error::from)
-            });
-        }
-    }
+    attach_lifeline(&mut command);
     command
         .spawn()
         .map_err(|error| format!("the engine did not start: {error}"))
 }
+
+/// The controller service, when the settings file asks for one.
+///
+/// Everything about this function is "off means absent": no setting means no process, a driver of `none` means no
+/// process, and a binary that is not there is a line in the log instead of a failed start — a machine that never had
+/// the service must still play records.
+fn start_controller(folder: &Path, options: &Options) -> Option<Child> {
+    let (config, _) = dj_config::Config::load_or_default(None).ok()?;
+    if !config.controller.enabled {
+        return None;
+    }
+    if matches!(config.controller.driver, dj_config::ControllerDriver::None) {
+        say(
+            options,
+            "controller: switched on in settings, but no driver is chosen — nothing to start",
+        );
+        return None;
+    }
+    let binary = folder.join(program("dj-controller"));
+    if !binary.is_file() {
+        say(
+            options,
+            &format!(
+                "controller: no {} beside me — carrying on without it",
+                binary.display()
+            ),
+        );
+        return None;
+    }
+    let mut command = Command::new(&binary);
+    command.stdin(Stdio::null());
+    command.stdout(Stdio::null());
+    command.stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // A console program started from a windowed launcher would grow a black window of its own.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    attach_lifeline(&mut command);
+    match command.spawn() {
+        Ok(child) => {
+            say(
+                options,
+                &format!("controller: started {}", binary.display()),
+            );
+            Some(child)
+        }
+        Err(error) => {
+            say(
+                options,
+                &format!(
+                    "controller: {} did not start ({error}); carrying on without it",
+                    binary.display()
+                ),
+            );
+            None
+        }
+    }
+}
+
+/// Makes a child die with this process on Linux.
+///
+/// On other systems the child watches its parent by itself, or the system kills it with the session.
+#[cfg(unix)]
+fn attach_lifeline(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    #[allow(unsafe_code)]
+    // SAFETY: `pre_exec` runs between fork and exec; the only call is `prctl`, which is async-signal-safe
+    // and touches nothing this process owns.
+    unsafe {
+        command.pre_exec(|| {
+            rustix::process::set_parent_process_death_signal(Some(rustix::process::Signal::TERM))
+                .map_err(std::io::Error::from)
+        });
+    }
+}
+
+/// Nothing to attach: Windows closes the child with the job object, and macOS with the session.
+#[cfg(not(unix))]
+fn attach_lifeline(_command: &mut Command) {}
 
 /// Waits until a client can actually talk to the engine, not merely until the file exists.
 ///

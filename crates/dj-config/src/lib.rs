@@ -39,6 +39,8 @@ pub struct Config {
     pub analysis: AnalysisSettings,
     /// Collection and the history of plays.
     pub library: LibrarySettings,
+    /// Whether a DJ controller is used at all (ADR-0006).
+    pub controller: ControllerSettings,
 }
 
 impl Default for Config {
@@ -53,8 +55,48 @@ impl Default for Config {
             display: DisplaySettings::default(),
             analysis: AnalysisSettings::default(),
             library: LibrarySettings::default(),
+            controller: ControllerSettings::default(),
         }
     }
+}
+
+/// Whether a controller is used, and which driver reads it (ADR-0006).
+///
+/// Off by default, and that is a promise rather than a style: with `enabled = false` the program is exactly the
+/// mouse-and-keyboard one it was before controllers existed — no process is started, no HID node is opened, and no
+/// branch in the audio or the picture changes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ControllerSettings {
+    /// Whether a controller is used at all.
+    pub enabled: bool,
+    /// Which driver to run when one is enabled. `none` means "enabled but nothing to read", which is said out loud in
+    /// the log instead of being quietly ignored.
+    pub driver: ControllerDriver,
+    /// The HID node to open, when the driver should not search by itself.
+    pub device: Option<String>,
+}
+
+impl Default for ControllerSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            driver: ControllerDriver::None,
+            device: None,
+        }
+    }
+}
+
+/// The drivers this build knows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ControllerDriver {
+    /// Nothing: the setting is on but no device is claimed.
+    #[default]
+    None,
+    /// Native Instruments Traktor Kontrol S4 MK3.
+    #[serde(rename = "s4mk3")]
+    S4Mk3,
 }
 
 /// Collection and history settings (DJP-MEDIA-004).
@@ -719,6 +761,39 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
+    /// A controller that switches itself on would change the program for every existing user.
+    #[test]
+    fn a_controller_is_off_until_the_file_says_otherwise() {
+        let config = Config::default();
+        assert!(!config.controller.enabled);
+        assert_eq!(config.controller.driver, ControllerDriver::None);
+        assert!(config.controller.device.is_none());
+    }
+
+    /// The setting has to survive a round trip through the file, because the window writes it and the service reads it.
+    #[test]
+    fn the_controller_section_is_written_and_read_back() {
+        let file = toml::to_string(&Config::default()).unwrap_or_default();
+        assert!(file.contains("[controller]"), "{file}");
+        assert!(file.contains("enabled = false"), "{file}");
+        let parsed: Config = toml::from_str(&file).unwrap_or_default();
+        assert_eq!(parsed.controller, Config::default().controller);
+
+        let turned_on = Config {
+            controller: ControllerSettings {
+                enabled: true,
+                driver: ControllerDriver::S4Mk3,
+                device: None,
+            },
+            ..Config::default()
+        };
+        let text = toml::to_string(&turned_on).unwrap_or_default();
+        let back: Config = toml::from_str(&text).unwrap_or_default();
+        assert!(back.controller.enabled);
+        assert_eq!(back.controller.driver, ControllerDriver::S4Mk3);
+        assert!(text.contains("driver = \"s4mk3\""), "{text}");
+    }
+
     use super::*;
 
     #[test]

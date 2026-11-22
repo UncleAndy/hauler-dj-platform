@@ -91,7 +91,7 @@ linux_extra=()
 
 build_linux() {
     echo "== пакет для этой системы"
-    cargo build --release -p dj-engine -p dj-launcher
+    cargo build --release -p dj-engine -p dj-launcher -p dj-controller
     BUILD_DIR="${DJ_UI_BUILD_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/dj-platform-ui-build}" \
         bash "$repo/scripts/ui.sh" --build-only
 
@@ -103,6 +103,7 @@ build_linux() {
 
     cp "$engine_dir/dj-engine" "$staging/"
     cp "$engine_dir/dj-launcher" "$staging/"
+    cp "$engine_dir/dj-controller" "$staging/"
     cp "$ui_build/apps/dj-ui/dj-ui" "$staging/"
 
     # Запись в меню и иконки: без них «пакет» — это папка с бинарниками.
