@@ -247,7 +247,28 @@ DLL Windows — в самом скрипте. Сейчас: 2 exe, 119 библ�
 `onnxruntime.dll` собран MSVC и требует `MSVCP140.dll`, `MSVCP140_1.dll`, `VCRUNTIME140.dll`,
 `VCRUNTIME140_1.dll`. Microsoft разрешает распространять их вместе с приложением (app-local), поэтому
 сборка берёт их из каталога, названного `ORT_CRT_DIR`; если каталога нет, скрипт печатает, чего не хватает.
-Обычный источник — установленный Visual C++ Redistributable: `C:\Windows\System32`.
+
+Чтобы это не оставалось заботой упаковщика, есть отдельная команда:
+
+```bash
+bash scripts/windows-msvc-runtime.sh          # положить четыре DLL в dist/windows
+bash scripts/windows-msvc-runtime.sh --check   # только сказать, чего не хватает
+```
+
+Она качает официальный Visual C++ Redistributable (`aka.ms/vs/17/release/vc_redist.x64.exe`), проверяет его хеш по
+пину в скрипте, разбирает bundle (payload — кабинет кабинетов, ищется по сигнатуре `MSCF`, а не по смещению),
+берёт оттуда x64-файлы, сверяет разрядность по PE-заголовку и кладёт рядом с `onnxruntime.dll` вместе с
+`LICENSES/msvc-runtime.txt`. Приложение разворачивает их рядом с собой («app-local»), что и разрешает лицензия
+redistributable.
+
+Хеш пина: `cc0ff0eb…713b` (14.44.35211.0, 2025-06-11). Если Microsoft выпустит новый bundle, скрипт остановится и
+скажет это: версию рантайма не меняют молча.
+
+Старый путь тоже работает: `ORT_CRT_DIR=<каталог>` берёт файлы из установленного Redistributable
+(`C:\Windows\System32`).
+
+Проверка зависимостей дистрибутива (`--dist` → `scripts/windows-deps-check.py`) считает `dbghelp.dll` системным: он
+приходит из Windows или из того же Redistributable и рядом не нужен.
 
 Проверка пути замера — одна строка в `dj-engine.log` на трек: `grid by beat model small` (модель работает)
 или `grid by built-in detector` (модели нет). Разница в темпе на «Любе» — 96 против 128.

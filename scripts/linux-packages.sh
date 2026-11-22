@@ -22,7 +22,9 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo"
 
 version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
-out="$repo/dist/packages"
+# Where the packages are written. An override exists because a working directory can belong to another user (a build
+# that ran as somebody else leaves files that the next run cannot clean), and a release should not be blocked by that.
+out="${DJ_PACKAGES_DIR:-$repo/dist/packages}"
 root="$out/root"
 want_deb=0
 want_rpm=0

@@ -54,6 +54,7 @@ ALSA) допустимы только через динамическую лин
 | Signalsmith FFT | repo | MIT (в README) | самостоятельный FFT, если понадобится без Stretch |
 | Signalsmith Pitch Tracker | 2026 (repo) | MIT | оценка тональности трека, детект вокала (монофонический — на миксе врёт) |
 | Signalsmith IIR Hilbert (`githilbert-iir`) | 2024 | **0BSD** | сдвиг частоты, ширина стерео, фазовое вращение |
+| Microsoft Visual C++ Redistributable runtime (`MSVCP140.dll`, `MSVCP140_1.dll`, `VCRUNTIME140.dll`, `VCRUNTIME140_1.dll`) | 14.44.35211.0 | проприетарная, но разворачивается рядом с приложением (app-local) по условиям лицензии redistributable | только Windows-дистрибутив, берётся `scripts/windows-msvc-runtime.sh`, текст — в `dist/windows/LICENSES/msvc-runtime.txt` |
 
 Stretch `1.3.2` и Linear `0.6.6` из этого же набора уже в сборке (см. выше) и дают больше, чем мы
 используем: `setTransposeSemitones`/`setFormantSemitones`/`setFreqMap` — это будущий сдвиг тональности

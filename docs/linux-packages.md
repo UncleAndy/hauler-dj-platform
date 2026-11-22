@@ -9,9 +9,12 @@ nix develop --command bash scripts/linux-packages.sh --all   # только па
 
 | файл | для кого | размер (0.1.0) |
 |---|---|---|
-| `hauler-dj_0.1.0_amd64.deb` | Debian, Ubuntu и производные | 223 МБ |
-| `hauler-dj-0.1.0-1.x86_64.rpm` | Fedora, openSUSE и производные | 253 МБ |
-| `hauler-dj-0.1.0-x86_64.AppImage` | один файл, любой дистрибутив | 185 МБ |
+| `hauler-dj_0.1.0_amd64.deb` | Debian, Ubuntu и производные | 233 МБ |
+| `hauler-dj-0.1.0-1.x86_64.rpm` | Fedora, openSUSE и производные | 266 МБ |
+| `hauler-dj-0.1.0-x86_64.AppImage` | один файл, любой дистрибутив | 194 МБ |
+
+Переопределить каталог вывода можно: `DJ_PACKAGES_DIR=/путь bash scripts/linux-packages.sh --all`. Это нужно, когда
+рабочий каталог остался от сборки другого пользователя и убрать его файлы нельзя без прав.
 
 Установка — обычная для формата: `dpkg -i`, `dnf install ./файл.rpm`, AppImage — `chmod +x` и запуск. Все три ставят
 одно и то же дерево: `/usr/bin/{hauler-dj,dj-engine,dj-ui,dj-launcher}`, `/usr/lib/hauler-dj/`, запись в меню,
@@ -70,3 +73,27 @@ exec /usr/lib/hauler-dj/ld-linux-x86-64.so.2 --library-path /usr/lib/hauler-dj \
 Сборке нужны `dpkg`, `rpm`, `squashfsTools`, `patchelf` и `curl` (рантайм AppImage скачивается один раз в
 `~/.cache/appimage-runtime`); всё это уже в оболочке разработчика. `rpmbuild` запускает свои шаги через `/bin/sh`,
 которого в контейнере нет, — для него подкладывается статический busybox через `bwrap` с ядром хоста.
+
+## Что проверено на 0.1.0 (22.11)
+
+Проверка — не «собралось», а «запускается из распакованного пакета своим загрузчиком и своими библиотеками»: на
+машине сборки нет ни `/lib64/ld-linux-x86-64.so.2`, ни системного Qt, поэтому чужой путь проверяет ровно то, что
+получит пользователь.
+
+| что | как | свидетель |
+|---|---|---|
+| deb: набор файлов | `dpkg-deb -x` в пустой корень | `usr/lib/hauler-dj/bin/`: `dj-engine`, `dj-ui`, `dj-controller` |
+| deb: движок | `ld-linux --library-path … bin/dj-engine --help` | печатает свой журнал и справку, код 0 |
+| deb: служба контроллера | `… bin/dj-controller --status` | `controller support is off in the settings; nothing to do` |
+| deb: оболочка | `QT_PLUGIN_PATH=… QML2_IMPORT_PATH=… bin/dj-ui --smoke` | `dj-ui: QML scene loaded, no Qt warnings` |
+| rpm: набор файлов | `rpm2cpio | cpio -t` | все три бинаря на месте, плюс `usr/bin/hauler-dj` |
+| AppImage: набор файлов | `unsquashfs -o <размер рантайма>` | все три бинаря; оболочка грузит сцену без предупреждений Qt |
+| AppImage: запуск как файла | — | **не проверен здесь**: рантайм AppImage — обычный ELF с `PT_INTERP=/lib64/ld-linux-x86-64.so.2`, а на этой машине такого пути нет |
+
+Ограничение по AppImage касается и NixOS: там файл запускается через `nix run nixpkgs#appimage-run -- ./файл.AppImage`
+(или `programs.appimage.enable = true`). На обычном FHS-дистрибутиве — `chmod +x` и запуск. Внутри AppImage лежит то
+же дерево, что в deb и rpm, и оно проверено.
+
+Установка в живую систему (`dpkg -i`, `dnf install`) по-прежнему не проверялась: ставить пакет в эту машину некуда,
+а выдавать «установилось» за проверку я не буду.
+
