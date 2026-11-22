@@ -10,7 +10,10 @@
 //! - Backlog task: A09 (the path), A10 (the routing)
 //! - Requirements: DJP-CTRL-002, DJP-CTRL-004
 
-use dj_domain::{DeckId, DjCommand, SyncMode};
+use dj_domain::{CueAction, DeckId, DjCommand, SyncMode};
+
+/// The slot this program treats as the deck's cue point: hotcue 0, the one the panel's own Cue button writes.
+pub const CUE_SLOT: u8 = 0;
 
 /// What a control asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,11 +26,15 @@ pub enum Intent {
     PlayPause,
     /// Sync this deck to its master.
     Sync,
+    /// Go back to the cue point and carry on from there.
+    CueJump,
+    /// Store the cue point where the deck stands.
+    CueSet,
 }
 
-// The cue button of a real controller is deliberately absent: the engine has no command for the cue point, only
-// hotcues (`DjCommand::Cue` works on slots). An entry that jumped to hotcue 0 instead would be a button doing
-// something other than the word says, so the line is missing and the gap is the engine's, to be closed on its own.
+// The cue button: this program's cue point **is** hotcue slot 0 — the deck's own Cue button sets that slot with a
+// hold and jumps to it with a tap (owner's decision), and the engine's `DjCommand::Cue` works on slots. So the two
+// halves of the gesture have names of their own here rather than one name and a guess: `cue` jumps, `cue_set` stores.
 
 impl Intent {
     /// The command this intent turns into, or `None` when the deck cannot act on it.
@@ -62,6 +69,16 @@ impl Intent {
                 },
             }),
             Self::Sync => None,
+            Self::CueJump if pressed => Some(DjCommand::Cue {
+                deck,
+                action: CueAction::Jump(CUE_SLOT),
+            }),
+            Self::CueJump => None,
+            Self::CueSet if pressed => Some(DjCommand::Cue {
+                deck,
+                action: CueAction::Set(CUE_SLOT),
+            }),
+            Self::CueSet => None,
         }
     }
 }
@@ -118,6 +135,8 @@ pub fn intent_for(control: &str) -> Option<Intent> {
         "pause" => Some(Intent::Pause),
         "play_pause" => Some(Intent::PlayPause),
         "sync" => Some(Intent::Sync),
+        "cue" => Some(Intent::CueJump),
+        "cue_set" => Some(Intent::CueSet),
         _ => None,
     }
 }
@@ -176,8 +195,8 @@ mod tests {
         assert_eq!(intent_for("deck_b.sync"), Some(Intent::Sync));
         assert_eq!(intent_for("deck_a.tempo"), None);
         assert_eq!(intent_for("play"), None);
-        // The cue button has no engine command yet, and an entry for it would be a button doing something else.
-        assert_eq!(intent_for("deck_a.cue"), None);
+        assert_eq!(intent_for("deck_a.cue"), Some(Intent::CueJump));
+        assert_eq!(intent_for("deck_a.cue_set"), Some(Intent::CueSet));
     }
 
     #[test]
@@ -227,6 +246,27 @@ mod tests {
                 mode: SyncMode::Off
             })
         );
+    }
+
+    #[test]
+    fn the_cue_button_is_the_deck_s_own_cue_point() {
+        assert_eq!(
+            Intent::CueJump.command(DeckId::A, true, false),
+            Some(DjCommand::Cue {
+                deck: DeckId::A,
+                action: CueAction::Jump(CUE_SLOT)
+            })
+        );
+        assert_eq!(
+            Intent::CueSet.command(DeckId::B, true, true),
+            Some(DjCommand::Cue {
+                deck: DeckId::B,
+                action: CueAction::Set(CUE_SLOT)
+            })
+        );
+        // The release of either says nothing: the store and the jump are one gesture each.
+        assert_eq!(Intent::CueJump.command(DeckId::A, false, false), None);
+        assert_eq!(Intent::CueSet.command(DeckId::A, false, false), None);
     }
 
     #[test]
