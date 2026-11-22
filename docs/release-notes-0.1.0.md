@@ -3,6 +3,10 @@
 The first build that can be handed to someone else. Two decks play through our own engine; the window is a separate
 process that talks to the engine over a socket, so audio never waits for the interface.
 
+> **This is the first release, and it is meant for plain use on a computer** — a keyboard, a mouse and the screen.
+> It is **not adapted for DJ controllers**: nothing here listens to MIDI or HID, and no controller mapping ships with
+> this build. The design for controllers is written down (ADR-0006); the code is not in this release.
+
 ## What you can do
 
 - **Play two decks.** Load a track with the deck's Load button or its hotkey. A playing deck refuses a new track
@@ -50,6 +54,8 @@ so they do not care which glibc, Qt or library versions your distribution ships.
 
 ## Known limits
 
+- **No DJ controller support.** The audio interface is used for sound, not as a control surface: nothing listens to MIDI
+  or HID, and no controller mapping ships with this build. Mixing is done with the mouse and the keyboard.
 - **The Windows build is unsigned.** SmartScreen shows "More info → Run anyway".
 - **The Linux packages were not installed on a live Debian or Fedora.** They were built and inspected here (`dpkg-deb -I`,
   `rpm -qip`, file lists, self-checks below), but the first `dpkg -i` / `dnf install` on a real machine is still ahead.
