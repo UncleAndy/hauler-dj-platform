@@ -48,6 +48,20 @@ void settle(int milliseconds)
     loop.exec();
 }
 
+/// The value the window would show for a path, asked the way the window asks.
+double Settings_value(QQmlApplicationEngine &engine, const QString &path)
+{
+    auto *model = engine.singletonInstance<QObject *>(QAnyStringView("DjPlatform.Ui"), QAnyStringView("Settings"));
+    if (model == nullptr) {
+        return 0.0;
+    }
+    QVariant answer;
+    if (!QMetaObject::invokeMethod(model, "value", Q_RETURN_ARG(QVariant, answer), Q_ARG(QString, path))) {
+        return 0.0;
+    }
+    return answer.toDouble();
+}
+
 /// One device's shape, asked the way the window asks.
 QVariantMap Settings_shape(QQmlApplicationEngine &engine, const QString &device)
 {
@@ -452,6 +466,7 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
         ++turned;
         settle(40);
         collectHints();
+
     }
     if (!withoutHint.isEmpty()) {
         std::fprintf(stderr, "dj-ui: %lld lines of the window have no description: %s\n",
@@ -459,6 +474,44 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
                      qPrintable(withoutHint.join(QStringLiteral(", "))));
         return 1;
     }
+    // A slider whose ends do not match its value is a slider that writes the wrong number: the percent rows were 0..1
+    // while the layout stores 3..100, so dragging changed the interface to one clamped value (owner's report, 22.11).
+    // Writing a quarter of the travel and reading it back catches the whole class, not just those three.
+    QStringList slides;
+    const std::function<void(QQuickItem *)> walkSliders = [&](QQuickItem *node) {
+        if (node->property("kind").toString() == QStringLiteral("slider")) {
+            slides << node->objectName();
+        }
+        for (QQuickItem *child : node->childItems()) {
+            walkSliders(child);
+        }
+    };
+    walkSliders(content);
+    for (const QString &name : slides) {
+        QQuickItem *sliderRow = findInWindow(name);
+        if (sliderRow == nullptr) {
+            continue;
+        }
+        const QString path = sliderRow->property("path").toString();
+        const double low = sliderRow->property("from").toDouble();
+        const double high = sliderRow->property("to").toDouble();
+        const double wanted = low + (high - low) * 0.25;
+        const double before = Settings_value(engine, path);
+        if (!QMetaObject::invokeMethod(sliderRow, "write", Q_ARG(QVariant, QVariant(wanted)))) {
+            std::fprintf(stderr, "dj-ui: the %s slider refused its own value\n", qPrintable(name));
+            return 1;
+        }
+        const double stored = Settings_value(engine, path);
+        if (std::abs(stored - wanted) > 0.6) {
+            std::fprintf(stderr, "dj-ui: the %s slider spans %.2f..%.2f, wrote %.2f and the file holds %.2f\n",
+                         qPrintable(name), low, high, wanted, stored);
+            return 1;
+        }
+        // Put back what the file had: a check must not leave the window changed.
+        QMetaObject::invokeMethod(sliderRow, "write", Q_ARG(QVariant, QVariant(before)));
+    }
+    std::fprintf(stderr, "dj-ui: %lld sliders reach the values they write\n", static_cast<long long>(slides.size()));
+
     if (seenRows.size() < 30) {
         std::fprintf(stderr, "dj-ui: only %lld lines were seen while the pages turned — the hint check proves little\n",
                      static_cast<long long>(seenRows.size()));
