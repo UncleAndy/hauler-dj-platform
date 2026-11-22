@@ -220,6 +220,13 @@ case "${1:-}" in
   --engine-check)
     # The A06 acceptance, without a display or a sound card: run the real engine on a null sink,
     # let the real UI press Play, and require the ack and the published state to agree.
+    #
+    # The output is a wall of witnesses by design: every `dj-ui:` line says what was measured and what came out,
+    # and the gate reads them. A person needs only three things to know how the run went — this header, the last
+    # line on failure, and the verdict at the end.
+    echo "== проверки движка и оболочки: звука и экрана не требуется"
+    echo "   каждая строка «dj-ui:» и «dj-engine:» ниже — свидетельство: что измерено и что получилось"
+    echo "   если прогон упал, причина — последняя строка «dj-ui:» выше строки про остановку"
     # Build the engine rather than demand it: `cargo test` does not always leave the binary behind,
     # and a missing artefact is not the operator's problem to solve by hand.
     if [ -z "${DJ_ENGINE_BIN:-}" ]; then
@@ -254,7 +261,18 @@ case "${1:-}" in
       wait "$engine_pid" 2>/dev/null || true
       rm -rf "$run_dir"
     }
-    trap cleanup EXIT
+    # Строк проверок много, и без итога человек не понимает, читать ему дальше или уже всё. Итог печатается всегда:
+    # на успехе — одной фразой, на падении — с указанием, где причина.
+    report_engine_check() {
+      local code=$?
+      if [ "$code" -eq 0 ]; then
+        echo "engine-check: все проверки прошли (код 0)"
+      else
+        echo "engine-check: остановился на ошибке (код $code)" >&2
+        echo "   причина — последняя строка «dj-ui:» выше; ниже неё ничего не выполнялось" >&2
+      fi
+    }
+    trap 'report_engine_check; cleanup' EXIT
     for _ in $(seq 1 100); do
       [ -S "$socket" ] && break
       sleep 0.05
