@@ -4,6 +4,10 @@
 //! the window must not cost the controller. It reads; it does not write. The screens and the motors are later, and the
 //! motors are behind a decision that has not been made.
 //!
+//! `--replay` closes the other half of the path: a file of control events goes through the binding table into the
+//! engine, as the same commands a hand would send. That is how the path is tested without a device — the driver's own
+//! bytes are the only part a controller adds.
+//!
 //! **Off by default.** The setting `controller.enabled` in `config.toml` decides whether the service does anything at
 //! all; while it is off — which is what a fresh install has — this program says so and exits successfully, so the
 //! program behaves exactly as it did before controllers existed.
@@ -12,6 +16,8 @@
 //! dj-controller --status              what the setting says and what is plugged in
 //! dj-controller --list                every HID node this system has, marking ours
 //! dj-controller --capture out.txt     read reports into a file, nothing sent to the device
+//! dj-controller --replay events.txt --engine <endpoint>
+//!                                     turn control events into engine commands
 //! ```
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
@@ -19,11 +25,12 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::process::ExitCode;
 
-use dj_controller_core::Driver;
+use dj_bridge::{ClientMessage, ServerMessage};
+use dj_controller_core::{ControlEvent, Driver, Mapping};
 use dj_controller_s4mk3::{NAME, PRODUCT, S4Mk3, VENDOR};
 use dj_hid::{DeviceInfo, HidrawTransport, Transport};
 
-const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>]";
+const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>]";
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -39,11 +46,26 @@ fn main() -> ExitCode {
 fn run(arguments: &[String]) -> Result<(), String> {
     let mut mode = Mode::Status;
     let mut reports = 200_usize;
+    let mut engine: Option<String> = None;
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].as_str() {
             "--status" => mode = Mode::Status,
             "--list" => mode = Mode::List,
+            "--replay" => {
+                let Some(path) = arguments.get(index + 1) else {
+                    return Err(format!("--replay wants a file name. {USAGE}"));
+                };
+                mode = Mode::Replay(path.clone());
+                index += 1;
+            }
+            "--engine" => {
+                let Some(endpoint) = arguments.get(index + 1) else {
+                    return Err(format!("--engine wants an endpoint. {USAGE}"));
+                };
+                engine = Some(endpoint.clone());
+                index += 1;
+            }
             "--capture" => {
                 let Some(path) = arguments.get(index + 1) else {
                     return Err(format!("--capture wants a file name. {USAGE}"));
@@ -94,6 +116,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
             Ok(())
         }
         Mode::Capture(path) => capture(&transport, &devices, &path, reports),
+        Mode::Replay(path) => replay(&path, engine.as_deref()),
     }
 }
 
@@ -102,6 +125,7 @@ enum Mode {
     Status,
     List,
     Capture(String),
+    Replay(String),
 }
 
 fn status(devices: &[DeviceInfo]) -> Result<(), String> {
@@ -194,6 +218,102 @@ fn capture(
     Ok(())
 }
 
+/// Turns a file of control events into engine commands.
+///
+/// The file is what a capture records, annotated: `deck_a.play=1` on a line, `#` for a comment. Going through the same
+/// binding table the driver feeds is the point — a test of this path proves the path, and the only thing a device adds
+/// later is the bytes that produce the same events.
+fn replay(path: &str, endpoint: Option<&str>) -> Result<(), String> {
+    let text =
+        std::fs::read_to_string(path).map_err(|error| format!("{path} cannot be read: {error}"))?;
+    let mapping = Mapping::new();
+    let mut commands = Vec::new();
+    for (number, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((control, value)) = line.split_once('=') else {
+            return Err(format!(
+                "{}:{}: wanted control=value, got {line}",
+                number + 1,
+                path
+            ));
+        };
+        let value: f32 = value
+            .trim()
+            .parse()
+            .map_err(|_| format!("{}:{}: {value} is not a number", number + 1, path))?;
+        let event = ControlEvent::level(control.trim(), value);
+        match mapping.resolve(&event, false) {
+            Some((deck, command)) => commands.push((control.trim().to_string(), deck, command)),
+            None => println!(
+                "dj-controller: {} asks for nothing the engine knows ({control})",
+                line
+            ),
+        }
+    }
+    let Some(endpoint) = endpoint else {
+        for (control, _, command) in &commands {
+            println!("dj-controller: {control} would send {command:?} (no --engine, nothing sent)");
+        }
+        return Ok(());
+    };
+    send_commands(endpoint, &commands)
+}
+
+/// Sends the commands to the engine and waits for their answers.
+fn send_commands(
+    endpoint: &str,
+    commands: &[(String, dj_domain::DeckId, dj_domain::DjCommand)],
+) -> Result<(), String> {
+    let mut stream = dj_bridge::transport::connect(std::path::Path::new(endpoint))
+        .map_err(|error| format!("{endpoint} cannot be reached: {error}"))?;
+    dj_bridge::write_frame(
+        &mut stream,
+        &ClientMessage::Hello {
+            protocol: dj_domain::COMMAND_PROTOCOL.to_string(),
+        },
+    )
+    .map_err(|error| format!("the engine refused the handshake: {error}"))?;
+    let mut ids = Vec::new();
+    for (index, (_, _, command)) in commands.iter().enumerate() {
+        let id = u64::try_from(index + 1).unwrap_or(1);
+        ids.push(id);
+        let scheduled = dj_domain::ScheduledCommand {
+            id,
+            // No clock of our own: the engine applies it at the next block, which is where a hand's command lands too.
+            effective_sample: 0,
+            command: command.clone(),
+        };
+        dj_bridge::write_frame(&mut stream, &ClientMessage::Command(scheduled))
+            .map_err(|error| format!("the command could not be sent: {error}"))?;
+    }
+    let mut answered = Vec::new();
+    while answered.len() < ids.len() {
+        let message: ServerMessage = dj_bridge::read_frame(&mut stream).map_err(|error| {
+            format!(
+                "the engine stopped answering after {} answers: {error}",
+                answered.len()
+            )
+        })?;
+        if let ServerMessage::Ack(ack) = message {
+            if !ids.contains(&ack.command_id) {
+                continue;
+            }
+            let (control, _, _) = commands
+                .iter()
+                .zip(ids.iter())
+                .find(|(_, id)| **id == ack.command_id)
+                .map(|(entry, _)| entry.clone())
+                .ok_or("an answer with no question")?;
+            println!("dj-controller: {control} → {:?}", ack.status);
+            answered.push(ack.command_id);
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,5 +340,27 @@ mod tests {
     #[test]
     fn a_report_count_must_be_a_number() {
         assert!(run(&["--reports".to_string(), "many".to_string()]).is_err());
+    }
+
+    #[test]
+    fn a_replay_line_that_is_not_a_pair_is_refused() {
+        let dir = std::env::temp_dir().join("dj-controller-replay-test");
+        let _ = std::fs::create_dir_all(&dir);
+        let file = dir.join("bad.txt");
+        let _ = std::fs::write(&file, "deck_a.play\n");
+        let refused = replay(&file.to_string_lossy(), None);
+        assert!(refused.is_err());
+        let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
+    fn a_replay_without_an_engine_sends_nothing() {
+        let dir = std::env::temp_dir().join("dj-controller-replay-test");
+        let _ = std::fs::create_dir_all(&dir);
+        let file = dir.join("quiet.txt");
+        let _ = std::fs::write(&file, "# a comment\ndeck_a.play=1\nwheel_left=1.5\n");
+        // No endpoint: the commands are printed, not sent, and an event the table does not know is said out loud.
+        assert!(replay(&file.to_string_lossy(), None).is_ok());
+        let _ = std::fs::remove_file(&file);
     }
 }

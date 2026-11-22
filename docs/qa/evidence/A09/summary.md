@@ -14,6 +14,7 @@
 | Выключатель в окне «Settings» → «Controller» | `settings/SettingsWindow.qml` | `--settings-window-check`: «the controller is off until asked for, and the switch writes it: on, then off again» |
 | Настройка в файле, по умолчанию выключена | `crates/dj-config` | `cargo test -p dj-config`: `[controller] enabled = false` в свежем файле, круговой обход через TOML |
 | Лаунчер запускает службу только по настройке | `apps/dj-launcher` | `bash scripts/launcher-check.sh` (запуск без службы не меняется) + `controller-check.sh` |
+| Таблица «орган → команда» и путь до движка | `crates/dj-controller-core/src/mapping.rs`, `apps/dj-controller --replay` | `cargo test -p dj-controller-core` (23 теста) + `controller-check.sh`: `deck_b.sync=1` → `Applied { at_sample: … }` от живого движка |
 
 ## Свидетели
 
@@ -31,4 +32,6 @@ controller-check: off by default, on when asked, off again; nothing is opened or
 2. Дисплеи: нужен доступ к bulk (на Linux правило `udev` на `/dev/bus/usb`, на Windows WinUSB) и решение, что
    показывать.
 3. Моторы: запрещены до отдельного ADR о безопасности.
-4. Живой замер задержки «орган → команда» — после того, как события пойдут в движок (A10).
+4. Команда для cue-точки в контракте движка отсутствует — таблица привязок поэтому без `cue`; это работа движка,
+   не маппинга.
+5. Живой замер задержки «орган → команда» — на устройстве: путь уже пройден на записанных событиях.

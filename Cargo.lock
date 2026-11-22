@@ -426,15 +426,20 @@ dependencies = [
 name = "dj-controller"
 version = "0.1.0"
 dependencies = [
+ "dj-bridge",
  "dj-config",
  "dj-controller-core",
  "dj-controller-s4mk3",
+ "dj-domain",
  "dj-hid",
 ]
 
 [[package]]
 name = "dj-controller-core"
 version = "0.1.0"
+dependencies = [
+ "dj-domain",
+]
 
 [[package]]
 name = "dj-controller-s4mk3"

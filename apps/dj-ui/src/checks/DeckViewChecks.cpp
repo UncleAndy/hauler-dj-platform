@@ -5984,10 +5984,19 @@ int runScratchCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, QComman
         send(QEvent::MouseMove, at - QPointF(10.0 * step, 0.0));
         (void)waitFor([&]() { return false; }, 15);
     }
+    // The position read here is the engine's, published some twenty times a second: a drag of two hundred
+    // milliseconds can finish between two snapshots, and reading the older one says the hand moved nothing
+    // (measured, 22.11 — the check accused the hand of a fault that was a stale picture). Ask until a snapshot
+    // carries the drag, then measure it.
+    if (!waitFor([&]() { return frame() != grabbed; }, 1000)) {
+        std::fprintf(stderr, "dj-ui: the hand moved left but the material went nowhere (%lld)\n",
+                     static_cast<long long>(grabbed));
+        return 1;
+    }
     const qint64 moved = frame();
     if (moved <= grabbed) {
         std::fprintf(stderr,
-                     "dj-ui: the hand moved left but the material went nowhere (%lld -> %lld)\n",
+                     "dj-ui: the hand moved left but the material went backwards (%lld -> %lld)\n",
                      static_cast<long long>(grabbed), static_cast<long long>(moved));
         return 1;
     }

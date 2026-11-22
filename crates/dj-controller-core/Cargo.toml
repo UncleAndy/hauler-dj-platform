@@ -8,6 +8,8 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+# The command a control turns into is the engine's own contract, not a dialect of ours.
+dj-domain = { path = "../dj-domain" }
 
 [lints]
 workspace = true

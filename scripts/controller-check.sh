@@ -73,4 +73,36 @@ if [ -s "$work/reports.txt" ]; then
     fail "a capture file was written while controller support was off"
 fi
 
-printf 'controller-check: off by default, on when asked, off again; nothing is opened or sent while it is off\n'
+# 5. The other half of the path, end to end without a device: a file of control events goes through the binding
+#    table into a real engine, and the engine's own answers are the witness. This is what a controller adds bytes to —
+#    nothing else in the chain is new when the hardware arrives.
+"$engine" --set-config controller.enabled=true >/dev/null
+engine_socket="$work/engine.sock"
+"$engine" --null-sink --socket "$engine_socket" --block 256 >/dev/null 2>&1 &
+replay_engine=$!
+for _ in $(seq 1 100); do
+    [ -S "$engine_socket" ] && break
+    sleep 0.05
+done
+printf 'deck_b.sync=1\nwheel_left=1.5\n' >"$work/events.txt"
+replayed="$("$service" --replay "$work/events.txt" --engine "$engine_socket" 2>&1 || true)"
+kill "$replay_engine" 2>/dev/null || true
+wait "$replay_engine" 2>/dev/null || true
+case "$replayed" in
+    *"deck_b.sync → Applied"*) ;;
+    *) fail "the command never reached the engine: $replayed" ;;
+esac
+case "$replayed" in
+    *"wheel_left=1.5 asks for nothing the engine knows"*) ;;
+    *) fail "an event the table does not know was not said out loud: $replayed" ;;
+esac
+
+# 6. And with the switch off the same replay sends nothing at all.
+"$engine" --set-config controller.enabled=false >/dev/null
+quiet="$("$service" --replay "$work/events.txt" --engine "$engine_socket" 2>&1 || true)"
+case "$quiet" in
+    *"controller support is off"*) ;;
+    *) fail "a replay ran while the controller was off: $quiet" ;;
+esac
+
+printf 'controller-check: off by default, on when asked, off again; commands reach the engine and events the table does not know are named\n'

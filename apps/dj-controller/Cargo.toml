@@ -8,7 +8,9 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+dj-bridge = { path = "../../crates/dj-bridge" }
 dj-config = { path = "../../crates/dj-config" }
+dj-domain = { path = "../../crates/dj-domain" }
 dj-controller-core = { path = "../../crates/dj-controller-core" }
 dj-controller-s4mk3 = { path = "../../crates/dj-controller-s4mk3" }
 dj-hid = { path = "../../crates/dj-hid" }

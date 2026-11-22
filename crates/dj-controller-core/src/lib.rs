@@ -12,12 +12,14 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 pub mod layers;
+pub mod mapping;
 pub mod report;
 pub mod wheel;
 
 use std::time::Duration;
 
 pub use layers::{DeckLayer, LayerChange, Layers};
+pub use mapping::{BindableDeck, Intent, Mapping, intent_for};
 pub use wheel::WheelCounter;
 
 /// One thing the DJ did, and when the device said so.
