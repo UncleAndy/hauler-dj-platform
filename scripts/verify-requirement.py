@@ -46,6 +46,36 @@ def main(argv: list[str]) -> int:
         for row in waiting:
             print(f"  {row['req_id']:13} {row['test_id'][:44]:44} {row['evidence_link']}")
         return 0
+    if argv[0] == '--defer':
+        # Формальное исключение: требование известно, но в объём не входит — решением владельца, с причиной в строке.
+        if len(argv) < 3:
+            print('нужно: --defer "<причина>" "<имя владельца>" [--yes]', file=sys.stderr)
+            return 2
+        reason, owner = argv[1].strip(), argv[2].strip()
+        confirmed = '--yes' in argv[3:]
+        pending = [row for row in rows if row['test_status'] == 'unverified']
+        if not pending:
+            print('в unverified ничего нет')
+            return 0
+        print(f'в unverified {len(pending)} строк; будут помечены deferred с причиной «{reason}»:')
+        for row in pending:
+            print(f"  {row['req_id']:13} {row['implementation_path'][:70]}")
+        if not confirmed:
+            print('\nэто была проверка: ничего не изменено. Повторите с --yes.')
+            return 0
+        if ',' in reason or ',' in owner:
+            print('в причине и имени не должно быть запятых', file=sys.stderr)
+            return 2
+        date = datetime.date.today().isoformat()
+        for row in pending:
+            row['test_status'] = 'deferred'
+            row['reviewer'] = owner
+            row['date'] = date
+            if not row['implementation_path'].startswith('deferred:'):
+                row['implementation_path'] = f'deferred: {reason}; ' + row['implementation_path']
+        save(CSV, rows)
+        print(f'\nпомечено deferred: {len(pending)}, владелец {owner}, {date}')
+        return 0
     if argv[0] == '--batch-gate':
         # Массовая отметка того, что проверяется гейтом: cargo-тесты и скрипты. Список печатается целиком и только
         # после подтверждения меняется файл — ревьюер видит, за что расписывается, и не может «не заметить».

@@ -40,13 +40,15 @@ if [ "$bad_rows" -ne 0 ]; then
 fi
 
 # A row may only claim a state that another person can check: `passing` needs a test or a command,
-# `review` and `passing` need an evidence file that exists today.
-while IFS=, read -r id owner priority risk source what how state evidence _rest; do
+# `review`, `passing` and `verified` need an evidence file that exists today, and `verified` needs the
+# name of the person who gave the verdict plus the date they gave it — a verdict without an author is
+# not a verdict.
+while IFS=, read -r id owner priority risk source what how state evidence reviewer date; do
   [ "$id" = "req_id" ] && continue
   case "$state" in
-    passing|review|unverified|planned) ;;
+    passing|review|verified|unverified|planned|deferred) ;;
     *)
-      echo "traceability: ${id} has status '${state}', which is not passing/review/unverified/planned" >&2
+      echo "traceability: ${id} has status '${state}', which is not passing/review/verified/unverified/planned/deferred" >&2
       status=1
       continue
       ;;
@@ -55,7 +57,16 @@ while IFS=, read -r id owner priority risk source what how state evidence _rest;
     echo "traceability: ${id} is passing but names no test or command" >&2
     status=1
   fi
-  if [ "$state" = "passing" ] || [ "$state" = "review" ]; then
+  if [ "$state" = "verified" ]; then
+    if [ -z "$reviewer" ] || [ -z "$date" ]; then
+      echo "traceability: ${id} is verified but names no reviewer or no date" >&2
+      status=1
+    elif ! printf '%s' "$date" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then
+      echo "traceability: ${id} is verified but the date '${date}' is not YYYY-MM-DD" >&2
+      status=1
+    fi
+  fi
+  if [ "$state" = "passing" ] || [ "$state" = "review" ] || [ "$state" = "verified" ]; then
     [ -z "$evidence" ] && continue
     first="${evidence%%;*}"
     if [ ! -e "$first" ]; then
@@ -66,6 +77,6 @@ while IFS=, read -r id owner priority risk source what how state evidence _rest;
 done < "$csv"
 
 if [ "$status" -eq 0 ]; then
-  echo "traceability: every DJP-* requirement has an owned row, every row has 11 fields"
+  echo "traceability: every DJP-* requirement has an owned row, every row has 11 fields, every verdict names its author"
 fi
 exit "$status"
