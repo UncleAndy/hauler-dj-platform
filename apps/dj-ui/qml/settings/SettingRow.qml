@@ -211,6 +211,8 @@ Item {
 
         Label {
             Layout.preferredWidth: 200
+            // The collection block carries its own label inside its frame; a second one on the left would say it twice.
+            visible: row.kind !== "folders"
             text: row.label
             color: row.open ? UiSettings.themeText : UiSettings.themeTextDim
             font.pixelSize: 11
@@ -291,56 +293,64 @@ Item {
             elide: Text.ElideRight
         }
 
-        // The collection folders: a table with drawn cells and four rows of its own height, not a list that borrows
-        // whatever the layout has left. The owner's report was exact — the list was too low and the lines below were
-        // drawn over it — and the cause was a row that never said how tall it is. Here the sizes are numbers, so the
-        // table cannot shrink: 18 px of header and four rows of 20 px, with scrolling when there are more folders.
-        Item {
+        // The collection folders, in one framed block of their own: the label, the table, the path field with its
+        // picker, and the two buttons. Every size here is a number and every child is anchored to its neighbour — the
+        // layout negotiation froze the table at zero height twice, and the owner has already told me twice what he sees
+        // instead of what I intended (22.11): no header row, the frame ending under the fourth row, and the whole block
+        // told apart from the page.
+        Rectangle {
+            id: folderBlock
+            objectName: "folderBlock"
             visible: row.kind === "folders"
-            // A width has to be named as well as a height: a layout child that only asks to fill is zero wide until
-            // something asks it how wide it wants to be, and its children then compute against zero.
-            // The width is what is left of the row after its label (200 px and 8 px of spacing) minus room for the
-            // page's scrollbar and a margin. Measured: without the margin the table's right edge landed exactly on the
-            // page's edge and read as running past it (owner's report, 22.11).
-            width: parent.width - 208 - 28
-            // The table (108), the gap and the path field (4 + 24), then the buttons stacked below it: Add first,
-            // Remove under it (owner's order).
-            height: 108 + 4 + 26 + 4 + 26
+            // Plain width and height, not Layout.*: in this row the layout left the block zero-sized (measured:
+            // block x 481..481, y 170..170) while the children kept their own geometry. Numbers hold, and the row is
+            // 200 px of label plus 8 px of spacing, with 28 px left for the page's scrollbar.
+            width: parent.width - 236
+            height: 184
+            color: UiSettings.themeRaised
+            border.color: UiSettings.themeTextDim
+            border.width: 1
+            radius: 3
 
+            Label {
+                id: folderTitle
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.leftMargin: 8
+                anchors.rightMargin: 8
+                anchors.topMargin: 8
+                height: 16
+                text: row.label
+                color: UiSettings.themeText
+                font.pixelSize: 11
+                font.bold: true
+                elide: Text.ElideRight
+            }
+
+            // Four rows of 20 px and a 1 px border on each side: 82 px, so the bottom border sits under the fourth row
+            // instead of hanging below it.
             Rectangle {
                 id: folderFrame
                 objectName: "folderTable"
                 anchors.left: parent.left
-                anchors.top: parent.top
-                width: parent.width
-                height: 108
-                anchors.bottom: undefined
+                anchors.right: parent.right
+                anchors.top: folderTitle.bottom
+                anchors.leftMargin: 8
+                anchors.rightMargin: 8
+                anchors.topMargin: 6
+                height: 82
                 color: UiSettings.themeBackground
                 border.color: UiSettings.themeTextDim
                 border.width: 1
                 clip: true
 
-                // Empty cells under the rows: an empty table still reads as a table.
+                // Empty cells under the rows: an empty table still reads as a table, and the last cell's border is the
+                // frame's own border.
                 Column {
                     anchors.fill: parent
                     anchors.margins: 1
                     spacing: 0
-
-                    Rectangle {
-                        width: parent.width
-                        height: 18
-                        color: "transparent"
-                        border.color: UiSettings.themeTextDim
-                        border.width: 1
-                        Label {
-                            anchors.left: parent.left
-                            anchors.leftMargin: 4
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: qsTr("Folder")
-                            color: UiSettings.themeTextDim
-                            font.pixelSize: 9
-                        }
-                    }
 
                     Repeater {
                         model: 4
@@ -359,7 +369,6 @@ Item {
                     objectName: "folderRows"
                     anchors.fill: parent
                     anchors.margins: 1
-                    anchors.topMargin: 19
                     clip: true
                     model: row.folders
                     currentIndex: -1
@@ -381,8 +390,8 @@ Item {
                             anchors.verticalCenter: parent.verticalCenter
                             width: parent.width - 8
                             text: modelData
-                            // A folder that is gone is shown as gone: a quiet line would promise tracks that are
-                            // not there any more.
+                            // A folder that is gone is shown as gone: a quiet line would promise tracks that are not
+                            // there any more.
                             color: row.folderMissing(modelData) ? UiSettings.themeWarning : UiSettings.themeText
                             font.pixelSize: 10
                             elide: Text.ElideLeft
@@ -399,15 +408,19 @@ Item {
             Row {
                 id: folderPathRow
                 anchors.left: parent.left
+                anchors.right: parent.right
                 anchors.top: folderFrame.bottom
-                anchors.topMargin: 4
-                width: parent.width
+                anchors.leftMargin: 8
+                anchors.rightMargin: 8
+                anchors.topMargin: 6
+                height: 26
                 spacing: 4
 
                 TextField {
                     id: folderField
                     objectName: "folderAddField"
-                    width: folderPathRow.width - browseButton.width - folderPathRow.spacing
+                    width: parent.width - browseButton.width - parent.spacing
+                    height: parent.height
                     font.pixelSize: 11
                     placeholderText: qsTr("/path/to/music")
                     onAccepted: row.addFolder(text)
@@ -419,31 +432,26 @@ Item {
                     id: browseButton
                     objectName: "folderBrowse"
                     width: 28
+                    height: parent.height
                     text: qsTr("…")
                     font.pixelSize: 11
                     onClicked: folderDialog.open()
                 }
             }
 
-            FolderDialog {
-                id: folderDialog
-                title: qsTr("Choose a music folder")
-                onAccepted: folderField.text = folderDialog.selectedFolder.toString()
-            }
-
-            // The buttons in one row under the path field: Add first, Remove next to it (owner's order, 22.11). The
-            // anchor is the field's row, not the field itself — the field lives inside that row, and its `bottom` is
-            // measured in the row's coordinates, which put the buttons on top of the table.
             Row {
                 id: folderButtons
                 anchors.left: parent.left
                 anchors.top: folderPathRow.bottom
-                anchors.topMargin: 4
+                anchors.leftMargin: 8
+                anchors.topMargin: 6
+                height: 26
                 spacing: 8
 
                 Button {
                     id: folderAddButton
                     objectName: "folderAdd"
+                    height: parent.height
                     text: qsTr("Add")
                     font.pixelSize: 9
                     enabled: folderField.text.trim() !== ""
@@ -456,6 +464,7 @@ Item {
                 Button {
                     id: folderRemoveButton
                     objectName: "folderRemove"
+                    height: parent.height
                     text: qsTr("Remove")
                     font.pixelSize: 9
                     enabled: folderList.currentIndex >= 0
@@ -466,6 +475,12 @@ Item {
                         }
                     }
                 }
+            }
+
+            FolderDialog {
+                id: folderDialog
+                title: qsTr("Choose a music folder")
+                onAccepted: folderField.text = folderDialog.selectedFolder.toString()
             }
         }
 

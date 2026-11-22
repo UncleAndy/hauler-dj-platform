@@ -549,10 +549,31 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
         std::fprintf(stderr, "dj-ui: the collection row has no table or no buttons\n");
         return 1;
     }
+    // Four rows of 20 px and the frame's own border: the frame must end under the fourth row, not hang below it
+    // (owner's report, 22.11).
     const double tableHeight = table->height();
-    if (tableHeight < 4 * 20.0) {
-        std::fprintf(stderr, "dj-ui: the collection table is %.0f px tall, less than four rows\n", tableHeight);
+    if (tableHeight < 4 * 20.0 || tableHeight > 4 * 20.0 + 4) {
+        std::fprintf(stderr, "dj-ui: the collection table is %.0f px tall, where four rows and their border are 82\n",
+                     tableHeight);
         return 1;
+    }
+    // The block itself is one framed thing: its frame has to hold the label, the table, the field and the buttons.
+    QQuickItem *block = findInWindow(QStringLiteral("folderBlock"));
+    if (block == nullptr) {
+        std::fprintf(stderr, "dj-ui: the collection folders have no block of their own\n");
+        return 1;
+    }
+    const QRectF blockRect(block->mapToScene(QPointF(0, 0)), block->size());
+    for (QQuickItem *part : {table, addButton, removeButton}) {
+        const QRectF partRect(part->mapToScene(QPointF(0, 0)), part->size());
+        if (!blockRect.contains(partRect)) {
+            std::fprintf(stderr,
+                         "dj-ui: %s at x %.0f..%.0f y %.0f..%.0f is outside the collection block "
+                         "x %.0f..%.0f y %.0f..%.0f\n",
+                         qPrintable(part->objectName()), partRect.left(), partRect.right(), partRect.top(),
+                         partRect.bottom(), blockRect.left(), blockRect.right(), blockRect.top(), blockRect.bottom());
+            return 1;
+        }
     }
     // The buttons live in one row under the path field: Add first, Remove to its right (owner's order, 22.11).
     const QRectF addRect(addButton->mapToScene(QPointF(0, 0)), addButton->size());
