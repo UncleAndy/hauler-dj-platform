@@ -5,20 +5,20 @@ DJP-ARCH-003,audio-core,P0,R0,DJP-SRS-001 §4,crates/dj-audio-core/src/queue.rs,
 DJP-ARCH-004,audio-core,P0,R0,DJP-SRS-001 §4,dj-bridge + apps/dj-engine: снапшоты публикует отдельный поток из атомарных ячеек рендер-поток не блокирует и не аллоцирует,bridge::a_split_connection_writes_while_its_reader_is_blocked; engine::publishing_a_block_does_not_allocate,review,docs/architecture/rt-contract.md,,2026-11-05
 DJP-ARCH-005,audio-core,P0,R0,DJP-SRS-001 §4,crates/dj-audio-core/src/engine.rs; crates/dj-audio-core/tests/rt_contract.rs,rt_contract::processing_a_block_does_not_allocate,passing,docs/qa/evidence/A01/summary.md,,2026-11-05
 DJP-ARCH-006,audio-core,P0,R0,DJP-SRS-001 §4,порядок сигнала на устройстве: деки → канальные стрипы → микшер → master/cue; master на первую пару выходов; cue на вторую при 4+ каналах,dj-engine --device default_output --seconds 60 --autoplay: пики 0.4 на обоих каналах; 48 000 кадров/с; late 0 early 0 errors 0,review,docs/qa/evidence/A04/summary.md,docs/qa/evidence/A06/device-output.md,2026-11-05
-DJP-ARCH-007,audio-core,P1,R1,DJP-SRS-001 §4,partial: crates/dj-mixer (шины master и cue; booth / external / recording / aux — нет),mixer::routing_puts_each_channel_only_where_it_belongs,unverified,docs/qa/evidence/A04/summary.md,,2026-11-05
-DJP-ARCH-008,audio-core,P1,R1,DJP-SRS-001 §4,,,unverified,docs/adr/0005-audio-devices-and-routes.md,,2026-11-05
-DJP-ARCH-009,audio-core,P1,R1,DJP-SRS-001 §4,,,unverified,,,
-DJP-ARCH-010,audio-core,P1,R1,DJP-SRS-001 §4,,,unverified,,,
-DJP-CTRL-001,hardware,P0,R0,DJP-SRS-001 §5,planned: crates/dj-controller-core,,unverified,docs/adr/0006-controllers.md,,2026-11-05
-DJP-CTRL-002,hardware,P0,R0,DJP-SRS-001 §5,planned: crates/dj-midi; crates/dj-controller-core,,unverified,docs/adr/0006-controllers.md,,2026-11-05
-DJP-CTRL-003,hardware,P1,R1,DJP-SRS-001 §5,planned: crates/dj-controller-s4mk3,,unverified,docs/adr/0006-controllers.md,,2026-11-05
-DJP-CTRL-004,hardware,P1,R1,DJP-SRS-001 §5,planned: crates/dj-hid; docs/hardware/s4mk3/hardware-profile.md,,unverified,docs/adr/0006-controllers.md,,2026-11-05
-DJP-CTRL-005,hardware,P1,R1,DJP-SRS-001 §5,planned: crates/dj-display; crates/dj-controller-s4mk3,,unverified,docs/adr/0006-controllers.md,,2026-11-05
-DJP-CTRL-006,hardware,P2,R2,DJP-SRS-001 §5,planned: crates/dj-controller-s4mk3; docs/adr (safety gate),,unverified,docs/adr/0006-controllers.md,,2026-11-05
-DJP-CTRL-007,hardware,P2,R2,DJP-SRS-001 §5,planned: crates/dj-display; crates/dj-controller-s4mk3,,unverified,docs/adr/0006-controllers.md,,2026-11-05
-DJP-CTRL-008,hardware,P2,R3,DJP-SRS-001 §5,planned: crates/dj-hid; crates/dj-midi,,unverified,docs/adr/0006-controllers.md,,2026-11-05
-DJP-CTRL-009,hardware,P2,R3,DJP-SRS-001 §5,,,unverified,,,
-DJP-CTRL-010,hardware,P3,R3,DJP-SRS-001 §5,,,unverified,,,
+DJP-ARCH-007,audio-core,P1,R1,DJP-SRS-001 §4,partial: crates/dj-mixer — шины master и cue с PFL; booth; external; recording; aux нет,mixer::routing_puts_each_channel_only_where_it_belongs,unverified,docs/qa/evidence/A04/summary.md,,2026-11-05
+DJP-ARCH-008,audio-core,P1,R1,DJP-SRS-001 §4,partial: маршрутизация master/cue и пары каналов по устройству; компенсации задержек узлов нет,,unverified,docs/adr/0005-audio-devices-and-routes.md,,2026-11-05
+DJP-ARCH-009,audio-core,P1,R1,DJP-SRS-001 §4,partial: у узлов есть process/reset (crates/dj-dsp; crates/dj-fx); единого prepare(sample_rate; block_limits) нет,,unverified,,,
+DJP-ARCH-010,audio-core,P1,R1,DJP-SRS-001 §4,partial: значения ограничиваются на границе (UiSettings; движок); общего валидатора DSP-параметров нет,,unverified,,,
+DJP-CTRL-001,hardware,P0,R0,DJP-SRS-001 §5,partial: crates/dj-hid (транспорт hidraw); crates/dj-controller-core (события; слои; таблица привязок); MIDI и negotiation возможностей нет,cargo test -p dj-hid -p dj-controller-core,review,docs/qa/evidence/A09/summary.md,,2026-11-05
+DJP-CTRL-002,hardware,P0,R0,DJP-SRS-001 §5,не сделано: MIDI-подсистемы нет ни в одном крейте,,unverified,docs/adr/0006-controllers.md,,2026-11-05
+DJP-CTRL-003,hardware,P1,R1,DJP-SRS-001 §5,partial: crates/dj-controller-s4mk3 — репорт джогов; кадр экрана; цвета LED; шкала темпофейдера; карта кнопок 1/2 снимается на железе,cargo test -p dj-controller-s4mk3,review,docs/qa/evidence/A09/summary.md,,2026-11-05
+DJP-CTRL-004,hardware,P1,R1,DJP-SRS-001 §5,partial: поиск устройства по vendor/product через /sys/class/hidraw без root; hotplug и правило udev не проверены на устройстве,dj-controller --status,review,docs/hardware/s4mk3/protocol-notes.md,,2026-11-05
+DJP-CTRL-005,hardware,P1,R1,DJP-SRS-001 §5,partial: кадр экрана (320x240; RGB565) строится и проверен; отправка требует bulk/WinUSB — решения нет,,unverified,docs/adr/0006-controllers.md,,2026-11-05
+DJP-CTRL-006,hardware,P2,R2,DJP-SRS-001 §5,не сделано: моторы запрещены до отдельного ADR о безопасности (ADR-0006),,unverified,docs/adr/0006-controllers.md,,2026-11-05
+DJP-CTRL-007,hardware,P2,R2,DJP-SRS-001 §5,partial: коды цветов LED (18; шаг 4) и пакет 94 байта описаны; отправки нет,,unverified,docs/adr/0006-controllers.md,,2026-11-05
+DJP-CTRL-008,hardware,P2,R3,DJP-SRS-001 §5,не сделано: вне объёма 0.1.0 (R3),,unverified,docs/adr/0006-controllers.md,,2026-11-05
+DJP-CTRL-009,hardware,P2,R3,DJP-SRS-001 §5,не сделано: вне объёма 0.1.0 (R3),,unverified,,,
+DJP-CTRL-010,hardware,P3,R3,DJP-SRS-001 §5,не сделано: вне объёма 0.1.0 (R3),,unverified,,,
 DJP-DATA-001,media,,,DJP-SRS-001 §6,схема файла и API не раскрывают pointer-адреса и backend-типы,schemas/djmeta-v1.json; crates/dj-library::meta — только кадры и числа,review,docs/qa/evidence/A08/summary.md,,2026-11-06
 DJP-DATA-002,media,,,DJP-SRS-001 §6,времена в кадрах источника: cue.frame; loop.start/end; first_beat_frame,crates/dj-library::meta; sidecar::a_round_trip_keeps_fields_this_build_does_not_know,review,docs/qa/evidence/A08/summary.md,,2026-11-06
 DJP-DATA-003,media,,,DJP-SRS-001 §6,кэш версионирован и имеет fingerprint; сбой кэша не трогает метаданные,crates/dj-library::fingerprint; a_broken_sidecar_is_reported_and_the_mirror_still_answers,review,docs/qa/evidence/A08/summary.md,,2026-11-06
@@ -33,35 +33,35 @@ DJP-DECK-005,audio-core,P1,R1,DJP-SRS-001 §5,петля по длине в до
 DJP-DECK-006,audio-core,P1,R1,DJP-SRS-001 §5,crates/dj-deck::beat_jump + crates/dj-deck::set_nudge + apps/dj-engine::apply + apps/dj-ui/src/BridgeClient::beatJump,deck::a_beat_jump_lands_on_the_beat_it_promised + engine::a_nudge_reaches_the_deck_and_the_state_reports_it + ui.sh --transport-extras-check,review,docs/qa/evidence/B05/summary.md,,
 DJP-DECK-007,audio-core,P1,R1,DJP-SRS-001 §5,crates/dj-deck::set_slip/set_reverse/read_reversed + apps/dj-engine::apply + apps/dj-ui/src/BridgeClient::setSlip/setReverse,deck::a_slip_jump_keeps_the_virtual_head_running + deck::reverse_walks_the_material_backwards + deck::reverse_with_key_lock_keeps_the_pitch + engine::slip_and_its_virtual_head_reach_the_state + ui.sh --transport-extras-check,passing,docs/qa/evidence/B05/summary.md,,
 DJP-DECK-008,audio-core,P1,R1,DJP-SRS-001 §5,crates/dj-stretch-sys — вендоренная Signalsmith Stretch 1.3.2 через C ABI; crates/dj-deck/src/stretch.rs; crates/dj-deck/src/lib.rs: set_keylock/render_keylocked; ступень стоит в тракте с загрузки трека — вход посреди звучания был щелчком; её задержка 2880 кадров (60 мс) возвращается через position()/seek(); включён по умолчанию,deck::the_pitch_stays_where_the_file_put_it_when_the_tempo_moves; deck::without_key_lock_the_pitch_follows_the_rate_as_on_a_turntable; deck::a_stretched_tone_stays_clean; deck::at_the_files_own_speed_a_key_locked_deck_keeps_time; deck::a_block_larger_than_the_staging_still_locks_the_key; deck::starting_the_tempo_from_playback_does_not_click; dj-stretch-sys::a_tone_keeps_its_pitch_and_its_purity_at_eight_per_cent_faster,passing,docs/qa/evidence/A03/summary.md,,2026-11-08
-DJP-DECK-009,audio-core,P1,R1,DJP-SRS-001 §5,,,unverified,,,
-DJP-DECK-010,audio-core,P2,R2,DJP-SRS-001 §5,,,unverified,,,
-DJP-DECK-011,audio-core,P2,R2,DJP-SRS-001 §5,,,unverified,,,
+DJP-DECK-009,audio-core,P1,R1,DJP-SRS-001 §5,crates/dj-mixer и apps/dj-engine: четыре деки; независимые каналы и маршрутизация,dj-ui --four-deck-check,review,docs/qa/evidence/A13/summary.md,,
+DJP-DECK-010,audio-core,P2,R2,DJP-SRS-001 §5,partial: лупы и хоткью есть; типов cue; move loop start/end и keep-playback-position нет,,unverified,,,
+DJP-DECK-011,audio-core,P2,R2,DJP-SRS-001 §5,partial: раскладки и стили волны есть; многоцветных волн нет,,unverified,,,
 DJP-ENV-001,architect,P0,R0,DJP-SRS-001 §2,flake.nix; rust-toolchain.toml; Cargo.toml; CMakeLists.txt,,review,docs/qa/evidence/A00/summary.md,,
 DJP-ENV-002,architect,P0,R0,DJP-SRS-001 §2,crates/dj-audio-io (master-путь и route plan); 48 кГц stereo подтверждено живьём; 44.1 кГц и многоканальный вывод — A11,audio_io::intervals_are_judged_against_the_period; живой прогон владельца 2026-11-05 (dj-live-probe: 48 кГц / 256 кадров / 2 канала),review,docs/qa/evidence/A05/live-output.md,,2026-11-05
 DJP-ENV-003,architect,P0,R0,DJP-SRS-001 §2,flake.nix; rust-toolchain.toml; Cargo.toml; CMakeLists.txt,,review,docs/qa/evidence/A00/summary.md,,
-DJP-ENV-004,architect,P1,R1,DJP-SRS-001 §2,,,unverified,,,
-DJP-ENV-005,architect,P1,R1,DJP-SRS-001 §2,,,unverified,,,
+DJP-ENV-004,architect,P1,R1,DJP-SRS-001 §2,есть: работа полностью локальная; единственная сеть — loopback-мост к движку (docs/windows.md),bash scripts/check.sh,review,docs/architecture/crate-map.md,,
+DJP-ENV-005,architect,P1,R1,DJP-SRS-001 §2,не проверено: HiDPI и мультимонитор не тестировались; 1920x1080 проверен только в проверках окна,,unverified,,,
 DJP-ENV-006,architect,P1,R1,DJP-SRS-001 §2,настройки между запусками: устройство; микшер; деки,crates/dj-session::store; tests/session.rs::a_session_round_trips,review,docs/qa/evidence/A08/summary.md,,2026-11-06
-DJP-ENV-007,architect,P2,R2,DJP-SRS-001 §2,,,unverified,docs/adr/0005-audio-devices-and-routes.md,,2026-11-05
+DJP-ENV-007,architect,P2,R2,DJP-SRS-001 §2,partial: движок и DSP не завязаны на 48 кГц (частота — параметр; 88.2/96 кГц принимает устройство); замер на 96 кГц не проводился,,unverified,docs/adr/0005-audio-devices-and-routes.md,,2026-11-05
 DJP-FX-001,dsp,P1,R1,DJP-SRS-001 §5,нейтральный трейт FxUnit в crates/dj-fx: prepare/reset/process/engage/latency_frames; ноль аллокаций в process; сквозной путь «команда - полка - снапшот» в dj-mixer и dj-engine,cargo test -p dj-fx; cargo test -p dj-mixer --test fx_in_strip; cargo test -p dj-engine --test fx,passing,docs/qa/evidence/FX/summary.md,,2026-11-21
-DJP-FX-002,dsp,P1,R1,DJP-SRS-001 §5,,,unverified,,,
+DJP-FX-002,dsp,P1,R1,DJP-SRS-001 §5,partial: по блоку эффектов на деку (crates/dj-fx; 7 эффектов); режимов Single/Group/Pattern нет,,unverified,,,
 DJP-FX-003,dsp,P1,R1,DJP-SRS-001 §5,реализован только режим insert: Mixer::process_fx вызывается до trim и мониторинг снимается после него; post-fader и send не реализованы,crates/dj-mixer/tests/fx_in_strip.rs::the_effect_sits_before_the_fader_and_under_the_monitoring,passing,docs/qa/evidence/FX/summary.md,,2026-11-21
 DJP-FX-004,dsp,P1,R1,DJP-SRS-001 §5,семь эффектов: filter; echo; roll; flanger; phaser; bitcrusher; noise. gater; reverb; distortion; EQ как эффект не сделаны: начало набора закрыто; полный список DJP-FX-004 ещё нет,cargo test -p dj-fx (17 тестов); bash scripts/ui.sh --fx-check,passing,docs/qa/evidence/FX/summary.md,,2026-11-21
-DJP-FX-005,dsp,P2,R3,DJP-SRS-001 §5,,,unverified,,,
-DJP-FX-006,dsp,P2,R3,DJP-SRS-001 §5,,,unverified,,,
+DJP-FX-005,dsp,P2,R3,DJP-SRS-001 §5,partial: 7 эффектов против 43 в матрице Traktor,,unverified,,,
+DJP-FX-006,dsp,P2,R3,DJP-SRS-001 §5,не сделано: вне объёма 0.1.0 (R3),,unverified,,,
 DJP-FX-007,dsp,P2,R2,DJP-SRS-001 §5,BPM-привязка эха и roll через Mixer::beat_seconds из темпа и питча деки; пересчёт длины на ходу через равномощный кроссфейд 20 мс; хвост не рвётся на границе блока,crates/dj-fx/tests/echo.rs::the_beat_change_retimes_the_tail; crates/dj-mixer/tests/fx_in_strip.rs,passing,docs/qa/evidence/FX/summary.md,,2026-11-21
-DJP-FX-008,dsp,P2,R3,DJP-SRS-001 §5,,,unverified,,,
-DJP-GOAL-001,architect,,,DJP-SRS-001 §1,,,unverified,,,
+DJP-FX-008,dsp,P2,R3,DJP-SRS-001 §5,partial: стоимость стретчера измеряется тестом (1600 мкс); бюджета CPU эффектов и метрик хвостов нет,,unverified,,,
+DJP-GOAL-001,architect,,,DJP-SRS-001 §1,partial: четыре деки и режим Track есть; режимов Stem и Remix нет,,unverified,,,
 DJP-GOAL-002,architect,,,DJP-SRS-001 §1,демо R0: две деки; микшер с кроссфейдером; волны; cue и loop переживают перезапуск,ui.sh --engine-check (self/wheel/curve/strip/master/cue-write+cue-read); dj-headless: два прогона совпадают побайтово,passing,docs/qa/evidence/A13/summary.md,,2026-11-22
 DJP-GOAL-003,architect,,,DJP-SRS-001 §1,демо R0: две деки; микшер с кроссфейдером; волны; cue и loop переживают перезапуск,ui.sh --engine-check (self/wheel/curve/strip/master/cue-write+cue-read); dj-headless: два прогона совпадают побайтово,passing,docs/qa/evidence/A13/summary.md,,2026-11-22
-DJP-GOAL-004,architect,,,DJP-SRS-001 §1,,,unverified,,,
-DJP-GOAL-005,architect,,,DJP-SRS-001 §1,,,unverified,,,
-DJP-GOAL-006,architect,,,DJP-SRS-001 §1,,,unverified,,,
+DJP-GOAL-004,architect,,,DJP-SRS-001 §1,partial: мышь и клавиатура полностью; контроллер — чтение джогов (A09); MIDI нет,,unverified,,,
+DJP-GOAL-005,architect,,,DJP-SRS-001 §1,есть: доменные и аудио-крейты без Qt и без ОС-зависимостей; движок собран под Windows (mingw) и Linux,bash scripts/check.sh,review,docs/architecture/crate-map.md,,
+DJP-GOAL-006,architect,,,DJP-SRS-001 §1,есть: docs/architecture; ADR-0001..0006; scripts/check.sh с 12 гейтами и трассировка требований,bash scripts/check.sh,review,docs/architecture/crate-map.md,,
 DJP-LIC-001,compliance,,,DJP-SRS-001 §3,,,review,docs/adr/0001-license.md,,
 DJP-LIC-002,compliance,,,DJP-SRS-001 §3,,,review,docs/adr/0001-license.md,,
 DJP-LIC-003,compliance,,,DJP-SRS-001 §3,,,review,docs/adr/0001-license.md,,
 DJP-LIC-004,compliance,,,DJP-SRS-001 §3,,,review,docs/adr/0001-license.md,,
-DJP-LIC-005,compliance,,,DJP-SRS-001 §3,,,unverified,,,
+DJP-LIC-005,compliance,,,DJP-SRS-001 §3,есть: ADR-001; THIRD_PARTY.md; LICENSES/ — Qt под LGPLv3 и плагины динамически; ORT MIT; MSVC app-local,bash scripts/check-docs.sh,review,THIRD_PARTY.md,,
 DJP-LIC-006,compliance,,,DJP-SRS-001 §3,,,review,THIRD_PARTY.md,,
 DJP-MEDIA-001,media,P0,R0,DJP-SRS-001 §5,загрузка файла в деку: Load идёт в поток-загрузчик; граф вкладывает готовый источник на границе блока; состояние Loading → Ready,engine::a_prepared_track_is_attached_at_a_block_boundary_and_plays; ui.sh --engine-check (Load → Ready → Play),review,docs/qa/evidence/A02/summary.md,docs/qa/evidence/A07/track-loading.md,2026-11-05
 DJP-MEDIA-002,media,P0,R0,DJP-SRS-001 §5,crates/dj-codec/src/prefetch.rs; crates/dj-codec/src/cache.rs,prefetch::the_window_delivers_the_same_samples_as_the_decoder; prefetch::a_seek_inside_the_window_never_calls_the_decoder; cache::a_prefetch_over_the_cache_plays_without_a_decoder; cache::an_mp3_is_built_once_then_reused,passing,docs/qa/evidence/A02/summary.md,,2026-11-05
@@ -70,64 +70,64 @@ DJP-MEDIA-004,media,P0,R0,DJP-SRS-001 §5,импорт файла в колле�
 DJP-MEDIA-005,media,P1,R1,DJP-SRS-001 §5,дубли при добавлении: проверка до копирования; идентичность — длительность и chromaprint; дубль при согласии >= 0.90 и том же издании (словарь издания в скобках; feat/prod изданием не считаются) и длительности в допуске (lossy против lossless max(3 с; 1 %); одного вида max(1.5 с; 0.5 %)) или при сдвиге отпечатка; версия иначе; поиск по каталогу подотпечатков (>= 8 общих; до 3 кандидатов) вместо попарного перебора; печать в .djmeta (base64) чтобы переезжать с файлом; замер 20 файлов: повторный проход нашёл 20 дублей и не скопировал ни одного; политики ask (по умолчанию; дубль не копируется); replace_if_better (остаётся лучшая копия по порядку lossless > частота > разрядность > средний битрейт; проигравший в _duplicates/ вместе с .djmeta); keep_both (обе остаются; новая с суффиксом и variant в .djmeta); проверено на реальной паре FLAC/MP3,dj-library::identity::the_same_print_and_length_is_a_duplicate; identity::a_trimmed_copy_is_still_the_same_recording; identity::another_edition_is_a_version_even_at_full_agreement; identity::a_credit_is_not_an_edition; identity::a_lossy_copy_of_a_lossless_track_gets_room_for_encoder_padding; identity::strangers_and_unmeasured_tracks_are_never_duplicates; identity::the_strongest_match_wins; identity::the_catalogue_finds_the_same_track_among_strangers; identity::a_track_added_to_the_catalogue_is_found_by_the_next_copy; tests/duplicates.rs — the_same_file_twice_is_a_duplicate_and_is_not_copied; a_copy_a_second_shorter_is_still_the_same_recording; another_edition_is_a_version_and_both_stay; a_stranger_is_placed_without_questions; the_chromaprint_travels_in_the_metadata_file; a_print_round_trips_through_text; probe_import с DJ_IMPORT_CHECK на 20 файлах коллекции; tests/duplicates.rs — the_better_copy_replaces_the_one_in_the_collection; the_worse_copy_goes_to_duplicates_and_the_collection_stays; keeping_both_marks_the_second_copy_as_a_variant; dj-library::quality::lossless_beats_lossy_whatever_the_numbers; quality::a_higher_sample_rate_wins_between_two_lossless_copies; quality::bitrate_decides_only_between_equal_formats; quality::the_same_quality_replaces_nothing,review,docs/qa/evidence/B08/import.md,,2026-11-11
 DJP-MEDIA-006,media,P1,R1,DJP-SRS-001 §5,темп и сетка: dj_analysis::tempo — спектральный поток и спектр огибающей; сетка пишется в .djmeta; сетка — сегменты (BeatGrid: один темп = один сегмент); пересчёт по кнопке BPM ⟳ с подтверждением и ручной редактор (сдвиг; темп; ½ и ×2; tap) — GridEdit → .djmeta с analysis_lock; линии долей и тактов на волне; сдвиг на долю без границ (перебазирование квадратами); начало квадрата из 4 тактов и счёт такта в деке; Tap строит сетку по моментам нажатий; правка сетки работает на переподключённом клиенте (дека публикует путь и движок знает файл деки); темп обязан целым числом делить измеренный период акцентов — полоса ниже 150 Гц; доунбит по самой громкой бочке такта; размер (3 или 4 доли) измеряется и публикуется в сетке — bar/square и счёт деки идут по нему; метроном по сетке (команда Metronome: клик на каждой доле и акцент на первой доле такта — генерируется в мастере до гейна и лимитера; в снапшоте флаг и счётчик кликов); фаза сетки берётся по онсетам всего спектра — низкая полоса даёт только размер и доунбит; период уточняется мелким перебором по средней силе онсетов на долях (ответ — только при выигрыше >2 %). Тональность/пики и ручной редактор — не сделаны; анализ по всему файлу; кандидаты уровня темпа включают ×2 ×3 ×3/2 ×4/3 над пиком огибающей; кластер выбирается по доле онсетов всей огибающей; при отказе по доле уровень переспрашивается у родственников; уровень доли — октавы в диапазоне 70…180 BPM с узким приоритетом по темпу; период и якорь доводятся поиском по ppm на всей огибающей; сторона доли — по кик-полосе; кнопка ⌖ между стрелками сдвига: доля сетки ставится на точку проигрывания (GridEdit::Here — сдвиг на расстояние до ближайшей доли),ui.sh --engine-check (--tempo-check и --tempo-recheck); tempo::detect; ui: --grid-here-check; tempo_grid::a_beat_goes_where_the_play_head_is; тональность: dj_analysis::key — хрома по спектральным пикам и профили Крумхансль-Кесслера; строй измеряется по спектру; Key::name/camelot/traktor; key пишется в .djmeta при загрузке (сохранённая главнее замера) и показывается в шапке деки рядом с темпом; 7 точных из 8 и 8 совместимых из 8 на эталоне владельца,review,docs/qa/evidence/A15/summary.md; docs/qa/evidence/B07/summary.md; docs/qa/evidence/B07/tap.md; docs/qa/evidence/A15/raveform.md,,2026-11-11
 DJP-MEDIA-007,media,P1,R1,DJP-SRS-001 §5,очередь импорта: список файлов и атомарный индекс — его разбирают работники; число работников настройка (0 — по числу ядер; 1 — законный выбор на медленном диске); прогресс дешёвым снимком (всего; сделано; отказов; доля; идёт; текущий файл) для публикации в UI; отмена говорит «дальше не бери» и доносит текущий файл целиком; результат сортируется по путям; замер 300 файлов — 8.8 с одним работником против 2.3 с на шестнадцати (3.8×; упирается в диск),dj-library::queue::zero_threads_means_one_per_core_and_never_none; queue::share_counts_both_verdicts; tests/queue.rs — a_batch_lands_whole_whatever_the_number_of_workers; one_worker_and_many_give_the_same_collection; progress_is_visible_while_the_batch_runs; cancelling_stops_the_batch_between_files; probe_import с DJ_IMPORT_THREADS на 300 файлах коллекции,review,docs/qa/evidence/B08/import.md,,2026-11-11
-DJP-MEDIA-008,media,P1,R1,DJP-SRS-001 §5,,,unverified,,,
-DJP-MEDIA-009,media,P2,R2,DJP-SRS-001 §5,,,unverified,,,
-DJP-MEDIA-010,media,P2,R3,DJP-SRS-001 §5,,,unverified,,,
-DJP-MEDIA-011,media,P3,R3,DJP-SRS-001 §5,,,unverified,,,
+DJP-MEDIA-008,media,P1,R1,DJP-SRS-001 §5,не сделано: Preview Deck отсутствует,,unverified,,,
+DJP-MEDIA-009,media,P2,R2,DJP-SRS-001 §5,partial: плейлисты M3U читаются и пишутся атомарно; экспорта cue/grid в CSV нет,,unverified,,,
+DJP-MEDIA-010,media,P2,R3,DJP-SRS-001 §5,не сделано: импорта Traktor нет,,unverified,,,
+DJP-MEDIA-011,media,P3,R3,DJP-SRS-001 §5,не сделано: вне объёма 0.1.0 (R3),,unverified,,,
 DJP-MIX-001,dsp,P0,R0,DJP-SRS-001 §5,каналы A и B через микшер: gain · fader · crossfader · лимитер; поправка автогейна видна у часов деки (auto_gain_db в снапшоте); обе деки на одном устройстве подтверждены на слух,mixer::routing_puts_each_channel_only_where_it_belongs; mixer::the_limiter_keeps_the_master_below_full_scale; engine::a_fader_moves_the_channel_and_leaves_the_gain_alone; engine::a_track_opens_at_the_level_the_loader_measured (снапшот несёт дБ); loudness::a_loud_file_is_turned_down_and_a_quiet_one_up; ui::scenario-check (малая поправка видна у часов),passing,docs/qa/evidence/A04/summary.md; docs/qa/evidence/A14/summary.md,docs/qa/evidence/A07/track-loading.md,2026-11-07
 DJP-MIX-002,dsp,P1,R1,DJP-SRS-001 §5,partial: три полосы на канал (A14) — таблица коэффициентов 0.125 дБ в crates/dj-dsp; фильтр в crates/dj-deck после трима; SetChannelEq и поле eq снапшота в apps/dj-engine; три ручки в полосе apps/dj-ui; 4 полосы / параметрический / модели фильтров — B06,eq_tests::the_reported_response_matches_a_measured_sine; callback_path::a_knob_move_and_a_block_are_free_of_transcendentals; an_eq_knob_reaches_only_its_own_band_and_its_own_deck; dj-headless eq (свип); ui.sh --engine-check (--eq-check),review,docs/qa/evidence/A14/summary.md,,2026-11-07
-DJP-MIX-003,dsp,P1,R1,DJP-SRS-001 §5,partial: crates/dj-mixer (шина cue с PFL и cue_gain; cue-mix / booth / независимые шины — нет),mixer::routing_puts_each_channel_only_where_it_belongs,unverified,docs/qa/evidence/A04/summary.md,,2026-11-05
+DJP-MIX-003,dsp,P1,R1,DJP-SRS-001 §5,partial: cue/PFL; cue_gain и cue-mix есть; независимых шин booth и headphones как отдельных выходов нет,cargo test -p dj-mixer --test cue_bus,review,docs/qa/evidence/A04/summary.md,,2026-11-05
 DJP-MIX-004,dsp,P1,R1,DJP-SRS-001 §5,crates/dj-mixer: пять законов — linear; constant_power; smooth (S-кривая); sharp (cut); cut-in с номером (Cut { cut_in }) и hamster; закон приходит в протоколе (dj-domain::CrossfaderCurve),crossfader_laws::a_cut_curve_opens_at_the_cut_in_point; crossfader_laws::the_cut_in_is_the_number_the_dj_asks_for; crossfader_laws::the_hamster_switches_the_sides; crossfader_click::the_gate_does_not_click; crossfader_wire::a_cut_law_travels_with_its_number; ui.sh --engine-check (--curve-check),passing,docs/qa/evidence/MIX004/summary.md,,2026-11-17
-DJP-MIX-005,dsp,P1,R1,DJP-SRS-001 §5,,,unverified,,,
-DJP-MIX-006,dsp,P1,R1,DJP-SRS-001 §5,,,unverified,,,
-DJP-MIX-007,dsp,P2,R2,DJP-SRS-001 §5,,,unverified,,,
-DJP-MIX-008,dsp,P2,R2,DJP-SRS-001 §5,,,unverified,,,
-DJP-MIX-009,dsp,P2,R3,DJP-SRS-001 §5,,,unverified,,,
-DJP-MIX-010,dsp,P2,R3,DJP-SRS-001 §5,,,unverified,,,
-DJP-MIX-011,dsp,P2,R3,DJP-SRS-001 §5,,,unverified,,,
-DJP-MIX-012,dsp,P2,R3,DJP-SRS-001 §5,,,unverified,,,
+DJP-MIX-005,dsp,P1,R1,DJP-SRS-001 §5,не сделано: рекордера нет,,unverified,,,
+DJP-MIX-006,dsp,P1,R1,DJP-SRS-001 §5,есть: лимитер на master с lookahead в crates/dj-mixer,cargo test -p dj-mixer --test mixer,review,docs/qa/evidence/A04/summary.md,,
+DJP-MIX-007,dsp,P2,R2,DJP-SRS-001 §5,не сделано: вне объёма 0.1.0 (R2),,unverified,,,
+DJP-MIX-008,dsp,P2,R2,DJP-SRS-001 §5,не сделано: вне объёма 0.1.0 (R2),,unverified,,,
+DJP-MIX-009,dsp,P2,R3,DJP-SRS-001 §5,не сделано: вне объёма 0.1.0 (R3),,unverified,,,
+DJP-MIX-010,dsp,P2,R3,DJP-SRS-001 §5,не сделано: вне объёма 0.1.0 (R3),,unverified,,,
+DJP-MIX-011,dsp,P2,R3,DJP-SRS-001 §5,не сделано: вне объёма 0.1.0 (R3),,unverified,,,
+DJP-MIX-012,dsp,P2,R3,DJP-SRS-001 §5,не сделано: вне объёма 0.1.0 (R3),,unverified,,,
 DJP-NFR-001,qa,,,DJP-SRS-001 §7,crates/dj-testkit/src/rt.rs; crates/dj-audio-core/tests/no_forbidden_primitives.rs; scripts/check-fixtures.sh,rt_contract::the_instrumentation_sees_a_deliberate_allocation; no_forbidden_primitives::the_core_crate_holds_no_blocking_primitives; check-fixtures.sh: 6 golden files match the manifest,passing,docs/qa/evidence/A01/summary.md; docs/qa/evidence/A11/summary.md,,2026-11-06
-DJP-NFR-002,qa,,,DJP-SRS-001 §7,,,unverified,,,
+DJP-NFR-002,qa,,,DJP-SRS-001 §7,partial: soak 10 минут (B03) и минутный прогон в гейте; двухчасового прогона на 2/4 деках нет,,unverified,,,
 DJP-NFR-003,qa,P0,R0,DJP-SRS-001 §7,стоимость обработки блока: p50 8 мкс; p99 12 мкс; max 22 мкс при периоде 5 333 мкс — 0.225 %,docs/qa/evidence/A06/device-output-signal.json; engine::the_callback_path_does_not_allocate,review,docs/qa/evidence/A06/device-output.md,,2026-11-05
-DJP-NFR-004,qa,,,DJP-SRS-001 §7,,,unverified,,,
-DJP-NFR-005,qa,,,DJP-SRS-001 §7,,,unverified,,,
-DJP-NFR-006,qa,,,DJP-SRS-001 §7,,,unverified,,,
-DJP-NFR-007,qa,,,DJP-SRS-001 §7,,,unverified,,,
-DJP-NFR-008,qa,,,DJP-SRS-001 §7,,,unverified,,,
-DJP-NFR-009,qa,,,DJP-SRS-001 §7,,,unverified,,,
-DJP-NFR-010,qa,,,DJP-SRS-001 §7,,,unverified,,,
-DJP-NFR-011,qa,,,DJP-SRS-001 §7,,,unverified,,,
-DJP-NFR-012,qa,,,DJP-SRS-001 §7,,,unverified,,,
-DJP-NFR-013,qa,,,DJP-SRS-001 §7,,,unverified,,,
-DJP-NFR-014,qa,,,DJP-SRS-001 §7,,,unverified,,,
-DJP-NFR-015,qa,,,DJP-SRS-001 §7,,,unverified,,,
-DJP-NFR-016,qa,,,DJP-SRS-001 §7,,,unverified,,,
-DJP-REMIX-001,ml,P2,R2,DJP-SRS-001 §5,,,unverified,,,
-DJP-REMIX-002,ml,P2,R2,DJP-SRS-001 §5,,,unverified,,,
-DJP-REMIX-003,ml,P2,R2,DJP-SRS-001 §5,,,unverified,,,
-DJP-REMIX-004,ml,P2,R2,DJP-SRS-001 §5,,,unverified,,,
-DJP-REMIX-005,ml,P2,R3,DJP-SRS-001 §5,,,unverified,,,
-DJP-REMIX-006,ml,P2,R3,DJP-SRS-001 §5,,,unverified,,,
+DJP-NFR-004,qa,,,DJP-SRS-001 §7,не проверено: нулевые xrun за 2 часа требуют эталонного стенда (docs/qa/reference-rig.md),,unverified,,,
+DJP-NFR-005,qa,,,DJP-SRS-001 §7,не проверено: профиль 128 кадров не прогонялся,,unverified,,,
+DJP-NFR-006,qa,,,DJP-SRS-001 §7,не проверено: round-trip latency через loopback не измерялась,,unverified,,,
+DJP-NFR-007,qa,,,DJP-SRS-001 §7,partial: движок отдельный процесс; окно можно закрыть в любой момент (A13); падения ML-воркера не проверялись,,unverified,,,
+DJP-NFR-008,qa,,,DJP-SRS-001 §7,есть: NaN/Inf на входе и в параметрах отбрасываются; тесты в crates/dj-mixer,cargo test -p dj-mixer --test mixer,review,docs/qa/evidence/A04/summary.md,,
+DJP-NFR-009,qa,,,DJP-SRS-001 §7,не измерено: cold start до готовности окна,,unverified,,,
+DJP-NFR-010,qa,,,DJP-SRS-001 §7,partial: кадры в секунду — настройка (по умолчанию 20); частота проверяется в прогоне окна; цели 60 FPS нет,,unverified,,,
+DJP-NFR-011,qa,,,DJP-SRS-001 §7,partial: файлы плейлистов пишутся атомарно (временный файл и переименование); .djmeta — через движок; crash-теста нет,,unverified,,,
+DJP-NFR-012,qa,,,DJP-SRS-001 §7,partial: метаданные и пути валидируются (dj-library; dj-paths); HID-payload проверяется только на длину,,unverified,,,
+DJP-NFR-013,qa,,,DJP-SRS-001 §7,есть: телеметрии и удалённых учётных записей нет; диагностика локальная (docs/operations),bash scripts/check.sh,review,docs/operations/settings.md,,
+DJP-NFR-014,qa,,,DJP-SRS-001 §7,не измерено: бюджет памяти 2 ГБ,,unverified,,,
+DJP-NFR-015,qa,,,DJP-SRS-001 §7,partial: очереди команд ограничены и проверяются (dj-bridge); роста памяти под нагрузкой контроллера нет — контроллера нет,,unverified,,,
+DJP-NFR-016,qa,,,DJP-SRS-001 §7,partial: звук не зависит от сети и БД (A13); экстренная остановка проверена закрытием окна,,unverified,,,
+DJP-REMIX-001,ml,P2,R2,DJP-SRS-001 §5,не сделано: вне объёма 0.1.0 (R2),,unverified,,,
+DJP-REMIX-002,ml,P2,R2,DJP-SRS-001 §5,не сделано: вне объёма 0.1.0 (R2),,unverified,,,
+DJP-REMIX-003,ml,P2,R2,DJP-SRS-001 §5,не сделано: вне объёма 0.1.0 (R3),,unverified,,,
+DJP-REMIX-004,ml,P2,R2,DJP-SRS-001 §5,не сделано: вне объёма 0.1.0 (R3),,unverified,,,
+DJP-REMIX-005,ml,P2,R3,DJP-SRS-001 §5,не сделано: вне объёма 0.1.0 (R3),,unverified,,,
+DJP-REMIX-006,ml,P2,R3,DJP-SRS-001 §5,не сделано: вне объёма 0.1.0 (R3),,unverified,,,
 DJP-SET-001,media,P1,R1,DJP-SRS-001 §5,crates/dj-config (все критичные значения как параметры с дефолтами из замеров; UI-поверхность — A10),dj_config::defaults_are_the_values_the_measurements_justified; dj_config::nonsense_is_rejected_with_the_field_named; dj_config::settings_survive_a_round_trip,review,docs/operations/settings.md,,2026-11-05
 DJP-SET-002,media,P1,R1,DJP-SRS-001 §5,документ сессии djp-session-v1 с версией и цепочкой миграций; аудио не копируется,schemas/session-v1.json; tests/session.rs::an_older_document_is_migrated; the_document_holds_paths_not_audio,review,docs/qa/evidence/A08/summary.md,,2026-11-06
 DJP-SET-003,media,P1,R1,DJP-SRS-001 §5,атомарная запись; бэкап предыдущей; отказ документу новее сборки; автосохранение вне аудиопотока,tests/session.rs::a_broken_document_costs_one_write_not_the_setup; autosave_coalesces_and_lands_the_last_document,review,docs/qa/evidence/A08/summary.md,,2026-11-06
-DJP-SET-004,media,P2,R2,DJP-SRS-001 §5,,,unverified,,,
-DJP-SET-005,media,P2,R3,DJP-SRS-001 §5,,,unverified,,,
-DJP-STEM-001,ml,P2,R2,DJP-SRS-001 §5,,,unverified,,,
-DJP-STEM-002,ml,P2,R2,DJP-SRS-001 §5,,,unverified,,,
-DJP-STEM-003,ml,P2,R2,DJP-SRS-001 §5,,,unverified,,,
-DJP-STEM-004,ml,P2,R2,DJP-SRS-001 §5,,,unverified,,,
-DJP-STEM-005,ml,P2,R2,DJP-SRS-001 §5,,,unverified,,,
-DJP-STEM-006,ml,P2,R2,DJP-SRS-001 §5,,,unverified,,,
-DJP-STEM-007,ml,P2,R3,DJP-SRS-001 §5,,,unverified,,,
+DJP-SET-004,media,P2,R2,DJP-SRS-001 §5,не сделано: вне объёма 0.1.0 (R2),,unverified,,,
+DJP-SET-005,media,P2,R3,DJP-SRS-001 §5,не сделано: вне объёма 0.1.0 (R3),,unverified,,,
+DJP-STEM-001,ml,P2,R2,DJP-SRS-001 §5,не сделано: вне объёма 0.1.0 (R2),,unverified,,,
+DJP-STEM-002,ml,P2,R2,DJP-SRS-001 §5,не сделано: вне объёма 0.1.0 (R2),,unverified,,,
+DJP-STEM-003,ml,P2,R2,DJP-SRS-001 §5,не сделано: вне объёма 0.1.0 (R2),,unverified,,,
+DJP-STEM-004,ml,P2,R2,DJP-SRS-001 §5,не сделано: вне объёма 0.1.0 (R3),,unverified,,,
+DJP-STEM-005,ml,P2,R2,DJP-SRS-001 §5,не сделано: вне объёма 0.1.0 (R3),,unverified,,,
+DJP-STEM-006,ml,P2,R2,DJP-SRS-001 §5,не сделано: вне объёма 0.1.0 (R3),,unverified,,,
+DJP-STEM-007,ml,P2,R3,DJP-SRS-001 §5,не сделано: вне объёма 0.1.0 (R3),,unverified,,,
 DJP-SYNC-001,audio-core,P1,R1,DJP-SRS-001 §5,crates/dj-sync — BeatClock (любой источник темпа и фазы: дека; MIDI; Link) и DeckClock поверх BeatGrid; LockState для стареющих внешних часов; choose_master() (явный/авто). Движок мастера пока не выбирает,cargo test -p dj-sync --test master; cargo test -p dj-sync --test planning; bash scripts/ui.sh --engine-check (--sync-soak),passing,docs/qa/evidence/B03/soak.md,,2026-11-10
 DJP-SYNC-002,audio-core,P1,R1,DJP-SRS-001 §5,crates/dj-sync: plan() — Tempo Sync (ratio) и Beat Sync (прыжок в кадрах и долях); отказ OutOfRange вместо обрезки; DriftMeter для AC-SYNC; RateTrim для хода питча. Проводки в движок и оболочку нет,cargo test -p dj-sync --test planning; cargo test -p dj-sync --test drift; cargo test -p dj-sync --test grid_phase; bash scripts/ui.sh --engine-check (--sync-soak),passing,docs/qa/evidence/B03/soak.md,,2026-11-10
 DJP-SYNC-003,audio-core,P1,R1,DJP-SRS-001 §5,кнопка на деку; клик на каждую долю сетки этой деки (первая доля такта — акцент); сетка приходит на деку вместе с треком при загрузке (Deck::attach) — а не только по команде пересчёта; трек без сетки очищает прежнюю,engine tests/tempo_grid.rs — 3 теста,review,docs/qa/evidence/A15/summary.md,,2026-11-08
 DJP-SYNC-004,audio-core,P2,R2,DJP-SRS-001 §5,сетка следующая за дрейфом темпа — поход по долям: период это медиана восьми интервалов позади доли; поиск в пределах четверти периода со штрафом за уход от предсказания; доли режутся на стяжки по прямой с допуском 1.2 кадра и не короче 8 долей; публикуется только если объясняет онсеты лучше жёсткой сетки на 20 % и темп идёт в одну сторону и ушёл не меньше 1 %; ступенчатый дрейф берёт второй проход растяжек,cargo test -p dj-analysis --test tempo a_beat_that_drifts_gets_a_grid_that_follows_it; cargo test -p dj-analysis --test tempo a_beat_that_glides_gets_a_grid_that_follows_it; cargo test -p dj-analysis --test tempo a_beat_that_holds_its_tempo_is_one_segment_still,passing,docs/qa/evidence/A15/summary.md,,2026-11-09
-DJP-SYNC-005,audio-core,P2,R2,DJP-SRS-001 §5,,,unverified,,,
-DJP-SYNC-006,audio-core,P2,R2,DJP-SRS-001 §5,,,unverified,,,
+DJP-SYNC-005,audio-core,P2,R2,DJP-SRS-001 §5,не сделано: вне объёма 0.1.0 (R2),,unverified,,,
+DJP-SYNC-006,audio-core,P2,R2,DJP-SRS-001 §5,не сделано: вне объёма 0.1.0 (R2),,unverified,,,
 DJP-SYNC-007,audio-core,P2,R3,DJP-SRS-001 §5,,,planned,,,
-DJP-SYNC-008,audio-core,P2,R3,DJP-SRS-001 §5,,,unverified,,,
+DJP-SYNC-008,audio-core,P2,R3,DJP-SRS-001 §5,не сделано: вне объёма 0.1.0 (R3),,unverified,,,
 DJP-UI-001,ui,P0,R0,DJP-SRS-001 §5,dj-ui: BridgeClient говорит по command-v1/state-v1; кнопки Play/Cue/Loop и кроссфейдер показывают только опубликованное состояние,scripts/ui.sh --engine-check: dj-ui --self-check против настоящего dj-engine,review,,,2026-11-05
 DJP-UI-002,ui,P0,R0,DJP-SRS-001 §5,dj-ui: рабочая раскладка 2-deck тёмная схема индикаторы play/cue/loop и уровни L/R из снапшота; восемь раскладок (Classic / Duo / Stack и Stack Duo / Studio — каждая с микшером слева или справа) выбираются списком в верхней полосе; числа хранятся на раскладку (numbers в layout-файле; старые плоские ключи читаются),scripts/ui.sh --smoke + --engine-check (индикаторы от состояния); ui.sh --layout-check по каждой раскладке (доли регионов; сторона микшера; столбик дек; складывание на 1500x700); --layout-menu-check (восемь пунктов списка; подпись следует за выбором; Custom после разделителя; страница не переспрошена); --layout-numbers-check (числа на раскладку; файл прежней сборки открывается),review,docs/qa/evidence/A06/bridge-and-engine.md; docs/qa/evidence/A07/layout.md,,2026-11-19
 DJP-UI-003,ui,P1,R1,DJP-SRS-001 §5,apps/dj-ui/src/LayoutSettings — доли областей; пресеты; число полос; сохранение в layout.json | apps/dj-ui/qml/shell/ShellLayout.qml | qml/shell/GlobalBar.qml — выбор раскладки (layoutChoice_*) | qml/settings/SettingsWindow.qml — раздел «Интерфейс»,ui.sh --four-deck-check; ui.sh --layout-check; ui.sh --layout-numbers-check; ui.sh --layout-menu-check,review,docs/qa/evidence/A07/layout.md,,2026-11-21
@@ -135,7 +135,7 @@ DJP-UI-004,ui,P1,R1,DJP-SRS-001 §5,apps/dj-ui/qml/views/WaveformView.qml; apps/
 DJP-UI-005,ui,P1,R1,DJP-SRS-001 §5,apps/dj-ui/qml/browser/BrowserPanel.qml — клавиши списков: стрелки и Home/End и PgUp/PgDn с Shift | apps/dj-ui/src/BridgeClient.cpp — состояние связи и отказ команды видны в полосе | анализ и сканирование идут в движке — окно их не ждёт,ui.sh --selection-check; ui.sh --whole-list-check; ui.sh --load-busy-check; ui.sh --refusal-check; ui.sh --reconnect-check,review,docs/qa/evidence/settings/summary.md,,2026-11-21
 DJP-UI-006,ui,P2,R2,DJP-SRS-001 §5,apps/dj-ui/src/UiSettings — двадцать цветов темы как записываемые свойства; три набора dark/graphite/warm; стиль и цвета волны; зум; ширина и зазор полос | хранение — блок «ui» в layout.json через LayoutSettings::save/load | окно — раздел «Интерфейс»,ui.sh --ui-theme-check; ui.sh --settings-window-check — набор темы меняет палитру и переживает чтение файла,review,docs/qa/evidence/settings/summary.md,,2026-11-21
 DJP-UI-007,ui,P2,R2,DJP-SRS-001 §5,crates/dj-fx — семь эффектов на деку | apps/dj-ui/qml/mixer/MixerPanel.qml — ручка и кнопка эффекта | apps/dj-ui/src/checks/FxChecks.cpp — замер полосы | crates/dj-audio-io — output_device_list (перечисление выходов) и resolve_device (проверка имени) | окно настроек — выбор устройства и кнопка «Проверить» | стемы и паттерны и DVS не реализованы,ui.sh --fx-check; ui.sh --cue-check; ui.sh --settings-window-check; cargo test -p dj-fx; cargo test -p dj-audio-io --test devices,review,docs/qa/evidence/FX/summary.md; docs/qa/evidence/settings/summary.md,,2026-11-21
-DJP-UI-008,ui,P2,R3,DJP-SRS-001 §5,,,unverified,,,
+DJP-UI-008,ui,P2,R3,DJP-SRS-001 §5,partial: раскладки и темы есть; пользовательских раскладок органов нет,,unverified,,,
 DJP-SCR-001,audio-core,P1,R1,DJP-SRS-001 §4,crates/dj-deck/src/lib.rs; apps/dj-engine/src/lib.rs (DjCommand::Hand),scratch::a_hand_moves_the_head_by_its_own_integral,passing,docs/qa/evidence/SCR/summary.md,,2026-11-17
 DJP-SCR-002,audio-core,P1,R1,DJP-SRS-001 §4,crates/dj-deck/src/lib.rs (grab; hand_resume; HAND_SILENCE_SECONDS),scratch::releasing_the_record_gives_it_back_to_the_motor,passing,docs/qa/evidence/SCR/summary.md,,2026-11-17
 DJP-SCR-003,audio-core,P1,R1,DJP-SRS-001 §4,crates/dj-deck/src/lib.rs (prime_keylock; HAND_RELEASE_FADE_SECONDS),scratch_sound::the_hand_arrives_and_leaves_without_a_click,passing,docs/qa/evidence/SCR/summary.md,,2026-11-17
