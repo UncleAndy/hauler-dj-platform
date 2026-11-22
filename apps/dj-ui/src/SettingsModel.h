@@ -70,6 +70,17 @@ public:
     /// Ask the engine about one device: what it opens, or why it cannot.
     Q_INVOKABLE QString describeDevice(const QString &name) const;
 
+    /// The collection folders, as the layout file has them.
+    ///
+    /// The list is owned by LayoutSettings — the window only routes the edit, so there is still one writer per file.
+    Q_INVOKABLE QStringList collectionRoots() const;
+    /// Add a folder to the collection. False when the path is empty or already there: a duplicate is not an edit.
+    Q_INVOKABLE bool addCollectionRoot(const QString &path);
+    /// Take a folder out of the collection. False when it was not there.
+    Q_INVOKABLE bool removeCollectionRoot(const QString &path);
+    /// Whether the folder still exists: a root whose disk went away is shown as missing, not silently kept.
+    Q_INVOKABLE bool collectionRootExists(const QString &path) const;
+
     /// A short report for the clipboard: versions, the files, the audio shape.
     Q_INVOKABLE QString report() const;
 

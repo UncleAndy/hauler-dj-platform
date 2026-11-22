@@ -280,8 +280,11 @@ Popup {
         {
             key: "library",
             title: qsTr("Library"),
-            about: qsTr("History and the PCM cache. The collection folders live in the browser, where they are added."),
+            about: qsTr("Where the music is, and how much of it the engine remembers."),
             rows: [
+                // The collection folders, editable here: a list with a way to add and take away, not a path typed into
+                // a file (owner's request, 22.11).
+                { label: qsTr("Collection folders"), path: "layout:collectionRoots", kind: "folders" },
                 { label: qsTr("History, seconds"), path: "engine:library.history_min_seconds", kind: "number",
                   from: 0, to: 600 },
                 { label: qsTr("Recently played, hours"), path: "engine:library.played_recently_hours", kind: "number",

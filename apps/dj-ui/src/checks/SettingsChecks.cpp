@@ -6,6 +6,7 @@
 
 #include "Checks.h"
 
+#include <QDir>
 #include <QEventLoop>
 #include <QQmlApplicationEngine>
 #include <QTimer>
@@ -458,6 +459,90 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
             return 1;
         }
     }
+
+    // The collection folders are a list the DJ edits in this window — added and taken away with buttons, not typed into
+    // a JSON file by hand (owner's request, 22.11). The proof is the same as for the other lines: what the row shows, what
+    // the model holds and what the file carries have to be one answer.
+    // The rows of a page exist while that page is the one on screen, so the library is opened the way the DJ opens it.
+    if (!press(findInWindow(QStringLiteral("settingsSection_library")))) {
+        std::fprintf(stderr, "dj-ui: the library section does not answer a click\n");
+        return 1;
+    }
+    settle(60);
+    // Rows live inside the popup's own content, not in the window's item tree: that is where the eye sees them.
+    QQuickItem *foldersRow = findInWindow(QStringLiteral("settingRow_layout_collectionRoots"));
+    if (foldersRow == nullptr) {
+        std::fprintf(stderr, "dj-ui: the library section has no list of collection folders\n");
+        return 1;
+    }
+    auto *settings = engine.singletonInstance<QObject *>(QAnyStringView("DjPlatform.Ui"),
+                                                         QAnyStringView("Settings"));
+    auto *layoutState = engine.singletonInstance<QObject *>(QAnyStringView("DjPlatform.Ui"),
+                                                           QAnyStringView("LayoutState"));
+    if (settings == nullptr || layoutState == nullptr) {
+        std::fprintf(stderr, "dj-ui: the settings model or the arrangement is not reachable from the check\n");
+        return 1;
+    }
+    const QString firstRoot = QDir::tempPath() + QStringLiteral("/hauler-collection-one");
+    const QString secondRoot = QDir::tempPath() + QStringLiteral("/hauler-collection-two");
+    QDir().mkpath(firstRoot);
+    QDir().mkpath(secondRoot);
+    for (const QString &root : {firstRoot, secondRoot}) {
+        if (!QMetaObject::invokeMethod(foldersRow, "addFolder", Q_ARG(QVariant, QVariant(root)))) {
+            std::fprintf(stderr, "dj-ui: the collection row refused to add %s\n", qPrintable(root));
+            return 1;
+        }
+    }
+    settle(40);
+    const auto shownFolders = foldersRow->property("folders").toList();
+    if (!shownFolders.contains(QVariant(firstRoot)) || !shownFolders.contains(QVariant(secondRoot))) {
+        std::fprintf(stderr, "dj-ui: the collection list shows %lld folders instead of the two just added\n",
+                     static_cast<long long>(shownFolders.size()));
+        return 1;
+    }
+    QStringList inModel;
+    if (!QMetaObject::invokeMethod(settings, "collectionRoots", Q_RETURN_ARG(QStringList, inModel))) {
+        std::fprintf(stderr, "dj-ui: the model would not name the collection folders\n");
+        return 1;
+    }
+    if (!inModel.contains(firstRoot) || !inModel.contains(secondRoot)) {
+        std::fprintf(stderr, "dj-ui: the model holds %s instead of the folders the row shows\n",
+                     qPrintable(inModel.join(QStringLiteral(", "))));
+        return 1;
+    }
+    if (!QMetaObject::invokeMethod(layoutState, "save")) {
+        std::fprintf(stderr, "dj-ui: the arrangement refused to be saved with the new collection folders\n");
+        return 1;
+    }
+    if (!QMetaObject::invokeMethod(layoutState, "load")) {
+        std::fprintf(stderr, "dj-ui: the arrangement refused to be read back\n");
+        return 1;
+    }
+    const QStringList afterRestart = layoutState->property("collectionRoots").toStringList();
+    if (!afterRestart.contains(firstRoot) || !afterRestart.contains(secondRoot)) {
+        std::fprintf(stderr, "dj-ui: the folders did not survive being read back: %s\n",
+                     qPrintable(afterRestart.join(QStringLiteral(", "))));
+        return 1;
+    }
+    // Taking one away is an edit too: it must leave both the list on screen and the file.
+    if (!QMetaObject::invokeMethod(foldersRow, "removeFolder", Q_ARG(QVariant, QVariant(firstRoot)))) {
+        std::fprintf(stderr, "dj-ui: the collection row refused to remove %s\n", qPrintable(firstRoot));
+        return 1;
+    }
+    settle(40);
+    if (foldersRow->property("folders").toList().contains(QVariant(firstRoot))) {
+        std::fprintf(stderr, "dj-ui: the removed folder is still in the list on screen\n");
+        return 1;
+    }
+    QStringList afterRemove;
+    if (!QMetaObject::invokeMethod(settings, "collectionRoots", Q_RETURN_ARG(QStringList, afterRemove))
+        || afterRemove.contains(firstRoot)) {
+        std::fprintf(stderr, "dj-ui: the removed folder is still in the model\n");
+        return 1;
+    }
+    std::fprintf(stderr,
+                 "dj-ui: the collection folders are a list: %lld shown, one removed, the rest kept in the file\n",
+                 static_cast<long long>(shownFolders.size()));
 
     // The theme is a whole palette at a time, and the promise is that it outlives the window: it is written through
     // its own line, saved into layout.json with the arrangement, and read back by the loader that starts the shell.

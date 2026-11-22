@@ -7,6 +7,7 @@
 
 #include <QClipboard>
 #include <QCoreApplication>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QMetaObject>
 #include <QPixmap>
@@ -232,6 +233,41 @@ QStringList SettingsModel::devicePairs(const QString &device) const
         }
     }
     return pairs;
+}
+
+QStringList SettingsModel::collectionRoots() const
+{
+    return m_layout.collectionRoots();
+}
+
+bool SettingsModel::addCollectionRoot(const QString &path)
+{
+    const QString trimmed = path.trimmed();
+    if (trimmed.isEmpty()) {
+        return false;
+    }
+    QStringList roots = m_layout.collectionRoots();
+    if (roots.contains(trimmed)) {
+        return false;
+    }
+    roots.append(trimmed);
+    m_layout.setCollectionRoots(roots);
+    return true;
+}
+
+bool SettingsModel::removeCollectionRoot(const QString &path)
+{
+    QStringList roots = m_layout.collectionRoots();
+    if (roots.removeOne(path) == false) {
+        return false;
+    }
+    m_layout.setCollectionRoots(roots);
+    return true;
+}
+
+bool SettingsModel::collectionRootExists(const QString &path) const
+{
+    return QFileInfo(path).isDir();
 }
 
 QString SettingsModel::describeDevice(const QString &name) const

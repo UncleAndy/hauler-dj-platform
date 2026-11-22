@@ -17,6 +17,9 @@ Item {
     property string itemName: ""
     // "switch" | "choice" | "slider" | "number" | "text" | "check" | "device" | "pair"
     property string kind: "text"
+    // The collection folders, when this row is one. Read in reload(), not in a binding: an invokable called from a
+    // binding answers once and never again (the lock on the headphone row taught that the hard way).
+    property var folders: []
     // What the engine answered about the device (kind "check").
     property string answer: ""
     property var values: []
@@ -139,6 +142,9 @@ Item {
             // Read here, not in the binding: an invokable called from a binding answers once and never again.
             row.alsoCurrent = row.text(row.alsoPath);
         }
+        if (row.kind === "folders") {
+            row.loadFolders();
+        }
         if (row.kind === "device") {
             row.engineDevices = Settings.devices();
         } else if (row.kind === "pair") {
@@ -147,6 +153,26 @@ Item {
             const device = row.pairDevicePath === "" ? "" : row.text(row.pairDevicePath);
             row.enginePairs = Settings.devicePairs(device);
         }
+    }
+
+    function loadFolders() {
+        row.folders = row.kind === "folders" ? Settings.collectionRoots() : [];
+    }
+
+    function addFolder(path) {
+        if (Settings.addCollectionRoot(path)) {
+            row.loadFolders();
+        }
+    }
+
+    function removeFolder(path) {
+        if (Settings.removeCollectionRoot(path)) {
+            row.loadFolders();
+        }
+    }
+
+    function folderMissing(path) {
+        return !Settings.collectionRootExists(path);
     }
 
     function write(value) {
@@ -259,6 +285,70 @@ Item {
             color: row.answer.startsWith(qsTr("no answer")) ? UiSettings.themeWarning : UiSettings.themeTextDim
             font.pixelSize: 10
             elide: Text.ElideRight
+        }
+
+        // The collection folders: a list, not one path. A DJ whose music sits in two places has to see both and be able
+        // to take one away without editing a JSON file by hand (owner's request, 22.11).
+        ColumnLayout {
+            visible: row.kind === "folders"
+            Layout.fillWidth: true
+            spacing: 2
+
+            Repeater {
+                model: row.folders
+
+                RowLayout {
+                    required property var modelData
+                    Layout.fillWidth: true
+                    spacing: 6
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: modelData
+                        // A folder that is gone is shown as gone: keeping the line silent would promise tracks that
+                        // are not there any more.
+                        color: row.folderMissing(modelData) ? UiSettings.themeWarning : UiSettings.themeText
+                        font.pixelSize: 10
+                        elide: Text.ElideLeft
+                    }
+
+                    Button {
+                        objectName: "folderRemove_" + modelData.replace(/[:\/.]/g, "_")
+                        text: qsTr("Remove")
+                        font.pixelSize: 9
+                        onClicked: row.removeFolder(modelData)
+                    }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 6
+
+                TextField {
+                    id: addField
+                    objectName: "folderAddField"
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: 300
+                    font.pixelSize: 11
+                    placeholderText: qsTr("/path/to/music")
+                    onAccepted: {
+                        row.addFolder(text);
+                        text = "";
+                    }
+                }
+
+                Button {
+                    objectName: "folderAdd"
+                    text: qsTr("Add")
+                    font.pixelSize: 9
+                    enabled: addField.text.trim() !== ""
+                    onClicked: {
+                        row.addFolder(addField.text);
+                        addField.text = "";
+                    }
+                }
+            }
         }
 
         TextField {
