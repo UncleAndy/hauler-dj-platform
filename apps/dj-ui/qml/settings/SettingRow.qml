@@ -63,7 +63,9 @@ Item {
 
     signal edited(var value)
 
-    implicitHeight: 30
+    // The row is as tall as what it holds, and never less than one line: a multi-line row (the collection table) has
+    // to push the next line down instead of being drawn over it (owner's report, 22.11).
+    implicitHeight: Math.max(30, inner.implicitHeight)
     implicitWidth: 600
     visible: !row.onlyWhenDistinct || row.distinct
 
@@ -202,6 +204,7 @@ Item {
     }
 
     RowLayout {
+        id: inner
         anchors.fill: parent
         spacing: 8
 
@@ -287,67 +290,150 @@ Item {
             elide: Text.ElideRight
         }
 
-        // The collection folders: a list, not one path. A DJ whose music sits in two places has to see both and be able
-        // to take one away without editing a JSON file by hand (owner's request, 22.11).
-        ColumnLayout {
+        // The collection folders: a table with drawn cells and four rows of its own height, not a list that borrows
+        // whatever the layout has left. The owner's report was exact — the list was too low and the lines below were
+        // drawn over it — and the cause was a row that never said how tall it is. Here the sizes are numbers, so the
+        // table cannot shrink: 18 px of header and four rows of 20 px, with scrolling when there are more folders.
+        Item {
             visible: row.kind === "folders"
-            Layout.fillWidth: true
-            spacing: 2
+            // A width has to be named as well as a height: a layout child that only asks to fill is zero wide until
+            // something asks it how wide it wants to be, and its children then compute against zero.
+            // Stated outright: a layout child here ended up zero wide, and a table of zero width is a table nobody
+            // can read. The numbers are the table (108), the gap and the path field (4 + 24).
+            width: 460
+            height: 136
 
-            Repeater {
-                model: row.folders
+            Rectangle {
+                id: folderFrame
+                objectName: "folderTable"
+                anchors.left: parent.left
+                anchors.top: parent.top
+                width: parent.width - 92
+                height: 108
+                anchors.bottom: undefined
+                color: UiSettings.themeBackground
+                border.color: UiSettings.themeTextDim
+                border.width: 1
+                clip: true
 
-                RowLayout {
-                    required property var modelData
-                    Layout.fillWidth: true
-                    spacing: 6
+                // Empty cells under the rows: an empty table still reads as a table.
+                Column {
+                    anchors.fill: parent
+                    anchors.margins: 1
+                    spacing: 0
 
-                    Label {
-                        Layout.fillWidth: true
-                        text: modelData
-                        // A folder that is gone is shown as gone: keeping the line silent would promise tracks that
-                        // are not there any more.
-                        color: row.folderMissing(modelData) ? UiSettings.themeWarning : UiSettings.themeText
-                        font.pixelSize: 10
-                        elide: Text.ElideLeft
+                    Rectangle {
+                        width: parent.width
+                        height: 18
+                        color: "transparent"
+                        border.color: UiSettings.themeTextDim
+                        border.width: 1
+                        Label {
+                            anchors.left: parent.left
+                            anchors.leftMargin: 4
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: qsTr("Folder")
+                            color: UiSettings.themeTextDim
+                            font.pixelSize: 9
+                        }
                     }
 
-                    Button {
-                        objectName: "folderRemove_" + modelData.replace(/[:\/.]/g, "_")
-                        text: qsTr("Remove")
-                        font.pixelSize: 9
-                        onClicked: row.removeFolder(modelData)
+                    Repeater {
+                        model: 4
+                        Rectangle {
+                            width: parent ? parent.width : 0
+                            height: 20
+                            color: "transparent"
+                            border.color: UiSettings.themeTextDim
+                            border.width: 1
+                        }
+                    }
+                }
+
+                ListView {
+                    id: folderList
+                    objectName: "folderRows"
+                    anchors.fill: parent
+                    anchors.margins: 1
+                    anchors.topMargin: 19
+                    clip: true
+                    model: row.folders
+                    currentIndex: -1
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar {}
+
+                    delegate: Rectangle {
+                        required property var modelData
+                        required property int index
+                        width: folderList.width
+                        height: 20
+                        color: folderList.currentIndex === index ? UiSettings.themeAccentDim : UiSettings.themeBackground
+                        border.color: UiSettings.themeTextDim
+                        border.width: 1
+
+                        Label {
+                            anchors.left: parent.left
+                            anchors.leftMargin: 4
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: parent.width - 8
+                            text: modelData
+                            // A folder that is gone is shown as gone: a quiet line would promise tracks that are
+                            // not there any more.
+                            color: row.folderMissing(modelData) ? UiSettings.themeWarning : UiSettings.themeText
+                            font.pixelSize: 10
+                            elide: Text.ElideLeft
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: folderList.currentIndex = index
+                        }
                     }
                 }
             }
 
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 6
-
-                TextField {
-                    id: addField
-                    objectName: "folderAddField"
-                    Layout.fillWidth: true
-                    Layout.maximumWidth: 300
-                    font.pixelSize: 11
-                    placeholderText: qsTr("/path/to/music")
-                    onAccepted: {
-                        row.addFolder(text);
-                        text = "";
-                    }
-                }
+            // The buttons, in the order the owner asked for: Add first, Remove under it.
+            Column {
+                anchors.left: folderFrame.right
+                anchors.leftMargin: 6
+                anchors.top: parent.top
+                spacing: 4
 
                 Button {
                     objectName: "folderAdd"
                     text: qsTr("Add")
                     font.pixelSize: 9
-                    enabled: addField.text.trim() !== ""
+                    enabled: folderField.text.trim() !== ""
                     onClicked: {
-                        row.addFolder(addField.text);
-                        addField.text = "";
+                        row.addFolder(folderField.text);
+                        folderField.text = "";
                     }
                 }
+
+                Button {
+                    objectName: "folderRemove"
+                    text: qsTr("Remove")
+                    font.pixelSize: 9
+                    enabled: folderList.currentIndex >= 0
+                    onClicked: {
+                        if (folderList.currentIndex >= 0) {
+                            row.removeFolder(row.folders[folderList.currentIndex]);
+                            folderList.currentIndex = -1;
+                        }
+                    }
+                }
+            }
+
+            TextField {
+                id: folderField
+                objectName: "folderAddField"
+                anchors.left: parent.left
+                anchors.top: folderFrame.bottom
+                anchors.topMargin: 4
+                width: Math.min(parent.width - 92, 320)
+                font.pixelSize: 11
+                placeholderText: qsTr("/path/to/music")
+                onAccepted: row.addFolder(text)
             }
         }
 
@@ -364,6 +450,9 @@ Item {
 
         Label {
             Layout.fillWidth: true
+            // The collection table carries its own explanation inside the frame, and a hint that shares the width with
+            // it leaves the table with none.
+            visible: row.kind !== "folders"
             // Why a device is typed rather than chosen: the engine could not be asked, and saying so is better than a
             // list that silently is not one.
             text: !row.open

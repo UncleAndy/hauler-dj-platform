@@ -540,9 +540,46 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
         std::fprintf(stderr, "dj-ui: the removed folder is still in the model\n");
         return 1;
     }
+    // The table has to be a table the eye can use: tall enough for four rows even when the collection is empty, and
+    // nothing drawn over it (owner's report, 22.11: the list was too low and the lines below sat on top of it).
+    QQuickItem *table = findInWindow(QStringLiteral("folderTable"));
+    QQuickItem *addButton = findInWindow(QStringLiteral("folderAdd"));
+    QQuickItem *removeButton = findInWindow(QStringLiteral("folderRemove"));
+    if (table == nullptr || addButton == nullptr || removeButton == nullptr) {
+        std::fprintf(stderr, "dj-ui: the collection row has no table or no buttons\n");
+        return 1;
+    }
+    const double tableHeight = table->height();
+    if (tableHeight < 4 * 20.0) {
+        std::fprintf(stderr, "dj-ui: the collection table is %.0f px tall, less than four rows\n", tableHeight);
+        return 1;
+    }
+    const double addTop = addButton->mapToScene(QPointF(0, 0)).y();
+    const double removeTop = removeButton->mapToScene(QPointF(0, 0)).y();
+    if (addTop >= removeTop) {
+        std::fprintf(stderr, "dj-ui: Add sits at y %.0f and Remove at %.0f — Add has to be first\n", addTop, removeTop);
+        return 1;
+    }
+    const QRectF rowRect(foldersRow->mapToScene(QPointF(0, 0)), foldersRow->size());
+    const QRectF tableRect(table->mapToScene(QPointF(0, 0)), table->size());
+    if (!rowRect.contains(tableRect)) {
+        std::fprintf(stderr, "dj-ui: the collection table sticks out of its own line (%.0f x %.0f in %.0f x %.0f)\n",
+                     tableRect.width(), tableRect.height(), rowRect.width(), rowRect.height());
+        return 1;
+    }
+    QQuickItem *nextRow = findInWindow(QStringLiteral("settingRow_engine_library_history_min_seconds"));
+    if (nextRow != nullptr) {
+        const QRectF nextRect(nextRow->mapToScene(QPointF(0, 0)), nextRow->size());
+        if (rowRect.intersects(nextRect)) {
+            std::fprintf(stderr, "dj-ui: the collection line (bottom %.0f) runs into the next one (top %.0f)\n",
+                         rowRect.bottom(), nextRect.top());
+            return 1;
+        }
+    }
     std::fprintf(stderr,
-                 "dj-ui: the collection folders are a list: %lld shown, one removed, the rest kept in the file\n",
-                 static_cast<long long>(shownFolders.size()));
+                 "dj-ui: the collection folders are a table %.0f px tall with Add above Remove, and nothing drawn over "
+                 "it: %lld shown, one removed, the rest kept in the file\n",
+                 tableHeight, static_cast<long long>(shownFolders.size()));
 
     // The theme is a whole palette at a time, and the promise is that it outlives the window: it is written through
     // its own line, saved into layout.json with the arrangement, and read back by the loader that starts the shell.
