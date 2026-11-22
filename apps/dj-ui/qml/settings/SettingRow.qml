@@ -24,6 +24,9 @@ Item {
     // What the engine answered about the device (kind "check").
     property string answer: ""
     property var values: []
+    // What this line is for, in a sentence or two: shown as a tooltip when the pointer rests on the label. The window
+    // carries a description for every line, and the check refuses to pass when one is missing — a settings window that
+    // does not say what a value does is a list of words.
     property string hint: ""
     property real from: 0
     property real to: 1
@@ -210,6 +213,7 @@ Item {
         spacing: 8
 
         Label {
+            id: labelText
             Layout.preferredWidth: 200
             // The collection block carries its own label inside its frame; a second one on the left would say it twice.
             visible: row.kind !== "folders"
@@ -217,6 +221,12 @@ Item {
             color: row.open ? UiSettings.themeText : UiSettings.themeTextDim
             font.pixelSize: 11
             elide: Text.ElideRight
+
+            HoverHandler { id: labelHover }
+            ToolTip.visible: labelHover.hovered && row.hint !== ""
+            ToolTip.text: row.hint
+            ToolTip.delay: 400
+            ToolTip.timeout: 12000
         }
 
         // A switch, for what is on or off.
@@ -327,6 +337,12 @@ Item {
                 font.pixelSize: 11
                 font.bold: true
                 elide: Text.ElideRight
+
+                HoverHandler { id: blockTitleHover }
+                ToolTip.visible: blockTitleHover.hovered && row.hint !== ""
+                ToolTip.text: row.hint
+                ToolTip.delay: 400
+                ToolTip.timeout: 12000
             }
 
             // Four rows of 20 px and a 1 px border on each side: 82 px, so the bottom border sits under the fourth row

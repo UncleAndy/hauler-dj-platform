@@ -9,6 +9,7 @@
 #include <QDir>
 #include <QEventLoop>
 #include <QQmlApplicationEngine>
+#include <QSet>
 #include <QTimer>
 #include <QRectF>
 #include <QQuickWindow>
@@ -415,6 +416,27 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
         return 1;
     }
     int turned = 0;
+    // Every line of the window has to say what it is for: the hint is what the DJ reads when the pointer rests on the
+    // label, and a line without one is a word nobody can look up. Collected while the pages turn, because a page's rows
+    // exist only while that page is on screen.
+    QSet<QString> seenRows;
+    QStringList withoutHint;
+    const auto collectHints = [&]() {
+        const std::function<void(QQuickItem *)> walk = [&](QQuickItem *node) {
+            const QString name = node->objectName();
+            if (name.startsWith(QStringLiteral("settingRow_")) && !seenRows.contains(name)) {
+                seenRows.insert(name);
+                if (node->property("hint").toString().trimmed().isEmpty()) {
+                    withoutHint << name;
+                }
+            }
+            for (QQuickItem *child : node->childItems()) {
+                walk(child);
+            }
+        };
+        walk(content);
+    };
+    collectHints();
     for (int index = 1; index < sections.size(); ++index) {
         QQuickItem *button = findInWindow(QStringLiteral("settingsSection_") + sections.at(index));
         if (!press(button)) {
@@ -428,7 +450,23 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
             return 1;
         }
         ++turned;
+        settle(40);
+        collectHints();
     }
+    if (!withoutHint.isEmpty()) {
+        std::fprintf(stderr, "dj-ui: %lld lines of the window have no description: %s\n",
+                     static_cast<long long>(withoutHint.size()),
+                     qPrintable(withoutHint.join(QStringLiteral(", "))));
+        return 1;
+    }
+    if (seenRows.size() < 30) {
+        std::fprintf(stderr, "dj-ui: only %lld lines were seen while the pages turned — the hint check proves little\n",
+                     static_cast<long long>(seenRows.size()));
+        return 1;
+    }
+    std::fprintf(stderr, "dj-ui: all %lld lines of the window describe themselves in a tooltip\n",
+                 static_cast<long long>(seenRows.size()));
+
 
     // A line of the window writes as the hand would: the engine's file and the layout's file both have to carry the
     // value afterwards. This is what separates a window from a picture of one.
