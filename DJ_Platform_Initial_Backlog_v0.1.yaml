@@ -193,6 +193,7 @@ tasks:
       - 'Project license strategy approved before GPL-only code incorporation'
       - 'Encdr, Qt, CPAL, Symphonia and Ableton Link licensing assessed'
   - id: A13
+    status: done
     title: 'R0 integration demo: two decks, mixer and waveforms'
     role: integrator
     priority: P0

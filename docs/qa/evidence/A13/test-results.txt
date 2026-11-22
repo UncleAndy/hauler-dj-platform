@@ -1,0 +1,35 @@
+# A13 — сырые строки прогонов (2026-11-22)
+
+## bash scripts/ui.sh --engine-check — EXIT=0
+dj-ui: self-check passed: Play and Cue acknowledged and visible in the snapshot (sample 52992, rev 22) after 1022 ms
+dj-ui: the UI shuts down cleanly when the window closes right after the start
+dj-ui: cue on deck A reached the engine and came back on
+dj-ui: cue on deck A off again, and the engine says so
+dj-ui: strip A is 25,0 wide and 372,0 high
+dj-ui: curve constant_power -> snapshot says constant_power
+dj-ui: curve linear -> snapshot says linear
+dj-ui: curve smooth -> snapshot says smooth
+dj-ui: curve sharp -> snapshot says sharp
+dj-ui: gain 0.25 and fader 0.5 reached deck C and stayed apart; deck B untouched (gain 1,00, fader 1,00)
+dj-ui: the gain curve is cubic at 0,10; the trim moves 0,267 dB per pixel at unity and 5,068 at the end of the cut; the master moves 0,050 dB per pixel at unity and 0,950 at the bottom
+dj-ui: the channel fader moves 6,604 of its range per unit of travel at the top (curve logarithmic at 0,50) and 0,144 at the bottom
+dj-ui: the gain curve is linear at 0,10; the trim moves 2,667 dB per pixel at unity and 2,667 at the end of the cut; the master moves 0,500 dB per pixel at unity and 0,500 at the bottom
+dj-ui: the channel fader moves 6,604 of its range per unit of travel at the top (curve logarithmic at 0,50) and 0,144 at the bottom
+dj-ui: the gain curve is cubic at 0,10; the trim moves 0,267 dB per pixel at unity and 5,068 at the end of the cut; the master moves 0,050 dB per pixel at unity and 0,950 at the bottom
+dj-ui: the channel fader moves 0,505 of its range per unit of travel at the top (curve cubic at 0,50) and 1,495 at the bottom
+dj-ui: the gain curve is cubic at 0,10; the trim moves 0,267 dB per pixel at unity and 5,068 at the end of the cut; the master moves 0,050 dB per pixel at unity and 0,950 at the bottom
+dj-ui: the channel fader moves 1,000 of its range per unit of travel at the top (curve linear at 0,50) and 1,000 at the bottom
+dj-ui: deck B moved 71360 frames in 1,5 s
+dj-ui: self-check passed: Play and Cue acknowledged and visible in the snapshot (sample 48128, rev 20) after 943 ms
+
+## dj-headless scenario, два прогона
+3f9cea995796acfedbb532b71fd5bcb389473de4361cf198dd6c87567a7aaa5c  run-a.wav
+3f9cea995796acfedbb532b71fd5bcb389473de4361cf198dd6c87567a7aaa5c  run-b.wav
+cmp: побайтово совпадают
+
+## timing из --measure
+{"block_frames":256,"blocks":19,"max_us":5.018,"p50_us":1.435,"p99_us":5.018,"period_us":5333.3333,"sample_rate":48000,"note":"offline render on this host, not the reference rig (DJP-NFR-003 needs A11)"}
+{"block_frames":256,"blocks":19,"max_us":4.774,"p50_us":1.434,"p99_us":4.774,"period_us":5333.3333,"sample_rate":48000}
+
+## an_edit_survives_a_restart (в гейте)
+test an_edit_survives_a_restart ... ok
