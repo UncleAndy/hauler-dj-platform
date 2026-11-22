@@ -580,6 +580,59 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
             return 1;
         }
     }
+    // The page's own width, not the panel's: the sections on the left take a share of the panel, and a block sized
+    // against the panel fits the panel and still leaves the page (owner's report, 22.11).
+    QQuickItem *pageFlick = nullptr;
+    for (QQuickItem *pageParent = foldersRow->parentItem(); pageParent != nullptr; pageParent = pageParent->parentItem()) {
+        if (pageParent->inherits("QQuickFlickable")) {
+            pageFlick = pageParent;
+            break;
+        }
+    }
+    const QRectF pageRect(pageFlick != nullptr ? pageFlick->mapToScene(QPointF(0, 0)) : QPointF(0, 0),
+                          pageFlick != nullptr ? pageFlick->size() : panel->size());
+    for (QQuickItem *inside : {table, addButton, removeButton, findInWindow(QStringLiteral("folderAddField")),
+                               findInWindow(QStringLiteral("folderBrowse"))}) {
+        if (inside == nullptr) {
+            std::fprintf(stderr, "dj-ui: a part of the collection row is missing\n");
+            return 1;
+        }
+        const QRectF rect(inside->mapToScene(QPointF(0, 0)), inside->size());
+        // Not merely inside the page: with room to spare at its right edge, or the table reads as cut off by it.
+        if (rect.right() > pageRect.right() - 16 || rect.left() < pageRect.left() - 0.5) {
+            std::fprintf(stderr,
+                         "dj-ui: %s spans x %.0f..%.0f where the page ends at %.0f (page %.0f wide)\n",
+                         qPrintable(inside->objectName()), rect.left(), rect.right(), pageRect.right(),
+                         pageRect.width());
+            return 1;
+        }
+    }
+    // The path field carries a button for picking a folder, and it sits to the right of the field. The dialog itself is
+    // not opened here: a native dialog in a headless run waits for a hand that is not there. What is checked is that the
+    // button is where it belongs and that the field still only fills — the list changes when Add is pressed, not before.
+    QQuickItem *pathField = findInWindow(QStringLiteral("folderAddField"));
+    QQuickItem *browseButton = findInWindow(QStringLiteral("folderBrowse"));
+    if (pathField == nullptr || browseButton == nullptr) {
+        std::fprintf(stderr, "dj-ui: the collection row has no path field or no browse button\n");
+        return 1;
+    }
+    const QRectF fieldRect(pathField->mapToScene(QPointF(0, 0)), pathField->size());
+    const QRectF browseRect(browseButton->mapToScene(QPointF(0, 0)), browseButton->size());
+    if (browseRect.left() < fieldRect.right() - 1) {
+        std::fprintf(stderr, "dj-ui: the browse button sits at x %.0f inside the field (field ends at %.0f)\n",
+                     browseRect.left(), fieldRect.right());
+        return 1;
+    }
+    const auto beforeBrowse = foldersRow->property("folders").toList().size();
+    if (!press(browseButton)) {
+        std::fprintf(stderr, "dj-ui: the browse button does not answer a click\n");
+        return 1;
+    }
+    settle(40);
+    if (foldersRow->property("folders").toList().size() != beforeBrowse) {
+        std::fprintf(stderr, "dj-ui: pressing the browse button added a folder without Add\n");
+        return 1;
+    }
     QQuickItem *nextRow = findInWindow(QStringLiteral("settingRow_engine_library_history_min_seconds"));
     if (nextRow != nullptr) {
         const QRectF nextRect(nextRow->mapToScene(QPointF(0, 0)), nextRow->size());
@@ -591,8 +644,10 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
     }
     std::fprintf(stderr,
                  "dj-ui: the collection folders are a table %.0f px tall with Add above Remove, and nothing drawn over "
-                 "it: %lld shown, one removed, the rest kept in the file\n",
-                 tableHeight, static_cast<long long>(shownFolders.size()));
+                 "it: %lld shown, one removed, the rest kept in the file (page %.0f px, table x %.0f..%.0f, "
+                 "panel right %.0f)\n",
+                 tableHeight, static_cast<long long>(shownFolders.size()), pageRect.width(),
+                 tableRect.left(), tableRect.right(), panelRect.right());
 
     // The theme is a whole palette at a time, and the promise is that it outlives the window: it is written through
     // its own line, saved into layout.json with the arrangement, and read back by the loader that starts the shell.

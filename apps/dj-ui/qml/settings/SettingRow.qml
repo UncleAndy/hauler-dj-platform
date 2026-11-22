@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Dialogs
 import QtQuick.Layouts
 import DjPlatform.Ui 1.0
 
@@ -298,12 +299,13 @@ Item {
             visible: row.kind === "folders"
             // A width has to be named as well as a height: a layout child that only asks to fill is zero wide until
             // something asks it how wide it wants to be, and its children then compute against zero.
-            // The width is what is left of the row after its label: 200 px of label and 8 px of spacing. A block
-            // wider than that reached past the panel's right edge and its buttons were outside the window.
-            width: parent.width - 208
+            // The width is what is left of the row after its label (200 px and 8 px of spacing) minus room for the
+            // page's scrollbar and a margin. Measured: without the margin the table's right edge landed exactly on the
+            // page's edge and read as running past it (owner's report, 22.11).
+            width: parent.width - 208 - 28
             // The table (108), the gap and the path field (4 + 24), then the buttons stacked below it: Add first,
             // Remove under it (owner's order).
-            height: 108 + 4 + 24 + 4 + 26 + 4 + 26
+            height: 108 + 4 + 26 + 4 + 26 + 4 + 26
 
             Rectangle {
                 id: folderFrame
@@ -394,16 +396,39 @@ Item {
                 }
             }
 
-            TextField {
-                id: folderField
-                objectName: "folderAddField"
+            Row {
+                id: folderPathRow
                 anchors.left: parent.left
                 anchors.top: folderFrame.bottom
                 anchors.topMargin: 4
-                width: Math.min(parent.width, 320)
-                font.pixelSize: 11
-                placeholderText: qsTr("/path/to/music")
-                onAccepted: row.addFolder(text)
+                width: parent.width
+                spacing: 4
+
+                TextField {
+                    id: folderField
+                    objectName: "folderAddField"
+                    width: folderPathRow.width - browseButton.width - folderPathRow.spacing
+                    font.pixelSize: 11
+                    placeholderText: qsTr("/path/to/music")
+                    onAccepted: row.addFolder(text)
+                }
+
+                // A path is easier to pick than to type. The dialog only fills the field: a folder becomes part of the
+                // collection when the DJ presses Add, not when he closes a window.
+                Button {
+                    id: browseButton
+                    objectName: "folderBrowse"
+                    width: 28
+                    text: qsTr("…")
+                    font.pixelSize: 11
+                    onClicked: folderDialog.open()
+                }
+            }
+
+            FolderDialog {
+                id: folderDialog
+                title: qsTr("Choose a music folder")
+                onAccepted: folderField.text = folderDialog.selectedFolder.toString()
             }
 
             // The buttons sit under the list, not beside it: beside it they were pushed past the panel's edge and
