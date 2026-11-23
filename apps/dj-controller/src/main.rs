@@ -437,8 +437,8 @@ fn run(arguments: &[String]) -> Result<(), String> {
             &palette,
             inputs_map.as_deref(),
         ),
-        Mode::InputsWatch => inputs_watch(&transport, &devices, watch_seconds),
-        Mode::InputsLearn => inputs_learn(&transport, &devices, pick_out.as_deref()),
+        Mode::InputsWatch => inputs_watch(&devices, watch_seconds),
+        Mode::InputsLearn => inputs_learn(&devices, pick_out.as_deref()),
         Mode::ScreenFrom => screen_from(engine.as_deref(), pick_out.as_deref(), screen_panel),
         Mode::LightsPick(what) => lights_pick(
             &devices,
@@ -890,14 +890,18 @@ fn serve(
              learn them with --inputs-learn"
         );
     }
-    if !map.is_empty()
-        && let Some(device) = devices.iter().find(|device| device.is(VENDOR, PRODUCT))
-    {
-        let path = device.path.clone();
+    if !map.is_empty() {
+        // Finding the node that talks takes a moment, and the panel must light at once: the search happens on the same
+        // thread that will then read the presses.
+        let devices = devices.to_vec();
         let endpoint = endpoint.to_string();
-        // The reader is a thread: a report arriving while the lights are being painted must not be lost, and the
-        // engine's snapshots must keep flowing meanwhile.
-        std::thread::spawn(move || inputs_loop(&path, &endpoint, map));
+        std::thread::spawn(move || match pick_talkative(&devices) {
+            Ok((path, reports)) => {
+                println!("dj-controller: presses are read from {}", path.display());
+                inputs_loop(reports, &endpoint, map);
+            }
+            Err(reason) => println!("dj-controller: {reason}; presses ask for nothing"),
+        });
     }
     lights_show(devices, Some(endpoint), body_only, night, palette)
 }
@@ -932,48 +936,23 @@ fn learned_inputs_path() -> Option<std::path::PathBuf> {
 ///
 /// Errors are said out loud once and then swallowed: a device that goes away must not take the lights with it, and a
 /// program that stops answering because a USB cable moved is worse than one that says "the panel is gone".
-fn inputs_loop(path: &std::path::Path, endpoint: &str, map: dj_controller_s4mk3::inputs::InputMap) {
-    let transport = HidrawTransport::new();
-    let device = DeviceInfo {
-        path: path.to_path_buf(),
-        vendor: VENDOR,
-        product: PRODUCT,
-        name: NAME.to_string(),
-    };
-    let mut source = match transport.open(&device) {
-        Ok(source) => source,
-        Err(error) => {
-            println!(
-                "dj-controller: {} cannot be opened for reading ({error}); no presses will arrive",
-                path.display()
-            );
-            return;
-        }
-    };
+fn inputs_loop(
+    reports: std::sync::mpsc::Receiver<Vec<u8>>,
+    endpoint: &str,
+    map: dj_controller_s4mk3::inputs::InputMap,
+) {
     let mapping = Mapping::new();
     let mut previous = std::collections::HashMap::new();
-    let mut buffer = [0_u8; 128];
-    let mut said_gone = false;
     loop {
-        let read = match source.read_report(&mut buffer) {
-            Ok(read) => read,
-            Err(error) => {
-                if !said_gone {
-                    println!(
-                        "dj-controller: the panel stopped answering ({error}); no more presses"
-                    );
-                    said_gone = true;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(200));
-                continue;
-            }
+        let Ok(report_bytes) = reports.recv() else {
+            println!("dj-controller: the panel stopped answering; no more presses");
+            return;
         };
-        said_gone = false;
-        if read < 2 {
+        if report_bytes.len() < 2 {
             continue;
         }
-        let report = buffer[0];
-        let payload = &buffer[1..read];
+        let report = report_bytes[0];
+        let payload = &report_bytes[1..];
         for event in map.decode(report, payload, &mut previous) {
             let Some((deck, command)) = mapping.resolve(&event, false) else {
                 continue;
@@ -989,63 +968,123 @@ fn inputs_loop(path: &std::path::Path, endpoint: &str, map: dj_controller_s4mk3:
     }
 }
 
-/// Prints what the panel says, one line a change: the tool that turns a hand into a map line.
-fn inputs_watch(
-    transport: &HidrawTransport,
-    devices: &[DeviceInfo],
-    seconds: f32,
-) -> Result<(), String> {
-    let Some(device) = devices.iter().find(|device| device.is(VENDOR, PRODUCT)) else {
-        return Err(format!(
-            "no {NAME} is plugged in, so there is nothing to watch"
-        ));
+/// Reads the panel on a thread and hands the reports over a channel.
+///
+/// A blocking read on a device that says nothing would hang whoever is listening: the walk would never reach its
+/// deadline, and "press the button" would sit there for ever. Over a channel the listener keeps its own clock.
+fn spawn_reader(path: &std::path::Path) -> Result<std::sync::mpsc::Receiver<Vec<u8>>, String> {
+    let device = DeviceInfo {
+        path: path.to_path_buf(),
+        vendor: VENDOR,
+        product: PRODUCT,
+        name: NAME.to_string(),
     };
-    let mut source = transport.open(device).map_err(|error| {
+    let mut source = HidrawTransport::new().open(&device).map_err(|error| {
         format!(
             "{} cannot be opened for reading: {error}",
             device.path.display()
         )
     })?;
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buffer = [0_u8; 128];
+        loop {
+            match source.read_report(&mut buffer) {
+                Ok(read) if read >= 1 => {
+                    if sender.send(buffer[..read].to_vec()).is_err() {
+                        return;
+                    }
+                }
+                Ok(_) => {}
+                Err(_) => std::thread::sleep(std::time::Duration::from_millis(100)),
+            }
+        }
+    });
+    Ok(receiver)
+}
+
+/// The first node of the panel that actually talks.
+///
+/// One USB device shows up as several HID nodes, and the one that carries the buttons is not necessarily the first the
+/// kernel lists. Rather than trusting the order, each matching node is given a moment to say something: the one that
+/// does is the panel.
+fn pick_talkative(
+    devices: &[DeviceInfo],
+) -> Result<(std::path::PathBuf, std::sync::mpsc::Receiver<Vec<u8>>), String> {
+    let mut tried = 0_usize;
+    for device in devices.iter().filter(|device| device.is(VENDOR, PRODUCT)) {
+        tried += 1;
+        let Ok(reports) = spawn_reader(&device.path) else {
+            println!(
+                "dj-controller: {} не открывается — пробую следующий узел",
+                device.path.display()
+            );
+            continue;
+        };
+        if reports
+            .recv_timeout(std::time::Duration::from_millis(700))
+            .is_ok()
+        {
+            return Ok((device.path.clone(), reports));
+        }
+        println!(
+            "dj-controller: {} молчит — пробую следующий узел",
+            device.path.display()
+        );
+    }
+    Err(format!(
+        "no {NAME} node said anything ({tried} tried): the panel is plugged in but quiet"
+    ))
+}
+
+/// Prints what the panel says, one line a change: the tool that turns a hand into a map line.
+fn inputs_watch(devices: &[DeviceInfo], seconds: f32) -> Result<(), String> {
+    if !devices.iter().any(|device| device.is(VENDOR, PRODUCT)) {
+        return Err(format!(
+            "no {NAME} is plugged in, so there is nothing to watch"
+        ));
+    }
+    let (path, reports) = pick_talkative(devices)?;
     println!(
         "dj-controller: watching {} for {seconds:.0} s — presses and turns are printed as \
          report, byte, bit and value",
-        device.path.display()
+        path.display()
     );
     let until = std::time::Instant::now() + std::time::Duration::from_secs_f32(seconds.max(1.0));
-    let mut before = [0_u8; 128];
-    let mut buffer = [0_u8; 128];
+    let mut last: std::collections::HashMap<u8, Vec<u8>> = std::collections::HashMap::new();
+    let mut seen = 0_usize;
     while std::time::Instant::now() < until {
-        let Ok(read) = source.read_report(&mut buffer) else {
+        let Ok(report) = reports.recv_timeout(std::time::Duration::from_millis(100)) else {
             continue;
         };
-        if read < 2 {
+        if report.len() < 2 {
             continue;
         }
-        let report = buffer[0];
-        for byte in 0..read.saturating_sub(1).min(127) {
-            let value = buffer[byte + 1];
-            let was = if before[0] == report {
-                before[byte + 1]
-            } else {
-                value
-            };
-            if value == was {
-                continue;
-            }
-            for bit in 0..8 {
-                let mask = 1_u8 << bit;
-                if (value ^ was) & mask == 0 {
+        seen += 1;
+        let id = report[0];
+        let payload = &report[1..];
+        if let Some(previous) = last.get(&id) {
+            for byte in 0..payload.len().min(previous.len()) {
+                let value = payload[byte];
+                let was = previous[byte];
+                if value == was {
                     continue;
                 }
-                println!(
-                    "dj-controller: report {report} byte {byte} bit {bit} → {}",
-                    u8::from(value & mask != 0)
-                );
+                for bit in 0..8 {
+                    let mask = 1_u8 << bit;
+                    if (value ^ was) & mask == 0 {
+                        continue;
+                    }
+                    println!(
+                        "dj-controller: report {id} byte {byte} bit {bit} → {}",
+                        u8::from(value & mask != 0)
+                    );
+                }
             }
         }
-        before[0] = report;
-        before[1..read.min(128)].copy_from_slice(&buffer[1..read.min(128)]);
+        last.insert(id, payload.to_vec());
     }
+    println!("dj-controller: {seen} отчётов за {seconds:.0} с");
     Ok(())
 }
 
@@ -1054,22 +1093,13 @@ fn inputs_watch(
 /// Nothing is guessed: the line written is the byte and bit that changed while that one button was pressed, and the next
 /// control is asked for only after the button was let go. Analog controls are not in this walk — a hand cannot hold a
 /// knob still enough to say which field it is — and are found with `--inputs-watch`.
-fn inputs_learn(
-    transport: &HidrawTransport,
-    devices: &[DeviceInfo],
-    out: Option<&str>,
-) -> Result<(), String> {
-    let Some(device) = devices.iter().find(|device| device.is(VENDOR, PRODUCT)) else {
+fn inputs_learn(devices: &[DeviceInfo], out: Option<&str>) -> Result<(), String> {
+    if !devices.iter().any(|device| device.is(VENDOR, PRODUCT)) {
         return Err(format!(
             "no {NAME} is plugged in, so there is nothing to learn"
         ));
-    };
-    let mut source = transport.open(device).map_err(|error| {
-        format!(
-            "{} cannot be opened for reading: {error}",
-            device.path.display()
-        )
-    })?;
+    }
+    let (path, reports) = pick_talkative(devices)?;
     const WALK: &[(&str, &str)] = &[
         ("deck_a.play", "PLAY на деке A"),
         ("deck_a.cue", "CUE на деке A"),
@@ -1078,57 +1108,94 @@ fn inputs_learn(
         ("deck_b.cue", "CUE на деке B"),
         ("deck_b.sync", "SYNC/LOCK на деке B"),
     ];
-    let mut before = [0_u8; 128];
-    let mut buffer = [0_u8; 128];
-    // The resting state first: a button already held is not a press.
-    let _ = source.read_report(&mut buffer);
-    let mut learned = Vec::new();
+    // Every report is compared with the previous one **of the same number**: the panel sends several kinds, and the bytes
+    // of one are not the bytes of another. Without this the first resting report looked like a press of every control at
+    // once, and the walk skipped all six without waiting for a hand (owner's report, 24.11).
+    let mut last: std::collections::HashMap<u8, Vec<u8>> = std::collections::HashMap::new();
+    let mut reports_seen = 0_usize;
+    let mut learned: Vec<(String, u8, usize, usize)> = Vec::new();
+    println!(
+        "dj-controller: слушаю {} — нажимайте кнопку и отпускайте её",
+        path.display()
+    );
     for (control, label) in WALK {
-        println!("dj-controller: нажмите {label} (и отпустите); 15 с на кнопку");
-        let until = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        println!("dj-controller: нажмите {label} (15 с на кнопку)");
+        let started = std::time::Instant::now();
+        let deadline = started + std::time::Duration::from_secs(15);
         let mut found: Option<(u8, usize, usize)> = None;
-        while found.is_none() && std::time::Instant::now() < until {
-            let Ok(read) = source.read_report(&mut buffer) else {
+        let mut said_waiting = false;
+        while found.is_none() && std::time::Instant::now() < deadline {
+            let Ok(report) = reports.recv_timeout(std::time::Duration::from_millis(100)) else {
                 continue;
             };
-            if read < 2 {
+            if report.len() < 2 {
                 continue;
             }
-            let report = buffer[0];
-            for byte in 0..read.saturating_sub(1).min(127) {
-                let value = buffer[byte + 1];
-                let was = before[byte + 1];
-                let appeared = value & !was;
-                if appeared == 0 {
-                    continue;
-                }
-                for bit in 0..8 {
-                    if appeared & (1_u8 << bit) == 0 {
+            reports_seen += 1;
+            let id = report[0];
+            let payload = report[1..].to_vec();
+            if let Some(previous) = last.get(&id) {
+                'report: for byte in 0..payload.len().min(previous.len()) {
+                    let appeared = payload[byte] & !previous[byte];
+                    if appeared == 0 {
                         continue;
                     }
-                    let candidate = (report, byte, bit);
-                    if learned.iter().any(|(_, _, _, _, seen)| *seen == candidate) {
-                        continue;
+                    for bit in 0..8 {
+                        if appeared & (1_u8 << bit) == 0 {
+                            continue;
+                        }
+                        if learned.iter().any(|(_, seen_report, seen_byte, seen_bit)| {
+                            *seen_report == id && *seen_byte == byte && *seen_bit == bit
+                        }) {
+                            continue;
+                        }
+                        found = Some((id, byte, bit));
+                        break 'report;
                     }
-                    found = Some(candidate);
-                    break;
-                }
-                if found.is_some() {
-                    break;
                 }
             }
-            before[0] = report;
-            before[1..read.min(128)].copy_from_slice(&buffer[1..read.min(128)]);
+            last.insert(id, payload);
+            if found.is_none()
+                && started.elapsed() > std::time::Duration::from_secs(4)
+                && !said_waiting
+            {
+                said_waiting = true;
+                println!("dj-controller: жду нажатия…");
+            }
         }
         let Some((report, byte, bit)) = found else {
-            println!("dj-controller: {control}: ничего не увидел за 15 с — пропускаю");
+            println!(
+                "dj-controller: {control}: за 15 с ничего не увидел (отчётов пришло {reports_seen}) — пропускаю"
+            );
             continue;
         };
         println!("dj-controller: {control} → report {report} byte {byte} bit {bit}");
-        learned.push((*control, report, byte, bit, (report, byte, bit)));
+        learned.push((control.to_string(), report, byte, bit));
+        // The button has to be let go before the next question: a hand that holds it down would answer every following
+        // control with the same bit.
+        let release_by = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < release_by {
+            let Ok(next) = reports.recv_timeout(std::time::Duration::from_millis(100)) else {
+                continue;
+            };
+            if next.len() < 2 {
+                continue;
+            }
+            let id = next[0];
+            let released = id == report
+                && next
+                    .get(byte + 1)
+                    .is_some_and(|value| value & (1_u8 << bit) == 0);
+            if released {
+                break;
+            }
+            last.insert(id, next[1..].to_vec());
+        }
     }
     if learned.is_empty() {
-        return Err("nothing was learned: no button was pressed".to_string());
+        return Err(format!(
+            "nothing was learned: {reports_seen} reports arrived, and no button went down"
+        ));
     }
     let path = match out {
         Some(path) => path.to_string(),
@@ -1143,11 +1210,8 @@ fn inputs_learn(
         }
     };
     let mut text = String::new();
-    for (control, report, byte, bit, _) in &learned {
-        text.push_str(&format!(
-            "{control} {report} {byte} {bit} 1
-"
-        ));
+    for (control, report, byte, bit) in &learned {
+        text.push_str(&format!("{control} {report} {byte} {bit} 1\n"));
     }
     std::fs::write(&path, &text).map_err(|error| format!("{path} cannot be written: {error}"))?;
     println!(

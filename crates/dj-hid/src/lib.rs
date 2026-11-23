@@ -40,7 +40,10 @@ impl DeviceInfo {
 }
 
 /// One device's reports.
-pub trait ReportSource {
+///
+/// Send, because reading belongs on its own thread: a blocking read on a device that says nothing must not hold the
+/// clock of whoever is listening.
+pub trait ReportSource: Send {
     /// Reads one report into `buffer` and returns how many bytes arrived.
     ///
     /// Blocks until the device sends something; an error means the node is gone or was never readable.
