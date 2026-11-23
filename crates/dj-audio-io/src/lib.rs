@@ -410,6 +410,10 @@ pub fn device_routes(device: Option<&str>) -> Result<Vec<(usize, usize)>, IoErro
 /// to write to.
 pub fn resolve_device(device: Option<&str>) -> Result<DeviceShape, IoError> {
     let host = cpal::default_host();
+    // An empty name is not a needle: every device name contains the empty string, so the first one in the list would
+    // win and the chosen interface would never be opened. Empty means "the system's own choice", exactly as
+    // `output_channels` has always read it.
+    let device = device.map(str::trim).filter(|needle| !needle.is_empty());
     let device = match device {
         Some(needle) => {
             let needle_lower = needle.to_ascii_lowercase();

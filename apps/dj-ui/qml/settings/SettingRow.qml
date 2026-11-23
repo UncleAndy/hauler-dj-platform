@@ -32,6 +32,10 @@ Item {
     property real to: 1
     property int decimals: 2
     property bool restart: Settings ? Settings.needsRestart(path) : false
+    // Some values are the hardware's while a controller is in use: the S4 MK3 has its own headphone volume and its own
+    // cue/master knob, and a second control for the same job would fight the hand that is already turning it.
+    property bool hardwareOwned: (path === "audio.headphones.gain" || path === "audio.headphones.mix")
+                                 && (Settings ? Settings.hardwareOwnsCue() : false)
     // A line that only makes sense under one setting of another line: the headphone device is chosen by name only in
     // the "device" mode, and in the other modes the engine picks it. The control stays visible and locked — hiding it
     // would leave the DJ wondering where the device went (owner's report, 21.11).
@@ -232,7 +236,7 @@ Item {
         // A switch, for what is on or off.
         Switch {
             visible: row.kind === "switch"
-            enabled: row.open
+            enabled: row.open && !row.hardwareOwned
             Layout.preferredWidth: 60
             checked: row.current === true
             onToggled: row.write(checked)
@@ -242,7 +246,7 @@ Item {
         ComboBox {
             id: choice
             visible: row.asList
-            enabled: row.open
+            enabled: row.open && !row.hardwareOwned
             Layout.fillWidth: true
             Layout.maximumWidth: 320
             model: row.offered
@@ -254,7 +258,7 @@ Item {
         // A slider for a share between two ends, with the number beside it.
         Slider {
             visible: row.kind === "slider"
-            enabled: row.open
+            enabled: row.open && !row.hardwareOwned
             Layout.fillWidth: true
             Layout.maximumWidth: 220
             from: row.from
@@ -275,7 +279,7 @@ Item {
 
         SpinBox {
             visible: row.kind === "number"
-            enabled: row.open
+            enabled: row.open && !row.hardwareOwned
             Layout.preferredWidth: 120
             from: Math.round(row.from)
             to: Math.round(row.to)
@@ -287,7 +291,7 @@ Item {
         // A device the engine is asked about before the DJ commits a name to a file read at start.
         Button {
             visible: row.kind === "check"
-            enabled: row.open
+            enabled: row.open && !row.hardwareOwned
             text: qsTr("Check")
             font.pixelSize: 10
             padding: 3
@@ -503,7 +507,7 @@ Item {
 
         TextField {
             visible: row.asField
-            enabled: row.open
+            enabled: row.open && !row.hardwareOwned
             Layout.fillWidth: true
             Layout.maximumWidth: 300
             font.pixelSize: 11

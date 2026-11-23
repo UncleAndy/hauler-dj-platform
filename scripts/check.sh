@@ -14,10 +14,12 @@ bash scripts/check-fixtures.sh
 bash scripts/check-rust.sh
 bash scripts/check-docs.sh
 bash scripts/launcher-check.sh
+bash scripts/device-choice-check.sh
 bash scripts/ui.sh --smoke
 bash scripts/ui.sh --engine-check
 bash scripts/curve-check.sh
 bash scripts/fx-check.sh
 bash scripts/controller-check.sh
+bash scripts/cue-hardware-check.sh
 
 echo "check.sh: all gates passed"

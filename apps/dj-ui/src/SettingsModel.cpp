@@ -206,6 +206,13 @@ QStringList SettingsModel::devices() const
     return names;
 }
 
+bool SettingsModel::hardwareOwnsCue() const
+{
+    // The engine owns the rule: it reads the settings file and it knows which driver is in use. Asking costs one short
+    // process that answers and leaves before it touches the logger or the audio device.
+    return m_engine.ask(QStringList{QStringLiteral("--cue-hardware")}).trimmed() == QStringLiteral("hardware");
+}
+
 bool SettingsModel::headphoneDeviceDiffers() const
 {
     const QString main = value(QStringLiteral("engine:audio.device")).toString().trimmed();

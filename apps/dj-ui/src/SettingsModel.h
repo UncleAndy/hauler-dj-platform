@@ -61,6 +61,11 @@ public:
     /// The outputs the engine can open, as names to choose from rather than a string to guess.
     Q_INVOKABLE QStringList devices() const;
 
+    /// Who turns the headphone volume and the cue/master proportion: the window, or the controller's own knobs.
+    /// The rule lives in `dj-config` and the engine answers for it, so the shell does not learn one controller's knobs
+    /// at a time (owner's instruction, 23.11).
+    Q_INVOKABLE bool hardwareOwnsCue() const;
+
     /// Whether the headphones are on an interface of their own, rather than on the main one.
     Q_INVOKABLE bool headphoneDeviceDiffers() const;
 

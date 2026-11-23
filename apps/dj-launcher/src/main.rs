@@ -208,8 +208,9 @@ fn run(options: &Options) -> Result<u8, String> {
 /// The engine, with the lifeline that makes it die with this process on Linux.
 fn start_engine(engine: &Path) -> Result<Child, String> {
     let mut command = Command::new(engine);
-    // An empty device name asks for the system's own output; the engine plays a generated tone without it, which
-    // on a machine with no console looks exactly like "no sound but the meter is lit".
+    // An empty device name is a placeholder, not a choice: it tells the engine "I have no name to give you, ask the
+    // settings file". That is where the DJ picks the interface, and getting it wrong sounds exactly like "no sound
+    // but the meter is lit" — the engine used to read the empty name as "the system's own output" instead.
     command.arg("--device").arg("");
     command.stdin(Stdio::null());
     if cfg!(windows) {

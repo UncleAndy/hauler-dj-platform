@@ -244,13 +244,34 @@ fn settings_request(argv: &[String]) -> Option<std::process::ExitCode> {
 fn cue_request(argv: &[String]) -> Option<std::process::ExitCode> {
     let mut mode: Option<String> = None;
     let mut path: Option<String> = None;
+    let mut ask_hardware = false;
     let mut arguments = argv.iter();
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--resolve-cue" => mode = arguments.next().cloned(),
+            "--cue-hardware" => ask_hardware = true,
             "--settings" => path = arguments.next().cloned(),
             _ => {}
         }
+    }
+    if ask_hardware {
+        // The window asks who owns the headphone knobs before drawing them. The rule lives in the settings crate, so
+        // the shell does not have to know which controller has which knob.
+        let (config, _used) =
+            match dj_config::Config::load_or_default(path.as_deref().map(std::path::Path::new)) {
+                Ok(pair) => pair,
+                Err(error) => {
+                    eprintln!("dj-engine: settings: {error}");
+                    return Some(std::process::ExitCode::from(2));
+                }
+            };
+        let owner = if dj_config::hardware_owns_cue(&config.controller) {
+            "hardware"
+        } else {
+            "window"
+        };
+        println!("{owner}");
+        return Some(std::process::ExitCode::SUCCESS);
     }
     let mode = mode?;
     let (config, _used) =
@@ -691,6 +712,11 @@ fn run(argv: &[String]) -> Result<(), String> {
     // A device that will not open costs the DJ the sound, not the program: the engine keeps running on the null
     // sink and says so, so the shell still starts and the log names the reason. Exiting left a window with no
     // engine at all, which is a worse answer than a silent one.
+    // What to open. The launcher passes an empty `--device` because it has no business knowing a device name; the
+    // answer to "which interface" belongs to the settings file, where the DJ chose it (owner's report, 2026-11-23:
+    // the controller was chosen in the window, the interface was not the system default, and there was no sound).
+    let mut device =
+        dj_config::chosen_output_device(device.as_deref(), defaults.audio.device.as_deref());
     let device_channels = match &device {
         Some(requested) => match dj_audio_io::output_channels(Some(requested), 4) {
             Ok(channels) => Some(channels),
@@ -773,6 +799,17 @@ fn run(argv: &[String]) -> Result<(), String> {
     }
     let mut mixer = Mixer::new(decks.len());
     mixer.prepare(rate, block);
+    // The S4 MK3 is an audio interface as well as a controller: its headphone volume and its cue/master knob are
+    // physical, and the hardware never reports where they stand. Two stages for one job means the knob on screen
+    // lies about what the DJ hears, so the software bus is held at unity and full monitoring and the hands do the
+    // rest (owner's instruction, 23.11).
+    if dj_config::hardware_owns_cue(&defaults.controller) {
+        mixer.set_cue_gain(1.0);
+        mixer.set_cue_mix(1.0);
+        dj_engine::log::info(
+            "the headphones' volume and mix are on the controller: the window's two knobs stay at unity",
+        );
+    }
     mixer.set_curve(crossfader_curve);
     for index in 0..decks.len() {
         mixer.set_channel(

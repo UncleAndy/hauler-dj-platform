@@ -58,6 +58,12 @@ Pane {
     readonly property real cueKnobSide: masterKnobSide
 
     /// The headphone value the engine published, by knob kind.
+    // Whether the two headphone knobs belong to the controller. On the S4 MK3 they are physical: the hardware has the
+    // volume and the cue/master proportion, and it does not report where they stand. A knob on screen for the same job
+    // would be a knob that lies, so those two are locked with a hint that names the hardware (owner's instruction,
+    // 23.11). Everything else on the panel stays the DJ's.
+    readonly property bool cueOnHardware: Settings !== null && Settings !== undefined ? Settings.hardwareOwnsCue() : false
+
     function headphoneValue(kind) {
         const phones = Bridge.snapshot.headphones !== undefined ? Bridge.snapshot.headphones : null;
         if (phones === null || phones === undefined) {
@@ -227,6 +233,12 @@ Pane {
                         sink: "phones"
                         gain: mixer.headphoneValue("phones")
                         diameter: mixer.cueKnobSide
+                        // The controller's own knob does this, so the one here must not pretend to.
+                        enabled: !mixer.cueOnHardware
+                        opacity: mixer.cueOnHardware ? 0.4 : 1.0
+                        ToolTip.visible: phonesHover.hovered && mixer.cueOnHardware
+                        ToolTip.text: qsTr("Громкость наушников — ручкой на контроллере")
+                        HoverHandler { id: phonesHover }
                     }
 
                     Item {
@@ -255,6 +267,12 @@ Pane {
                         negativeRangeDb: 6
                         gain: Math.pow(10.0, ((0.5 - mixer.headphoneValue("mix")) * 12.0) / 20.0)
                         diameter: mixer.cueKnobSide
+                        // The cue/master proportion is the controller's knob too.
+                        enabled: !mixer.cueOnHardware
+                        opacity: mixer.cueOnHardware ? 0.4 : 1.0
+                        ToolTip.visible: mixHover.hovered && mixer.cueOnHardware
+                        ToolTip.text: qsTr("Степень микса — ручкой на контроллере")
+                        HoverHandler { id: mixHover }
                     }
                 }
 

@@ -759,6 +759,44 @@ impl Config {
     }
 }
 
+/// Which output device the engine should ask for, given the command line and the settings file.
+///
+/// Three callers say three different things, and the order between them is the whole point:
+///
+/// - an explicit name (`--device ur22c`) is what the person typed just now, so it wins;
+/// - an empty name is the launcher's placeholder — it does not know any device, so the settings file answers, and an
+///   empty answer asks for the system's own choice;
+/// - no name at all means the caller never asked for sound, and the engine keeps its silent null sink. A gate that
+///   measures the mixer must not open a sound card just because a settings file names one.
+///
+/// Whitespace is not a name in either place: a file with `device = "  "` is a file with no device, not a search for a
+/// device whose name contains spaces (an empty needle matches every device — the first one wins, and that is how the
+/// controller chosen in the window ended up unplugged from the sound).
+/// Whether the two headphone knobs belong to the hardware rather than to the window.
+///
+/// The S4 MK3 is an audio interface as well as a controller: its headphone volume and its cue/master proportion are
+/// physical knobs, and the hardware never reports their positions to us. A second stage for the same job on screen
+/// would be a knob that lies — it would move, the sound would change by a few decibels, and the DJ would have two
+/// places to look for the same thing (owner's instruction, 23.11: "в режиме работы через контроллер не нужно ручками
+/// в приложении регулировать громкость наушников и степень микса").
+pub fn hardware_owns_cue(controller: &crate::ControllerSettings) -> bool {
+    controller.enabled && controller.driver == ControllerDriver::S4Mk3
+}
+
+pub fn chosen_output_device(cli: Option<&str>, configured: Option<&str>) -> Option<String> {
+    let configured = configured
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string);
+    let requested = cli?;
+    let requested = requested.trim();
+    if requested.is_empty() {
+        Some(configured.unwrap_or_default())
+    } else {
+        Some(requested.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     /// A controller that switches itself on would change the program for every existing user.
