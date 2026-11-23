@@ -31,7 +31,7 @@ use dj_controller_s4mk3::{NAME, PRODUCT, S4Mk3, VENDOR};
 use dj_hid::write::ReportSink;
 use dj_hid::{DeviceInfo, HidrawTransport, Transport};
 
-const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send] | --lights-demo [--interval MS] [--send]";
+const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send] | --lights-demo [--interval MS] [--send] | --lights-show --engine <endpoint>";
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -75,6 +75,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
                 index += 1;
             }
             "--lights-demo" => mode = Mode::LightsDemo,
+            "--lights-show" => mode = Mode::LightsShow,
             "--lights-map" => {
                 let Some(path) = arguments.get(index + 1) else {
                     return Err(format!("--lights-map wants a file name. {USAGE}"));
@@ -244,6 +245,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         Mode::LightsMap(path) => lights_map(&devices, &path, &sweep),
         Mode::LightsColours(byte) => lights_colours(&devices, byte, &sweep),
         Mode::LightsDemo => lights_demo(&devices, &sweep, sweep_send),
+        Mode::LightsShow => lights_show(&devices, engine.as_deref(), sweep_body_only),
         Mode::LightsSweep => lights_sweep(&devices, &sweep, sweep_send),
     }
 }
@@ -259,6 +261,7 @@ enum Mode {
     LightsMap(String),
     LightsColours(usize),
     LightsDemo,
+    LightsShow,
 }
 
 /// Write one screen as a picture a person can open, and say how big the frame would be.
@@ -437,6 +440,118 @@ fn lights_colours(devices: &[DeviceInfo], byte: usize, sweep: &Sweep) -> Result<
     let _ = sink.send(&dj_controller_s4mk3::lights::LightsReport::dark().wire(with_id));
     println!("dj-controller: done; the panel is dark again");
     Ok(())
+}
+
+/// What one deck says about itself, as far as the panel cares.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct DeckFacts {
+    playing: bool,
+    monitoring: bool,
+    sync: bool,
+    fx: bool,
+    hotcues: [bool; 8],
+}
+
+/// The panel's state from four decks' facts.
+///
+/// Two halves again: hotcues, `PLAY`, `CUE` and sync belong to the decks with platters — the left and right pairs — while
+/// the mixer section has an FX button for each of the four decks the program runs. Decks C and D have no platter on this
+/// controller, so nothing else of theirs can be lit.
+fn show_from_facts(decks: &[DeckFacts; 4]) -> dj_controller_s4mk3::lights::Show {
+    dj_controller_s4mk3::lights::Show {
+        hotcues: [decks[0].hotcues, decks[1].hotcues],
+        playing: [decks[0].playing, decks[1].playing],
+        monitoring: [decks[0].monitoring, decks[1].monitoring],
+        sync: [decks[0].sync, decks[1].sync],
+        fx: [decks[0].fx, decks[1].fx, decks[2].fx, decks[3].fx],
+    }
+}
+
+/// The same facts, taken from a published snapshot.
+fn facts_from(snapshot: &dj_domain::Snapshot) -> [DeckFacts; 4] {
+    let mut facts = [DeckFacts::default(); 4];
+    for deck in &snapshot.decks {
+        let index = deck.deck.index();
+        if index >= facts.len() {
+            continue;
+        }
+        let mut hotcues = [false; 8];
+        for (slot, cue) in deck.hotcues.iter().take(8).enumerate() {
+            hotcues[slot] = cue.is_some();
+        }
+        facts[index] = DeckFacts {
+            playing: deck.playing,
+            monitoring: deck.cue,
+            sync: !deck.sync.is_off(),
+            fx: deck.fx.enabled,
+            hotcues,
+        };
+    }
+    facts
+}
+
+/// Light the panel from what the engine publishes, as long as the engine is there.
+///
+/// This is the live half of the lights: the same report the tests build, sent whenever the state actually changed. A
+/// report every frame would be a stream of identical bytes; the panel does not need to be told twice that nothing moved.
+fn lights_show(
+    devices: &[DeviceInfo],
+    engine: Option<&str>,
+    body_only: bool,
+) -> Result<(), String> {
+    let Some(endpoint) = engine else {
+        return Err(format!("--lights-show wants --engine <endpoint>. {USAGE}"));
+    };
+    // Without a device the show says what it would light: that is the half a person can check without the controller,
+    // and the only half a machine with no panel can test at all.
+    let mut sink = if devices.is_empty() {
+        None
+    } else {
+        Some(open_lights(devices)?)
+    };
+    let (mut client, welcome) = dj_bridge::connect_with_timeout(
+        std::path::Path::new(endpoint),
+        Some(std::time::Duration::from_secs(2)),
+    )
+    .map_err(|error| format!("no engine at {endpoint}: {error}"))?;
+    let _ = welcome;
+    let with_id = !body_only;
+    let mut last: Option<Vec<u8>> = None;
+    println!("dj-controller: lighting the panel from {endpoint}; Ctrl-C stops");
+    loop {
+        let message = client
+            .recv_server()
+            .map_err(|error| format!("the engine stopped answering: {error}"))?;
+        let dj_bridge::ServerMessage::Snapshot(snapshot) = message else {
+            continue;
+        };
+        let report =
+            dj_controller_s4mk3::lights::report_for(&show_from_facts(&facts_from(&snapshot)));
+        let wire = report.wire(with_id);
+        if last.as_ref() == Some(&wire) {
+            continue;
+        }
+        match sink.as_mut() {
+            Some(sink) => sink
+                .send(&wire)
+                .map_err(|error| format!("the panel did not take the report: {error}"))?,
+            None => {
+                let lit: Vec<String> = report
+                    .body
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, colour)| **colour != 0)
+                    .map(|(byte, colour)| {
+                        let name = dj_controller_s4mk3::lights::name_of(byte as u8)
+                            .unwrap_or("a byte the map does not name");
+                        format!("{byte} {name} ({colour})")
+                    })
+                    .collect();
+                println!("dj-controller: would light {}", lit.join(", "));
+            }
+        }
+        last = Some(wire);
+    }
 }
 
 /// Light every control the map knows, one at a time.
@@ -683,6 +798,59 @@ fn send_commands(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_left_and_right_decks_carry_the_platter_lights() {
+        // Hotcues, play, monitoring and sync belong to the two decks with platters: the mixer section has no room for
+        // them, and lighting a button that is not under that hand would be a lie about which deck it belongs to.
+        let decks = [
+            DeckFacts {
+                playing: true,
+                monitoring: true,
+                sync: false,
+                fx: false,
+                hotcues: [true; 8],
+            },
+            DeckFacts::default(),
+            DeckFacts::default(),
+            DeckFacts::default(),
+        ];
+        let show = show_from_facts(&decks);
+        assert!(show.playing[0] && !show.playing[1]);
+        assert!(show.monitoring[0] && !show.monitoring[1]);
+        assert!(!show.sync[0] && !show.sync[1]);
+        assert!(show.hotcues[0].iter().all(|lit| *lit));
+        assert!(show.hotcues[1].iter().all(|lit| !*lit));
+    }
+
+    #[test]
+    fn the_fx_buttons_follow_all_four_decks() {
+        // The program runs four decks and the controller has four FX buttons, so C and D can light even though they have
+        // no platter: that is the one part of the panel that can show them.
+        let decks = [
+            DeckFacts::default(),
+            DeckFacts::default(),
+            DeckFacts {
+                fx: true,
+                ..DeckFacts::default()
+            },
+            DeckFacts {
+                fx: true,
+                ..DeckFacts::default()
+            },
+        ];
+        let show = show_from_facts(&decks);
+        assert_eq!(show.fx, [false, false, true, true]);
+    }
+
+    #[test]
+    fn the_live_lights_want_an_endpoint() {
+        // A show without an engine would light nothing and say nothing; the message has to name the missing half.
+        match lights_show(&[], None, false) {
+            Ok(()) => panic!("a show without an endpoint lit something"),
+            Err(refused) => assert!(refused.contains("--engine"), "{refused}"),
+        }
+    }
 
     #[test]
     fn usage_is_not_an_error() {

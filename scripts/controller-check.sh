@@ -136,7 +136,28 @@ case "$sweep" in
   *) fail "the sweep counts its reports wrongly: $sweep" ;;
 esac
 
-# 9. The sweep's parameters are flags of their own: `--lights-map file --from 0` has to work, because that is what a
+# 9. The live lights: a playing engine, a snapshot, and a report that says what would be lit. With no controller on this
+# machine the service prints instead of sending, which is exactly the half a check can see.
+"$engine" --set-config controller.enabled=true >/dev/null 2>&1 || true
+"$engine" --set-config controller.driver=s4mk3 >/dev/null 2>&1 || true
+show_socket="$work/show.sock"
+"$engine" --null-sink --autoplay --seconds 8 --socket "$show_socket" >/dev/null 2>&1 &
+show_pid=$!
+for _ in $(seq 1 40); do [ -S "$show_socket" ] && break; sleep 0.25; done
+shown="$(timeout 6 "$service" --lights-show --engine "$show_socket" 2>&1 || true)"
+kill "$show_pid" 2>/dev/null || true
+wait "$show_pid" 2>/dev/null || true
+"$engine" --set-config controller.enabled=false >/dev/null 2>&1 || true
+case "$shown" in
+  *"would light"*|*"lighting the panel"*) ;;
+  *) fail "the live lights said nothing about a playing engine: $shown" ;;
+esac
+case "$shown" in
+  *"PLAY button"*) ;;
+  *) fail "a playing deck did not light its PLAY button: $shown" ;;
+esac
+
+# 10. The sweep's parameters are flags of their own: `--lights-map file --from 0` has to work, because that is what a
 # person types. It failed on `--from` once, after the file name.
 mapdry="$("$service" --lights-map "$work/map.txt" --from 0 --to 2 2>&1 || true)"
 case "$mapdry" in
@@ -161,4 +182,4 @@ case "$bad" in
   *) fail "a broken colour list was not refused: $bad" ;;
 esac
 
-printf 'controller-check: off by default, on when asked, off again; commands reach the engine and events the table does not know are named; the screen draws as a 320x240 picture with the switch off; the lights sweep prints its frames and sends nothing; the sweep takes its flags in any order\n'
+printf 'controller-check: off by default, on when asked, off again; commands reach the engine and events the table does not know are named; the screen draws as a 320x240 picture with the switch off; the lights sweep prints its frames and sends nothing; the sweep takes its flags in any order; the live lights follow a playing engine\n'
