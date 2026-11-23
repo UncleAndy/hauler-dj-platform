@@ -75,6 +75,91 @@ pub struct ControllerSettings {
     pub driver: ControllerDriver,
     /// The HID node to open, when the driver should not search by itself.
     pub device: Option<String>,
+    /// The colours the panel shows. Data, not code: the panel is in the owner's hands, not in the author's.
+    #[serde(default)]
+    pub lights: ControllerLights,
+}
+
+/// Which colour every state of the panel uses, in the device's own names.
+///
+/// The controller only understands a numbered colour table, and the numbers are pinned by the hardware: 4 is red, 28 is
+/// green, 68 is white. Which of those a person wants under their hands in the dark is not a hardware question, so the
+/// names are settings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ControllerLights {
+    /// Light the whole panel faintly instead of leaving it dark when a control is inactive.
+    pub night: bool,
+    /// The colour of everything that is inactive in night mode.
+    pub resting: LightColour,
+    /// A deck that is playing.
+    pub play: LightColour,
+    /// A channel in the headphones.
+    pub cue: LightColour,
+    /// A deck that follows another.
+    pub sync: LightColour,
+    /// A stored hotcue slot.
+    pub hotcue: LightColour,
+    /// A deck whose effect is switched in.
+    pub fx: LightColour,
+}
+
+impl Default for ControllerLights {
+    fn default() -> Self {
+        // The defaults are the colours the first build used, so a settings file from before this section sounds and
+        // looks the way it did: night off, and the states in the colours they were drawn in.
+        Self {
+            night: false,
+            resting: LightColour::White,
+            play: LightColour::Green,
+            cue: LightColour::Blue,
+            sync: LightColour::Yellow,
+            hotcue: LightColour::Green,
+            fx: LightColour::Magenta,
+        }
+    }
+}
+
+/// The eighteen colours the panel's LEDs can show, by the names the panel's own protocol uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LightColour {
+    /// No light.
+    Off,
+    /// Red.
+    Red,
+    /// Carrot.
+    Carrot,
+    /// Orange.
+    Orange,
+    /// Honey.
+    Honey,
+    /// Yellow.
+    Yellow,
+    /// Lime.
+    Lime,
+    /// Green.
+    Green,
+    /// Aqua.
+    Aqua,
+    /// Celeste.
+    Celeste,
+    /// Sky.
+    Sky,
+    /// Blue.
+    Blue,
+    /// Purple.
+    Purple,
+    /// Fuscia, spelled as the device names it.
+    Fuscia,
+    /// Magenta.
+    Magenta,
+    /// Azalea.
+    Azalea,
+    /// Salmon.
+    Salmon,
+    /// White.
+    White,
 }
 
 impl Default for ControllerSettings {
@@ -83,6 +168,7 @@ impl Default for ControllerSettings {
             enabled: false,
             driver: ControllerDriver::None,
             device: None,
+            lights: ControllerLights::default(),
         }
     }
 }
@@ -822,6 +908,7 @@ mod tests {
                 enabled: true,
                 driver: ControllerDriver::S4Mk3,
                 device: None,
+                lights: ControllerLights::default(),
             },
             ..Config::default()
         };

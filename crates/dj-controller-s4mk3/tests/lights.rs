@@ -8,9 +8,9 @@
 
 use dj_controller_s4mk3::Colour;
 use dj_controller_s4mk3::lights::{
-    LIGHTS_LENGTH, LightsReport, REPORT_LIGHTS, Show, bright, brightness_probe, byte_of, bytes_for,
-    colour_name, colour_walk, colours, dim, fill_only, known_bytes, map, map_line, name_of,
-    parse_map, pick_line, report_at_rest, report_for, sweep, walk,
+    LIGHTS_LENGTH, LightsReport, Palette, REPORT_LIGHTS, Show, bright, brightness_probe, byte_of,
+    bytes_for, colour_by_name, colour_name, colour_walk, colours, dim, fill_only, known_bytes, map,
+    map_line, name_of, parse_map, pick_line, report_at_rest, report_for, report_with, sweep, walk,
 };
 
 #[test]
@@ -257,11 +257,11 @@ fn brightness_is_an_offset_to_the_colour() {
 fn a_dark_booth_lights_every_control_faintly() {
     // The owner's request: in the dark the whole panel glows, and the active controls stand out. Every mapped byte gets
     // the resting colour, so nothing on the panel is invisible.
-    let report = report_at_rest(&Show::default(), 68);
+    let report = report_at_rest(&Show::default(), &Palette::default());
     for (byte, _) in map() {
         assert_eq!(
             report.body[usize::from(*byte)],
-            dim(68),
+            dim(Palette::default().resting.code()),
             "byte {byte} is faint, not dark"
         );
     }
@@ -273,7 +273,7 @@ fn a_dark_booth_lights_every_control_faintly() {
         playing: [true, false],
         ..Show::default()
     };
-    let report = report_at_rest(&show, 68);
+    let report = report_at_rest(&show, &Palette::default());
     assert_eq!(report.body[0], bright(Colour::Green.code()), "the lit slot");
     let play = byte_of("Left PLAY").expect("the map has it");
     assert_eq!(
@@ -284,7 +284,7 @@ fn a_dark_booth_lights_every_control_faintly() {
     let neighbour = byte_of("Left CUE3").expect("the map has it");
     assert_eq!(
         report.body[usize::from(neighbour)],
-        dim(68),
+        dim(Palette::default().resting.code()),
         "a neighbouring control stays faint"
     );
 }
@@ -387,4 +387,42 @@ fn a_picked_colour_is_recorded_in_the_same_shape_as_the_map() {
         pick_line(68, "   ").is_none(),
         "a colour without a name is not a choice"
     );
+}
+
+#[test]
+fn the_settings_choose_the_colours() {
+    // "Давай сделаем цвета настраиваемыми": every state takes its colour from the palette, so the window can offer the
+    // eighteen names and the panel follows.
+    let palette = Palette {
+        play: Colour::Red,
+        hotcue: Colour::Purple,
+        fx: Colour::Sky,
+        cue: Colour::Salmon,
+        sync: Colour::Lime,
+        resting: Colour::Off,
+    };
+    let mut hotcues = [[false; 8]; 2];
+    hotcues[0][0] = true;
+    let show = Show {
+        hotcues,
+        playing: [true, false],
+        monitoring: [false, true],
+        sync: [true, false],
+        fx: [false, false, true, false],
+    };
+    let report = report_with(&show, &palette);
+    assert_eq!(report.body[0], bright(Colour::Purple.code()), "the hotcue");
+    let play = byte_of("Left PLAY").expect("the map has it");
+    assert_eq!(report.body[usize::from(play)], bright(Colour::Red.code()));
+    let cue = byte_of("Right CUE").expect("the map has it");
+    assert_eq!(report.body[usize::from(cue)], bright(Colour::Salmon.code()));
+    let fx = byte_of("Deck C FX").expect("the map has it");
+    assert_eq!(report.body[usize::from(fx)], bright(Colour::Sky.code()));
+}
+
+#[test]
+fn a_colour_is_found_by_the_name_the_settings_use() {
+    assert_eq!(colour_by_name("green"), Some(Colour::Green));
+    assert_eq!(colour_by_name(" White "), Some(Colour::White));
+    assert_eq!(colour_by_name("chartreuse"), None);
 }

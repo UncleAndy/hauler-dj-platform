@@ -55,7 +55,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
     let mut sweep_body_only = false;
     let mut sweep_send = false;
     let mut sweep_colours: Vec<u8> = vec![4];
-    let mut rest_colour: u8 = 68;
+    let mut rest_colour: Option<dj_controller_s4mk3::Colour> = None;
     let mut night = false;
     let mut rounds = 3usize;
     let mut shifted = false;
@@ -86,10 +86,13 @@ fn run(arguments: &[String]) -> Result<(), String> {
                 mode = Mode::LightsShow;
             }
             "--rest" => {
-                rest_colour = arguments
-                    .get(index + 1)
-                    .and_then(|value| value.parse().ok())
-                    .ok_or_else(|| "--rest wants a colour code".to_string())?;
+                let Some(name) = arguments.get(index + 1) else {
+                    return Err(format!("--rest wants a colour name. {USAGE}"));
+                };
+                rest_colour = Some(
+                    dj_controller_s4mk3::lights::colour_by_name(name)
+                        .ok_or_else(|| format!("--rest: no colour called {name:?}"))?,
+                );
                 index += 1;
             }
             "--rounds" => {
@@ -354,6 +357,13 @@ fn run(arguments: &[String]) -> Result<(), String> {
         return Ok(());
     }
 
+    // The colours the panel shows are settings: the file decides, and `--rest` overrides one of them for a night of
+    // trying colours out.
+    let mut palette = palette_from(&config.controller.lights);
+    if let Some(resting) = rest_colour {
+        palette.resting = resting;
+    }
+
     let transport = HidrawTransport::new();
     let devices = transport
         .enumerate()
@@ -374,7 +384,8 @@ fn run(arguments: &[String]) -> Result<(), String> {
             &devices,
             engine.as_deref(),
             sweep_body_only,
-            night.then_some(rest_colour),
+            night || config.controller.lights.night,
+            &palette,
         ),
         Mode::LightsFill(code) => lights_fill(&devices, code, sweep_send, sweep_body_only),
         Mode::LightsPick(what) => lights_pick(
@@ -799,6 +810,45 @@ fn lights_fill(
     Ok(())
 }
 
+/// The colour of a settings value in the driver's own vocabulary.
+///
+/// One match, in one place: the settings crate names the colours as the device does, and this is where the two meet.
+fn colour_of(colour: dj_config::LightColour) -> dj_controller_s4mk3::Colour {
+    use dj_config::LightColour as Wanted;
+    match colour {
+        Wanted::Off => dj_controller_s4mk3::Colour::Off,
+        Wanted::Red => dj_controller_s4mk3::Colour::Red,
+        Wanted::Carrot => dj_controller_s4mk3::Colour::Carrot,
+        Wanted::Orange => dj_controller_s4mk3::Colour::Orange,
+        Wanted::Honey => dj_controller_s4mk3::Colour::Honey,
+        Wanted::Yellow => dj_controller_s4mk3::Colour::Yellow,
+        Wanted::Lime => dj_controller_s4mk3::Colour::Lime,
+        Wanted::Green => dj_controller_s4mk3::Colour::Green,
+        Wanted::Aqua => dj_controller_s4mk3::Colour::Aqua,
+        Wanted::Celeste => dj_controller_s4mk3::Colour::Celeste,
+        Wanted::Sky => dj_controller_s4mk3::Colour::Sky,
+        Wanted::Blue => dj_controller_s4mk3::Colour::Blue,
+        Wanted::Purple => dj_controller_s4mk3::Colour::Purple,
+        Wanted::Fuscia => dj_controller_s4mk3::Colour::Fuscia,
+        Wanted::Magenta => dj_controller_s4mk3::Colour::Magenta,
+        Wanted::Azalea => dj_controller_s4mk3::Colour::Azalea,
+        Wanted::Salmon => dj_controller_s4mk3::Colour::Salmon,
+        Wanted::White => dj_controller_s4mk3::Colour::White,
+    }
+}
+
+/// The palette the settings file asks for.
+fn palette_from(lights: &dj_config::ControllerLights) -> dj_controller_s4mk3::lights::Palette {
+    dj_controller_s4mk3::lights::Palette {
+        resting: colour_of(lights.resting),
+        play: colour_of(lights.play),
+        cue: colour_of(lights.cue),
+        sync: colour_of(lights.sync),
+        hotcue: colour_of(lights.hotcue),
+        fx: colour_of(lights.fx),
+    }
+}
+
 /// What one deck says about itself, as far as the panel cares.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct DeckFacts {
@@ -855,7 +905,8 @@ fn lights_show(
     devices: &[DeviceInfo],
     engine: Option<&str>,
     body_only: bool,
-    night: Option<u8>,
+    night: bool,
+    palette: &dj_controller_s4mk3::lights::Palette,
 ) -> Result<(), String> {
     let Some(endpoint) = engine else {
         return Err(format!("--lights-show wants --engine <endpoint>. {USAGE}"));
@@ -884,10 +935,12 @@ fn lights_show(
             continue;
         };
         let show = show_from_facts(&facts_from(&snapshot));
-        let report = match night {
-            // In a dark booth everything glows faintly and the active controls stand out.
-            Some(resting) => dj_controller_s4mk3::lights::report_at_rest(&show, resting),
-            None => dj_controller_s4mk3::lights::report_for(&show),
+        // In a dark booth everything glows faintly and the active controls stand out; outside it the panel is dark
+        // where nothing happens.
+        let report = if night {
+            dj_controller_s4mk3::lights::report_at_rest(&show, palette)
+        } else {
+            dj_controller_s4mk3::lights::report_with(&show, palette)
         };
         let wire = report.wire(with_id);
         if last.as_ref() == Some(&wire) {
@@ -1208,7 +1261,13 @@ mod tests {
     #[test]
     fn the_live_lights_want_an_endpoint() {
         // A show without an engine would light nothing and say nothing; the message has to name the missing half.
-        match lights_show(&[], None, false, None) {
+        match lights_show(
+            &[],
+            None,
+            false,
+            false,
+            &dj_controller_s4mk3::lights::Palette::default(),
+        ) {
             Ok(()) => panic!("a show without an endpoint lit something"),
             Err(refused) => assert!(refused.contains("--engine"), "{refused}"),
         }

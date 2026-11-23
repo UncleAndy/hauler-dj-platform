@@ -233,12 +233,52 @@ fn control(name: &str) -> Option<u8> {
     byte_of(name)
 }
 
+/// Which colour each state of the panel uses.
+///
+/// The colours are settings, not constants: the panel is in the owner's hands, and whether white is too much in a dark
+/// booth is not a question the hardware answers. This struct is the whole vocabulary — one field per state — so adding a
+/// state means adding a field and a line where it is painted, not hunting through matches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Palette {
+    /// The colour of everything inactive, when the panel rests instead of going dark.
+    pub resting: Colour,
+    /// A deck that is playing.
+    pub play: Colour,
+    /// A channel in the headphones.
+    pub cue: Colour,
+    /// A deck that follows another.
+    pub sync: Colour,
+    /// A stored hotcue slot.
+    pub hotcue: Colour,
+    /// A deck whose effect is switched in.
+    pub fx: Colour,
+}
+
+impl Default for Palette {
+    fn default() -> Self {
+        // The colours the first build drew, so a panel without a settings section looks the way it did.
+        Self {
+            resting: Colour::White,
+            play: Colour::Green,
+            cue: Colour::Blue,
+            sync: Colour::Yellow,
+            hotcue: Colour::Green,
+            fx: Colour::Magenta,
+        }
+    }
+}
+
 /// The report for a state: every control that should be lit, in its colour, and everything else dark.
 ///
 /// Colours are a choice, not a measurement: a lit hotcue is green, a playing deck green, monitoring blue, sync yellow,
 /// FX magenta. The byte sets the colour — that is what the probe on byte 8 showed — so what is left is deciding which
 /// colour means what, and that is written here in one place a person can argue with.
 pub fn report_for(show: &Show) -> LightsReport {
+    report_with(show, &Palette::default())
+}
+
+/// The same report in the colours the settings name.
+pub fn report_with(show: &Show, palette: &Palette) -> LightsReport {
     let mut report = LightsReport::dark();
     let mut set = |byte: Option<u8>, colour: u8| {
         if let Some(byte) = byte
@@ -251,7 +291,7 @@ pub fn report_for(show: &Show) -> LightsReport {
     for (side, slots) in show.hotcues.iter().enumerate() {
         for (slot, lit) in slots.iter().enumerate() {
             if *lit {
-                set(hotcue_byte(side, slot), bright(Colour::Green.code()));
+                set(hotcue_byte(side, slot), bright(palette.hotcue.code()));
             }
         }
     }
@@ -262,13 +302,13 @@ pub fn report_for(show: &Show) -> LightsReport {
             ("Right PLAY button", "Right CUE", "Right Sync")
         };
         if show.playing[side] {
-            set(control(names.0), bright(Colour::Green.code()));
+            set(control(names.0), bright(palette.play.code()));
         }
         if show.monitoring[side] {
-            set(control(names.1), bright(Colour::Blue.code()));
+            set(control(names.1), bright(palette.cue.code()));
         }
         if show.sync[side] {
-            set(control(names.2), bright(Colour::Yellow.code()));
+            set(control(names.2), bright(palette.sync.code()));
         }
     }
     for (deck, lit) in show.fx.iter().enumerate() {
@@ -279,7 +319,7 @@ pub fn report_for(show: &Show) -> LightsReport {
                 2 => "Deck C FX on button",
                 _ => "Deck D FX on button",
             };
-            set(control(name), bright(Colour::Magenta.code()));
+            set(control(name), bright(palette.fx.code()));
         }
     }
     report
@@ -291,22 +331,30 @@ pub fn report_for(show: &Show) -> LightsReport {
 /// only possible because brightness is an offset: the same colour at 0 is the faint state and at 2 is the bright one.
 /// `resting` is the colour everything sits at when nothing is happening; the active controls keep their own colours,
 /// brighter.
-pub fn report_at_rest(show: &Show, resting: u8) -> LightsReport {
+pub fn report_at_rest(show: &Show, palette: &Palette) -> LightsReport {
     let mut report = LightsReport::dark();
-    let faint = dim(resting);
+    let faint = dim(palette.resting.code());
     for (byte, _) in map() {
         if let Some(slot) = report.body.get_mut(usize::from(*byte)) {
             *slot = faint;
         }
     }
     // The active controls are painted over the resting layer: their own colour, one brightness step up.
-    let active = report_for(show);
+    let active = report_with(show, palette);
     for (byte, colour) in report.body.iter_mut().zip(active.body.iter()) {
         if *colour != 0 {
             *byte = *colour;
         }
     }
     report
+}
+
+/// The colour a settings file names, by the name the device's own table uses.
+pub fn colour_by_name(name: &str) -> Option<Colour> {
+    let wanted = name.trim().to_ascii_lowercase();
+    Colour::all()
+        .into_iter()
+        .find(|colour| colour_name(*colour) == wanted)
 }
 
 /// The reports that check the encoding on the device: the same colour, dim and bright, a few times each.
