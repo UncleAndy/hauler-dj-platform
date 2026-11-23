@@ -856,7 +856,8 @@ struct DeckFacts {
     monitoring: bool,
     sync: bool,
     fx: bool,
-    hotcues: [bool; 8],
+    /// The colour each occupied hotcue slot shows: the marker's own colour, or the palette's when it has none.
+    hotcues: [Option<dj_controller_s4mk3::Colour>; 8],
 }
 
 /// The panel's state from four decks' facts.
@@ -875,16 +876,28 @@ fn show_from_facts(decks: &[DeckFacts; 4]) -> dj_controller_s4mk3::lights::Show 
 }
 
 /// The same facts, taken from a published snapshot.
-fn facts_from(snapshot: &dj_domain::Snapshot) -> [DeckFacts; 4] {
+fn facts_from(
+    snapshot: &dj_domain::Snapshot,
+    palette: &dj_controller_s4mk3::lights::Palette,
+) -> [DeckFacts; 4] {
     let mut facts = [DeckFacts::default(); 4];
     for deck in &snapshot.decks {
         let index = deck.deck.index();
         if index >= facts.len() {
             continue;
         }
-        let mut hotcues = [false; 8];
+        // The pad shows the colour the DJ painted the cue with; a cue without one gets the palette's colour, because an
+        // uncoloured pad in the dark is a pad that cannot be found.
+        let mut hotcues = [None; 8];
         for (slot, cue) in deck.hotcues.iter().take(8).enumerate() {
-            hotcues[slot] = cue.is_some();
+            if cue.is_some() {
+                let painted = deck
+                    .cue_colors
+                    .get(slot)
+                    .and_then(|colour| colour.as_deref())
+                    .and_then(dj_controller_s4mk3::lights::nearest_colour);
+                hotcues[slot] = Some(painted.unwrap_or(palette.hotcue));
+            }
         }
         facts[index] = DeckFacts {
             playing: deck.playing,
@@ -934,7 +947,7 @@ fn lights_show(
         let dj_bridge::ServerMessage::Snapshot(snapshot) = message else {
             continue;
         };
-        let show = show_from_facts(&facts_from(&snapshot));
+        let show = show_from_facts(&facts_from(&snapshot, palette));
         // In a dark booth everything glows faintly and the active controls stand out; outside it the panel is dark
         // where nothing happens.
         let report = if night {
@@ -1224,7 +1237,7 @@ mod tests {
                 monitoring: true,
                 sync: false,
                 fx: false,
-                hotcues: [true; 8],
+                hotcues: [Some(dj_controller_s4mk3::Colour::Green); 8],
             },
             DeckFacts::default(),
             DeckFacts::default(),
@@ -1234,8 +1247,8 @@ mod tests {
         assert!(show.playing[0] && !show.playing[1]);
         assert!(show.monitoring[0] && !show.monitoring[1]);
         assert!(!show.sync[0] && !show.sync[1]);
-        assert!(show.hotcues[0].iter().all(|lit| *lit));
-        assert!(show.hotcues[1].iter().all(|lit| !*lit));
+        assert!(show.hotcues[0].iter().all(|slot| slot.is_some()));
+        assert!(show.hotcues[1].iter().all(|slot| slot.is_none()));
     }
 
     #[test]

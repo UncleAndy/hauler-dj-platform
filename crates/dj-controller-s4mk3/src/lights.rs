@@ -210,8 +210,11 @@ pub fn known_bytes() -> Vec<u8> {
 /// that and nothing more — no field for a light the map has not taught us.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Show {
-    /// Hotcue slots lit, for the left and the right deck.
-    pub hotcues: [[bool; 8]; 2],
+    /// Hotcue slots lit, for the left and the right deck, each in the colour of its marker in the application.
+    ///
+    /// A pad's colour is the colour the DJ painted the cue with: a hand looks for the pad it painted, not for a pad the
+    /// program chose. `None` means the slot is empty, or the cue has no colour of its own.
+    pub hotcues: [[Option<Colour>; 8]; 2],
     /// Playing, for the left and the right deck.
     pub playing: [bool; 2],
     /// Monitoring in the headphones (the CUE button), for the left and the right deck.
@@ -289,9 +292,11 @@ pub fn report_with(show: &Show, palette: &Palette) -> LightsReport {
     };
 
     for (side, slots) in show.hotcues.iter().enumerate() {
-        for (slot, lit) in slots.iter().enumerate() {
-            if *lit {
-                set(hotcue_byte(side, slot), bright(palette.hotcue.code()));
+        for (slot, colour) in slots.iter().enumerate() {
+            // The marker's own colour when it has one, the palette's otherwise: an uncoloured cue still has to be
+            // findable.
+            if let Some(colour) = colour {
+                set(hotcue_byte(side, slot), bright(colour.code()));
             }
         }
     }
@@ -430,6 +435,69 @@ pub fn colour_walk(shifted: bool) -> Vec<ColourStep> {
         }
     }
     out
+}
+
+/// What each colour of the panel looks like, as the reference table gives it: `#rrggbb` at three quarters.
+///
+/// The numbers are not invented here: they come with the public controller script's colour table, one entry per colour
+/// name, and they are what the application's cue colours are matched against. A cue marked `#ff0044` has no exact light
+/// on this panel; the nearest one is what a hand can find in the dark.
+pub fn colour_rgb(colour: Colour) -> u32 {
+    match colour {
+        Colour::Off => 0x000000,
+        Colour::Red => 0xCC0000,
+        Colour::Carrot => 0xCC5E00,
+        Colour::Orange => 0xCC7800,
+        Colour::Honey => 0xCC9200,
+        Colour::Yellow => 0xCCCC00,
+        Colour::Lime => 0x81CC00,
+        Colour::Green => 0x00CC00,
+        Colour::Aqua => 0x00CC49,
+        Colour::Celeste => 0x00CCCC,
+        Colour::Sky => 0x0091CC,
+        Colour::Blue => 0x0000CC,
+        Colour::Purple => 0xCC00CC,
+        Colour::Fuscia => 0xAD65FF,
+        Colour::Magenta => 0xCC0079,
+        Colour::Azalea => 0xCC477E,
+        Colour::Salmon => 0xCC4761,
+        Colour::White => 0xCCCCCC,
+    }
+}
+
+/// The colour of the panel closest to an `#rrggbb` value.
+///
+/// Distance is the plain sum of squared channel differences, which is what a person's eye does well enough at this
+/// saturation: the panel has eighteen colours, and "the closest of eighteen" is the honest answer to a cue marker
+/// painted `#33aaff`. `None` for a string that is not a colour at all — a cue without a colour is not a colour to guess
+/// at.
+pub fn nearest_colour(rgb: &str) -> Option<Colour> {
+    let text = rgb.trim().trim_start_matches('#');
+    if text.len() != 6 {
+        return None;
+    }
+    let value = u32::from_str_radix(text, 16).ok()?;
+    let (red, green, blue) = ((value >> 16) & 0xFF, (value >> 8) & 0xFF, value & 0xFF);
+    let mut best: Option<(u64, Colour)> = None;
+    for colour in Colour::all() {
+        if colour == Colour::Off {
+            continue;
+        }
+        let candidate = colour_rgb(colour);
+        let (cr, cg, cb) = (
+            (candidate >> 16) & 0xFF,
+            (candidate >> 8) & 0xFF,
+            candidate & 0xFF,
+        );
+        let distance = (i64::from(red) - i64::from(cr)).pow(2)
+            + (i64::from(green) - i64::from(cg)).pow(2)
+            + (i64::from(blue) - i64::from(cb)).pow(2);
+        let distance = distance as u64;
+        if best.is_none_or(|(current, _)| distance < current) {
+            best = Some((distance, colour));
+        }
+    }
+    best.map(|(_, colour)| colour)
 }
 
 /// A colour's name for a person watching the panel.

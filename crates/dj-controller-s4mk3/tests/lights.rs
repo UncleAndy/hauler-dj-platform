@@ -10,7 +10,8 @@ use dj_controller_s4mk3::Colour;
 use dj_controller_s4mk3::lights::{
     LIGHTS_LENGTH, LightsReport, Palette, REPORT_LIGHTS, Show, bright, brightness_probe, byte_of,
     bytes_for, colour_by_name, colour_name, colour_walk, colours, dim, fill_only, known_bytes, map,
-    map_line, name_of, parse_map, pick_line, report_at_rest, report_for, report_with, sweep, walk,
+    map_line, name_of, nearest_colour, parse_map, pick_line, report_at_rest, report_for,
+    report_with, sweep, walk,
 };
 
 #[test]
@@ -173,8 +174,8 @@ fn an_empty_show_lights_nothing() {
 
 #[test]
 fn a_lit_hotcue_lights_the_slot_the_map_names() {
-    let mut hotcues = [[false; 8]; 2];
-    hotcues[0][1] = true;
+    let mut hotcues = [[None; 8]; 2];
+    hotcues[0][1] = Some(Colour::Green);
     let show = Show {
         hotcues,
         ..Show::default()
@@ -266,8 +267,8 @@ fn a_dark_booth_lights_every_control_faintly() {
         );
     }
 
-    let mut hotcues = [[false; 8]; 2];
-    hotcues[0][0] = true;
+    let mut hotcues = [[None; 8]; 2];
+    hotcues[0][0] = Some(Colour::Green);
     let show = Show {
         hotcues,
         playing: [true, false],
@@ -401,8 +402,8 @@ fn the_settings_choose_the_colours() {
         sync: Colour::Lime,
         resting: Colour::Off,
     };
-    let mut hotcues = [[false; 8]; 2];
-    hotcues[0][0] = true;
+    let mut hotcues = [[None; 8]; 2];
+    hotcues[0][0] = Some(Colour::Purple);
     let show = Show {
         hotcues,
         playing: [true, false],
@@ -425,4 +426,38 @@ fn a_colour_is_found_by_the_name_the_settings_use() {
     assert_eq!(colour_by_name("green"), Some(Colour::Green));
     assert_eq!(colour_by_name(" White "), Some(Colour::White));
     assert_eq!(colour_by_name("chartreuse"), None);
+}
+
+#[test]
+fn a_cue_marker_colour_becomes_the_nearest_light() {
+    // The application paints a cue with `#rrggbb`; the panel has eighteen colours. The pad shows the nearest one, so a
+    // hand finds the pad it painted rather than a colour the program preferred.
+    assert_eq!(nearest_colour("#cc0000"), Some(Colour::Red));
+    assert_eq!(nearest_colour("00CC00"), Some(Colour::Green));
+    assert_eq!(nearest_colour("#cccccc"), Some(Colour::White));
+    // A colour the panel does not have lands on the closest it does: a light blue is not mistaken for violet.
+    let sky = nearest_colour("#33aaff").expect("a colour");
+    assert!(
+        matches!(sky, Colour::Sky | Colour::Celeste | Colour::Aqua),
+        "#33aaff became {sky:?}"
+    );
+    assert_eq!(nearest_colour("nonsense"), None);
+    assert_eq!(nearest_colour(""), None);
+}
+
+#[test]
+fn a_pad_shows_the_colour_of_its_marker() {
+    let mut hotcues = [[None; 8]; 2];
+    // The slot's own colour wins over the palette.
+    let palette = Palette {
+        hotcue: Colour::White,
+        ..Palette::default()
+    };
+    hotcues[0][0] = Some(Colour::Salmon);
+    let show = Show {
+        hotcues,
+        ..Show::default()
+    };
+    let report = report_with(&show, &palette);
+    assert_eq!(report.body[0], bright(Colour::Salmon.code()));
 }
