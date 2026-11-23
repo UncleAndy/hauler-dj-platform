@@ -23,6 +23,7 @@ use std::fmt;
 use dj_controller_core::{ControlEvent, Driver, WheelCounter};
 
 /// USB vendor id.
+pub mod inputs;
 pub mod lights;
 pub mod screen;
 pub mod text;

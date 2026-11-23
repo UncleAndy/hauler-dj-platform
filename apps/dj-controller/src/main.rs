@@ -31,7 +31,7 @@ use dj_controller_s4mk3::{NAME, PRODUCT, S4Mk3, VENDOR};
 use dj_hid::write::ReportSink;
 use dj_hid::{DeviceInfo, HidrawTransport, Transport};
 
-const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send] | --lights-demo [--interval MS] [--send] | --lights-show --engine <endpoint> | --lights-fill <code> [--send] | --lights-night [--rest <code>] [--send] | --lights-bright <byte> [--colour N] [--rounds N] [--send] | --lights-colour-walk [<byte>|left|right|all] [--shift] [--interval MS] [--send] | --lights-pick [<byte>|left|right|all] [--out <file>] [--interval MS] [--send] | --screen-from --engine <endpoint> --out <file.ppm> [--panel left|right] | --lights-off";
+const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send] | --lights-demo [--interval MS] [--send] | --lights-show --engine <endpoint> | --lights-fill <code> [--send] | --lights-night [--rest <code>] [--send] | --lights-bright <byte> [--colour N] [--rounds N] [--send] | --lights-colour-walk [<byte>|left|right|all] [--shift] [--interval MS] [--send] | --lights-pick [<byte>|left|right|all] [--out <file>] [--interval MS] [--send] | --screen-from --engine <endpoint> --out <file.ppm> [--panel left|right] | --lights-off | --serve --engine <endpoint> | --inputs-watch [--seconds N] | --inputs-learn [--out <file>] [--inputs <file>]";
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -61,6 +61,8 @@ fn run(arguments: &[String]) -> Result<(), String> {
     let mut shifted = false;
     let mut pick_out: Option<String> = None;
     let mut screen_panel = dj_controller_s4mk3::Screen::Left;
+    let mut inputs_map: Option<String> = None;
+    let mut watch_seconds = 30.0_f32;
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].as_str() {
@@ -122,6 +124,25 @@ fn run(arguments: &[String]) -> Result<(), String> {
             }
             "--shift" => shifted = true,
             "--lights-off" => mode = Mode::LightsOff,
+            "--serve" => mode = Mode::Serve,
+            "--inputs-watch" => mode = Mode::InputsWatch,
+            "--inputs-learn" => mode = Mode::InputsLearn,
+            "--inputs" => {
+                let Some(path) = arguments.get(index + 1) else {
+                    return Err(format!("--inputs wants a map file. {USAGE}"));
+                };
+                inputs_map = Some(path.clone());
+                index += 1;
+            }
+            "--seconds" => {
+                let Some(text) = arguments.get(index + 1) else {
+                    return Err(format!("--seconds wants a number. {USAGE}"));
+                };
+                watch_seconds = text
+                    .parse::<f32>()
+                    .map_err(|_| format!("--seconds wants a number of seconds, got {text}"))?;
+                index += 1;
+            }
             "--screen-from" => mode = Mode::ScreenFrom,
             "--panel" => {
                 let Some(side) = arguments.get(index + 1) else {
@@ -377,6 +398,11 @@ fn run(arguments: &[String]) -> Result<(), String> {
     if let Some(resting) = rest_colour {
         palette.resting = resting;
     }
+    // The night mode is a setting, and `--lights-night` only forces it on for one run: a service started by the
+    // application has no flags, and the panel it lights must be the panel the settings describe.
+    if config.controller.lights.night {
+        night = true;
+    }
 
     let transport = HidrawTransport::new();
     let devices = transport
@@ -403,6 +429,16 @@ fn run(arguments: &[String]) -> Result<(), String> {
         ),
         Mode::LightsFill(code) => lights_fill(&devices, code, sweep_send, sweep_body_only),
         Mode::LightsOff => lights_off(&devices),
+        Mode::Serve => serve(
+            &devices,
+            engine.as_deref(),
+            sweep_body_only,
+            night,
+            &palette,
+            inputs_map.as_deref(),
+        ),
+        Mode::InputsWatch => inputs_watch(&transport, &devices, watch_seconds),
+        Mode::InputsLearn => inputs_learn(&transport, &devices, pick_out.as_deref()),
         Mode::ScreenFrom => screen_from(engine.as_deref(), pick_out.as_deref(), screen_panel),
         Mode::LightsPick(what) => lights_pick(
             &devices,
@@ -451,6 +487,9 @@ enum Mode {
     LightsPick(String),
     ScreenFrom,
     LightsOff,
+    Serve,
+    InputsWatch,
+    InputsLearn,
 }
 
 /// Write one screen as a picture a person can open, and say how big the frame would be.
@@ -824,6 +863,296 @@ fn lights_fill(
     println!(
         "dj-controller: all {} bytes are code {code}; look at the panel, then 'dj-controller --lights-fill 0 --send' to clear",
         report.body.len()
+    );
+    Ok(())
+}
+
+/// The service the application runs: the panel's lights and the panel's buttons, in one process.
+///
+/// Two jobs and one device: the lights come from the engine's snapshots, the presses go back to the engine as commands.
+/// Reading and writing the same HID node from two processes would split the reports between them, so the reading happens
+/// on a thread of this process and the writing stays where it was.
+fn serve(
+    devices: &[DeviceInfo],
+    engine: Option<&str>,
+    body_only: bool,
+    night: bool,
+    palette: &dj_controller_s4mk3::lights::Palette,
+    inputs_file: Option<&str>,
+) -> Result<(), String> {
+    let Some(endpoint) = engine else {
+        return Err(format!("--serve wants --engine <endpoint>. {USAGE}"));
+    };
+    let map = load_inputs(inputs_file)?;
+    if map.is_empty() {
+        println!(
+            "dj-controller: no control has been learned yet, so presses ask for nothing; \
+             learn them with --inputs-learn"
+        );
+    }
+    if !map.is_empty()
+        && let Some(device) = devices.iter().find(|device| device.is(VENDOR, PRODUCT))
+    {
+        let path = device.path.clone();
+        let endpoint = endpoint.to_string();
+        // The reader is a thread: a report arriving while the lights are being painted must not be lost, and the
+        // engine's snapshots must keep flowing meanwhile.
+        std::thread::spawn(move || inputs_loop(&path, &endpoint, map));
+    }
+    lights_show(devices, Some(endpoint), body_only, night, palette)
+}
+
+/// The map the presses are read with: the file named on the command line, else the one learned on this machine, else
+/// the map the program ships with.
+///
+/// The learned one lives beside the settings rather than inside the binary: learning a button must not need a rebuild,
+/// and a DJ who moves a control in their own file must be able to.
+fn load_inputs(named: Option<&str>) -> Result<dj_controller_s4mk3::inputs::InputMap, String> {
+    if let Some(path) = named {
+        let text = std::fs::read_to_string(path)
+            .map_err(|error| format!("{path} cannot be read: {error}"))?;
+        return dj_controller_s4mk3::inputs::parse_inputs(&text);
+    }
+    if let Some(path) = learned_inputs_path()
+        && path.is_file()
+    {
+        let text = std::fs::read_to_string(&path)
+            .map_err(|error| format!("{} cannot be read: {error}", path.display()))?;
+        return dj_controller_s4mk3::inputs::parse_inputs(&text);
+    }
+    Ok(dj_controller_s4mk3::inputs::InputMap::built_in())
+}
+
+/// Where a learned map is kept: `$XDG_DATA_HOME/hauler-dj/inputs-map.txt`, beside the logs.
+fn learned_inputs_path() -> Option<std::path::PathBuf> {
+    dj_paths::data_dir().map(|folder| folder.join("hauler-dj").join("inputs-map.txt"))
+}
+
+/// Reads the panel and sends what a hand asked for.
+///
+/// Errors are said out loud once and then swallowed: a device that goes away must not take the lights with it, and a
+/// program that stops answering because a USB cable moved is worse than one that says "the panel is gone".
+fn inputs_loop(path: &std::path::Path, endpoint: &str, map: dj_controller_s4mk3::inputs::InputMap) {
+    let transport = HidrawTransport::new();
+    let device = DeviceInfo {
+        path: path.to_path_buf(),
+        vendor: VENDOR,
+        product: PRODUCT,
+        name: NAME.to_string(),
+    };
+    let mut source = match transport.open(&device) {
+        Ok(source) => source,
+        Err(error) => {
+            println!(
+                "dj-controller: {} cannot be opened for reading ({error}); no presses will arrive",
+                path.display()
+            );
+            return;
+        }
+    };
+    let mapping = Mapping::new();
+    let mut previous = std::collections::HashMap::new();
+    let mut buffer = [0_u8; 128];
+    let mut said_gone = false;
+    loop {
+        let read = match source.read_report(&mut buffer) {
+            Ok(read) => read,
+            Err(error) => {
+                if !said_gone {
+                    println!(
+                        "dj-controller: the panel stopped answering ({error}); no more presses"
+                    );
+                    said_gone = true;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                continue;
+            }
+        };
+        said_gone = false;
+        if read < 2 {
+            continue;
+        }
+        let report = buffer[0];
+        let payload = &buffer[1..read];
+        for event in map.decode(report, payload, &mut previous) {
+            let Some((deck, command)) = mapping.resolve(&event, false) else {
+                continue;
+            };
+            let asked = vec![(event.control.clone(), deck, command)];
+            if let Err(reason) = send_commands(endpoint, &asked) {
+                println!(
+                    "dj-controller: {} did not reach the engine: {reason}",
+                    event.control
+                );
+            }
+        }
+    }
+}
+
+/// Prints what the panel says, one line a change: the tool that turns a hand into a map line.
+fn inputs_watch(
+    transport: &HidrawTransport,
+    devices: &[DeviceInfo],
+    seconds: f32,
+) -> Result<(), String> {
+    let Some(device) = devices.iter().find(|device| device.is(VENDOR, PRODUCT)) else {
+        return Err(format!(
+            "no {NAME} is plugged in, so there is nothing to watch"
+        ));
+    };
+    let mut source = transport.open(device).map_err(|error| {
+        format!(
+            "{} cannot be opened for reading: {error}",
+            device.path.display()
+        )
+    })?;
+    println!(
+        "dj-controller: watching {} for {seconds:.0} s — presses and turns are printed as \
+         report, byte, bit and value",
+        device.path.display()
+    );
+    let until = std::time::Instant::now() + std::time::Duration::from_secs_f32(seconds.max(1.0));
+    let mut before = [0_u8; 128];
+    let mut buffer = [0_u8; 128];
+    while std::time::Instant::now() < until {
+        let Ok(read) = source.read_report(&mut buffer) else {
+            continue;
+        };
+        if read < 2 {
+            continue;
+        }
+        let report = buffer[0];
+        for byte in 0..read.saturating_sub(1).min(127) {
+            let value = buffer[byte + 1];
+            let was = if before[0] == report {
+                before[byte + 1]
+            } else {
+                value
+            };
+            if value == was {
+                continue;
+            }
+            for bit in 0..8 {
+                let mask = 1_u8 << bit;
+                if (value ^ was) & mask == 0 {
+                    continue;
+                }
+                println!(
+                    "dj-controller: report {report} byte {byte} bit {bit} → {}",
+                    u8::from(value & mask != 0)
+                );
+            }
+        }
+        before[0] = report;
+        before[1..read.min(128)].copy_from_slice(&buffer[1..read.min(128)]);
+    }
+    Ok(())
+}
+
+/// Asks for one control at a time and writes down where the press appeared.
+///
+/// Nothing is guessed: the line written is the byte and bit that changed while that one button was pressed, and the next
+/// control is asked for only after the button was let go. Analog controls are not in this walk — a hand cannot hold a
+/// knob still enough to say which field it is — and are found with `--inputs-watch`.
+fn inputs_learn(
+    transport: &HidrawTransport,
+    devices: &[DeviceInfo],
+    out: Option<&str>,
+) -> Result<(), String> {
+    let Some(device) = devices.iter().find(|device| device.is(VENDOR, PRODUCT)) else {
+        return Err(format!(
+            "no {NAME} is plugged in, so there is nothing to learn"
+        ));
+    };
+    let mut source = transport.open(device).map_err(|error| {
+        format!(
+            "{} cannot be opened for reading: {error}",
+            device.path.display()
+        )
+    })?;
+    const WALK: &[(&str, &str)] = &[
+        ("deck_a.play", "PLAY на деке A"),
+        ("deck_a.cue", "CUE на деке A"),
+        ("deck_a.sync", "SYNC/LOCK на деке A"),
+        ("deck_b.play", "PLAY на деке B"),
+        ("deck_b.cue", "CUE на деке B"),
+        ("deck_b.sync", "SYNC/LOCK на деке B"),
+    ];
+    let mut before = [0_u8; 128];
+    let mut buffer = [0_u8; 128];
+    // The resting state first: a button already held is not a press.
+    let _ = source.read_report(&mut buffer);
+    let mut learned = Vec::new();
+    for (control, label) in WALK {
+        println!("dj-controller: нажмите {label} (и отпустите); 15 с на кнопку");
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        let mut found: Option<(u8, usize, usize)> = None;
+        while found.is_none() && std::time::Instant::now() < until {
+            let Ok(read) = source.read_report(&mut buffer) else {
+                continue;
+            };
+            if read < 2 {
+                continue;
+            }
+            let report = buffer[0];
+            for byte in 0..read.saturating_sub(1).min(127) {
+                let value = buffer[byte + 1];
+                let was = before[byte + 1];
+                let appeared = value & !was;
+                if appeared == 0 {
+                    continue;
+                }
+                for bit in 0..8 {
+                    if appeared & (1_u8 << bit) == 0 {
+                        continue;
+                    }
+                    let candidate = (report, byte, bit);
+                    if learned.iter().any(|(_, _, _, _, seen)| *seen == candidate) {
+                        continue;
+                    }
+                    found = Some(candidate);
+                    break;
+                }
+                if found.is_some() {
+                    break;
+                }
+            }
+            before[0] = report;
+            before[1..read.min(128)].copy_from_slice(&buffer[1..read.min(128)]);
+        }
+        let Some((report, byte, bit)) = found else {
+            println!("dj-controller: {control}: ничего не увидел за 15 с — пропускаю");
+            continue;
+        };
+        println!("dj-controller: {control} → report {report} byte {byte} bit {bit}");
+        learned.push((*control, report, byte, bit, (report, byte, bit)));
+    }
+    if learned.is_empty() {
+        return Err("nothing was learned: no button was pressed".to_string());
+    }
+    let path = match out {
+        Some(path) => path.to_string(),
+        None => {
+            let path = learned_inputs_path()
+                .ok_or("no data folder to write the map into; pass --out <file>")?;
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| format!("{}: {error}", parent.display()))?;
+            }
+            path.display().to_string()
+        }
+    };
+    let mut text = String::new();
+    for (control, report, byte, bit, _) in &learned {
+        text.push_str(&format!(
+            "{control} {report} {byte} {bit} 1
+"
+        ));
+    }
+    std::fs::write(&path, &text).map_err(|error| format!("{path} cannot be written: {error}"))?;
+    println!(
+        "dj-controller: {} строк записано в {path}; служба прочитает его при следующем запуске",
+        learned.len()
     );
     Ok(())
 }
@@ -1637,6 +1966,15 @@ mod tests {
         if let Err(text) = refused {
             assert!(text.contains("--nonsense"), "{text}");
         }
+    }
+
+    #[test]
+    fn serve_without_an_engine_is_refused() {
+        // A service that lights nothing and hears nothing is worse than a refusal with a reason.
+        let Err(error) = run(&["--serve".to_string()]) else {
+            panic!("a service without an engine must be refused");
+        };
+        assert!(error.contains("--engine"), "{error}");
     }
 
     #[test]

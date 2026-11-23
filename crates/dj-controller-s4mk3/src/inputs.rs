@@ -1,0 +1,219 @@
+//! What the panel's own buttons say: a report from the device becomes control events.
+//!
+//! The bytes are data, not code (the same rule as the lights map): which bit of which report carries `deck_a.play` is a
+//! fact about this device, learned by pressing the button, and it lives in `data/inputs-map.txt` where it can be read,
+//! corrected and argued with. A program that hard-coded the layout would have to be rebuilt to fix a wrong byte.
+//!
+//! - Backlog task: A09 (the path), A10 (the routing)
+//! - Requirements: DJP-CTRL-002
+
+use std::collections::HashMap;
+
+use dj_controller_core::{ControlEvent, report};
+
+/// The map as it ships: learned on the panel, one line per control.
+pub const INPUTS_MAP: &str = include_str!("../data/inputs-map.txt");
+
+/// One control's place in a report.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Field {
+    /// The control's name, the words the binding table uses (`deck_a.play`).
+    pub control: String,
+    /// Which report carries it.
+    pub report: u8,
+    /// Which byte of the payload.
+    pub byte: usize,
+    /// Which bit of that byte, for a field narrower than the byte.
+    pub bit: usize,
+    /// How many bits wide: 1 for a button, 12 for an encoder, 16 for a fader.
+    pub width: usize,
+}
+
+/// Every control the map knows, and where it lives.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct InputMap {
+    fields: Vec<Field>,
+}
+
+impl InputMap {
+    /// The map that ships with the program.
+    #[must_use]
+    pub fn built_in() -> Self {
+        parse_inputs(INPUTS_MAP).unwrap_or_default()
+    }
+
+    /// The controls, in file order.
+    #[must_use]
+    pub fn fields(&self) -> &[Field] {
+        &self.fields
+    }
+
+    /// True while nothing has been learned yet: a panel whose presses ask for nothing.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.fields.is_empty()
+    }
+
+    /// The events one report carries, for the fields whose value changed.
+    ///
+    /// `previous` is the caller's memory of the last value of each control: a device that reports the whole panel every
+    /// few milliseconds says the same thing most of the time, and a command for a button nobody touched is a command
+    /// that would start a deck by itself.
+    pub fn decode(
+        &self,
+        report_id: u8,
+        payload: &[u8],
+        previous: &mut HashMap<String, f32>,
+    ) -> Vec<ControlEvent> {
+        let mut events = Vec::new();
+        for field in self.fields.iter().filter(|field| field.report == report_id) {
+            let Some(raw) = report::unsigned(payload, field.byte, field.bit, field.width) else {
+                continue;
+            };
+            let value = value_of(raw, field.width);
+            let known = previous.get(&field.control).copied();
+            if known.is_some_and(|known| (known - value).abs() < f32::EPSILON) {
+                continue;
+            }
+            previous.insert(field.control.clone(), value);
+            // A button already held when the program starts is not a press: the first report only teaches the resting
+            // state.
+            if known.is_none() && value == 0.0 && field.width == 1 {
+                continue;
+            }
+            events.push(ControlEvent::level(field.control.clone(), value));
+        }
+        events
+    }
+}
+
+/// A field's value on the scale the rest of the program uses: `0.0…1.0`, and exactly `0.0`/`1.0` for a button.
+#[must_use]
+fn value_of(raw: u16, width: usize) -> f32 {
+    if width == 1 {
+        return f32::from(raw.min(1));
+    }
+    let top = (1_u32 << width.min(16)) - 1;
+    f32::from(raw) / top as f32
+}
+
+/// Reads the map file.
+///
+/// Damage is an error with a line number, never a silent skip: a map with one wrong line puts a command on the wrong
+/// button, and the DJ finds out on stage.
+pub fn parse_inputs(text: &str) -> Result<InputMap, String> {
+    let mut fields: Vec<Field> = Vec::new();
+    for (number, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() != 5 {
+            return Err(format!(
+                "line {}: wanted control, report, byte, bit, width; got {line}",
+                number + 1
+            ));
+        }
+        let control = parts[0].to_string();
+        let parse = |what: &str, text: &str| -> Result<usize, String> {
+            text.parse::<usize>()
+                .map_err(|_| format!("line {}: {what} is not a number: {text}", number + 1))
+        };
+        let report_text = parts[1];
+        let report = u8::try_from(parse("the report", report_text)?)
+            .map_err(|_| format!("line {}: {report_text} is not a report number", number + 1))?;
+        let byte = parse("the byte", parts[2])?;
+        let bit = parse("the bit", parts[3])?;
+        let width = parse("the width", parts[4])?;
+        if width == 0 || width > 16 || bit > 7 || (width > 1 && bit + width > 16) {
+            return Err(format!(
+                "line {}: {width} bits at bit {bit} do not fit the payload",
+                number + 1
+            ));
+        }
+        if fields.iter().any(|field| field.control == control) {
+            return Err(format!(
+                "line {}: {control} is already in the map",
+                number + 1
+            ));
+        }
+        fields.push(Field {
+            control,
+            report,
+            byte,
+            bit,
+            width,
+        });
+    }
+    Ok(InputMap { fields })
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    const SAMPLE: &str = "\
+# control report byte bit width
+deck_a.play 1 4 0 1
+deck_b.play 1 4 1 1
+deck_a.crossfader 2 12 0 16
+";
+
+    #[test]
+    fn a_button_becomes_a_press_and_a_release() {
+        let map = parse_inputs(SAMPLE).expect("the sample parses");
+        let mut previous = HashMap::new();
+        let mut payload = vec![0_u8; 20];
+        // Nothing pressed yet: the first report teaches the map the resting state and asks for nothing.
+        assert!(map.decode(1, &payload, &mut previous).is_empty());
+        payload[4] = 0b0000_0001;
+        let events = map.decode(1, &payload, &mut previous);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].control, "deck_a.play");
+        assert_eq!(events[0].value, 1.0);
+        // The same report again is not a second press.
+        assert!(map.decode(1, &payload, &mut previous).is_empty());
+        payload[4] = 0;
+        let events = map.decode(1, &payload, &mut previous);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].value, 0.0);
+    }
+
+    #[test]
+    fn a_fader_arrives_as_a_fraction() {
+        let map = parse_inputs(SAMPLE).expect("the sample parses");
+        let mut previous = HashMap::new();
+        let mut payload = vec![0_u8; 20];
+        payload[12] = 0xFF;
+        payload[13] = 0x7F;
+        let events = map.decode(2, &payload, &mut previous);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].control, "deck_a.crossfader");
+        assert!(
+            (events[0].value - 0.5).abs() < 0.001,
+            "{:?}",
+            events[0].value
+        );
+    }
+
+    #[test]
+    fn a_report_without_fields_of_its_own_says_nothing() {
+        let map = parse_inputs(SAMPLE).expect("the sample parses");
+        let mut previous = HashMap::new();
+        let payload = vec![0xFF_u8; 20];
+        assert!(map.decode(3, &payload, &mut previous).is_empty());
+    }
+
+    #[test]
+    fn a_broken_line_is_an_error_with_its_number() {
+        let error = parse_inputs("deck_a.play 1 4 0\n").expect_err("four fields are not five");
+        assert!(error.contains("line 1"), "{error}");
+        let error = parse_inputs("deck_a.play 1 4 0 x\n").expect_err("the width is not a number");
+        assert!(error.contains("the width"), "{error}");
+        let error = parse_inputs("deck_a.play 1 4 0 1\ndeck_a.play 1 5 0 1\n")
+            .expect_err("one control twice");
+        assert!(error.contains("already in the map"), "{error}");
+    }
+}

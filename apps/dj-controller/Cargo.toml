@@ -14,6 +14,7 @@ dj-domain = { path = "../../crates/dj-domain" }
 dj-controller-core = { path = "../../crates/dj-controller-core" }
 dj-controller-s4mk3 = { path = "../../crates/dj-controller-s4mk3" }
 dj-hid = { path = "../../crates/dj-hid" }
+dj-paths = { path = "../../crates/dj-paths" }
 
 [lints]
 workspace = true

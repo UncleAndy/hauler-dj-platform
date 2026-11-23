@@ -10,5 +10,8 @@ authors.workspace = true
 [dependencies]
 dj-controller-core = { path = "../dj-controller-core" }
 
+[dev-dependencies]
+dj-domain = { path = "../dj-domain" }
+
 [lints]
 workspace = true

@@ -1,0 +1,16 @@
+# Where each of the panel's own controls lives, learned on the panel.
+#
+# Format, one control a line, five fields separated by spaces:
+#
+#   control            report  byte  bit  width
+#   deck_a.play        1       4     0    1
+#   deck_a.crossfader  2       12    0    16
+#
+# `control` is the name the binding table uses (`deck_a.play`, `deck_b.sync`, `deck_a.cue`); `report` is the HID report
+# number the device sends; `byte` counts from the first byte **after** the report number; `bit` is the bit inside that
+# byte and `width` how many bits the field takes (1 for a button, 12 for an encoder, 16 for a fader read little-endian).
+#
+# Learned, never copied: `dj-controller --inputs-learn` asks for one button at a time and writes the line it saw. A map
+# that guesses puts a command on the wrong button, and the DJ finds out on stage.
+#
+# Nothing learned yet: presses ask for nothing until this file has lines.

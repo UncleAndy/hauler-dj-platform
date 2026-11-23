@@ -278,8 +278,10 @@ fn start_controller(folder: &Path, options: &Options) -> Option<Child> {
     // Started without a task, the service printed its usage and left — and nobody saw it, because its output went to
     // /dev/null. That is what "I start the application and the buttons do not light" looked like (owner's report,
     // 23.11). It is started for the one job it has: paint the panel from the engine's snapshots.
+    // One process for both halves of the panel: the lights and the buttons. Reading the device in one process and
+    // writing it in another splits the reports between them, so the service does both.
     command
-        .arg("--lights-show")
+        .arg("--serve")
         .arg("--engine")
         .arg(dj_paths::default_endpoint());
     command.stdin(Stdio::null());

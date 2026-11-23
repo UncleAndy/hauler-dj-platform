@@ -432,6 +432,7 @@ dependencies = [
  "dj-controller-s4mk3",
  "dj-domain",
  "dj-hid",
+ "dj-paths",
 ]
 
 [[package]]
@@ -446,6 +447,7 @@ name = "dj-controller-s4mk3"
 version = "0.1.0"
 dependencies = [
  "dj-controller-core",
+ "dj-domain",
 ]
 
 [[package]]
