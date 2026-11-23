@@ -31,7 +31,7 @@ use dj_controller_s4mk3::{NAME, PRODUCT, S4Mk3, VENDOR};
 use dj_hid::write::ReportSink;
 use dj_hid::{DeviceInfo, HidrawTransport, Transport};
 
-const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send] | --lights-demo [--interval MS] [--send] | --lights-show --engine <endpoint> | --lights-fill <code> [--send] | --lights-night [--rest <code>] [--send] | --lights-bright <byte> [--colour N] [--rounds N] [--send] | --lights-colour-walk [<byte>|left|right|all] [--shift] [--interval MS] [--send] | --lights-pick [<byte>|left|right|all] [--out <file>] [--interval MS] [--send] | --screen-from --engine <endpoint> --out <file.ppm> [--panel left|right]";
+const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send] | --lights-demo [--interval MS] [--send] | --lights-show --engine <endpoint> | --lights-fill <code> [--send] | --lights-night [--rest <code>] [--send] | --lights-bright <byte> [--colour N] [--rounds N] [--send] | --lights-colour-walk [<byte>|left|right|all] [--shift] [--interval MS] [--send] | --lights-pick [<byte>|left|right|all] [--out <file>] [--interval MS] [--send] | --screen-from --engine <endpoint> --out <file.ppm> [--panel left|right] | --lights-off";
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -121,6 +121,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
                 mode = Mode::LightsColourWalk(what);
             }
             "--shift" => shifted = true,
+            "--lights-off" => mode = Mode::LightsOff,
             "--screen-from" => mode = Mode::ScreenFrom,
             "--panel" => {
                 let Some(side) = arguments.get(index + 1) else {
@@ -401,6 +402,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
             &palette,
         ),
         Mode::LightsFill(code) => lights_fill(&devices, code, sweep_send, sweep_body_only),
+        Mode::LightsOff => lights_off(&devices),
         Mode::ScreenFrom => screen_from(engine.as_deref(), pick_out.as_deref(), screen_panel),
         Mode::LightsPick(what) => lights_pick(
             &devices,
@@ -448,6 +450,7 @@ enum Mode {
     LightsColourWalk(String),
     LightsPick(String),
     ScreenFrom,
+    LightsOff,
 }
 
 /// Write one screen as a picture a person can open, and say how big the frame would be.
@@ -825,6 +828,27 @@ fn lights_fill(
     Ok(())
 }
 
+/// Put the panel out: every byte of the lights report dark.
+///
+/// A panel left lit after the program closes is an instrument left on: the buttons stay glowing on a switched-off
+/// machine, and the next person cannot tell whether the program is running. Said twice, because the panel has been
+/// seen to miss the first report after a burst.
+fn lights_off(devices: &[DeviceInfo]) -> Result<(), String> {
+    if devices.is_empty() {
+        println!("dj-controller: no panel to darken");
+        return Ok(());
+    }
+    let mut sink = open_lights(devices)?;
+    let dark = dj_controller_s4mk3::lights::LightsReport::dark();
+    sink.send(&dark.wire(true))
+        .map_err(|error| format!("the panel did not take the dark report: {error}"))?;
+    std::thread::sleep(std::time::Duration::from_millis(60));
+    sink.send(&dark.wire(true))
+        .map_err(|error| format!("the panel did not take the dark report: {error}"))?;
+    println!("dj-controller: the panel is dark");
+    Ok(())
+}
+
 /// What one screen says, taken from what the engine publishes.
 ///
 /// The panels are two, and the program runs four decks: the left panel belongs to decks A and C, the right one to B and
@@ -1012,6 +1036,30 @@ fn show_from_facts(decks: &[DeckFacts; 4]) -> dj_controller_s4mk3::lights::Show 
 }
 
 /// The same facts, taken from a published snapshot.
+/// What each hotcue pad shows for one deck.
+///
+/// The pads speak about the record, not about the instrument: an empty deck says nothing and the pads stay dark, and a
+/// loaded deck shows its eight slots — the colour the DJ painted a cue with, or the palette's colour for a slot with no
+/// cue yet (owner's rule, 24.11).
+fn pad_colours(
+    loaded: bool,
+    cue_colors: &[Option<String>],
+    palette: &dj_controller_s4mk3::lights::Palette,
+) -> [Option<dj_controller_s4mk3::Colour>; 8] {
+    let mut pads = [None; 8];
+    if !loaded {
+        return pads;
+    }
+    for (slot, colour) in pads.iter_mut().enumerate() {
+        let painted = cue_colors
+            .get(slot)
+            .and_then(|colour| colour.as_deref())
+            .and_then(dj_controller_s4mk3::lights::nearest_colour);
+        *colour = Some(painted.unwrap_or(palette.hotcue));
+    }
+    pads
+}
+
 fn facts_from(
     snapshot: &dj_domain::Snapshot,
     palette: &dj_controller_s4mk3::lights::Palette,
@@ -1022,19 +1070,10 @@ fn facts_from(
         if index >= facts.len() {
             continue;
         }
-        // The pad shows the colour the DJ painted the cue with; a cue without one gets the palette's colour, because an
-        // uncoloured pad in the dark is a pad that cannot be found.
-        let mut hotcues = [None; 8];
-        for (slot, cue) in deck.hotcues.iter().take(8).enumerate() {
-            if cue.is_some() {
-                let painted = deck
-                    .cue_colors
-                    .get(slot)
-                    .and_then(|colour| colour.as_deref())
-                    .and_then(dj_controller_s4mk3::lights::nearest_colour);
-                hotcues[slot] = Some(painted.unwrap_or(palette.hotcue));
-            }
-        }
+        // The pads say what is in the deck, so they light when a record is loaded and stay dark while the deck is
+        // empty (owner's rule, 24.11). An occupied slot shows the colour the DJ painted it with; an empty one shows the
+        // palette's hotcue colour, because a pad that cannot be found in the dark is a pad nobody presses.
+        let hotcues = pad_colours(deck.track.is_some(), &deck.cue_colors, palette);
         facts[index] = DeckFacts {
             playing: deck.playing,
             monitoring: deck.cue,
@@ -1421,6 +1460,39 @@ fn send_commands(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_empty_deck_leaves_its_pads_dark() {
+        // The pads are about the record, not about the instrument: nothing loaded, nothing to say.
+        let palette = dj_controller_s4mk3::lights::Palette::default();
+        assert_eq!(super::pad_colours(false, &[], &palette), [None; 8]);
+    }
+
+    #[test]
+    fn a_loaded_deck_lights_all_eight_pads() {
+        // A pad that cannot be found in the dark is a pad nobody presses: the empty slots take the palette's colour.
+        let palette = dj_controller_s4mk3::lights::Palette::default();
+        let pads = super::pad_colours(true, &[], &palette);
+        assert_eq!(pads, [Some(palette.hotcue); 8]);
+    }
+
+    #[test]
+    fn a_painted_cue_keeps_its_own_colour_and_the_others_do_not() {
+        let palette = dj_controller_s4mk3::lights::Palette::default();
+        let colours = vec![
+            Some("#cc0000".to_string()),
+            None,
+            Some("not a colour".to_string()),
+        ];
+        let pads = super::pad_colours(true, &colours, &palette);
+        assert_eq!(pads[0], Some(dj_controller_s4mk3::Colour::Red));
+        assert_eq!(pads[1], Some(palette.hotcue), "an unpainted slot");
+        assert_eq!(
+            pads[2],
+            Some(palette.hotcue),
+            "a broken colour is no colour"
+        );
+    }
+
     use super::*;
 
     #[test]

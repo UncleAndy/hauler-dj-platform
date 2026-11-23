@@ -198,9 +198,15 @@ fn run(options: &Options) -> Result<u8, String> {
     let status = shell
         .wait()
         .map_err(|error| format!("the shell could not be waited for: {error}"))?;
-    // The engine leaves by its own idle exit once the shell's connection is gone; nothing to kill here. The controller
-    // service holds no device state worth saving, so it goes the same way.
-    drop(controller_process.take());
+    // The panel must not outlive the program: the buttons would stay lit on a closed application, and nobody could tell
+    // whether it is running (owner's report, 24.11). The service goes first, so nothing can repaint the panel after the
+    // dark report, and then the dark report goes to the device.
+    if let Some(mut service) = controller_process.take() {
+        let _ = service.kill();
+        let _ = service.wait();
+    }
+    lights_out(&folder);
+    // The engine leaves by its own idle exit once the shell's connection is gone; nothing to kill here.
     drop(engine_process.take());
     Ok(status.code().unwrap_or(0).clamp(0, 255) as u8)
 }
@@ -324,6 +330,57 @@ fn start_controller(folder: &Path, options: &Options) -> Option<Child> {
             None
         }
     }
+}
+
+/// Puts the panel out on the way out, and does not wait for it long: a program that cannot close is worse than a panel
+/// left lit.
+fn lights_out(folder: &Path) {
+    let binary = folder.join(program("dj-controller"));
+    if !binary.is_file() {
+        return;
+    }
+    let mut command = Command::new(&binary);
+    command.arg("--lights-off").stdin(Stdio::null());
+    // The words go to the service's own log: "the panel is dark" or "no panel to darken" is the last thing a person
+    // reads after closing the window, and it answers whether the lights went out.
+    match controller_log() {
+        Some(file) => {
+            let copy = file.try_clone();
+            command.stdout(file);
+            match copy {
+                Ok(copy) => {
+                    command.stderr(copy);
+                }
+                Err(_) => {
+                    command.stderr(Stdio::null());
+                }
+            }
+        }
+        None => {
+            command.stdout(Stdio::null());
+            command.stderr(Stdio::null());
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let Ok(mut child) = command.spawn() else {
+        return;
+    };
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => {}
+            Err(_) => break,
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 /// The file the controller service writes to: beside the launcher's own log, so one folder answers "why is nothing

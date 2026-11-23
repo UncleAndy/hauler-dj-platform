@@ -9,9 +9,9 @@
 use dj_controller_s4mk3::Colour;
 use dj_controller_s4mk3::lights::{
     LIGHTS_LENGTH, LightsReport, Palette, REPORT_LIGHTS, Show, bright, brightness_probe, byte_of,
-    bytes_for, colour_by_name, colour_name, colour_walk, colours, dim, fill_only, known_bytes, map,
-    map_line, name_of, nearest_colour, parse_map, pick_line, report_at_rest, report_for,
-    report_with, sweep, walk,
+    bytes_for, colour_by_name, colour_name, colour_walk, colours, dim, fill_only, hotcue_bytes,
+    known_bytes, map, map_line, name_of, nearest_colour, parse_map, pick_line, report_at_rest,
+    report_for, report_with, sweep, walk,
 };
 
 #[test]
@@ -255,16 +255,26 @@ fn brightness_is_an_offset_to_the_colour() {
 }
 
 #[test]
-fn a_dark_booth_lights_every_control_faintly() {
-    // The owner's request: in the dark the whole panel glows, and the active controls stand out. Every mapped byte gets
-    // the resting colour, so nothing on the panel is invisible.
+fn a_dark_booth_lights_every_control_faintly_except_the_pads() {
+    // The owner's request: in the dark the whole panel glows, and the active controls stand out. The hotcue pads are
+    // the exception — they say what is in the deck, and an empty deck has nothing to say (owner's rule, 24.11).
     let report = report_at_rest(&Show::default(), &Palette::default());
-    for (byte, _) in map() {
-        assert_eq!(
-            report.body[usize::from(*byte)],
-            dim(Palette::default().resting.code()),
-            "byte {byte} is faint, not dark"
-        );
+    let pads = hotcue_bytes();
+    assert_eq!(pads.len(), 16, "eight pads a side: {pads:?}");
+    for (byte, name) in map() {
+        if pads.contains(byte) {
+            assert_eq!(
+                report.body[usize::from(*byte)],
+                0,
+                "the pad {name} (byte {byte}) is dark until a record is loaded"
+            );
+        } else {
+            assert_eq!(
+                report.body[usize::from(*byte)],
+                dim(Palette::default().resting.code()),
+                "byte {byte} ({name}) is faint, not dark"
+            );
+        }
     }
 
     let mut hotcues = [[None; 8]; 2];
@@ -285,9 +295,31 @@ fn a_dark_booth_lights_every_control_faintly() {
     let neighbour = byte_of("Left CUE3").expect("the map has it");
     assert_eq!(
         report.body[usize::from(neighbour)],
-        dim(Palette::default().resting.code()),
-        "a neighbouring control stays faint"
+        0,
+        "a pad without a cue stays dark"
     );
+}
+
+#[test]
+fn the_pads_are_the_sixteen_hotcue_buttons() {
+    // Read from the map, so a renamed control moves the rule with it: eight pad names a side, and nothing else.
+    let pads = hotcue_bytes();
+    assert_eq!(pads.len(), 16, "{pads:?}");
+    assert_eq!(byte_of("Left CUE1"), Some(pads[0]));
+    assert_eq!(byte_of("Left CUE8"), Some(pads[7]));
+    // `Left CUE` (the monitoring button, byte 8) and `Right CUE` (byte 31) are not pads: `byte_of` matches by substring,
+    // so they are named by their own bytes rather than by a lookup that would find `Left CUE1` first.
+    for not_a_pad in [8u8, 31] {
+        assert!(
+            !pads.contains(&not_a_pad),
+            "{} is not a pad",
+            name_of(not_a_pad).unwrap_or("?")
+        );
+    }
+    for pad in &pads {
+        let name = name_of(*pad).expect("a named control");
+        assert!(name.contains("CUE"), "{name} is in the pad list");
+    }
 }
 
 #[test]

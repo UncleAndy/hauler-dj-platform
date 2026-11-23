@@ -226,6 +226,25 @@ pub struct Show {
 }
 
 /// The byte that lights a hotcue slot, found by the name the owner wrote down.
+/// Every hotcue pad of the panel, both sides, in map order.
+///
+/// Read from the map rather than written down twice: the pads are the bytes named `Left CUE1…CUE8` and
+/// `Right CUE1…CUE8`, and a map that renames one of them moves the rule with it.
+pub fn hotcue_bytes() -> Vec<u8> {
+    map()
+        .iter()
+        .filter(|(_, name)| {
+            let trimmed = name
+                .trim_start_matches("Left ")
+                .trim_start_matches("Right ");
+            trimmed
+                .strip_prefix("CUE")
+                .is_some_and(|rest| !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()))
+        })
+        .map(|(byte, _)| *byte)
+        .collect()
+}
+
 fn hotcue_byte(side: usize, slot: usize) -> Option<u8> {
     let side = if side == 0 { "Left" } else { "Right" };
     byte_of(&format!("{side} CUE{}", slot + 1))
@@ -342,6 +361,13 @@ pub fn report_at_rest(show: &Show, palette: &Palette) -> LightsReport {
     for (byte, _) in map() {
         if let Some(slot) = report.body.get_mut(usize::from(*byte)) {
             *slot = faint;
+        }
+    }
+    // The hotcue pads are not part of "the instrument is on": they say what is in the deck, and a deck with no record
+    // has nothing to say. The owner's rule: the pads light when a track is loaded, not when the program starts.
+    for byte in hotcue_bytes() {
+        if let Some(slot) = report.body.get_mut(usize::from(byte)) {
+            *slot = 0;
         }
     }
     // The active controls are painted over the resting layer: their own colour, one brightness step up.

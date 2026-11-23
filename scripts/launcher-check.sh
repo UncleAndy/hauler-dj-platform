@@ -142,15 +142,16 @@ driver = "s4mk3"
 CFG
 cp "$launcher" "$case6/dj-launcher"
 args_file="$case6/args.txt"
-printf '#!%s\nprintf "%%s\\n" "$@" > %s\nexit 0\n' "$(readlink -f "$(command -v bash)")" "$args_file" > "$case6/dj-controller"
+printf '#!%s\nprintf "%%s\\n" "$@" >> %s\nprintf "==\\n" >> %s\nexit 0\n' \
+  "$(readlink -f "$(command -v bash)")" "$args_file" "$args_file" > "$case6/dj-controller"
 chmod +x "$case6/dj-controller"
 case6_out="$(XDG_CONFIG_HOME="$case6/config" XDG_DATA_HOME="$case6/data" XDG_RUNTIME_DIR="$run_dir" \
   "$case6/dj-launcher" --engine "$engine" --ui "$stub" --verbose --timeout-ms 15000 2>&1)"
 case6_code=$?
 if [ "$case6_code" -eq 0 ] && [ -f "$args_file" ] \
   && grep -qx -- "--lights-show" "$args_file" && grep -qx -- "--engine" "$args_file" \
-  && grep -q "hauler-dj-engine.sock" "$args_file"; then
-  echo "launcher-check: the controller service is started with --lights-show and the engine's endpoint"
+  && grep -q "hauler-dj-engine.sock" "$args_file" && grep -qx -- "--lights-off" "$args_file"; then
+  echo "launcher-check: the service is started with --lights-show and the engine's endpoint, and the panel is put out on the way out"
 else
   echo "launcher-check: FAILED — the service was not asked to light anything (exit $case6_code)" >&2
   if [ -f "$args_file" ]; then
