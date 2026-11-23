@@ -8,8 +8,9 @@
 
 use dj_controller_s4mk3::Colour;
 use dj_controller_s4mk3::lights::{
-    LIGHTS_LENGTH, LightsReport, REPORT_LIGHTS, Show, byte_of, colours, known_bytes, map, map_line,
-    name_of, parse_map, report_for, sweep, walk,
+    LIGHTS_LENGTH, LightsReport, REPORT_LIGHTS, Show, bright, brightness_probe, byte_of, bytes_for,
+    colour_name, colour_walk, colours, dim, fill_only, known_bytes, map, map_line, name_of,
+    parse_map, report_at_rest, report_for, sweep, walk,
 };
 
 #[test]
@@ -179,7 +180,11 @@ fn a_lit_hotcue_lights_the_slot_the_map_names() {
         ..Show::default()
     };
     let report = report_for(&show);
-    assert_eq!(report.body[1], Colour::Green.code(), "Left CUE2");
+    assert_eq!(
+        report.body[1],
+        bright(Colour::Green.code()),
+        "Left CUE2, bright"
+    );
     let lit = report.body.iter().filter(|byte| **byte != 0).count();
     assert_eq!(lit, 1, "one slot, one light");
 }
@@ -197,9 +202,18 @@ fn playing_monitoring_and_sync_use_their_own_bytes() {
     let playing = byte_of("Right PLAY").expect("the map has the right play button");
     let monitoring = byte_of("Left CUE").expect("the map has the left cue");
     let sync = byte_of("Sync/Lock").expect("the map has sync");
-    assert_eq!(report.body[usize::from(playing)], Colour::Green.code());
-    assert_eq!(report.body[usize::from(monitoring)], Colour::Blue.code());
-    assert_eq!(report.body[usize::from(sync)], Colour::Yellow.code());
+    assert_eq!(
+        report.body[usize::from(playing)],
+        bright(Colour::Green.code())
+    );
+    assert_eq!(
+        report.body[usize::from(monitoring)],
+        bright(Colour::Blue.code())
+    );
+    assert_eq!(
+        report.body[usize::from(sync)],
+        bright(Colour::Yellow.code())
+    );
 }
 
 #[test]
@@ -210,7 +224,10 @@ fn the_fx_buttons_of_four_decks_have_their_own_bytes() {
     };
     let report = report_for(&show);
     let deck_c = byte_of("Deck C FX").expect("the map has deck C's fx button");
-    assert_eq!(report.body[usize::from(deck_c)], Colour::Magenta.code());
+    assert_eq!(
+        report.body[usize::from(deck_c)],
+        bright(Colour::Magenta.code())
+    );
 }
 
 #[test]
@@ -224,4 +241,140 @@ fn a_walk_visits_every_control_the_map_knows() {
             "a walk lights one control at a time"
         );
     }
+}
+
+#[test]
+fn brightness_is_an_offset_to_the_colour() {
+    // The colour table steps by four and the two low bits carry the level: the same colour at base is the faint state,
+    // at base + 2 the bright one. Taken from the device's public controller script, checked on the panel.
+    assert_eq!(dim(Colour::Green.code()), Colour::Green.code());
+    assert_eq!(bright(Colour::Green.code()), Colour::Green.code() + 2);
+    assert_eq!(dim(68), 68, "white at rest");
+    assert_eq!(bright(68), 70, "white bright");
+}
+
+#[test]
+fn a_dark_booth_lights_every_control_faintly() {
+    // The owner's request: in the dark the whole panel glows, and the active controls stand out. Every mapped byte gets
+    // the resting colour, so nothing on the panel is invisible.
+    let report = report_at_rest(&Show::default(), 68);
+    for (byte, _) in map() {
+        assert_eq!(
+            report.body[usize::from(*byte)],
+            dim(68),
+            "byte {byte} is faint, not dark"
+        );
+    }
+
+    let mut hotcues = [[false; 8]; 2];
+    hotcues[0][0] = true;
+    let show = Show {
+        hotcues,
+        playing: [true, false],
+        ..Show::default()
+    };
+    let report = report_at_rest(&show, 68);
+    assert_eq!(report.body[0], bright(Colour::Green.code()), "the lit slot");
+    let play = byte_of("Left PLAY").expect("the map has it");
+    assert_eq!(
+        report.body[usize::from(play)],
+        bright(Colour::Green.code()),
+        "the playing deck"
+    );
+    let neighbour = byte_of("Left CUE3").expect("the map has it");
+    assert_eq!(
+        report.body[usize::from(neighbour)],
+        dim(68),
+        "a neighbouring control stays faint"
+    );
+}
+
+#[test]
+fn the_brightness_probe_alternates_the_same_colour() {
+    let probe = brightness_probe(55, 28, 3);
+    assert_eq!(probe.len(), 6, "three rounds of two");
+    for (index, report) in probe.iter().enumerate() {
+        let want = if index % 2 == 0 { 28 } else { 30 };
+        assert_eq!(report.body[55], want, "step {index}");
+        assert_eq!(
+            report.body.iter().filter(|byte| **byte != 0).count(),
+            1,
+            "one control at a time"
+        );
+    }
+}
+
+#[test]
+fn the_colour_walk_visits_every_base_colour_in_both_states() {
+    let steps = colour_walk(false);
+    assert_eq!(steps.len(), 36, "eighteen colours, faint and bright");
+    // Each colour appears twice, faint first: its base code and the same code plus two.
+    for pair in steps.chunks(2) {
+        let (faint, bright_step) = (&pair[0], &pair[1]);
+        assert_eq!(faint.colour, bright_step.colour);
+        assert_eq!(faint.state, "faint");
+        assert_eq!(bright_step.state, "bright");
+        assert_eq!(bright_step.code, faint.code + 2);
+        assert_eq!(faint.code % 4, 0, "a base colour is a multiple of four");
+    }
+    assert!(
+        steps
+            .iter()
+            .any(|step| step.colour == "green" && step.code == 28),
+        "the green the owner checked is in the walk"
+    );
+}
+
+#[test]
+fn the_shifted_walk_adds_the_two_shades_between() {
+    let steps = colour_walk(true);
+    assert_eq!(steps.len(), 72, "eighteen colours, four shades each");
+    let states: Vec<&str> = steps.iter().take(4).map(|step| step.state).collect();
+    assert_eq!(
+        states,
+        vec!["faint", "bright", "faint shifted", "bright shifted"]
+    );
+}
+
+#[test]
+fn every_colour_has_a_name_a_person_can_read() {
+    for step in colour_walk(false) {
+        assert!(!step.colour.is_empty());
+        assert_ne!(step.colour, "?");
+    }
+    assert_eq!(colour_name(Colour::Green), "green");
+    assert_eq!(colour_name(Colour::White), "white");
+}
+
+#[test]
+fn a_side_is_every_byte_the_owner_named_that_side() {
+    // "Надо пробовать на всей деке": a side is a group of bytes, and the map is the dictionary that says which.
+    let left = bytes_for("left").expect("the map knows the left side");
+    assert!(left.len() > 20, "a deck has many lights: {}", left.len());
+    for byte in &left {
+        let name = name_of(*byte).expect("every byte in the map has a name");
+        assert!(
+            name.to_ascii_lowercase().contains("left"),
+            "byte {byte} is {name}, which is not on the left"
+        );
+    }
+    let right = bytes_for("right").expect("the map knows the right side");
+    assert!(right.iter().all(|byte| !left.contains(byte)));
+}
+
+#[test]
+fn all_means_the_whole_map_and_a_number_means_one_byte() {
+    assert_eq!(bytes_for("all").expect("all").len(), map().len());
+    assert_eq!(bytes_for("55").expect("a byte"), vec![55]);
+    assert!(bytes_for("leftе").is_err(), "a typo is a typo");
+    assert!(bytes_for("94").is_err(), "the report ends before 94");
+}
+
+#[test]
+fn filling_only_these_bytes_leaves_the_others_dark() {
+    let report = fill_only(30, &[1, 2]);
+    assert_eq!(report.body[1], 30);
+    assert_eq!(report.body[2], 30);
+    assert_eq!(report.body[0], 0);
+    assert_eq!(report.body[3], 0);
 }

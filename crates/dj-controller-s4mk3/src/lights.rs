@@ -17,6 +17,27 @@ pub const REPORT_LIGHTS: u8 = 128;
 /// question the device answers and a document does not, so both readings can be sent (`--body-only`).
 pub const LIGHTS_LENGTH: usize = 94;
 
+/// Brightness is not a separate field: it is an offset added to the colour code.
+///
+/// The colour table steps by four — red is 4, green 28, white 68 — and the two low bits carry the level. Source: the
+/// public controller script for this device, where a button sends `this.color + this.brightnessOn`, with
+/// `brightnessOff = 0` and `brightnessOn = 2`. So a base colour on its own is the dim state, and the same colour plus
+/// two is the bright one. A code with `+1` is a slightly different shade, which that script uses to squeeze extra
+/// colours out of sixteen base hues; it is not a brightness level.
+pub const BRIGHTNESS_OFF: u8 = 0;
+/// The offset that makes a control bright.
+pub const BRIGHTNESS_ON: u8 = 2;
+
+/// The same colour, dim: what an inactive control shows in a dark booth.
+pub fn dim(colour: u8) -> u8 {
+    colour.saturating_add(BRIGHTNESS_OFF)
+}
+
+/// The same colour, bright: what the DJ is looking for.
+pub fn bright(colour: u8) -> u8 {
+    colour.saturating_add(BRIGHTNESS_ON)
+}
+
 /// One lights report: the identifier and the body, kept apart so a caller can decide what goes on the wire.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LightsReport {
@@ -230,7 +251,7 @@ pub fn report_for(show: &Show) -> LightsReport {
     for (side, slots) in show.hotcues.iter().enumerate() {
         for (slot, lit) in slots.iter().enumerate() {
             if *lit {
-                set(hotcue_byte(side, slot), Colour::Green.code());
+                set(hotcue_byte(side, slot), bright(Colour::Green.code()));
             }
         }
     }
@@ -241,13 +262,13 @@ pub fn report_for(show: &Show) -> LightsReport {
             ("Right PLAY button", "Right CUE", "Right Sync")
         };
         if show.playing[side] {
-            set(control(names.0), Colour::Green.code());
+            set(control(names.0), bright(Colour::Green.code()));
         }
         if show.monitoring[side] {
-            set(control(names.1), Colour::Blue.code());
+            set(control(names.1), bright(Colour::Blue.code()));
         }
         if show.sync[side] {
-            set(control(names.2), Colour::Yellow.code());
+            set(control(names.2), bright(Colour::Yellow.code()));
         }
     }
     for (deck, lit) in show.fx.iter().enumerate() {
@@ -258,19 +279,182 @@ pub fn report_for(show: &Show) -> LightsReport {
                 2 => "Deck C FX on button",
                 _ => "Deck D FX on button",
             };
-            set(control(name), Colour::Magenta.code());
+            set(control(name), bright(Colour::Magenta.code()));
         }
     }
     report
+}
+
+/// The report for a dark booth: every control the map knows glows faintly, and the active ones stand out.
+///
+/// This is what the owner asked for — "минимально светились все кнопки, а включённые подсвечивались ярче" — and it is
+/// only possible because brightness is an offset: the same colour at 0 is the faint state and at 2 is the bright one.
+/// `resting` is the colour everything sits at when nothing is happening; the active controls keep their own colours,
+/// brighter.
+pub fn report_at_rest(show: &Show, resting: u8) -> LightsReport {
+    let mut report = LightsReport::dark();
+    let faint = dim(resting);
+    for (byte, _) in map() {
+        if let Some(slot) = report.body.get_mut(usize::from(*byte)) {
+            *slot = faint;
+        }
+    }
+    // The active controls are painted over the resting layer: their own colour, one brightness step up.
+    let active = report_for(show);
+    for (byte, colour) in report.body.iter_mut().zip(active.body.iter()) {
+        if *colour != 0 {
+            *byte = *colour;
+        }
+    }
+    report
+}
+
+/// The reports that check the encoding on the device: the same colour, dim and bright, a few times each.
+///
+/// If the panel shows one colour changing brightness rather than two colours, the encoding in `bright`/`dim` is right;
+/// if it shows two colours, brightness lives somewhere else and this check says so before any code depends on it.
+pub fn brightness_probe(byte: u8, colour: u8, rounds: usize) -> Vec<LightsReport> {
+    let mut out = Vec::new();
+    for _ in 0..rounds {
+        if let Some(report) = LightsReport::one(usize::from(byte), dim(colour)) {
+            out.push(report);
+        }
+        if let Some(report) = LightsReport::one(usize::from(byte), bright(colour)) {
+            out.push(report);
+        }
+    }
+    out
 }
 
 /// Every control the map knows, in order, for a panel test that lights them one at a time.
 pub fn walk() -> Vec<LightsReport> {
     let mut out = Vec::new();
     for (byte, _) in map() {
-        if let Some(report) = LightsReport::one(usize::from(*byte), Colour::Green.code()) {
+        if let Some(report) = LightsReport::one(usize::from(*byte), bright(Colour::Green.code())) {
             out.push(report);
         }
     }
     out
+}
+
+/// One step of a colour walk: the code to send, the colour it should be, and the state it should be in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ColourStep {
+    /// The byte that goes into the report.
+    pub code: u8,
+    /// The colour's name, as the colour table calls it.
+    pub colour: &'static str,
+    /// What the step should look like: faint, faint shifted, bright, bright shifted.
+    pub state: &'static str,
+}
+
+/// Every base colour in both states, so a person can check the whole table rather than one green.
+///
+/// The encoding is an offset: base is faint, base + 2 is bright, and + 1 is a slightly different shade. This walk puts
+/// those four variants of every colour on one control in order, which is what "разобраться и с другими цветами" needs —
+/// a green that behaves says nothing about blue.
+pub fn colour_walk(shifted: bool) -> Vec<ColourStep> {
+    let mut out = Vec::new();
+    for colour in Colour::all() {
+        let base = colour.code();
+        let name = colour_name(colour);
+        out.push(ColourStep {
+            code: dim(base),
+            colour: name,
+            state: "faint",
+        });
+        out.push(ColourStep {
+            code: bright(base),
+            colour: name,
+            state: "bright",
+        });
+        if shifted {
+            out.push(ColourStep {
+                code: dim(base + 1),
+                colour: name,
+                state: "faint shifted",
+            });
+            out.push(ColourStep {
+                code: bright(base + 1),
+                colour: name,
+                state: "bright shifted",
+            });
+        }
+    }
+    out
+}
+
+/// A colour's name for a person watching the panel.
+pub fn colour_name(colour: Colour) -> &'static str {
+    match colour {
+        Colour::Off => "off",
+        Colour::Red => "red",
+        Colour::Carrot => "carrot",
+        Colour::Orange => "orange",
+        Colour::Honey => "honey",
+        Colour::Yellow => "yellow",
+        Colour::Lime => "lime",
+        Colour::Green => "green",
+        Colour::Aqua => "aqua",
+        Colour::Celeste => "celeste",
+        Colour::Sky => "sky",
+        Colour::Blue => "blue",
+        Colour::Purple => "purple",
+        Colour::Fuscia => "fuscia",
+        Colour::Magenta => "magenta",
+        Colour::Azalea => "azalea",
+        Colour::Salmon => "salmon",
+        Colour::White => "white",
+    }
+}
+
+/// A report with `code` in every byte of `bytes`, and nothing anywhere else.
+///
+/// "Is this button colour capable?" is a question about a whole deck, not about one byte: a single button that stays
+/// the same may be a button that is single-colour, or one byte that is not what the map says. Painting a group answers
+/// it without guessing.
+pub fn fill_only(code: u8, bytes: &[u8]) -> LightsReport {
+    let mut report = LightsReport::dark();
+    for byte in bytes {
+        if let Some(slot) = report.body.get_mut(usize::from(*byte)) {
+            *slot = code;
+        }
+    }
+    report
+}
+
+/// The bytes a person means by a word: a side of the controller, everything, or one named byte number.
+///
+/// The map is the dictionary here: a byte belongs to a side because the owner wrote "Left CUE1" or "Right CUE1" next to
+/// it, so the answer cannot drift away from what was observed.
+pub fn bytes_for(what: &str) -> Result<Vec<u8>, String> {
+    let what = what.trim().to_ascii_lowercase();
+    let bytes: Vec<u8> = match what.as_str() {
+        "all" | "" => map().iter().map(|(byte, _)| *byte).collect(),
+        "left" => map()
+            .iter()
+            .filter(|(_, name)| name.to_ascii_lowercase().contains("left"))
+            .map(|(byte, _)| *byte)
+            .collect(),
+        "right" => map()
+            .iter()
+            .filter(|(_, name)| name.to_ascii_lowercase().contains("right"))
+            .map(|(byte, _)| *byte)
+            .collect(),
+        other => {
+            let byte: u8 = other.parse().map_err(|_| {
+                format!("wanted a side (left, right), all, or a byte number; got {other:?}")
+            })?;
+            if byte >= LIGHTS_LENGTH as u8 {
+                return Err(format!(
+                    "byte {byte} is outside the {LIGHTS_LENGTH} byte report"
+                ));
+            }
+            vec![byte]
+        }
+    };
+    if bytes.is_empty() {
+        return Err(format!("nothing in the map belongs to {what:?}"));
+    }
+    Ok(bytes)
 }

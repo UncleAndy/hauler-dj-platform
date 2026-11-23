@@ -31,7 +31,7 @@ use dj_controller_s4mk3::{NAME, PRODUCT, S4Mk3, VENDOR};
 use dj_hid::write::ReportSink;
 use dj_hid::{DeviceInfo, HidrawTransport, Transport};
 
-const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send] | --lights-demo [--interval MS] [--send] | --lights-show --engine <endpoint> | --lights-fill <code> [--send]";
+const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send] | --lights-demo [--interval MS] [--send] | --lights-show --engine <endpoint> | --lights-fill <code> [--send] | --lights-night [--rest <code>] [--send] | --lights-bright <byte> [--colour N] [--rounds N] [--send] | --lights-colour-walk <byte> [--shift] [--interval MS] [--send]";
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -55,6 +55,10 @@ fn run(arguments: &[String]) -> Result<(), String> {
     let mut sweep_body_only = false;
     let mut sweep_send = false;
     let mut sweep_colours: Vec<u8> = vec![4];
+    let mut rest_colour: u8 = 68;
+    let mut night = false;
+    let mut rounds = 3usize;
+    let mut shifted = false;
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].as_str() {
@@ -76,6 +80,52 @@ fn run(arguments: &[String]) -> Result<(), String> {
             }
             "--lights-demo" => mode = Mode::LightsDemo,
             "--lights-show" => mode = Mode::LightsShow,
+            "--lights-night" => {
+                night = true;
+                mode = Mode::LightsShow;
+            }
+            "--rest" => {
+                rest_colour = arguments
+                    .get(index + 1)
+                    .and_then(|value| value.parse().ok())
+                    .ok_or_else(|| "--rest wants a colour code".to_string())?;
+                index += 1;
+            }
+            "--rounds" => {
+                rounds = arguments
+                    .get(index + 1)
+                    .and_then(|value| value.parse().ok())
+                    .ok_or_else(|| "--rounds wants a number".to_string())?;
+                index += 1;
+            }
+            "--lights-colour-walk" => {
+                // The word after the flag is optional: no argument means the whole panel, which is how a button that
+                // ignores colour is spotted — it stays as it is while everything around it changes.
+                let what = match arguments.get(index + 1).map(String::as_str) {
+                    Some(value)
+                        if value == "left"
+                            || value == "right"
+                            || value == "all"
+                            || value.parse::<u8>().is_ok() =>
+                    {
+                        index += 1;
+                        value.to_string()
+                    }
+                    _ => "all".to_string(),
+                };
+                mode = Mode::LightsColourWalk(what);
+            }
+            "--shift" => shifted = true,
+            "--lights-bright" => {
+                let Some(byte) = arguments.get(index + 1) else {
+                    return Err(format!("--lights-bright wants a byte number. {USAGE}"));
+                };
+                let byte: u8 = byte
+                    .parse()
+                    .map_err(|_| format!("--lights-bright wants a byte number, got {byte}"))?;
+                mode = Mode::LightsBright(byte);
+                index += 1;
+            }
             "--lights-fill" => {
                 let Some(code) = arguments.get(index + 1) else {
                     return Err(format!("--lights-fill wants a code. {USAGE}"));
@@ -212,6 +262,31 @@ fn run(arguments: &[String]) -> Result<(), String> {
     {
         return lights_fill(&[], code, false, sweep_body_only);
     }
+    if let Mode::LightsColourWalk(what) = mode.clone()
+        && !sweep_send
+    {
+        return lights_colour_walk(
+            &[],
+            &what,
+            shifted,
+            sweep_interval_ms,
+            false,
+            sweep_body_only,
+        );
+    }
+    if let Mode::LightsBright(byte) = mode
+        && !sweep_send
+    {
+        return lights_bright(
+            &[],
+            byte,
+            sweep_colour,
+            rounds,
+            sweep_interval_ms,
+            false,
+            sweep_body_only,
+        );
+    }
     if matches!(mode, Mode::LightsDemo) && !sweep_send {
         return lights_demo(&[], &dry_sweep, false);
     }
@@ -260,8 +335,30 @@ fn run(arguments: &[String]) -> Result<(), String> {
         Mode::LightsMap(path) => lights_map(&devices, &path, &sweep),
         Mode::LightsColours(byte) => lights_colours(&devices, byte, &sweep),
         Mode::LightsDemo => lights_demo(&devices, &sweep, sweep_send),
-        Mode::LightsShow => lights_show(&devices, engine.as_deref(), sweep_body_only),
+        Mode::LightsShow => lights_show(
+            &devices,
+            engine.as_deref(),
+            sweep_body_only,
+            night.then_some(rest_colour),
+        ),
         Mode::LightsFill(code) => lights_fill(&devices, code, sweep_send, sweep_body_only),
+        Mode::LightsColourWalk(what) => lights_colour_walk(
+            &devices,
+            &what,
+            shifted,
+            sweep_interval_ms,
+            sweep_send,
+            sweep_body_only,
+        ),
+        Mode::LightsBright(byte) => lights_bright(
+            &devices,
+            byte,
+            sweep_colour,
+            rounds,
+            sweep_interval_ms,
+            sweep_send,
+            sweep_body_only,
+        ),
         Mode::LightsSweep => lights_sweep(&devices, &sweep, sweep_send),
     }
 }
@@ -279,6 +376,8 @@ enum Mode {
     LightsDemo,
     LightsShow,
     LightsFill(u8),
+    LightsBright(u8),
+    LightsColourWalk(String),
 }
 
 /// Write one screen as a picture a person can open, and say how big the frame would be.
@@ -459,6 +558,93 @@ fn lights_colours(devices: &[DeviceInfo], byte: usize, sweep: &Sweep) -> Result<
     Ok(())
 }
 
+/// Walk every base colour on one control, in both states.
+///
+/// A green that changes brightness says nothing about blue: each colour is its own pair of codes, and the table is only
+/// worth trusting once a person has seen all eighteen.
+fn lights_colour_walk(
+    devices: &[DeviceInfo],
+    what: &str,
+    shifted: bool,
+    interval_ms: u64,
+    send: bool,
+    body_only: bool,
+) -> Result<(), String> {
+    let bytes = dj_controller_s4mk3::lights::bytes_for(what)?;
+    let steps = dj_controller_s4mk3::lights::colour_walk(shifted);
+    let with_id = !body_only;
+    if !send || devices.is_empty() {
+        println!(
+            "dj-controller: would walk {} steps over {} bytes ({what}):",
+            steps.len(),
+            bytes.len()
+        );
+        for step in steps.iter().take(6) {
+            println!(
+                "dj-controller: code {} — {} {}",
+                step.code, step.colour, step.state
+            );
+        }
+        println!("dj-controller: … и так далее по всей таблице цветов");
+        return Ok(());
+    }
+    let mut sink = open_lights(devices)?;
+    for step in &steps {
+        let report = dj_controller_s4mk3::lights::fill_only(step.code, &bytes);
+        sink.send(&report.wire(with_id))
+            .map_err(|error| format!("code {}: {error}", step.code))?;
+        println!(
+            "dj-controller: code {} — {} {}, {} bytes",
+            step.code,
+            step.colour,
+            step.state,
+            bytes.len()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(interval_ms));
+    }
+    let _ = sink.send(&dj_controller_s4mk3::lights::LightsReport::dark().wire(with_id));
+    println!("dj-controller: done; the panel is dark again");
+    Ok(())
+}
+
+/// Check on the device that brightness is an offset to the colour code.
+///
+/// One control, the same colour twice: base and base + 2. If the panel shows one colour changing its brightness, the
+/// encoding is right; if it shows two colours, brightness lives elsewhere and nothing should depend on it yet.
+fn lights_bright(
+    devices: &[DeviceInfo],
+    byte: u8,
+    colour: u8,
+    rounds: usize,
+    interval_ms: u64,
+    send: bool,
+    body_only: bool,
+) -> Result<(), String> {
+    let reports = dj_controller_s4mk3::lights::brightness_probe(byte, colour, rounds);
+    let with_id = !body_only;
+    let faint = dj_controller_s4mk3::lights::dim(colour);
+    let strong = dj_controller_s4mk3::lights::bright(colour);
+    if !send || devices.is_empty() {
+        println!(
+            "dj-controller: would alternate byte {byte} between code {faint} and {strong}, {} times; nothing is sent",
+            reports.len() / 2
+        );
+        return Ok(());
+    }
+    let mut sink = open_lights(devices)?;
+    for (index, report) in reports.iter().enumerate() {
+        sink.send(&report.wire(with_id))
+            .map_err(|error| format!("step {index}: {error}"))?;
+        println!(
+            "dj-controller: {}",
+            if index % 2 == 0 { faint } else { strong }
+        );
+        std::thread::sleep(std::time::Duration::from_millis(interval_ms));
+    }
+    let _ = sink.send(&dj_controller_s4mk3::lights::LightsReport::dark().wire(with_id));
+    Ok(())
+}
+
 /// Put one colour code into every byte of the lights report.
 ///
 /// This is the question about the dark: the owner wants the panel to glow faintly everywhere and light the active
@@ -547,6 +733,7 @@ fn lights_show(
     devices: &[DeviceInfo],
     engine: Option<&str>,
     body_only: bool,
+    night: Option<u8>,
 ) -> Result<(), String> {
     let Some(endpoint) = engine else {
         return Err(format!("--lights-show wants --engine <endpoint>. {USAGE}"));
@@ -574,8 +761,12 @@ fn lights_show(
         let dj_bridge::ServerMessage::Snapshot(snapshot) = message else {
             continue;
         };
-        let report =
-            dj_controller_s4mk3::lights::report_for(&show_from_facts(&facts_from(&snapshot)));
+        let show = show_from_facts(&facts_from(&snapshot));
+        let report = match night {
+            // In a dark booth everything glows faintly and the active controls stand out.
+            Some(resting) => dj_controller_s4mk3::lights::report_at_rest(&show, resting),
+            None => dj_controller_s4mk3::lights::report_for(&show),
+        };
         let wire = report.wire(with_id);
         if last.as_ref() == Some(&wire) {
             continue;
@@ -895,7 +1086,7 @@ mod tests {
     #[test]
     fn the_live_lights_want_an_endpoint() {
         // A show without an engine would light nothing and say nothing; the message has to name the missing half.
-        match lights_show(&[], None, false) {
+        match lights_show(&[], None, false, None) {
             Ok(()) => panic!("a show without an endpoint lit something"),
             Err(refused) => assert!(refused.contains("--engine"), "{refused}"),
         }
