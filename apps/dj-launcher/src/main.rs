@@ -242,6 +242,12 @@ fn start_engine(engine: &Path) -> Result<Child, String> {
 fn start_controller(folder: &Path, options: &Options) -> Option<Child> {
     let (config, _) = dj_config::Config::load_or_default(None).ok()?;
     if !config.controller.enabled {
+        // Silence here is what "the buttons are dark and nothing says why" looked like: the switch is off, and the
+        // log says so in the one place a person looks first (owner's report, 23.11).
+        append_log(
+            "dj-launcher",
+            "controller: off in settings (Settings -> Controller -> Use the controller) — no panel to light",
+        );
         return None;
     }
     if matches!(config.controller.driver, dj_config::ControllerDriver::None) {
@@ -263,9 +269,34 @@ fn start_controller(folder: &Path, options: &Options) -> Option<Child> {
         return None;
     }
     let mut command = Command::new(&binary);
+    // Started without a task, the service printed its usage and left — and nobody saw it, because its output went to
+    // /dev/null. That is what "I start the application and the buttons do not light" looked like (owner's report,
+    // 23.11). It is started for the one job it has: paint the panel from the engine's snapshots.
+    command
+        .arg("--lights-show")
+        .arg("--engine")
+        .arg(dj_paths::default_endpoint());
     command.stdin(Stdio::null());
     command.stdout(Stdio::null());
-    command.stderr(Stdio::null());
+    // Its words go beside the engine's own log instead of nowhere: a service that cannot open the panel has to say why.
+    match controller_log() {
+        Some(file) => {
+            let copy = file.try_clone();
+            command.stdout(file);
+            match copy {
+                Ok(copy) => {
+                    command.stderr(copy);
+                }
+                Err(_) => {
+                    command.stderr(Stdio::null());
+                }
+            }
+        }
+        None => {
+            command.stdout(Stdio::null());
+            command.stderr(Stdio::null());
+        }
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -293,6 +324,21 @@ fn start_controller(folder: &Path, options: &Options) -> Option<Child> {
             None
         }
     }
+}
+
+/// The file the controller service writes to: beside the launcher's own log, so one folder answers "why is nothing
+/// lit".
+fn controller_log() -> Option<std::fs::File> {
+    let folder = dj_paths::data_dir()?;
+    let path = folder.join("hauler-dj").join("logs").join("controller.log");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .ok()
 }
 
 /// Makes a child die with this process on Linux.

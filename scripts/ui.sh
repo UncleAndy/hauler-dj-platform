@@ -759,6 +759,19 @@ TOML
     fi
     ;;
   *)
+    # The application is a launcher, not a shell. Started as a bare shell, nothing starts the engine's companion — the
+    # controller service — so the buttons on the panel stay dark however long the window is open (owner's report,
+    # 23.11). Here the program is started the way it is meant to be: one action, engine and service and window.
+    if [ $# -eq 0 ]; then
+      target="${CARGO_TARGET_DIR:-$HOME/.cache/dj-platform-target}/debug"
+      if command -v cargo >/dev/null 2>&1; then
+        cargo build --quiet -p dj-engine -p dj-launcher -p dj-controller || exit 1
+      fi
+      if [ -x "$target/dj-launcher" ] && [ -x "$target/dj-engine" ]; then
+        exec "$target/dj-launcher" --ui "$build_dir/apps/dj-ui/dj-ui" --engine "$target/dj-engine"
+      fi
+      echo "ui.sh: no launcher at $target/dj-launcher — starting the shell alone, nothing will light the panel" >&2
+    fi
     exec "$build_dir/apps/dj-ui/dj-ui" "$@"
     ;;
 esac

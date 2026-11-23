@@ -1067,12 +1067,6 @@ fn lights_show(
     } else {
         Some(open_lights(devices)?)
     };
-    let (mut client, welcome) = dj_bridge::connect_with_timeout(
-        std::path::Path::new(endpoint),
-        Some(std::time::Duration::from_secs(2)),
-    )
-    .map_err(|error| format!("no engine at {endpoint}: {error}"))?;
-    let _ = welcome;
     let with_id = !body_only;
     let night_kept = night;
     // The panel lights up the moment the program starts: every control in the resting colour, so a dark stage shows
@@ -1102,55 +1096,85 @@ fn lights_show(
             "dj-controller: lighting the panel from {endpoint}; 'controller.lights.night' is off, so inactive controls go dark on the first snapshot"
         );
     }
+    // The engine may not be listening yet — the service is started beside it, and a restart of the engine must not
+    // leave a dead service behind a silent log. Waiting and reconnecting is what makes "the buttons are dark" a thing
+    // of the past rather than a thing to explain.
+    let mut waiting_said = false;
     loop {
-        let message = client
-            .recv_server()
-            .map_err(|error| format!("the engine stopped answering: {error}"))?;
-        let dj_bridge::ServerMessage::Snapshot(snapshot) = message else {
-            continue;
-        };
-        let show = show_from_facts(&facts_from(&snapshot, palette));
-        // In a dark booth everything glows faintly and the active controls stand out; outside it the panel is dark
-        // where nothing happens.
-        let report = if night {
-            dj_controller_s4mk3::lights::report_at_rest(&show, palette)
-        } else {
-            dj_controller_s4mk3::lights::report_with(&show, palette)
-        };
-        let wire = report.wire(with_id);
-        if last.as_ref() == Some(&wire) {
-            continue;
-        }
-        match sink.as_mut() {
-            Some(sink) => sink
-                .send(&wire)
-                .map_err(|error| format!("the panel did not take the report: {error}"))?,
-            None => {
-                let mut lit: Vec<String> = report
-                    .body
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, colour)| **colour != 0)
-                    .map(|(byte, colour)| {
-                        let name = dj_controller_s4mk3::lights::name_of(byte as u8)
-                            .unwrap_or("a byte the map does not name");
-                        format!("{byte} {name} ({colour})")
-                    })
-                    .collect();
-                let total = lit.len();
-                lit.truncate(6);
-                let rest = if total > lit.len() {
-                    format!(" …и ещё {}", total - lit.len())
-                } else {
-                    String::new()
-                };
-                println!(
-                    "dj-controller: would light {total}: {}{rest}",
-                    lit.join(", ")
-                );
+        let (mut client, _welcome) = match dj_bridge::connect_with_timeout(
+            std::path::Path::new(endpoint),
+            Some(std::time::Duration::from_secs(2)),
+        ) {
+            Ok(pair) => pair,
+            Err(error) => {
+                if !waiting_said {
+                    println!(
+                        "dj-controller: no engine at {endpoint} yet ({error}); waiting for it"
+                    );
+                    waiting_said = true;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                continue;
             }
+        };
+        if waiting_said {
+            println!("dj-controller: the engine answered; lighting the panel");
+            waiting_said = false;
         }
-        last = Some(wire);
+        loop {
+            let message = match client.recv_server() {
+                Ok(message) => message,
+                Err(error) => {
+                    println!("dj-controller: the engine stopped answering ({error}); reconnecting");
+                    break;
+                }
+            };
+            let dj_bridge::ServerMessage::Snapshot(snapshot) = message else {
+                continue;
+            };
+            let show = show_from_facts(&facts_from(&snapshot, palette));
+            // In a dark booth everything glows faintly and the active controls stand out; outside it the panel is dark
+            // where nothing happens.
+            let report = if night {
+                dj_controller_s4mk3::lights::report_at_rest(&show, palette)
+            } else {
+                dj_controller_s4mk3::lights::report_with(&show, palette)
+            };
+            let wire = report.wire(with_id);
+            if last.as_ref() == Some(&wire) {
+                continue;
+            }
+            match sink.as_mut() {
+                Some(sink) => sink
+                    .send(&wire)
+                    .map_err(|error| format!("the panel did not take the report: {error}"))?,
+                None => {
+                    let mut lit: Vec<String> = report
+                        .body
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, colour)| **colour != 0)
+                        .map(|(byte, colour)| {
+                            let name = dj_controller_s4mk3::lights::name_of(byte as u8)
+                                .unwrap_or("a byte the map does not name");
+                            format!("{byte} {name} ({colour})")
+                        })
+                        .collect();
+                    let total = lit.len();
+                    lit.truncate(6);
+                    let rest = if total > lit.len() {
+                        format!(" …и ещё {}", total - lit.len())
+                    } else {
+                        String::new()
+                    };
+                    println!(
+                        "dj-controller: would light {total}: {}{rest}",
+                        lit.join(", ")
+                    );
+                }
+            }
+            last = Some(wire);
+        }
     }
 }
 

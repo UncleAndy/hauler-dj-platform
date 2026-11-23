@@ -139,7 +139,7 @@ esac
 # 9. The live lights: a playing engine, a snapshot, and a report that says what would be lit. With no controller on this
 # machine the service prints instead of sending, which is exactly the half a check can see.
 "$engine" --set-config controller.enabled=true >/dev/null 2>&1 || true
-"$engine" --set-config controller.driver=s4mk3 >/dev/null 2>&1 || true
+"$engine" --set-config-string controller.driver=s4mk3 >/dev/null 2>&1 || true
 show_socket="$work/show.sock"
 "$engine" --null-sink --autoplay --seconds 8 --socket "$show_socket" >/dev/null 2>&1 &
 show_pid=$!
@@ -186,7 +186,7 @@ esac
 screen_out="$work/live.ppm"
 screen_socket="$work/screen.sock"
 "$engine" --set-config controller.enabled=true >/dev/null 2>&1 || true
-"$engine" --set-config controller.driver=s4mk3 >/dev/null 2>&1 || true
+"$engine" --set-config-string controller.driver=s4mk3 >/dev/null 2>&1 || true
 "$engine" --null-sink --autoplay --seconds 8 --socket "$screen_socket" >/dev/null 2>&1 &
 screen_pid=$!
 for _ in $(seq 1 40); do [ -S "$screen_socket" ] && break; sleep 0.25; done
