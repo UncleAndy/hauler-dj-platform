@@ -182,4 +182,22 @@ case "$bad" in
   *) fail "a broken colour list was not refused: $bad" ;;
 esac
 
+# 11. A screen taken from the live engine: the same snapshot the lights use, drawn into a picture a person can open.
+screen_out="$work/live.ppm"
+screen_socket="$work/screen.sock"
+"$engine" --set-config controller.enabled=true >/dev/null 2>&1 || true
+"$engine" --set-config controller.driver=s4mk3 >/dev/null 2>&1 || true
+"$engine" --null-sink --autoplay --seconds 8 --socket "$screen_socket" >/dev/null 2>&1 &
+screen_pid=$!
+for _ in $(seq 1 40); do [ -S "$screen_socket" ] && break; sleep 0.25; done
+taken="$(timeout 8 "$service" --screen-from --engine "$screen_socket" --out "$screen_out" --panel left 2>&1 || true)"
+kill "$screen_pid" 2>/dev/null || true
+wait "$screen_pid" 2>/dev/null || true
+"$engine" --set-config controller.enabled=false >/dev/null 2>&1 || true
+case "$taken" in
+  *"live.ppm: A"*) ;;
+  *) fail "a screen was not drawn from the engine: $taken" ;;
+esac
+[ -s "$screen_out" ] || fail "the screen file is empty: $taken"
+
 printf 'controller-check: off by default, on when asked, off again; commands reach the engine and events the table does not know are named; the screen draws as a 320x240 picture with the switch off; the lights sweep prints its frames and sends nothing; the sweep takes its flags in any order; the live lights follow a playing engine\n'

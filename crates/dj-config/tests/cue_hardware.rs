@@ -46,7 +46,10 @@ fn a_known_driver_that_is_switched_off_owns_nothing() {
 fn a_fresh_file_keeps_the_colours_the_panel_already_had() {
     use dj_config::{ControllerLights, LightColour};
     let lights = ControllerLights::default();
-    assert!(!lights.night, "the panel is not lit while nobody asked");
+    assert!(
+        lights.night,
+        "the panel glows faintly instead of going dark: a hand has to find the buttons"
+    );
     assert_eq!(lights.resting, LightColour::White);
     assert_eq!(lights.play, LightColour::Green);
     assert_eq!(lights.cue, LightColour::Blue);

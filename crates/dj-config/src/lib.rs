@@ -106,10 +106,11 @@ pub struct ControllerLights {
 
 impl Default for ControllerLights {
     fn default() -> Self {
-        // The defaults are the colours the first build used, so a settings file from before this section sounds and
-        // looks the way it did: night off, and the states in the colours they were drawn in.
+        // Night on by default: a panel that is dark where nothing happens is a panel a hand has to find in the dark,
+        // and the owner asked for the opposite — every button faintly lit, the active ones brighter (23.11). The switch
+        // turns it off for anyone who wants the old behaviour.
         Self {
-            night: false,
+            night: true,
             resting: LightColour::White,
             play: LightColour::Green,
             cue: LightColour::Blue,

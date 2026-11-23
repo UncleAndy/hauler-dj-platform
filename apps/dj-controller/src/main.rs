@@ -31,7 +31,7 @@ use dj_controller_s4mk3::{NAME, PRODUCT, S4Mk3, VENDOR};
 use dj_hid::write::ReportSink;
 use dj_hid::{DeviceInfo, HidrawTransport, Transport};
 
-const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send] | --lights-demo [--interval MS] [--send] | --lights-show --engine <endpoint> | --lights-fill <code> [--send] | --lights-night [--rest <code>] [--send] | --lights-bright <byte> [--colour N] [--rounds N] [--send] | --lights-colour-walk <byte> [--shift] [--interval MS] [--send]";
+const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send] | --lights-demo [--interval MS] [--send] | --lights-show --engine <endpoint> | --lights-fill <code> [--send] | --lights-night [--rest <code>] [--send] | --lights-bright <byte> [--colour N] [--rounds N] [--send] | --lights-colour-walk [<byte>|left|right|all] [--shift] [--interval MS] [--send] | --lights-pick [<byte>|left|right|all] [--out <file>] [--interval MS] [--send] | --screen-from --engine <endpoint> --out <file.ppm> [--panel left|right]";
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -60,6 +60,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
     let mut rounds = 3usize;
     let mut shifted = false;
     let mut pick_out: Option<String> = None;
+    let mut screen_panel = dj_controller_s4mk3::Screen::Left;
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].as_str() {
@@ -120,6 +121,25 @@ fn run(arguments: &[String]) -> Result<(), String> {
                 mode = Mode::LightsColourWalk(what);
             }
             "--shift" => shifted = true,
+            "--screen-from" => mode = Mode::ScreenFrom,
+            "--panel" => {
+                let Some(side) = arguments.get(index + 1) else {
+                    return Err(format!("--panel wants left or right. {USAGE}"));
+                };
+                screen_panel = match side.as_str() {
+                    "left" => dj_controller_s4mk3::Screen::Left,
+                    "right" => dj_controller_s4mk3::Screen::Right,
+                    other => return Err(format!("--panel wants left or right, got {other}")),
+                };
+                index += 1;
+            }
+            "--out" => {
+                let Some(path) = arguments.get(index + 1) else {
+                    return Err(format!("--out wants a file name. {USAGE}"));
+                };
+                pick_out = Some(path.clone());
+                index += 1;
+            }
             "--lights-pick" => {
                 let what = match arguments.get(index + 1).map(String::as_str) {
                     Some(value)
@@ -134,13 +154,6 @@ fn run(arguments: &[String]) -> Result<(), String> {
                     _ => "all".to_string(),
                 };
                 mode = Mode::LightsPick(what);
-            }
-            "--out" => {
-                let Some(path) = arguments.get(index + 1) else {
-                    return Err(format!("--out wants a file name. {USAGE}"));
-                };
-                pick_out = Some(path.clone());
-                index += 1;
             }
             "--lights-bright" => {
                 let Some(byte) = arguments.get(index + 1) else {
@@ -388,6 +401,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
             &palette,
         ),
         Mode::LightsFill(code) => lights_fill(&devices, code, sweep_send, sweep_body_only),
+        Mode::ScreenFrom => screen_from(engine.as_deref(), pick_out.as_deref(), screen_panel),
         Mode::LightsPick(what) => lights_pick(
             &devices,
             &what,
@@ -433,6 +447,7 @@ enum Mode {
     LightsBright(u8),
     LightsColourWalk(String),
     LightsPick(String),
+    ScreenFrom,
 }
 
 /// Write one screen as a picture a person can open, and say how big the frame would be.
@@ -810,6 +825,127 @@ fn lights_fill(
     Ok(())
 }
 
+/// What one screen says, taken from what the engine publishes.
+///
+/// The panels are two, and the program runs four decks: the left panel belongs to decks A and C, the right one to B and
+/// D. Which of the pair is on the panel at a moment is the DJ's business, and this build shows the primary deck of the
+/// side — the one the settings name first — rather than guessing from what is playing.
+fn panel_from(
+    snapshot: &dj_domain::Snapshot,
+    side: dj_controller_s4mk3::Screen,
+) -> dj_controller_s4mk3::screen::DeckPanel {
+    let first = match side {
+        dj_controller_s4mk3::Screen::Left => dj_domain::DeckId::A,
+        dj_controller_s4mk3::Screen::Right => dj_domain::DeckId::B,
+    };
+    let Some(deck) = snapshot.decks.iter().find(|deck| deck.deck == first) else {
+        return dj_controller_s4mk3::screen::DeckPanel {
+            deck: if first == dj_domain::DeckId::A {
+                'A'
+            } else {
+                'B'
+            },
+            ..dj_controller_s4mk3::screen::DeckPanel::default()
+        };
+    };
+    let rate = f64::from(deck.source_rate.max(1));
+    let elapsed = deck.source_frame.0 as f64 / rate;
+    let remaining = deck
+        .remaining_frames
+        .map(|frames| frames as f64 / rate)
+        .unwrap_or(0.0);
+    let duration = deck
+        .remaining_frames
+        .map(|frames| (deck.source_frame.0 + frames) as f64 / rate)
+        .filter(|seconds| *seconds > 0.0);
+    let loop_fraction = match (deck.loop_region, duration) {
+        (Some(region), Some(total)) => Some((
+            region.start.0 as f64 / rate / total,
+            region.end.0 as f64 / rate / total,
+        )),
+        _ => None,
+    };
+    dj_controller_s4mk3::screen::DeckPanel {
+        deck: match first {
+            dj_domain::DeckId::A => 'A',
+            dj_domain::DeckId::B => 'B',
+            dj_domain::DeckId::C => 'C',
+            dj_domain::DeckId::D => 'D',
+        },
+        title: deck
+            .track
+            .as_ref()
+            .map(|track| track.title.clone())
+            .unwrap_or_default(),
+        artist: deck
+            .track
+            .as_ref()
+            .map(|track| track.artist.clone())
+            .unwrap_or_default(),
+        playing: deck.playing,
+        loaded: deck.track.is_some(),
+        elapsed_seconds: elapsed,
+        remaining_seconds: remaining,
+        bpm: deck
+            .track
+            .as_ref()
+            .and_then(|track| track.bpm)
+            .or(deck.local_bpm),
+        pitch_percent: (deck.tempo_ratio - 1.0) * 100.0,
+        position: deck.position_ratio.map(f64::from).unwrap_or_else(|| {
+            duration
+                .map(|total| (elapsed / total).clamp(0.0, 1.0))
+                .unwrap_or(0.0)
+        }),
+        loop_fraction,
+        beat_phase: deck
+            .bar_error_beats
+            .map(|beats| f64::from(beats).rem_euclid(1.0)),
+        beats_per_bar: 4,
+        key: deck.track.as_ref().and_then(|track| track.key.clone()),
+    }
+}
+
+/// Draw one screen from a live snapshot and write it where a person can look at it.
+fn screen_from(
+    engine: Option<&str>,
+    out: Option<&str>,
+    side: dj_controller_s4mk3::Screen,
+) -> Result<(), String> {
+    let (Some(endpoint), Some(path)) = (engine, out) else {
+        return Err(format!(
+            "--screen-from wants --engine <endpoint> and --out <file>. {USAGE}"
+        ));
+    };
+    let (mut client, _welcome) = dj_bridge::connect_with_timeout(
+        std::path::Path::new(endpoint),
+        Some(std::time::Duration::from_secs(2)),
+    )
+    .map_err(|error| format!("no engine at {endpoint}: {error}"))?;
+    loop {
+        match client
+            .recv_server()
+            .map_err(|error| format!("the engine stopped answering: {error}"))?
+        {
+            dj_bridge::ServerMessage::Snapshot(snapshot) => {
+                let panel = panel_from(&snapshot, side);
+                let canvas = dj_controller_s4mk3::screen::render_deck(&panel);
+                std::fs::write(path, canvas.to_ppm())
+                    .map_err(|error| format!("{path}: {error}"))?;
+                println!(
+                    "dj-controller: {path}: {} — {} by {}, {} left",
+                    panel.deck,
+                    panel.title,
+                    panel.artist,
+                    dj_controller_s4mk3::screen::clock(panel.remaining_seconds)
+                );
+                return Ok(());
+            }
+            _ => continue,
+        }
+    }
+}
+
 /// The colour of a settings value in the driver's own vocabulary.
 ///
 /// One match, in one place: the settings crate names the colours as the device does, and this is where the two meet.
@@ -938,8 +1074,34 @@ fn lights_show(
     .map_err(|error| format!("no engine at {endpoint}: {error}"))?;
     let _ = welcome;
     let with_id = !body_only;
-    let mut last: Option<Vec<u8>> = None;
-    println!("dj-controller: lighting the panel from {endpoint}; Ctrl-C stops");
+    let night_kept = night;
+    // The panel lights up the moment the program starts: every control in the resting colour, so a dark stage shows
+    // where the buttons are before any state arrives (owner's instruction, 23.11). The first snapshot then paints the
+    // active controls over it.
+    let glow = dj_controller_s4mk3::lights::report_at_rest(
+        &dj_controller_s4mk3::lights::Show::default(),
+        palette,
+    );
+    if let Some(sink) = sink.as_mut() {
+        sink.send(&glow.wire(with_id))
+            .map_err(|error| format!("the panel did not take the start-up glow: {error}"))?;
+    } else {
+        println!(
+            "dj-controller: would light the whole panel in the resting colour ({})",
+            dj_controller_s4mk3::lights::colour_name(palette.resting)
+        );
+    }
+    let mut last: Option<Vec<u8>> = Some(glow.wire(with_id));
+    if night_kept {
+        println!(
+            "dj-controller: lighting the panel from {endpoint}; the whole panel stays lit; Ctrl-C stops"
+        );
+    } else {
+        // Said out loud, because otherwise the panel glows for a moment and then goes dark for no visible reason.
+        println!(
+            "dj-controller: lighting the panel from {endpoint}; 'controller.lights.night' is off, so inactive controls go dark on the first snapshot"
+        );
+    }
     loop {
         let message = client
             .recv_server()
@@ -964,7 +1126,7 @@ fn lights_show(
                 .send(&wire)
                 .map_err(|error| format!("the panel did not take the report: {error}"))?,
             None => {
-                let lit: Vec<String> = report
+                let mut lit: Vec<String> = report
                     .body
                     .iter()
                     .enumerate()
@@ -975,7 +1137,17 @@ fn lights_show(
                         format!("{byte} {name} ({colour})")
                     })
                     .collect();
-                println!("dj-controller: would light {}", lit.join(", "));
+                let total = lit.len();
+                lit.truncate(6);
+                let rest = if total > lit.len() {
+                    format!(" …и ещё {}", total - lit.len())
+                } else {
+                    String::new()
+                };
+                println!(
+                    "dj-controller: would light {total}: {}{rest}",
+                    lit.join(", ")
+                );
             }
         }
         last = Some(wire);
