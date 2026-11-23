@@ -439,6 +439,7 @@ fn the_settings_choose_the_colours() {
         cue: Colour::Salmon,
         sync: Colour::Lime,
         resting: Colour::Off,
+        loop_: Colour::Aqua,
     };
     let mut hotcues = [[None; 8]; 2];
     hotcues[0][0] = Some(Pad {

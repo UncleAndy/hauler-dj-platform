@@ -284,6 +284,8 @@ pub struct Palette {
     pub sync: Colour,
     /// A stored hotcue slot.
     pub hotcue: Colour,
+    /// A pad that holds a loop: the colour the screen draws a loop with.
+    pub loop_: Colour,
     /// A deck whose effect is switched in.
     pub fx: Colour,
 }
@@ -297,6 +299,7 @@ impl Default for Palette {
             cue: Colour::Blue,
             sync: Colour::Yellow,
             hotcue: Colour::Green,
+            loop_: Colour::Yellow,
             fx: Colour::Magenta,
         }
     }

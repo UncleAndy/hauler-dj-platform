@@ -100,6 +100,13 @@ pub struct ControllerLights {
     pub sync: LightColour,
     /// A stored hotcue slot.
     pub hotcue: LightColour,
+    /// A pad that holds a loop rather than a cue.
+    ///
+    /// The screen draws a loop amber (`DeckPanel.qml`, `loopColor = #ffd400`), and the panel's nearest colour is yellow:
+    /// the same thing under the hand and on the screen. It is a setting like the rest, so a DJ who wants it another
+    /// colour gets it.
+    #[serde(rename = "loop")]
+    pub loop_: LightColour,
     /// A deck whose effect is switched in.
     pub fx: LightColour,
 }
@@ -116,6 +123,7 @@ impl Default for ControllerLights {
             cue: LightColour::Blue,
             sync: LightColour::Yellow,
             hotcue: LightColour::Green,
+            loop_: LightColour::Yellow,
             fx: LightColour::Magenta,
         }
     }

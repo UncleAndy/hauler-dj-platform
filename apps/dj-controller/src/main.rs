@@ -1005,6 +1005,7 @@ fn palette_from(lights: &dj_config::ControllerLights) -> dj_controller_s4mk3::li
         cue: colour_of(lights.cue),
         sync: colour_of(lights.sync),
         hotcue: colour_of(lights.hotcue),
+        loop_: colour_of(lights.loop_),
         fx: colour_of(lights.fx),
     }
 }
@@ -1044,6 +1045,7 @@ fn show_from_facts(decks: &[DeckFacts; 4]) -> dj_controller_s4mk3::lights::Show 
 fn pad_colours(
     loaded: bool,
     cues: &[Option<dj_domain::SourceFrame>],
+    loops: &[Option<dj_domain::FrameRange>],
     cue_colors: &[Option<String>],
     palette: &dj_controller_s4mk3::lights::Palette,
 ) -> [Option<dj_controller_s4mk3::lights::Pad>; 8] {
@@ -1052,18 +1054,24 @@ fn pad_colours(
         return pads;
     }
     for (slot, pad) in pads.iter_mut().enumerate() {
-        let occupied = cues.get(slot).is_some_and(Option::is_some);
+        let has_cue = cues.get(slot).is_some_and(Option::is_some);
+        let has_loop = loops.get(slot).is_some_and(Option::is_some);
         let painted = cue_colors
             .get(slot)
             .and_then(|colour| colour.as_deref())
             .and_then(dj_controller_s4mk3::lights::nearest_colour);
+        // A loop shows the colour the screen draws it with; a cue shows the colour the DJ painted it with; a slot with
+        // neither is still findable, faintly.
+        let colour = if has_cue {
+            painted.unwrap_or(palette.hotcue)
+        } else if has_loop {
+            palette.loop_
+        } else {
+            palette.hotcue
+        };
         *pad = Some(dj_controller_s4mk3::lights::Pad {
-            colour: if occupied {
-                painted.unwrap_or(palette.hotcue)
-            } else {
-                palette.hotcue
-            },
-            occupied,
+            colour,
+            occupied: has_cue || has_loop,
         });
     }
     pads
@@ -1085,6 +1093,7 @@ fn facts_from(
         let hotcues = pad_colours(
             deck.track.is_some(),
             &deck.hotcues,
+            &deck.pad_loops,
             &deck.cue_colors,
             palette,
         );
@@ -1489,7 +1498,10 @@ mod tests {
     fn an_empty_deck_leaves_its_pads_dark() {
         // The pads are about the record, not about the instrument: nothing loaded, nothing to say.
         let palette = dj_controller_s4mk3::lights::Palette::default();
-        assert_eq!(super::pad_colours(false, &[], &[], &palette), [None; 8]);
+        assert_eq!(
+            super::pad_colours(false, &[], &[], &[], &palette),
+            [None; 8]
+        );
     }
 
     #[test]
@@ -1498,13 +1510,35 @@ mod tests {
         // promises one it does not have (owner's rule, 24.11).
         let palette = dj_controller_s4mk3::lights::Palette::default();
         let cues = vec![cue_at(4800), None];
-        let pads = super::pad_colours(true, &cues, &[], &palette);
+        let pads = super::pad_colours(true, &cues, &[], &[], &palette);
         assert_eq!(pads[0], Some(pad(palette.hotcue, true)), "a stored cue");
         assert_eq!(pads[1], Some(pad(palette.hotcue, false)), "an empty slot");
         assert_eq!(
             pads[7],
             Some(pad(palette.hotcue, false)),
             "past the cue list"
+        );
+    }
+
+    #[test]
+    fn a_loop_shows_the_colour_the_screen_draws_it_with() {
+        // The screen draws a loop amber; the panel's nearest colour is yellow, and the pad says "loop" rather than
+        // "cue" (owner's report, 24.11: saved loops did not light at all).
+        let palette = dj_controller_s4mk3::lights::Palette::default();
+        let loops = vec![Some(dj_domain::FrameRange {
+            start: dj_domain::SourceFrame(0),
+            end: dj_domain::SourceFrame(4800),
+        })];
+        let pads = super::pad_colours(true, &[], &loops, &[], &palette);
+        assert_eq!(
+            pads[0],
+            Some(pad(dj_controller_s4mk3::Colour::Yellow, true)),
+            "a stored loop is yellow and bright"
+        );
+        assert_eq!(
+            pads[1],
+            Some(pad(palette.hotcue, false)),
+            "the next slot is still empty"
         );
     }
 
@@ -1517,7 +1551,7 @@ mod tests {
             None,
             Some("not a colour".to_string()),
         ];
-        let pads = super::pad_colours(true, &cues, &colours, &palette);
+        let pads = super::pad_colours(true, &cues, &[], &colours, &palette);
         assert_eq!(pads[0], Some(pad(dj_controller_s4mk3::Colour::Red, true)));
         assert_eq!(pads[1], Some(pad(palette.hotcue, true)), "an unpainted cue");
         assert_eq!(
