@@ -141,12 +141,17 @@ enabled = true
 driver = "s4mk3"
 CFG
 cp "$launcher" "$case6/dj-launcher"
+# Оболочка-заглушка живёт полсекунды: запускатор снимает службу, когда окно закрылось, и служба, которой не дали даже
+# запуститься, не успевала записать свои аргументы — проверка падала через раз (прогон gate-inputs2).
+slow_stub="$case6/stub-ui"
+printf '#!%s\nsleep 0.5\nexit 0\n' "$(readlink -f "$(command -v bash)")" > "$slow_stub"
+chmod +x "$slow_stub"
 args_file="$case6/args.txt"
 printf '#!%s\nprintf "%%s\\n" "$@" >> %s\nprintf "==\\n" >> %s\nexit 0\n' \
   "$(readlink -f "$(command -v bash)")" "$args_file" "$args_file" > "$case6/dj-controller"
 chmod +x "$case6/dj-controller"
 case6_out="$(XDG_CONFIG_HOME="$case6/config" XDG_DATA_HOME="$case6/data" XDG_RUNTIME_DIR="$run_dir" \
-  "$case6/dj-launcher" --engine "$engine" --ui "$stub" --verbose --timeout-ms 15000 2>&1)"
+  "$case6/dj-launcher" --engine "$engine" --ui "$slow_stub" --verbose --timeout-ms 15000 2>&1)"
 case6_code=$?
 if [ "$case6_code" -eq 0 ] && [ -f "$args_file" ] \
   && grep -qx -- "--serve" "$args_file" && grep -qx -- "--engine" "$args_file" \
