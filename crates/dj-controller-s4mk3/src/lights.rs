@@ -9,6 +9,8 @@
 //! lights up. This module builds those reports. It is safe by construction — a light cannot move a hand or a platter —
 //! and it touches nothing but the lights report: the motor reports are behind a decision that has not been made.
 
+use crate::Colour;
+
 /// The output report that carries the lights.
 pub const REPORT_LIGHTS: u8 = 128;
 /// Its length, as the protocol notes have it. Whether this count includes the report identifier is exactly the kind of
@@ -178,4 +180,97 @@ pub fn byte_of(needle: &str) -> Option<u8> {
 /// The bytes the map has heard about, in order, for a caller that wants to light everything the owner named.
 pub fn known_bytes() -> Vec<u8> {
     map().iter().map(|(byte, _)| *byte).collect()
+}
+
+/// What the panel shows right now.
+///
+/// Two halves, because the controller has two: the decks with their platters and hotcues are the left and the right
+/// pair, while the mixer section has an FX button for each of the four decks the program runs. The struct says exactly
+/// that and nothing more — no field for a light the map has not taught us.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Show {
+    /// Hotcue slots lit, for the left and the right deck.
+    pub hotcues: [[bool; 8]; 2],
+    /// Playing, for the left and the right deck.
+    pub playing: [bool; 2],
+    /// Monitoring in the headphones (the CUE button), for the left and the right deck.
+    pub monitoring: [bool; 2],
+    /// Sync engaged, for the left and the right deck.
+    pub sync: [bool; 2],
+    /// FX on, for decks A, B, C and D: the mixer section has a button for each.
+    pub fx: [bool; 4],
+}
+
+/// The byte that lights a hotcue slot, found by the name the owner wrote down.
+fn hotcue_byte(side: usize, slot: usize) -> Option<u8> {
+    let side = if side == 0 { "Left" } else { "Right" };
+    byte_of(&format!("{side} CUE{}", slot + 1))
+}
+
+/// The byte for a named control, or nothing when the map has never heard of it.
+fn control(name: &str) -> Option<u8> {
+    byte_of(name)
+}
+
+/// The report for a state: every control that should be lit, in its colour, and everything else dark.
+///
+/// Colours are a choice, not a measurement: a lit hotcue is green, a playing deck green, monitoring blue, sync yellow,
+/// FX magenta. The byte sets the colour — that is what the probe on byte 8 showed — so what is left is deciding which
+/// colour means what, and that is written here in one place a person can argue with.
+pub fn report_for(show: &Show) -> LightsReport {
+    let mut report = LightsReport::dark();
+    let mut set = |byte: Option<u8>, colour: u8| {
+        if let Some(byte) = byte
+            && let Some(slot) = report.body.get_mut(usize::from(byte))
+        {
+            *slot = colour;
+        }
+    };
+
+    for (side, slots) in show.hotcues.iter().enumerate() {
+        for (slot, lit) in slots.iter().enumerate() {
+            if *lit {
+                set(hotcue_byte(side, slot), Colour::Green.code());
+            }
+        }
+    }
+    for side in 0..2 {
+        let names = if side == 0 {
+            ("Left PLAY button", "Left CUE", "Sync/Lock")
+        } else {
+            ("Right PLAY button", "Right CUE", "Right Sync")
+        };
+        if show.playing[side] {
+            set(control(names.0), Colour::Green.code());
+        }
+        if show.monitoring[side] {
+            set(control(names.1), Colour::Blue.code());
+        }
+        if show.sync[side] {
+            set(control(names.2), Colour::Yellow.code());
+        }
+    }
+    for (deck, lit) in show.fx.iter().enumerate() {
+        if *lit {
+            let name = match deck {
+                0 => "Deck A FX on",
+                1 => "Deck B FX on button",
+                2 => "Deck C FX on button",
+                _ => "Deck D FX on button",
+            };
+            set(control(name), Colour::Magenta.code());
+        }
+    }
+    report
+}
+
+/// Every control the map knows, in order, for a panel test that lights them one at a time.
+pub fn walk() -> Vec<LightsReport> {
+    let mut out = Vec::new();
+    for (byte, _) in map() {
+        if let Some(report) = LightsReport::one(usize::from(*byte), Colour::Green.code()) {
+            out.push(report);
+        }
+    }
+    out
 }

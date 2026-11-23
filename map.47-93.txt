@@ -40,3 +40,8 @@
 86	Deck C use left FX
 87	Deck C use right FX
 88	Deck C EXT
+89	Deck D CUE
+90	Deck D use lft FX
+91	Deck D use right FX
+92	Deck D EXT
+93	QUANT/Snap button

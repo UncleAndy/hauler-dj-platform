@@ -31,7 +31,7 @@ use dj_controller_s4mk3::{NAME, PRODUCT, S4Mk3, VENDOR};
 use dj_hid::write::ReportSink;
 use dj_hid::{DeviceInfo, HidrawTransport, Transport};
 
-const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send]";
+const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send] | --lights-demo [--interval MS] [--send]";
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -74,6 +74,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
                 engine = Some(endpoint.clone());
                 index += 1;
             }
+            "--lights-demo" => mode = Mode::LightsDemo,
             "--lights-map" => {
                 let Some(path) = arguments.get(index + 1) else {
                     return Err(format!("--lights-map wants a file name. {USAGE}"));
@@ -195,6 +196,9 @@ fn run(arguments: &[String]) -> Result<(), String> {
         return lights_sweep(&[], &dry_sweep, false);
     }
     // The map has a dry half too: it prints the bytes it would light, which is how it is checked without a device.
+    if matches!(mode, Mode::LightsDemo) && !sweep_send {
+        return lights_demo(&[], &dry_sweep, false);
+    }
     if let Mode::LightsMap(path) = &mode
         && !sweep_send
     {
@@ -239,6 +243,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         Mode::ScreenPreview(path, panel) => screen_preview(&path, panel),
         Mode::LightsMap(path) => lights_map(&devices, &path, &sweep),
         Mode::LightsColours(byte) => lights_colours(&devices, byte, &sweep),
+        Mode::LightsDemo => lights_demo(&devices, &sweep, sweep_send),
         Mode::LightsSweep => lights_sweep(&devices, &sweep, sweep_send),
     }
 }
@@ -253,6 +258,7 @@ enum Mode {
     LightsSweep,
     LightsMap(String),
     LightsColours(usize),
+    LightsDemo,
 }
 
 /// Write one screen as a picture a person can open, and say how big the frame would be.
@@ -426,6 +432,43 @@ fn lights_colours(devices: &[DeviceInfo], byte: usize, sweep: &Sweep) -> Result<
         sink.send(&report.wire(with_id))
             .map_err(|error| format!("colour {colour}: {error}"))?;
         println!("dj-controller: byte {byte} = colour {colour}");
+        std::thread::sleep(std::time::Duration::from_millis(sweep.interval_ms));
+    }
+    let _ = sink.send(&dj_controller_s4mk3::lights::LightsReport::dark().wire(with_id));
+    println!("dj-controller: done; the panel is dark again");
+    Ok(())
+}
+
+/// Light every control the map knows, one at a time.
+///
+/// This is the check of the map itself: if a control the owner named does not light during the walk, the map is wrong
+/// for that byte, and a panel that lies about its own buttons is worse than a dark one. Nothing here needs the engine.
+fn lights_demo(devices: &[DeviceInfo], sweep: &Sweep, send: bool) -> Result<(), String> {
+    let reports = dj_controller_s4mk3::lights::walk();
+    let with_id = !sweep.body_only;
+    if !send || devices.is_empty() {
+        println!(
+            "dj-controller: would walk {} controls, {} ms apart; nothing is sent",
+            reports.len(),
+            sweep.interval_ms
+        );
+        for (byte, name) in dj_controller_s4mk3::lights::map() {
+            println!("dj-controller: byte {byte} — {name}");
+        }
+        return Ok(());
+    }
+    let mut sink = open_lights(devices)?;
+    println!(
+        "dj-controller: walking {} controls; watch the panel",
+        reports.len()
+    );
+    for ((byte, name), report) in dj_controller_s4mk3::lights::map()
+        .iter()
+        .zip(reports.iter())
+    {
+        sink.send(&report.wire(with_id))
+            .map_err(|error| format!("byte {byte}: {error}"))?;
+        println!("dj-controller: byte {byte} — {name}");
         std::thread::sleep(std::time::Duration::from_millis(sweep.interval_ms));
     }
     let _ = sink.send(&dj_controller_s4mk3::lights::LightsReport::dark().wire(with_id));

@@ -6,9 +6,10 @@
 // A failing expectation in a test is a failure message; the workspace forbids them in library code.
 #![allow(clippy::expect_used)]
 
+use dj_controller_s4mk3::Colour;
 use dj_controller_s4mk3::lights::{
-    LIGHTS_LENGTH, LightsReport, REPORT_LIGHTS, byte_of, colours, known_bytes, map, map_line,
-    name_of, parse_map, sweep,
+    LIGHTS_LENGTH, LightsReport, REPORT_LIGHTS, Show, byte_of, colours, known_bytes, map, map_line,
+    name_of, parse_map, report_for, sweep, walk,
 };
 
 #[test]
@@ -158,4 +159,69 @@ fn every_recorded_byte_is_in_the_report() {
     let bytes = known_bytes();
     assert!(!bytes.is_empty());
     assert!(bytes.iter().all(|byte| *byte < LIGHTS_LENGTH as u8));
+}
+
+#[test]
+fn an_empty_show_lights_nothing() {
+    let report = report_for(&Show::default());
+    assert!(
+        report.body.iter().all(|byte| *byte == 0),
+        "a deck that is doing nothing must not light the panel"
+    );
+}
+
+#[test]
+fn a_lit_hotcue_lights_the_slot_the_map_names() {
+    let mut hotcues = [[false; 8]; 2];
+    hotcues[0][1] = true;
+    let show = Show {
+        hotcues,
+        ..Show::default()
+    };
+    let report = report_for(&show);
+    assert_eq!(report.body[1], Colour::Green.code(), "Left CUE2");
+    let lit = report.body.iter().filter(|byte| **byte != 0).count();
+    assert_eq!(lit, 1, "one slot, one light");
+}
+
+#[test]
+fn playing_monitoring_and_sync_use_their_own_bytes() {
+    let show = Show {
+        playing: [false, true],
+        monitoring: [true, false],
+        sync: [true, false],
+        ..Show::default()
+    };
+    let report = report_for(&show);
+
+    let playing = byte_of("Right PLAY").expect("the map has the right play button");
+    let monitoring = byte_of("Left CUE").expect("the map has the left cue");
+    let sync = byte_of("Sync/Lock").expect("the map has sync");
+    assert_eq!(report.body[usize::from(playing)], Colour::Green.code());
+    assert_eq!(report.body[usize::from(monitoring)], Colour::Blue.code());
+    assert_eq!(report.body[usize::from(sync)], Colour::Yellow.code());
+}
+
+#[test]
+fn the_fx_buttons_of_four_decks_have_their_own_bytes() {
+    let show = Show {
+        fx: [false, false, true, false],
+        ..Show::default()
+    };
+    let report = report_for(&show);
+    let deck_c = byte_of("Deck C FX").expect("the map has deck C's fx button");
+    assert_eq!(report.body[usize::from(deck_c)], Colour::Magenta.code());
+}
+
+#[test]
+fn a_walk_visits_every_control_the_map_knows() {
+    let walk = walk();
+    assert_eq!(walk.len(), map().len());
+    for report in &walk {
+        assert_eq!(
+            report.body.iter().filter(|byte| **byte != 0).count(),
+            1,
+            "a walk lights one control at a time"
+        );
+    }
 }

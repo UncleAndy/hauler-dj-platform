@@ -1,11 +1,17 @@
 # Карта подсветки S4 MK3: байт отчёта 128 → что загорается.
 #
-# Снято владельцем на своём контроллере перебором `dj-controller --lights-map`: по одному байту, ответ набран
-# руками в терминале. Это наблюдение, а не выписка из чужого кода: у каждого байта есть человек, который видел,
-# что загорелось. Имена — слова владельца, поэтому они и остались как есть, вместе с опечатками («pint»,
-# «eynch»), которые исправлены более поздней записью того же байта.
+# Снято владельцем на своём контроллере перебором `dj-controller --lights-map`: по одному байту, ответ набран руками
+# в терминале. Это наблюдение, а не выписка из чужого кода: у каждого байта есть человек, который видел, что
+# загорелось.
 #
-# Формат: байт, табуляция, что загорелось. Пробелы в 44..93 означают, что при переборе этот байт не зажёг ничего.
+# Байт задаёт ЦВЕТ, а не только «включено»: на байте 8 коды 4, 8, 12 и 16 дали разные цвета (ответ владельца, 23.11).
+# Значит панель умеет цвет; яркость придётся искать отдельно.
+#
+# Опечатки исправлены при переносе: имя описывает железо, а не мнение снимавшего, и поиск по имени не должен зависеть
+# от того, попала ли буква. Что исправлено: `Rigth` → `Right`, `Lefr` → `Left`, `lft` → `left`, `selec` → `select`,
+# `hedphones` → `headphones`, и `Deck A FX on` → `Deck A FX on button` (у соседних дек кнопка названа так же).
+#
+# Формат: байт, табуляция, что загорелось.
 0	Left CUE1
 1	Left CUE2
 2	Left CUE3
@@ -15,20 +21,20 @@
 6	Left CUE7
 7	Left CUE8
 8	Left CUE
-9	Button "hotcues"
-10	Button "stems"
-11	Pitch zero light
+9	Left HOTCUES
+10	Left STEMS
+11	Left pitch zero point light
 12	Deck select A
 13	Deck select C
-14	Sync/Lock
-15	Master/Reset
-16	Jog
-17	TT
-18	GRID
-19	View
-20	List
-21	Rating
-22	Prelisten
+14	Left Sync/Lock
+15	Left Master/Reset
+16	Left JOG
+17	Left TT
+18	Left GRID
+19	Left View
+20	Left List
+21	Left Rating
+22	Left Prelisten
 23	Right CUE1
 24	Right CUE2
 25	Right CUE3
@@ -38,18 +44,65 @@
 29	Right CUE7
 30	Right CUE8
 31	Right CUE
-32	Button "hotcues"
-33	Button "stems"
-34	Right pitch zero pint light
+32	Right HOTCUES
+33	Right STEMS
+34	Right pitch zero light
 35	Deck select B
 36	Deck select D
-37	Right Sync
-38	Right Master
+37	Rick SYNC/LOCK
+38	Right MASTER/RESET
 39	Right JOG
-40	TT
-41	GRID
-42	View
-43	List
-44	Rating
-45	Prelisten
-46	Deck A FX on button
+40	Right TT
+41	Right GRID
+42	Right View
+43	Right List
+44	Right Rating
+45	Right Prelisten
+46	Deck A FX on
+47	Deck B FX on button
+48	Deck C FX on button
+49	Deck D FX on button
+50	FX select 1 button
+51	FX select 2 button
+52	FX select 3 button
+53	FX select 4 button
+54	FX select filter button
+55	Left PLAY button
+56	Left RECORD button
+57	Left SAMPLES button
+58	Left MUTE button
+59	Left SHIFT button
+60	Left REV button
+61	Left FLX button
+62	FX1 on button
+63	FX2 on button
+64	FX3 on button
+65	FX4 on button
+66	Right PLAY button
+67	Right RECORD button
+68	Right SAMPLES button
+69	Right MUTE button
+70	Right SHIFT button
+71	Right REV button
+72	Right FLX button
+73	Right FX1 button
+74	Right FX2 button
+75	Right FX3 button
+76	Right FX4 button
+77	Deck A CUE (headphones)
+78	Deck A use left FX button
+79	Deck A use right FX button
+80	Deck A EXT button
+81	Deck B CUE
+82	Deck B use left FX button
+83	Deck B use right FX button
+84	Deck B EXT button
+85	Deck C CUE
+86	Deck C use left FX
+87	Deck C use right FX
+88	Deck C EXT
+89	Deck D CUE
+90	Deck D use left FX
+91	Deck D use right FX
+92	Deck D EXT
+93	QUANT/Snap button
