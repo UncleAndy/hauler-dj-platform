@@ -59,6 +59,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
     let mut night = false;
     let mut rounds = 3usize;
     let mut shifted = false;
+    let mut pick_out: Option<String> = None;
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].as_str() {
@@ -116,6 +117,28 @@ fn run(arguments: &[String]) -> Result<(), String> {
                 mode = Mode::LightsColourWalk(what);
             }
             "--shift" => shifted = true,
+            "--lights-pick" => {
+                let what = match arguments.get(index + 1).map(String::as_str) {
+                    Some(value)
+                        if value == "left"
+                            || value == "right"
+                            || value == "all"
+                            || value.parse::<u8>().is_ok() =>
+                    {
+                        index += 1;
+                        value.to_string()
+                    }
+                    _ => "all".to_string(),
+                };
+                mode = Mode::LightsPick(what);
+            }
+            "--out" => {
+                let Some(path) = arguments.get(index + 1) else {
+                    return Err(format!("--out wants a file name. {USAGE}"));
+                };
+                pick_out = Some(path.clone());
+                index += 1;
+            }
             "--lights-bright" => {
                 let Some(byte) = arguments.get(index + 1) else {
                     return Err(format!("--lights-bright wants a byte number. {USAGE}"));
@@ -262,6 +285,18 @@ fn run(arguments: &[String]) -> Result<(), String> {
     {
         return lights_fill(&[], code, false, sweep_body_only);
     }
+    if let Mode::LightsPick(what) = mode.clone()
+        && !sweep_send
+    {
+        return lights_pick(
+            &[],
+            &what,
+            pick_out.as_deref(),
+            sweep_interval_ms,
+            false,
+            sweep_body_only,
+        );
+    }
     if let Mode::LightsColourWalk(what) = mode.clone()
         && !sweep_send
     {
@@ -342,6 +377,14 @@ fn run(arguments: &[String]) -> Result<(), String> {
             night.then_some(rest_colour),
         ),
         Mode::LightsFill(code) => lights_fill(&devices, code, sweep_send, sweep_body_only),
+        Mode::LightsPick(what) => lights_pick(
+            &devices,
+            &what,
+            pick_out.as_deref(),
+            sweep_interval_ms,
+            sweep_send,
+            sweep_body_only,
+        ),
         Mode::LightsColourWalk(what) => lights_colour_walk(
             &devices,
             &what,
@@ -378,6 +421,7 @@ enum Mode {
     LightsFill(u8),
     LightsBright(u8),
     LightsColourWalk(String),
+    LightsPick(String),
 }
 
 /// Write one screen as a picture a person can open, and say how big the frame would be.
@@ -604,6 +648,84 @@ fn lights_colour_walk(
     }
     let _ = sink.send(&dj_controller_s4mk3::lights::LightsReport::dark().wire(with_id));
     println!("dj-controller: done; the panel is dark again");
+    Ok(())
+}
+
+/// Show every colour in both states and let the person say which one the panel should rest at.
+///
+/// Choosing a resting colour by looking is the only way that produces a panel somebody wants: the table says "white" and
+/// "honey", but whether white is too much in a dark booth is not in the table. Each colour is shown faint and bright, then
+/// the walk asks; "y" records it, and the walk carries on so a second candidate can be compared against the first.
+fn lights_pick(
+    devices: &[DeviceInfo],
+    what: &str,
+    out: Option<&str>,
+    interval_ms: u64,
+    send: bool,
+    body_only: bool,
+) -> Result<(), String> {
+    let bytes = dj_controller_s4mk3::lights::bytes_for(what)?;
+    let steps = dj_controller_s4mk3::lights::colour_walk(false);
+    if !send || devices.is_empty() {
+        println!(
+            "dj-controller: would show {} colours over {} bytes and ask after each; nothing is sent",
+            steps.len() / 2,
+            bytes.len()
+        );
+        for step in steps.iter().step_by(2) {
+            println!(
+                "dj-controller: {} — faint {} / bright {}",
+                step.colour,
+                step.code,
+                step.code + 2
+            );
+        }
+        return Ok(());
+    }
+
+    let mut sink = open_lights(devices)?;
+    let with_id = !body_only;
+    let mut stdin = std::io::BufReader::new(std::io::stdin());
+    let mut chosen: Vec<(u8, &'static str)> = Vec::new();
+    for pair in steps.chunks(2) {
+        let (faint, bright_step) = (&pair[0], &pair[1]);
+        sink.send(&dj_controller_s4mk3::lights::fill_only(faint.code, &bytes).wire(with_id))
+            .map_err(|error| format!("{}: {error}", faint.colour))?;
+        std::thread::sleep(std::time::Duration::from_millis(interval_ms));
+        sink.send(&dj_controller_s4mk3::lights::fill_only(bright_step.code, &bytes).wire(with_id))
+            .map_err(|error| format!("{}: {error}", bright_step.colour))?;
+        println!(
+            "dj-controller: {} (faint {}, bright {}) — взять в фон? [y/N]",
+            faint.colour, faint.code, bright_step.code
+        );
+        let mut answer = String::new();
+        std::io::BufRead::read_line(&mut stdin, &mut answer)
+            .map_err(|error| format!("reading the answer: {error}"))?;
+        if answer.trim().eq_ignore_ascii_case("y") {
+            chosen.push((faint.code, faint.colour));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(interval_ms));
+    }
+    let _ = sink.send(&dj_controller_s4mk3::lights::LightsReport::dark().wire(with_id));
+
+    if chosen.is_empty() {
+        println!("dj-controller: nothing chosen; the panel is dark again");
+        return Ok(());
+    }
+    println!("dj-controller: выбрано:");
+    let mut text = String::new();
+    for (code, name) in &chosen {
+        println!("dj-controller: {code} — {name}");
+        if let Some(line) = dj_controller_s4mk3::lights::pick_line(*code, name) {
+            text.push_str(&line);
+        }
+    }
+    if let Some(path) = out {
+        std::fs::write(path, text).map_err(|error| format!("{path}: {error}"))?;
+        println!("dj-controller: записано в {path}");
+    } else {
+        println!("dj-controller: чтобы это не потерялось, добавьте --out <file>");
+    }
     Ok(())
 }
 

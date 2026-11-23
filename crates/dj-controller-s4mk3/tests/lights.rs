@@ -10,7 +10,7 @@ use dj_controller_s4mk3::Colour;
 use dj_controller_s4mk3::lights::{
     LIGHTS_LENGTH, LightsReport, REPORT_LIGHTS, Show, bright, brightness_probe, byte_of, bytes_for,
     colour_name, colour_walk, colours, dim, fill_only, known_bytes, map, map_line, name_of,
-    parse_map, report_at_rest, report_for, sweep, walk,
+    parse_map, pick_line, report_at_rest, report_for, sweep, walk,
 };
 
 #[test]
@@ -377,4 +377,14 @@ fn filling_only_these_bytes_leaves_the_others_dark() {
     assert_eq!(report.body[2], 30);
     assert_eq!(report.body[0], 0);
     assert_eq!(report.body[3], 0);
+}
+
+#[test]
+fn a_picked_colour_is_recorded_in_the_same_shape_as_the_map() {
+    let line = pick_line(68, "white").expect("a name");
+    assert_eq!(line, "68\twhite\n");
+    assert!(
+        pick_line(68, "   ").is_none(),
+        "a colour without a name is not a choice"
+    );
 }

@@ -458,3 +458,15 @@ pub fn bytes_for(what: &str) -> Result<Vec<u8>, String> {
     }
     Ok(bytes)
 }
+
+/// The line that records a colour the owner picked for the resting panel.
+///
+/// Same shape as the map — a tab, not a comma — for the same reason: the file is read back by a parser that has no
+/// patience for quoted columns, and a colour name is a person's word.
+pub fn pick_line(code: u8, name: &str) -> Option<String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    Some(format!("{code}\t{name}\n"))
+}
