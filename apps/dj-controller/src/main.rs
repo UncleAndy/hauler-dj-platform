@@ -28,9 +28,10 @@ use std::process::ExitCode;
 use dj_bridge::{ClientMessage, ServerMessage};
 use dj_controller_core::{ControlEvent, Driver, Mapping};
 use dj_controller_s4mk3::{NAME, PRODUCT, S4Mk3, VENDOR};
+use dj_hid::write::ReportSink;
 use dj_hid::{DeviceInfo, HidrawTransport, Transport};
 
-const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>]";
+const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send]";
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -47,6 +48,13 @@ fn run(arguments: &[String]) -> Result<(), String> {
     let mut mode = Mode::Status;
     let mut reports = 200_usize;
     let mut engine: Option<String> = None;
+    let mut sweep_from = 0usize;
+    let mut sweep_to = dj_controller_s4mk3::lights::LIGHTS_LENGTH - 1;
+    let mut sweep_colour = 4u8;
+    let mut sweep_interval_ms = 800u64;
+    let mut sweep_body_only = false;
+    let mut sweep_send = false;
+    let mut sweep_colours: Vec<u8> = vec![4];
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].as_str() {
@@ -65,6 +73,95 @@ fn run(arguments: &[String]) -> Result<(), String> {
                 };
                 engine = Some(endpoint.clone());
                 index += 1;
+            }
+            "--lights-map" => {
+                let Some(path) = arguments.get(index + 1) else {
+                    return Err(format!("--lights-map wants a file name. {USAGE}"));
+                };
+                mode = Mode::LightsMap(path.clone());
+                index += 1;
+            }
+            "--lights-colours" => {
+                let Some(byte) = arguments.get(index + 1) else {
+                    return Err(format!("--lights-colours wants a byte number. {USAGE}"));
+                };
+                let byte: usize = byte
+                    .parse()
+                    .map_err(|_| format!("--lights-colours wants a byte number, got {byte}"))?;
+                mode = Mode::LightsColours(byte);
+                index += 1;
+            }
+            "--colours" => {
+                let Some(list) = arguments.get(index + 1) else {
+                    return Err(format!("--colours wants a list like 4,8,12. {USAGE}"));
+                };
+                sweep_colours = dj_controller_s4mk3::lights::colours(list)?;
+                index += 1;
+            }
+            "--lights-sweep" => {
+                mode = Mode::LightsSweep;
+                let mut step = 0;
+                while let Some(next) = arguments.get(index + 1 + step) {
+                    match next.as_str() {
+                        "--from" => {
+                            sweep_from = arguments
+                                .get(index + 2 + step)
+                                .and_then(|value| value.parse().ok())
+                                .ok_or_else(|| "--from wants a byte number".to_string())?;
+                            step += 2;
+                        }
+                        "--to" => {
+                            sweep_to = arguments
+                                .get(index + 2 + step)
+                                .and_then(|value| value.parse().ok())
+                                .ok_or_else(|| "--to wants a byte number".to_string())?;
+                            step += 2;
+                        }
+                        "--colour" => {
+                            sweep_colour = arguments
+                                .get(index + 2 + step)
+                                .and_then(|value| value.parse().ok())
+                                .ok_or_else(|| "--colour wants a colour code".to_string())?;
+                            step += 2;
+                        }
+                        "--interval" => {
+                            sweep_interval_ms = arguments
+                                .get(index + 2 + step)
+                                .and_then(|value| value.parse().ok())
+                                .ok_or_else(|| "--interval wants milliseconds".to_string())?;
+                            step += 2;
+                        }
+                        "--body-only" => {
+                            sweep_body_only = true;
+                            step += 1;
+                        }
+                        "--send" => {
+                            sweep_send = true;
+                            step += 1;
+                        }
+                        _ => break,
+                    }
+                }
+                index += step;
+            }
+            "--screen-preview" => {
+                let Some(path) = arguments.get(index + 1) else {
+                    return Err(format!("--screen-preview wants a file name. {USAGE}"));
+                };
+                let mut panel = dj_controller_s4mk3::Screen::Left;
+                let mut step = 1;
+                if arguments.get(index + 2).map(String::as_str) == Some("--panel") {
+                    panel = match arguments.get(index + 3).map(String::as_str) {
+                        Some("right") => dj_controller_s4mk3::Screen::Right,
+                        Some("left") | None => dj_controller_s4mk3::Screen::Left,
+                        Some(other) => {
+                            return Err(format!("--panel wants left or right, got {other}"));
+                        }
+                    };
+                    step = 3;
+                }
+                mode = Mode::ScreenPreview(path.clone(), panel);
+                index += step;
             }
             "--capture" => {
                 let Some(path) = arguments.get(index + 1) else {
@@ -90,6 +187,34 @@ fn run(arguments: &[String]) -> Result<(), String> {
         }
         index += 1;
     }
+
+    // Drawing a screen needs neither the device nor the switch: it is how the design is looked at before anything is
+    // sent, so it answers even while controller support is off.
+    if let Mode::ScreenPreview(path, panel) = &mode {
+        return screen_preview(path, *panel);
+    }
+    // A dry sweep prints the frames it would send: that needs neither the switch nor a node, and it is how the sweep is
+    // tested. Sending is a write to a device, so that half waits for the switch like everything else.
+    let dry_sweep = Sweep {
+        from: sweep_from,
+        to: sweep_to,
+        colour: sweep_colour,
+        colours: sweep_colours.clone(),
+        interval_ms: sweep_interval_ms,
+        body_only: sweep_body_only,
+    };
+    if matches!(mode, Mode::LightsSweep) && !sweep_send {
+        return lights_sweep(&[], &dry_sweep, false);
+    }
+
+    let sweep = Sweep {
+        from: sweep_from,
+        to: sweep_to,
+        colour: sweep_colour,
+        colours: sweep_colours.clone(),
+        interval_ms: sweep_interval_ms,
+        body_only: sweep_body_only,
+    };
 
     let (config, file) = dj_config::Config::load_or_default(None)
         .map_err(|error| format!("the settings file cannot be read: {error}"))?;
@@ -117,6 +242,10 @@ fn run(arguments: &[String]) -> Result<(), String> {
         }
         Mode::Capture(path) => capture(&transport, &devices, &path, reports),
         Mode::Replay(path) => replay(&path, engine.as_deref()),
+        Mode::ScreenPreview(path, panel) => screen_preview(&path, panel),
+        Mode::LightsMap(path) => lights_map(&devices, &path, &sweep),
+        Mode::LightsColours(byte) => lights_colours(&devices, byte, &sweep),
+        Mode::LightsSweep => lights_sweep(&devices, &sweep, sweep_send),
     }
 }
 
@@ -126,6 +255,189 @@ enum Mode {
     List,
     Capture(String),
     Replay(String),
+    ScreenPreview(String, dj_controller_s4mk3::Screen),
+    LightsSweep,
+    LightsMap(String),
+    LightsColours(usize),
+}
+
+/// Write one screen as a picture a person can open, and say how big the frame would be.
+///
+/// The design has to be approved by an eye before it goes to a device: a screen verified only by sending bytes is a
+/// screen nobody has seen.
+fn screen_preview(path: &str, panel: dj_controller_s4mk3::Screen) -> Result<(), String> {
+    let (canvas, frame) = dj_controller_s4mk3::screen::sample_frame(panel)
+        .map_err(|error| format!("the frame does not fit the panel: {error:?}"))?;
+    std::fs::write(path, canvas.to_ppm()).map_err(|error| format!("{path}: {error}"))?;
+    let side = match panel {
+        dj_controller_s4mk3::Screen::Left => "left",
+        dj_controller_s4mk3::Screen::Right => "right",
+    };
+    println!(
+        "dj-controller: {path}: {}x{} pixels; the same picture is {} bytes as a frame for the {side} panel",
+        canvas.width(),
+        canvas.height(),
+        frame.len()
+    );
+    Ok(())
+}
+
+/// Ask the controller which control each byte of the lights report lights up.
+///
+/// A sweep is the only honest way to learn the map: the protocol notes name the report and the colours but not the
+/// per-control bytes, and a copied table would be somebody else's table. One byte at a time, one control at a time, and
+/// a person watches and writes down what lit.
+///
+/// Without `--send` nothing is sent: the frames are printed, which is what makes this testable without a device and
+/// without a `udev` rule.
+fn lights_sweep(devices: &[DeviceInfo], sweep: &Sweep, send: bool) -> Result<(), String> {
+    let (from, to, colour, interval_ms) = (sweep.from, sweep.to, sweep.colour, sweep.interval_ms);
+    let reports = dj_controller_s4mk3::lights::sweep(from, to, colour);
+    if reports.is_empty() {
+        return Err(format!(
+            "nothing to sweep: bytes {from}..{to} of a {} byte report",
+            dj_controller_s4mk3::lights::LIGHTS_LENGTH
+        ));
+    }
+    let with_id = !sweep.body_only;
+    if !send {
+        println!(
+            "dj-controller: {} reports, {} bytes each on the wire; nothing is sent without --send",
+            reports.len(),
+            reports[0].wire(with_id).len()
+        );
+        for (byte, report) in (from..).zip(reports.iter()) {
+            println!(
+                "dj-controller: byte {byte}: report {} body {} byte {byte} = {colour}",
+                report.id,
+                report.body.len()
+            );
+        }
+        return Ok(());
+    }
+
+    let ours = devices
+        .iter()
+        .find(|device| device.is(VENDOR, PRODUCT))
+        .ok_or_else(|| format!("no {NAME} on this machine"))?;
+    let mut sink = dj_hid::write::NodeSink::open(&ours.path)
+        .map_err(|error| format!("the lights need a writable node: {error}"))?;
+    println!(
+        "dj-controller: sending {} reports to {}, {} ms apart; watch which control lights",
+        reports.len(),
+        ours.path.display(),
+        interval_ms
+    );
+    for (byte, report) in (from..).zip(reports.iter()) {
+        sink.send(&report.wire(with_id))
+            .map_err(|error| format!("byte {byte}: {error}"))?;
+        println!("dj-controller: byte {byte}");
+        std::thread::sleep(std::time::Duration::from_millis(interval_ms));
+    }
+    // Leave the panel dark rather than with one light on.
+    let _ = sink.send(&dj_controller_s4mk3::lights::LightsReport::dark().wire(with_id));
+    println!(
+        "dj-controller: done; the sweep lights nothing on its own, so a dark panel is the end of it"
+    );
+    Ok(())
+}
+
+/// What a sweep is: which bytes, in which colour, how fast, and whether the identifier goes first.
+///
+/// A struct rather than a dozen arguments: the callers differ in one or two fields and would otherwise read as a wall of
+/// identical positions.
+struct Sweep {
+    from: usize,
+    to: usize,
+    colour: u8,
+    colours: Vec<u8>,
+    interval_ms: u64,
+    body_only: bool,
+}
+
+/// Walk the bytes and write down what a person sees.
+///
+/// The map is not something a document can give: it is what the controller shows when one byte is lit. So the sweep
+/// asks, one byte at a time, and appends the answer to a file. An empty answer means "nothing lit" and is not written:
+/// an absence in the file is how a missing light is recorded.
+fn lights_map(devices: &[DeviceInfo], path: &str, sweep: &Sweep) -> Result<(), String> {
+    let (from, to, colour, interval_ms) = (sweep.from, sweep.to, sweep.colour, sweep.interval_ms);
+    if from > to {
+        return Err(format!("the sweep starts at {from} and ends at {to}"));
+    }
+    let with_id = !sweep.body_only;
+    let mut sink = open_lights(devices)?;
+    println!(
+        "dj-controller: writing the map to {path}. For each byte type what lit up (empty means nothing); \"done\" stops"
+    );
+    let mut stdin = std::io::BufReader::new(std::io::stdin());
+    for byte in from..=to {
+        let Some(report) = dj_controller_s4mk3::lights::LightsReport::one(byte, colour) else {
+            break;
+        };
+        sink.send(&report.wire(with_id))
+            .map_err(|error| format!("byte {byte}: {error}"))?;
+        println!("dj-controller: byte {byte} — what lit up?");
+        let mut answer = String::new();
+        std::io::BufRead::read_line(&mut stdin, &mut answer)
+            .map_err(|error| format!("reading the answer: {error}"))?;
+        let answer = answer.trim();
+        if answer == "done" {
+            break;
+        }
+        if let Some(line) = dj_controller_s4mk3::lights::map_line(byte, answer) {
+            use std::io::Write;
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .map_err(|error| format!("{path}: {error}"))?;
+            file.write_all(line.as_bytes())
+                .map_err(|error| format!("{path}: {error}"))?;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(interval_ms));
+    }
+    let _ = sink.send(&dj_controller_s4mk3::lights::LightsReport::dark().wire(with_id));
+    println!("dj-controller: done; the panel is dark again");
+    Ok(())
+}
+
+/// One byte in several colours: the question the first sweep cannot answer.
+///
+/// A byte that looks the same in every colour sets "on", not a colour; a byte whose body changes with the code sets the
+/// colour itself; a byte that only lights at some codes is a brightness. A person watching says which it was.
+fn lights_colours(devices: &[DeviceInfo], byte: usize, sweep: &Sweep) -> Result<(), String> {
+    let with_id = !sweep.body_only;
+    let mut sink = open_lights(devices)?;
+    for colour in &sweep.colours {
+        let report =
+            dj_controller_s4mk3::lights::LightsReport::one(byte, *colour).ok_or_else(|| {
+                format!(
+                    "byte {byte} is outside a {} byte report",
+                    dj_controller_s4mk3::lights::LIGHTS_LENGTH
+                )
+            })?;
+        sink.send(&report.wire(with_id))
+            .map_err(|error| format!("colour {colour}: {error}"))?;
+        println!("dj-controller: byte {byte} = colour {colour}");
+        std::thread::sleep(std::time::Duration::from_millis(sweep.interval_ms));
+    }
+    let _ = sink.send(&dj_controller_s4mk3::lights::LightsReport::dark().wire(with_id));
+    println!("dj-controller: done; the panel is dark again");
+    Ok(())
+}
+
+/// The node the lights go to, with the message a person needs when the rules do not allow it.
+fn open_lights(devices: &[DeviceInfo]) -> Result<dj_hid::write::NodeSink, String> {
+    let ours = devices
+        .iter()
+        .find(|device| device.is(VENDOR, PRODUCT))
+        .ok_or_else(|| format!("no {NAME} on this machine"))?;
+    dj_hid::write::NodeSink::open(&ours.path).map_err(|error| {
+        format!(
+            "the lights need a writable node {error}; on Linux that is a udev rule for this device"
+        )
+    })
 }
 
 fn status(devices: &[DeviceInfo]) -> Result<(), String> {

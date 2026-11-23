@@ -62,6 +62,22 @@
         #
         # Outside `nix develop` the script re-enters the shell itself: the pinned rust and Qt live there, and a
         # build made with the machine's own toolchain is the class of bug this project already knows.
+        djController = pkgs.writeShellScriptBin "dj-controller" ''
+          set -eu
+          # Run the controller service from where it is built. Without this the service is a binary nobody knows the
+          # path to, which reads as "dj-controller: не найден" to the person asked to sweep the lights.
+          repo="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+          target="''${CARGO_TARGET_DIR:-$repo/target}"
+          binary=""
+          for candidate in "$target/release/dj-controller" "$target/debug/dj-controller"; do
+            [ -x "$candidate" ] && binary="$candidate" && break
+          done
+          if [ -z "$binary" ]; then
+            echo "dj-controller: not built yet — run 'dj-build' (or 'cargo build --release -p dj-controller')" >&2
+            exit 1
+          fi
+          exec "$binary" "$@"
+        '';
         djBuild = pkgs.writeShellScriptBin "dj-build" ''
           set -eu
 
@@ -110,10 +126,12 @@
 
           if [ "$want_engine" = 1 ]; then
             echo "== engine ($profile)"
+            # The controller service is built beside the engine: the launcher starts it from the same folder, so a
+            # build that skips it leaves the switch in Settings with nothing to start.
             if [ "$profile" = debug ]; then
-              cargo build -p dj-engine
+              cargo build -p dj-engine -p dj-controller
             else
-              cargo build --release -p dj-engine
+              cargo build --release -p dj-engine -p dj-controller
             fi
             engine_dir="''${CARGO_TARGET_DIR:-$repo/target}/$profile"
             # ONNX Runtime is loaded from beside the engine, so a copy there is what makes the beat model work
@@ -270,6 +288,7 @@
             # быть не должно: его апплеты перекрывают find и остальные утилиты, а `find -printf` busybox не знает.
             bubblewrap
             djBuild
+            djController
             djBuildWin
             djRelease
           ];

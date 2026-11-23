@@ -12,6 +12,8 @@
 //! - Requirements: DJP-CTRL-001, DJP-CTRL-004
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
+pub mod write;
+
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};

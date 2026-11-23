@@ -105,4 +105,42 @@ case "$quiet" in
     *) fail "a replay ran while the controller was off: $quiet" ;;
 esac
 
-printf 'controller-check: off by default, on when asked, off again; commands reach the engine and events the table does not know are named\n'
+# 7. The screens are drawn without the device and without the switch: that is how the design is looked at before
+# anything is sent, so it has to keep working with controller support off.
+"$engine" --set-config controller.enabled=false >/dev/null
+preview="$work/screen.ppm"
+"$service" --screen-preview "$preview" --panel left > "$work/preview.log" 2>&1 || {
+  fail "the screen preview failed with controller support off: $(cat "$work/preview.log")"
+}
+case "$(cat "$work/preview.log")" in
+  *"153620 bytes as a frame"*) ;;
+  *) fail "the preview does not report a full-screen frame: $(cat "$work/preview.log")" ;;
+esac
+size="$(wc -c < "$preview")"
+[ "$size" -eq 230415 ] || fail "the preview is $size bytes, not a 320x240 PPM (230415)"
+
+# 8. The sweep of the lights report prints the frames it would send, and sends nothing: that is the half of it that
+# needs neither a device nor the switch. The other half — which byte lights which control — is answered by a person
+# watching the controller, so it must not be pretended here.
+sweep="$("$service" --lights-sweep --from 10 --to 12 --colour 4 2>&1 || true)"
+case "$sweep" in
+  *"nothing is sent without --send"*) ;;
+  *) fail "the dry sweep does not say it is dry: $sweep" ;;
+esac
+case "$sweep" in
+  *"byte 10: report 128 body 94 byte 10 = 4"*) ;;
+  *) fail "the sweep does not name the byte it would light: $sweep" ;;
+esac
+case "$sweep" in
+  *"3 reports, 95 bytes each on the wire"*) ;;
+  *) fail "the sweep counts its reports wrongly: $sweep" ;;
+esac
+
+# 9. A colour list that is not a list is refused with words a person can act on, before any device is touched.
+bad="$("$service" --lights-colours 5 --colours "4,x" 2>&1 || true)"
+case "$bad" in
+  *"a colour is one byte"*) ;;
+  *) fail "a broken colour list was not refused: $bad" ;;
+esac
+
+printf 'controller-check: off by default, on when asked, off again; commands reach the engine and events the table does not know are named; the screen draws as a 320x240 picture with the switch off; the lights sweep prints its frames and sends nothing\n'

@@ -23,6 +23,10 @@ use std::fmt;
 use dj_controller_core::{ControlEvent, Driver, WheelCounter};
 
 /// USB vendor id.
+pub mod lights;
+pub mod screen;
+pub mod text;
+
 pub const VENDOR: u16 = 0x17cc;
 /// USB product id.
 pub const PRODUCT: u16 = 0x1720;
