@@ -541,6 +541,16 @@ impl Mixer {
         &self.cue[..self.block_frames * 2]
     }
 
+    /// Both output buses at once, for the one signal that is heard in the room and in the headphones.
+    ///
+    /// The metronome is such a signal (owner's instruction, 23.11): a reference beat is only useful if the DJ hears it
+    /// in the phones and the room hears it too. Two separate calls cannot borrow the mixer twice, and copying the
+    /// block to join them afterwards would be a copy in the audio path.
+    pub fn buses(&mut self) -> (&mut [f32], &mut [f32]) {
+        let frames = self.block_frames * 2;
+        (&mut self.master[..frames], &mut self.cue[..frames])
+    }
+
     /// Metering of the last finished block.
     pub fn meters(&self) -> &Meters {
         &self.meters

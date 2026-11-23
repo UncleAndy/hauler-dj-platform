@@ -236,6 +236,35 @@ fn clicks(master: &[f32], marks: &[usize]) -> Vec<usize> {
     found
 }
 
+/// Play and hand back both buses: what the room hears and what the headphones hear.
+fn render_both(graph: &mut EngineGraph, frames: usize) -> (Vec<f32>, Vec<f32>) {
+    let mut master = vec![0.0f32; frames * 2];
+    let mut cue = vec![0.0f32; frames * 2];
+    let mut written = 0;
+    while written < frames {
+        let count = (frames - written).min(BLOCK);
+        graph.render_pair(
+            &mut master[written * 2..(written + count) * 2],
+            &mut cue[written * 2..(written + count) * 2],
+            count,
+        );
+        written += count;
+    }
+    (master, cue)
+}
+
+/// Peak of one side of a stereo buffer, near `frame`, over the length of a click.
+fn peak_near(buffer: &[f32], frame: usize, side: usize) -> f32 {
+    let frames = buffer.len() / 2;
+    let from = frame.saturating_sub(2);
+    let to = (frame + CLICK_FRAMES).min(frames);
+    let mut peak = 0.0f32;
+    for index in from..to {
+        peak = peak.max(buffer[index * 2 + side].abs());
+    }
+    peak
+}
+
 /// Play with the metronome on and hand back the master.
 fn metronome_on(graph: &mut EngineGraph, cells: &StateCells, frames: usize) -> Vec<f32> {
     let _ = cells;
@@ -477,5 +506,71 @@ fn turning_the_click_off_stops_it() {
     assert!(
         after <= before + 1,
         "the click stopped: {before} clicks before the switch and {after} two seconds after it"
+    );
+}
+
+#[test]
+fn the_click_is_heard_in_the_headphones_and_in_the_room() {
+    // A reference beat is only useful if it is where the DJ is listening: the click has to reach the master and the
+    // cue bus alike, and with the same level — the same render, added twice, not rendered twice (owner's instruction,
+    // 23.11).
+    let (mut graph, cells, submissions) = graph_for(marked_deck());
+    let _ = cells;
+    let _ = post(
+        &submissions,
+        1,
+        DjCommand::Metronome {
+            deck: DeckId::A,
+            enabled: true,
+        },
+    );
+    let _ = post(
+        &submissions,
+        2,
+        DjCommand::Play {
+            deck: DeckId::A,
+            enabled: true,
+        },
+    );
+    let (master, cue) = render_both(&mut graph, 96_000);
+    let found_marks = marks(&master);
+    let found = clicks(&master, &found_marks);
+    assert!(found.len() >= 3, "three clicks in the room: {:?}", found);
+
+    for frame in found.iter().take(3) {
+        let in_phones = peak_near(&cue, *frame, 0);
+        let in_room = peak_near(&master, *frame, 0);
+        assert!(
+            in_phones > 0.02,
+            "the click at {frame} is in the room at {in_room} but not in the headphones ({in_phones})"
+        );
+        assert!(
+            (in_phones - in_room).abs() < 0.01,
+            "the click at {frame} is {in_room} in the room and {in_phones} in the headphones: one render, two buses"
+        );
+    }
+}
+
+#[test]
+fn a_metronome_that_is_off_puts_nothing_in_the_headphones() {
+    // The other half: with the click off and no channel cued, the cue bus stays silent. Otherwise "the click is in the
+    // headphones" would be true of a graph that always wrote something there.
+    let (mut graph, cells, submissions) = graph_for(marked_deck());
+    let _ = cells;
+    let _ = post(
+        &submissions,
+        2,
+        DjCommand::Play {
+            deck: DeckId::A,
+            enabled: true,
+        },
+    );
+    let (_master, cue) = render_both(&mut graph, 48_000);
+    let loudest = cue
+        .iter()
+        .fold(0.0f32, |peak, sample| peak.max(sample.abs()));
+    assert!(
+        loudest < 0.01,
+        "the headphones heard {loudest} with the metronome off and nothing cued"
     );
 }

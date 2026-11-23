@@ -2568,8 +2568,10 @@ pub struct EngineGraph {
     reverse_worker: Option<std::sync::mpsc::Sender<ReverseRequest>>,
     /// Bytes the whole-track cache may hold, as configured. Zero when the cache is off.
     cache_budget: u64,
-    /// The metronome's click generator: four voices mixed into the master bus.
+    /// The metronome's click generator: four voices mixed into the master bus and the headphones.
     metronome: metronome::Metronome,
+    /// One block of rendered clicks, so the same signal reaches both buses without advancing the voices twice.
+    click: Vec<f32>,
     /// Blocks since the last sync step: the loop runs every [`SYNC_BLOCKS`], not every block.
     sync_blocks: u32,
     /// What the sync loop remembers between steps: which decks were just moved.
@@ -2606,6 +2608,7 @@ impl EngineGraph {
             cache_budget: 0,
             paths: vec![None; decks_len],
             metronome: metronome::Metronome::new(mixer_sample_rate),
+            click: vec![0.0f32; block * 2],
             sync_blocks: 0,
             sync_memory: SyncMemory::default(),
         }
@@ -2637,8 +2640,18 @@ impl EngineGraph {
             self.metronome.fire(offset, accent);
         }
         if !self.metronome.is_idle() {
-            let master = self.mixer.master_bus();
-            self.metronome.mix(master, frames);
+            // Rendered once, added to both buses. A reference beat is only useful if the DJ hears it in the phones and
+            // the room hears it too (owner's instruction, 23.11); mixing twice would advance each voice's envelope
+            // twice, so the click would be half as loud and half as long in the second bus.
+            let frames = frames.min(self.click.len() / 2);
+            let click = &mut self.click[..frames * 2];
+            click.fill(0.0);
+            self.metronome.mix(click, frames);
+            let (master, cue) = self.mixer.buses();
+            for (index, sample) in click.iter().enumerate() {
+                master[index] += sample;
+                cue[index] += sample;
+            }
         }
     }
 
