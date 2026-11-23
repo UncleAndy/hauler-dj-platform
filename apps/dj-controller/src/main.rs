@@ -1016,8 +1016,8 @@ struct DeckFacts {
     monitoring: bool,
     sync: bool,
     fx: bool,
-    /// The colour each occupied hotcue slot shows: the marker's own colour, or the palette's when it has none.
-    hotcues: [Option<dj_controller_s4mk3::Colour>; 8],
+    /// What each hotcue pad shows: the marker's colour, and whether the slot holds a cue.
+    hotcues: [Option<dj_controller_s4mk3::lights::Pad>; 8],
 }
 
 /// The panel's state from four decks' facts.
@@ -1043,19 +1043,28 @@ fn show_from_facts(decks: &[DeckFacts; 4]) -> dj_controller_s4mk3::lights::Show 
 /// cue yet (owner's rule, 24.11).
 fn pad_colours(
     loaded: bool,
+    cues: &[Option<dj_domain::SourceFrame>],
     cue_colors: &[Option<String>],
     palette: &dj_controller_s4mk3::lights::Palette,
-) -> [Option<dj_controller_s4mk3::Colour>; 8] {
+) -> [Option<dj_controller_s4mk3::lights::Pad>; 8] {
     let mut pads = [None; 8];
     if !loaded {
         return pads;
     }
-    for (slot, colour) in pads.iter_mut().enumerate() {
+    for (slot, pad) in pads.iter_mut().enumerate() {
+        let occupied = cues.get(slot).is_some_and(Option::is_some);
         let painted = cue_colors
             .get(slot)
             .and_then(|colour| colour.as_deref())
             .and_then(dj_controller_s4mk3::lights::nearest_colour);
-        *colour = Some(painted.unwrap_or(palette.hotcue));
+        *pad = Some(dj_controller_s4mk3::lights::Pad {
+            colour: if occupied {
+                painted.unwrap_or(palette.hotcue)
+            } else {
+                palette.hotcue
+            },
+            occupied,
+        });
     }
     pads
 }
@@ -1073,7 +1082,12 @@ fn facts_from(
         // The pads say what is in the deck, so they light when a record is loaded and stay dark while the deck is
         // empty (owner's rule, 24.11). An occupied slot shows the colour the DJ painted it with; an empty one shows the
         // palette's hotcue colour, because a pad that cannot be found in the dark is a pad nobody presses.
-        let hotcues = pad_colours(deck.track.is_some(), &deck.cue_colors, palette);
+        let hotcues = pad_colours(
+            deck.track.is_some(),
+            &deck.hotcues,
+            &deck.cue_colors,
+            palette,
+        );
         facts[index] = DeckFacts {
             playing: deck.playing,
             monitoring: deck.cue,
@@ -1460,35 +1474,55 @@ fn send_commands(
 
 #[cfg(test)]
 mod tests {
+    fn cue_at(frame: u64) -> Option<dj_domain::SourceFrame> {
+        Some(dj_domain::SourceFrame(frame))
+    }
+
+    fn pad(
+        colour: dj_controller_s4mk3::Colour,
+        occupied: bool,
+    ) -> dj_controller_s4mk3::lights::Pad {
+        dj_controller_s4mk3::lights::Pad { colour, occupied }
+    }
+
     #[test]
     fn an_empty_deck_leaves_its_pads_dark() {
         // The pads are about the record, not about the instrument: nothing loaded, nothing to say.
         let palette = dj_controller_s4mk3::lights::Palette::default();
-        assert_eq!(super::pad_colours(false, &[], &palette), [None; 8]);
+        assert_eq!(super::pad_colours(false, &[], &[], &palette), [None; 8]);
     }
 
     #[test]
-    fn a_loaded_deck_lights_all_eight_pads() {
-        // A pad that cannot be found in the dark is a pad nobody presses: the empty slots take the palette's colour.
+    fn a_loaded_deck_lights_every_pad_and_the_stored_ones_brightly() {
+        // A pad that cannot be found in the dark is a pad nobody presses, and a pad that shines like a stored cue
+        // promises one it does not have (owner's rule, 24.11).
         let palette = dj_controller_s4mk3::lights::Palette::default();
-        let pads = super::pad_colours(true, &[], &palette);
-        assert_eq!(pads, [Some(palette.hotcue); 8]);
+        let cues = vec![cue_at(4800), None];
+        let pads = super::pad_colours(true, &cues, &[], &palette);
+        assert_eq!(pads[0], Some(pad(palette.hotcue, true)), "a stored cue");
+        assert_eq!(pads[1], Some(pad(palette.hotcue, false)), "an empty slot");
+        assert_eq!(
+            pads[7],
+            Some(pad(palette.hotcue, false)),
+            "past the cue list"
+        );
     }
 
     #[test]
     fn a_painted_cue_keeps_its_own_colour_and_the_others_do_not() {
         let palette = dj_controller_s4mk3::lights::Palette::default();
+        let cues = vec![cue_at(1), cue_at(2), cue_at(3)];
         let colours = vec![
             Some("#cc0000".to_string()),
             None,
             Some("not a colour".to_string()),
         ];
-        let pads = super::pad_colours(true, &colours, &palette);
-        assert_eq!(pads[0], Some(dj_controller_s4mk3::Colour::Red));
-        assert_eq!(pads[1], Some(palette.hotcue), "an unpainted slot");
+        let pads = super::pad_colours(true, &cues, &colours, &palette);
+        assert_eq!(pads[0], Some(pad(dj_controller_s4mk3::Colour::Red, true)));
+        assert_eq!(pads[1], Some(pad(palette.hotcue, true)), "an unpainted cue");
         assert_eq!(
             pads[2],
-            Some(palette.hotcue),
+            Some(pad(palette.hotcue, true)),
             "a broken colour is no colour"
         );
     }
@@ -1505,7 +1539,10 @@ mod tests {
                 monitoring: true,
                 sync: false,
                 fx: false,
-                hotcues: [Some(dj_controller_s4mk3::Colour::Green); 8],
+                hotcues: [Some(dj_controller_s4mk3::lights::Pad {
+                    colour: dj_controller_s4mk3::Colour::Green,
+                    occupied: true,
+                }); 8],
             },
             DeckFacts::default(),
             DeckFacts::default(),

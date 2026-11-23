@@ -205,16 +205,28 @@ pub fn known_bytes() -> Vec<u8> {
 
 /// What the panel shows right now.
 ///
+/// What one hotcue pad shows: a colour, and whether something is stored in that slot.
+///
+/// The owner asked for the difference (24.11): both kinds of pad are visible in the dark, but only a stored cue is at
+/// full brightness — an empty pad that shines as brightly as a full one is a pad that promises a cue it does not have.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Pad {
+    /// The colour of the pad: the marker's own colour when the slot holds a cue, the palette's otherwise.
+    pub colour: Colour,
+    /// True when the slot holds a cue.
+    pub occupied: bool,
+}
+
 /// Two halves, because the controller has two: the decks with their platters and hotcues are the left and the right
 /// pair, while the mixer section has an FX button for each of the four decks the program runs. The struct says exactly
 /// that and nothing more — no field for a light the map has not taught us.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Show {
-    /// Hotcue slots lit, for the left and the right deck, each in the colour of its marker in the application.
+    /// Hotcue slots, for the left and the right deck, each in the colour of its marker in the application.
     ///
     /// A pad's colour is the colour the DJ painted the cue with: a hand looks for the pad it painted, not for a pad the
-    /// program chose. `None` means the slot is empty, or the cue has no colour of its own.
-    pub hotcues: [[Option<Colour>; 8]; 2],
+    /// program chose. `None` means the deck is empty and the pads say nothing at all.
+    pub hotcues: [[Option<Pad>; 8]; 2],
     /// Playing, for the left and the right deck.
     pub playing: [bool; 2],
     /// Monitoring in the headphones (the CUE button), for the left and the right deck.
@@ -311,11 +323,17 @@ pub fn report_with(show: &Show, palette: &Palette) -> LightsReport {
     };
 
     for (side, slots) in show.hotcues.iter().enumerate() {
-        for (slot, colour) in slots.iter().enumerate() {
-            // The marker's own colour when it has one, the palette's otherwise: an uncoloured cue still has to be
-            // findable.
-            if let Some(colour) = colour {
-                set(hotcue_byte(side, slot), bright(colour.code()));
+        for (slot, pad) in slots.iter().enumerate() {
+            // A stored cue is at full brightness; an empty slot glows faintly, so the pad can be found in the dark without
+            // claiming a cue nobody stored.
+            if let Some(pad) = pad {
+                let code = pad.colour.code();
+                let level = if pad.occupied {
+                    bright(code)
+                } else {
+                    dim(code)
+                };
+                set(hotcue_byte(side, slot), level);
             }
         }
     }

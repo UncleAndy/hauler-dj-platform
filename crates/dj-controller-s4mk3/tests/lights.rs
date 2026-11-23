@@ -8,10 +8,10 @@
 
 use dj_controller_s4mk3::Colour;
 use dj_controller_s4mk3::lights::{
-    LIGHTS_LENGTH, LightsReport, Palette, REPORT_LIGHTS, Show, bright, brightness_probe, byte_of,
-    bytes_for, colour_by_name, colour_name, colour_walk, colours, dim, fill_only, hotcue_bytes,
-    known_bytes, map, map_line, name_of, nearest_colour, parse_map, pick_line, report_at_rest,
-    report_for, report_with, sweep, walk,
+    LIGHTS_LENGTH, LightsReport, Pad, Palette, REPORT_LIGHTS, Show, bright, brightness_probe,
+    byte_of, bytes_for, colour_by_name, colour_name, colour_walk, colours, dim, fill_only,
+    hotcue_bytes, known_bytes, map, map_line, name_of, nearest_colour, parse_map, pick_line,
+    report_at_rest, report_for, report_with, sweep, walk,
 };
 
 #[test]
@@ -175,7 +175,10 @@ fn an_empty_show_lights_nothing() {
 #[test]
 fn a_lit_hotcue_lights_the_slot_the_map_names() {
     let mut hotcues = [[None; 8]; 2];
-    hotcues[0][1] = Some(Colour::Green);
+    hotcues[0][1] = Some(Pad {
+        colour: Colour::Green,
+        occupied: true,
+    });
     let show = Show {
         hotcues,
         ..Show::default()
@@ -278,7 +281,10 @@ fn a_dark_booth_lights_every_control_faintly_except_the_pads() {
     }
 
     let mut hotcues = [[None; 8]; 2];
-    hotcues[0][0] = Some(Colour::Green);
+    hotcues[0][0] = Some(Pad {
+        colour: Colour::Green,
+        occupied: true,
+    });
     let show = Show {
         hotcues,
         playing: [true, false],
@@ -435,7 +441,10 @@ fn the_settings_choose_the_colours() {
         resting: Colour::Off,
     };
     let mut hotcues = [[None; 8]; 2];
-    hotcues[0][0] = Some(Colour::Purple);
+    hotcues[0][0] = Some(Pad {
+        colour: Colour::Purple,
+        occupied: true,
+    });
     let show = Show {
         hotcues,
         playing: [true, false],
@@ -485,11 +494,47 @@ fn a_pad_shows_the_colour_of_its_marker() {
         hotcue: Colour::White,
         ..Palette::default()
     };
-    hotcues[0][0] = Some(Colour::Salmon);
+    hotcues[0][0] = Some(Pad {
+        colour: Colour::Salmon,
+        occupied: true,
+    });
     let show = Show {
         hotcues,
         ..Show::default()
     };
     let report = report_with(&show, &palette);
-    assert_eq!(report.body[0], bright(Colour::Salmon.code()));
+    assert_eq!(
+        report.body[0],
+        bright(Colour::Salmon.code()),
+        "a stored cue is bright"
+    );
+}
+
+#[test]
+fn an_empty_slot_glows_faintly_and_a_stored_one_brightly() {
+    // The owner's rule (24.11): both are visible in the dark, but only a stored cue is at full brightness — an empty pad
+    // that shines like a full one promises a cue it does not have.
+    let palette = Palette::default();
+    let mut hotcues = [[None; 8]; 2];
+    hotcues[0][0] = Some(Pad {
+        colour: Colour::Green,
+        occupied: true,
+    });
+    hotcues[0][1] = Some(Pad {
+        colour: Colour::Green,
+        occupied: false,
+    });
+    let report = report_with(
+        &Show {
+            hotcues,
+            ..Show::default()
+        },
+        &palette,
+    );
+    assert_eq!(report.body[0], bright(Colour::Green.code()), "a stored cue");
+    assert_eq!(report.body[1], dim(Colour::Green.code()), "an empty slot");
+    assert!(
+        report.body[1] < report.body[0],
+        "the empty pad is the fainter of the two"
+    );
 }
