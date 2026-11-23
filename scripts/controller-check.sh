@@ -136,11 +136,29 @@ case "$sweep" in
   *) fail "the sweep counts its reports wrongly: $sweep" ;;
 esac
 
-# 9. A colour list that is not a list is refused with words a person can act on, before any device is touched.
+# 9. The sweep's parameters are flags of their own: `--lights-map file --from 0` has to work, because that is what a
+# person types. It failed on `--from` once, after the file name.
+mapdry="$("$service" --lights-map "$work/map.txt" --from 0 --to 2 2>&1 || true)"
+case "$mapdry" in
+  *"would write the map to"*) ;;
+  *) fail "the dry map does not name the file it would write: $mapdry" ;;
+esac
+case "$mapdry" in
+  *"would ask what lit up"*) ;;
+  *) fail "the dry map does not walk its bytes: $mapdry" ;;
+esac
+[ ! -s "$work/map.txt" ] || fail "a dry run wrote a map file"
+reordered="$("$service" --from 90 --to 91 --lights-sweep 2>&1 || true)"
+case "$reordered" in
+  *"2 reports"*) ;;
+  *) fail "the sweep rejects its own flags in another order: $reordered" ;;
+esac
+
+# 10. A colour list that is not a list is refused with words a person can act on, before any device is touched.
 bad="$("$service" --lights-colours 5 --colours "4,x" 2>&1 || true)"
 case "$bad" in
   *"a colour is one byte"*) ;;
   *) fail "a broken colour list was not refused: $bad" ;;
 esac
 
-printf 'controller-check: off by default, on when asked, off again; commands reach the engine and events the table does not know are named; the screen draws as a 320x240 picture with the switch off; the lights sweep prints its frames and sends nothing\n'
+printf 'controller-check: off by default, on when asked, off again; commands reach the engine and events the table does not know are named; the screen draws as a 320x240 picture with the switch off; the lights sweep prints its frames and sends nothing; the sweep takes its flags in any order\n'

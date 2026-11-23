@@ -98,52 +98,40 @@ fn run(arguments: &[String]) -> Result<(), String> {
                 sweep_colours = dj_controller_s4mk3::lights::colours(list)?;
                 index += 1;
             }
-            "--lights-sweep" => {
-                mode = Mode::LightsSweep;
-                let mut step = 0;
-                while let Some(next) = arguments.get(index + 1 + step) {
-                    match next.as_str() {
-                        "--from" => {
-                            sweep_from = arguments
-                                .get(index + 2 + step)
-                                .and_then(|value| value.parse().ok())
-                                .ok_or_else(|| "--from wants a byte number".to_string())?;
-                            step += 2;
-                        }
-                        "--to" => {
-                            sweep_to = arguments
-                                .get(index + 2 + step)
-                                .and_then(|value| value.parse().ok())
-                                .ok_or_else(|| "--to wants a byte number".to_string())?;
-                            step += 2;
-                        }
-                        "--colour" => {
-                            sweep_colour = arguments
-                                .get(index + 2 + step)
-                                .and_then(|value| value.parse().ok())
-                                .ok_or_else(|| "--colour wants a colour code".to_string())?;
-                            step += 2;
-                        }
-                        "--interval" => {
-                            sweep_interval_ms = arguments
-                                .get(index + 2 + step)
-                                .and_then(|value| value.parse().ok())
-                                .ok_or_else(|| "--interval wants milliseconds".to_string())?;
-                            step += 2;
-                        }
-                        "--body-only" => {
-                            sweep_body_only = true;
-                            step += 1;
-                        }
-                        "--send" => {
-                            sweep_send = true;
-                            step += 1;
-                        }
-                        _ => break,
-                    }
-                }
-                index += step;
+            // The sweep's own parameters are flags of their own: a person types them in whatever order reads well, and
+            // an option that only works after one particular command is a trap (`--lights-map map.txt --from 0` used to
+            // fail on `--from`).
+            "--from" => {
+                sweep_from = arguments
+                    .get(index + 1)
+                    .and_then(|value| value.parse().ok())
+                    .ok_or_else(|| "--from wants a byte number".to_string())?;
+                index += 1;
             }
+            "--to" => {
+                sweep_to = arguments
+                    .get(index + 1)
+                    .and_then(|value| value.parse().ok())
+                    .ok_or_else(|| "--to wants a byte number".to_string())?;
+                index += 1;
+            }
+            "--colour" => {
+                sweep_colour = arguments
+                    .get(index + 1)
+                    .and_then(|value| value.parse().ok())
+                    .ok_or_else(|| "--colour wants a colour code".to_string())?;
+                index += 1;
+            }
+            "--interval" => {
+                sweep_interval_ms = arguments
+                    .get(index + 1)
+                    .and_then(|value| value.parse().ok())
+                    .ok_or_else(|| "--interval wants milliseconds".to_string())?;
+                index += 1;
+            }
+            "--body-only" => sweep_body_only = true,
+            "--send" => sweep_send = true,
+            "--lights-sweep" => mode = Mode::LightsSweep,
             "--screen-preview" => {
                 let Some(path) = arguments.get(index + 1) else {
                     return Err(format!("--screen-preview wants a file name. {USAGE}"));
@@ -205,6 +193,12 @@ fn run(arguments: &[String]) -> Result<(), String> {
     };
     if matches!(mode, Mode::LightsSweep) && !sweep_send {
         return lights_sweep(&[], &dry_sweep, false);
+    }
+    // The map has a dry half too: it prints the bytes it would light, which is how it is checked without a device.
+    if let Mode::LightsMap(path) = &mode
+        && !sweep_send
+    {
+        return lights_map(&[], path, &dry_sweep);
     }
 
     let sweep = Sweep {
@@ -366,6 +360,18 @@ fn lights_map(devices: &[DeviceInfo], path: &str, sweep: &Sweep) -> Result<(), S
         return Err(format!("the sweep starts at {from} and ends at {to}"));
     }
     let with_id = !sweep.body_only;
+    if devices.is_empty() {
+        // The dry half: the bytes, in order, and nothing sent. This is what makes the map tool testable without the
+        // controller, and what a person can run to see the range before committing to a session.
+        println!(
+            "dj-controller: would write the map to {path}: bytes {from}..{to} in colour {colour}, {} bytes on the wire; nothing is sent",
+            from_to_width(sweep)
+        );
+        for byte in from..=to {
+            println!("dj-controller: byte {byte} — would ask what lit up");
+        }
+        return Ok(());
+    }
     let mut sink = open_lights(devices)?;
     println!(
         "dj-controller: writing the map to {path}. For each byte type what lit up (empty means nothing); \"done\" stops"
@@ -425,6 +431,11 @@ fn lights_colours(devices: &[DeviceInfo], byte: usize, sweep: &Sweep) -> Result<
     let _ = sink.send(&dj_controller_s4mk3::lights::LightsReport::dark().wire(with_id));
     println!("dj-controller: done; the panel is dark again");
     Ok(())
+}
+
+/// How many bytes one report takes on the wire.
+fn from_to_width(sweep: &Sweep) -> usize {
+    dj_controller_s4mk3::lights::LIGHTS_LENGTH + usize::from(!sweep.body_only)
 }
 
 /// The node the lights go to, with the message a person needs when the rules do not allow it.
