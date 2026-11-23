@@ -31,7 +31,7 @@ use dj_controller_s4mk3::{NAME, PRODUCT, S4Mk3, VENDOR};
 use dj_hid::write::ReportSink;
 use dj_hid::{DeviceInfo, HidrawTransport, Transport};
 
-const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send] | --lights-demo [--interval MS] [--send] | --lights-show --engine <endpoint>";
+const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send] | --lights-demo [--interval MS] [--send] | --lights-show --engine <endpoint> | --lights-fill <code> [--send]";
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -76,6 +76,16 @@ fn run(arguments: &[String]) -> Result<(), String> {
             }
             "--lights-demo" => mode = Mode::LightsDemo,
             "--lights-show" => mode = Mode::LightsShow,
+            "--lights-fill" => {
+                let Some(code) = arguments.get(index + 1) else {
+                    return Err(format!("--lights-fill wants a code. {USAGE}"));
+                };
+                let code: u8 = code
+                    .parse()
+                    .map_err(|_| format!("--lights-fill wants one byte, got {code}"))?;
+                mode = Mode::LightsFill(code);
+                index += 1;
+            }
             "--lights-map" => {
                 let Some(path) = arguments.get(index + 1) else {
                     return Err(format!("--lights-map wants a file name. {USAGE}"));
@@ -197,6 +207,11 @@ fn run(arguments: &[String]) -> Result<(), String> {
         return lights_sweep(&[], &dry_sweep, false);
     }
     // The map has a dry half too: it prints the bytes it would light, which is how it is checked without a device.
+    if let Mode::LightsFill(code) = mode
+        && !sweep_send
+    {
+        return lights_fill(&[], code, false, sweep_body_only);
+    }
     if matches!(mode, Mode::LightsDemo) && !sweep_send {
         return lights_demo(&[], &dry_sweep, false);
     }
@@ -246,6 +261,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         Mode::LightsColours(byte) => lights_colours(&devices, byte, &sweep),
         Mode::LightsDemo => lights_demo(&devices, &sweep, sweep_send),
         Mode::LightsShow => lights_show(&devices, engine.as_deref(), sweep_body_only),
+        Mode::LightsFill(code) => lights_fill(&devices, code, sweep_send, sweep_body_only),
         Mode::LightsSweep => lights_sweep(&devices, &sweep, sweep_send),
     }
 }
@@ -262,6 +278,7 @@ enum Mode {
     LightsColours(usize),
     LightsDemo,
     LightsShow,
+    LightsFill(u8),
 }
 
 /// Write one screen as a picture a person can open, and say how big the frame would be.
@@ -439,6 +456,38 @@ fn lights_colours(devices: &[DeviceInfo], byte: usize, sweep: &Sweep) -> Result<
     }
     let _ = sink.send(&dj_controller_s4mk3::lights::LightsReport::dark().wire(with_id));
     println!("dj-controller: done; the panel is dark again");
+    Ok(())
+}
+
+/// Put one colour code into every byte of the lights report.
+///
+/// This is the question about the dark: the owner wants the panel to glow faintly everywhere and light the active
+/// control brighter, and the only way to find a faint code is to fill the whole panel with it and look. One report, all
+/// ninety-four bytes, one code — a code that is invisible in a lit room may be exactly right in a booth.
+fn lights_fill(
+    devices: &[DeviceInfo],
+    code: u8,
+    send: bool,
+    body_only: bool,
+) -> Result<(), String> {
+    let mut report = dj_controller_s4mk3::lights::LightsReport::dark();
+    report.body.iter_mut().for_each(|byte| *byte = code);
+    let with_id = !body_only;
+    if !send || devices.is_empty() {
+        println!(
+            "dj-controller: would fill all {} bytes with code {code}; {} bytes on the wire; nothing is sent",
+            report.body.len(),
+            report.wire(with_id).len()
+        );
+        return Ok(());
+    }
+    let mut sink = open_lights(devices)?;
+    sink.send(&report.wire(with_id))
+        .map_err(|error| format!("the panel did not take the fill: {error}"))?;
+    println!(
+        "dj-controller: all {} bytes are code {code}; look at the panel, then 'dj-controller --lights-fill 0 --send' to clear",
+        report.body.len()
+    );
     Ok(())
 }
 
