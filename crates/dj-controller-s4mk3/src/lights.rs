@@ -119,3 +119,63 @@ pub fn colours(list: &str) -> Result<Vec<u8>, String> {
     }
     Ok(out)
 }
+
+/// The map, as the controller showed it: one byte of the lights report to what lit up.
+///
+/// The bytes are in `data/lights-map.txt`, taken down by the owner with `--lights-map`, one byte at a time, and that
+/// file — not this code — is the record. It is data for the same reason the binding table is: a map in code cannot be
+/// argued with, corrected after a second look, or replaced by a different controller.
+pub const MAP_SOURCE: &str = include_str!("../data/lights-map.txt");
+
+/// The map, parsed once.
+pub fn map() -> &'static [(u8, &'static str)] {
+    static PARSED: std::sync::OnceLock<Vec<(u8, &'static str)>> = std::sync::OnceLock::new();
+    PARSED.get_or_init(|| {
+        let mut out: Vec<(u8, &'static str)> = Vec::new();
+        for line in MAP_SOURCE.lines() {
+            let line = line.trim_end();
+            if line.trim().is_empty() || line.trim_start().starts_with('#') {
+                continue;
+            }
+            let Some((byte, name)) = line.split_once('\t') else {
+                continue;
+            };
+            let Ok(byte) = byte.trim().parse::<u8>() else {
+                continue;
+            };
+            let name = name.trim();
+            if !name.is_empty() {
+                out.push((byte, name));
+            }
+        }
+        out
+    })
+}
+
+/// What a byte of the lights report lights up, as the owner saw it.
+pub fn name_of(byte: u8) -> Option<&'static str> {
+    map()
+        .iter()
+        .find(|(candidate, _)| *candidate == byte)
+        .map(|(_, name)| *name)
+}
+
+/// The byte that lights a control whose name contains `needle`, ignoring case.
+///
+/// A name in the map is a person's words ("Left CUE3", "Deck select A"), so a lookup by part of those words is what a
+/// caller can do without owning a table of byte numbers.
+pub fn byte_of(needle: &str) -> Option<u8> {
+    let needle = needle.trim().to_ascii_lowercase();
+    if needle.is_empty() {
+        return None;
+    }
+    map()
+        .iter()
+        .find(|(_, name)| name.to_ascii_lowercase().contains(&needle))
+        .map(|(byte, _)| *byte)
+}
+
+/// The bytes the map has heard about, in order, for a caller that wants to light everything the owner named.
+pub fn known_bytes() -> Vec<u8> {
+    map().iter().map(|(byte, _)| *byte).collect()
+}

@@ -1,0 +1,55 @@
+# Карта подсветки S4 MK3: байт отчёта 128 → что загорается.
+#
+# Снято владельцем на своём контроллере перебором `dj-controller --lights-map`: по одному байту, ответ набран
+# руками в терминале. Это наблюдение, а не выписка из чужого кода: у каждого байта есть человек, который видел,
+# что загорелось. Имена — слова владельца, поэтому они и остались как есть, вместе с опечатками («pint»,
+# «eynch»), которые исправлены более поздней записью того же байта.
+#
+# Формат: байт, табуляция, что загорелось. Пробелы в 44..93 означают, что при переборе этот байт не зажёг ничего.
+0	Left CUE1
+1	Left CUE2
+2	Left CUE3
+3	Left CUE4
+4	Left CUE5
+5	Left CUE6
+6	Left CUE7
+7	Left CUE8
+8	Left CUE
+9	Button "hotcues"
+10	Button "stems"
+11	Pitch zero light
+12	Deck select A
+13	Deck select C
+14	Sync/Lock
+15	Master/Reset
+16	Jog
+17	TT
+18	GRID
+19	View
+20	List
+21	Rating
+22	Prelisten
+23	Right CUE1
+24	Right CUE2
+25	Right CUE3
+26	Right CUE4
+27	Right CUE5
+28	Right CUE6
+29	Right CUE7
+30	Right CUE8
+31	Right CUE
+32	Button "hotcues"
+33	Button "stems"
+34	Right pitch zero pint light
+35	Deck select B
+36	Deck select D
+37	Right Sync
+38	Right Master
+39	Right JOG
+40	TT
+41	GRID
+42	View
+43	List
+44	Rating
+45	Prelisten
+46	Deck A FX on button

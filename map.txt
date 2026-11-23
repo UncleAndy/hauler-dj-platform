@@ -1,52 +1,42 @@
-0	y
-1	y
-2	y
-3	y
-4	y
-5	y
-6	y
-7	y
-8	y
-9	y
-10	y
-0	Left CUE1
-1	Left CUE2
-2	Left CUE3
-3	Left CUE4
-4	Left CUE5
-5	Left CUE6
-6	Left CUE7
-7	Left CUE8
-8	Left CUE
-9	Button "hotcues"
-10	Button "stems"
-11	Pitch zero light
-12	Deck select A
-14	eync/Lock
-13	Deck select C
-14	Sync/Lock
-15	Master/Reset
-16	Jog
-17	TT
-18	GRID
-19	View
-20	List
-21	Rating
-22	Prelisten
-23	Right CUE1
-24	Right CUE2
-25	Right CUE3
-26	Right CUE4
-27	Right CUE5
-28	Right CUE6
-29	Right CUE7
-30	Right CUE8
-31	Right CUE
-32	Button "hotcues"
-33	Button "stems"
-34	Right pitch zero pint light
-35	Deck select B
-36	Deck select D
-37	Right Sync
-38	Right Master
-39	Right JOG
+47	Deck B FX on button
+48	Deck C FX on button
+49	Deck D FX on button
+50	FX select 1 button
+51	FX select 2 button
+52	FX select 3 button
+53	FX selec 4 button
+54	FX selec filter button
+55	Left PLAY button
+56	Left RECORD button
+57	Left SAMPLES button
+58	Left MUTE button
+59	Left SHIFT button
+60	Lefr REV button
+61	Left FLX button
+62	FX1 on button
+63	FX2 on button
+64	FX3 on button
+65	FX4 on button
+66	Rigth PLAY button
+67	Right RECORD button
+68	Right SAMPLES button
+69	Right MUTE button
+70	Right SHIFT button
+71	Right REV button
+72	Right FLX button
+73	Right FX1 button
+74	Right FX2 button
+75	Right FX3 button
+76	Right FX4 button
+77	Deck A CUE (hedphones)
+78	Deck A use left FX button
+79	Deck A use right FX button
+80	Deck A EXT button
+81	Deck B CUE
+82	Deck B use left FX button
+83	Deck B use right FX button
+84	Deck B EXT button
+85	Deck C CUE
+86	Deck C use left FX
+87	Deck C use right FX
+88	Deck C EXT

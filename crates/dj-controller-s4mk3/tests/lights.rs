@@ -7,7 +7,8 @@
 #![allow(clippy::expect_used)]
 
 use dj_controller_s4mk3::lights::{
-    LIGHTS_LENGTH, LightsReport, REPORT_LIGHTS, colours, map_line, parse_map, sweep,
+    LIGHTS_LENGTH, LightsReport, REPORT_LIGHTS, byte_of, colours, known_bytes, map, map_line,
+    name_of, parse_map, sweep,
 };
 
 #[test]
@@ -106,4 +107,55 @@ fn a_list_of_colours_is_read_in_order() {
     assert_eq!(colours("4 8").expect("two codes"), vec![4, 8]);
     assert!(colours("4,x").is_err(), "a colour is one byte");
     assert!(colours("").is_err(), "an empty list is not a probe");
+}
+
+#[test]
+fn the_map_the_controller_taught_us_is_readable() {
+    // The file is the record: it was taken byte by byte on the device, and a map that silently loses half its lines
+    // would look complete while the panel went dark in the middle of a set.
+    let map = map();
+    assert!(
+        map.len() >= 40,
+        "the map has {} records; the sweep covered bytes 0..46",
+        map.len()
+    );
+    let mut seen = std::collections::HashSet::new();
+    for (byte, name) in map {
+        assert!(
+            *byte < LIGHTS_LENGTH as u8,
+            "byte {byte} is inside the report"
+        );
+        assert!(!name.trim().is_empty(), "byte {byte} has no name");
+        assert!(
+            seen.insert(*byte),
+            "byte {byte} is recorded twice, so one of the names is a correction that did not replace the first"
+        );
+    }
+}
+
+#[test]
+fn a_known_byte_says_what_it_lights() {
+    assert_eq!(name_of(0), Some("Left CUE1"));
+    assert!(name_of(8).is_some_and(|name| name.contains("CUE")));
+    assert!(name_of(46).is_some_and(|name| name.contains("FX")));
+    assert_eq!(
+        name_of(LIGHTS_LENGTH as u8),
+        None,
+        "the report ends before 94"
+    );
+}
+
+#[test]
+fn a_control_is_found_by_part_of_its_name() {
+    assert_eq!(byte_of("left cue3"), Some(2));
+    assert_eq!(byte_of("Left CUE3"), Some(2));
+    assert!(byte_of("nothing lights under this name").is_none());
+    assert!(byte_of("  ").is_none());
+}
+
+#[test]
+fn every_recorded_byte_is_in_the_report() {
+    let bytes = known_bytes();
+    assert!(!bytes.is_empty());
+    assert!(bytes.iter().all(|byte| *byte < LIGHTS_LENGTH as u8));
 }
