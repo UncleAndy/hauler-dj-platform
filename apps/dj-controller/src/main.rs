@@ -1031,19 +1031,28 @@ fn inputs_loop(
                 );
                 continue;
             };
+            let analog = map
+                .field_of(&event.control)
+                .is_some_and(|field| field.width > 1);
             // A light touch can arrive as two presses a few milliseconds apart, and the second one would undo the first.
-            // A hand cannot press the same button twice that fast.
-            if event.value > 0.5 {
-                if let Some(last) = last_press.get(&event.control)
-                    && now.saturating_sub(*last) < 150
-                {
-                    println!(
-                        "dj-controller: at {now} ms {} ignored: the last press was {} ms ago",
-                        event.control,
-                        now.saturating_sub(*last)
-                    );
-                    continue;
-                }
+            // A hand cannot press the same button twice that fast — but a **fader** passes through the whole range in one
+            // gesture, and this debounce swallowed its positions one after another: a fader thrown up stopped where the
+            // last accepted step was, half way (owner's report, 24.11). Only buttons are debounced.
+            if is_double_touch(
+                analog,
+                event.value,
+                last_press.get(&event.control).copied(),
+                now,
+            ) {
+                let before = last_press.get(&event.control).copied().unwrap_or(now);
+                println!(
+                    "dj-controller: at {now} ms {} ignored: the last press was {} ms ago",
+                    event.control,
+                    now.saturating_sub(before)
+                );
+                continue;
+            }
+            if !analog && event.value > 0.5 {
                 last_press.insert(event.control.clone(), now);
             }
             let raw = map.raw_of(&event.control, report, payload).map(|raw| {
@@ -1059,9 +1068,11 @@ fn inputs_loop(
                 event.value,
                 raw.unwrap_or_default()
             );
-            let analog = map
-                .field_of(&event.control)
-                .is_some_and(|field| field.width > 1);
+            if let dj_domain::DjCommand::SetChannelFader { deck, position } = &command
+                && let Ok(mut state) = playing.lock()
+            {
+                state.fader_asked[deck_index(*deck)] = Some(*position);
+            }
             if analog {
                 // One entry per control, the newest wins.
                 if let Some(slot) = pending
@@ -1096,6 +1107,15 @@ fn inputs_loop(
             last_flush = std::time::Instant::now();
         }
     }
+}
+
+/// Whether a press is the second half of a light touch on the same button.
+///
+/// Buttons only: a fader crosses half of its travel in every gesture, and treating its positions as presses dropped them
+/// one after another until only the first one of each 150 ms stood — a fader thrown to the top stopped half way, while
+/// the bottom always arrived because zero is below the threshold (owner's report, 24.11).
+fn is_double_touch(analog: bool, value: f32, last: Option<u128>, now: u128) -> bool {
+    !analog && value > 0.5 && last.is_some_and(|last| now.saturating_sub(last) < 150)
 }
 
 /// Sends the newest position of every knob and fader that has one waiting.
@@ -1143,6 +1163,9 @@ fn deck_index(deck: dj_domain::DeckId) -> usize {
 struct DeckFactsShared {
     playing: [bool; 4],
     cues: [[bool; 8]; 4],
+    /// What the panel last asked the engine for, per channel: a fader thrown to the top must be seen at the top by the
+    /// next snapshot, and a disagreement is said out loud rather than left as "it stopped half way".
+    fader_asked: [Option<f32>; 4],
 }
 
 type Playing = std::sync::Arc<std::sync::Mutex<DeckFactsShared>>;
@@ -1757,6 +1780,8 @@ fn lights_show(
     // leave a dead service behind a silent log. Waiting and reconnecting is what makes "the buttons are dark" a thing
     // of the past rather than a thing to explain.
     let mut waiting_said = false;
+    // One line a second at most: a fader that disagrees would otherwise flood the log the moment it is touched.
+    let mut last_fader_note = std::time::Instant::now() - std::time::Duration::from_secs(5);
     loop {
         let (mut client, _welcome) = match dj_bridge::connect_with_timeout(
             std::path::Path::new(endpoint),
@@ -1797,6 +1822,20 @@ fn lights_show(
             {
                 for (index, deck) in facts.iter().enumerate() {
                     state.playing[index] = deck.playing;
+                }
+                for (index, deck) in snapshot.decks.iter().enumerate().take(4) {
+                    if let Some(asked) = state.fader_asked[index]
+                        && (deck.fader - asked).abs() > 0.01
+                    {
+                        let now = std::time::Instant::now();
+                        if now.duration_since(last_fader_note).as_millis() > 1000 {
+                            last_fader_note = now;
+                            println!(
+                                "dj-controller: the engine has {} on the fader of {:?} where the panel asked for {asked:.3}",
+                                deck.fader, deck.deck
+                            );
+                        }
+                    }
                 }
                 for (index, deck) in snapshot.decks.iter().enumerate().take(4) {
                     for slot in 0..8 {
@@ -2299,6 +2338,25 @@ mod tests {
         if let Err(text) = refused {
             assert!(text.contains("--nonsense"), "{text}");
         }
+    }
+
+    #[test]
+    fn a_fader_is_never_mistaken_for_a_second_touch() {
+        // The whole travel of a fader is one gesture: every position must be taken, however fast they come.
+        for step in 0..=100 {
+            let value = step as f32 / 100.0;
+            assert!(
+                !super::is_double_touch(true, value, Some(0), 10),
+                "step {step} was swallowed"
+            );
+        }
+        // A button pressed twice within 150 ms is a light touch, not two gestures.
+        assert!(super::is_double_touch(false, 1.0, Some(0), 100));
+        assert!(!super::is_double_touch(false, 1.0, Some(0), 400));
+        assert!(
+            !super::is_double_touch(false, 0.0, Some(0), 100),
+            "a release is not a press"
+        );
     }
 
     #[test]
