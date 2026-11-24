@@ -243,9 +243,18 @@ Pane {
             browser.lastAction = browser.foldPlaylists ? "playlists closed" : "playlists opened";
             return;
         }
-        // A folder or `All` opens its contents by the same act a click makes: the tree is the window's, and it already knows how
-        // to open one level (`openTreeRow`). A second map of folded folders in this file only fought it, which is why the
-        // playlists inside a folder never appeared (owner's report, 24.11).
+        // Opening a level is the window's own call — `togglePlaylistNode` — the same one a click on the twisty makes. Selecting
+        // the place (`openTreeRow`) is a different act: it shows the tracks of a playlist, and it was why nothing went deeper
+        // than the first level (owner's report, 24.11).
+        if (row.kind === "all") {
+            Browser.togglePlaylistNode("all", "");
+            return;
+        }
+        if (row.kind === "folder") {
+            Browser.togglePlaylistNode("folder", row.folder);
+            browser.openTreeRow(row);
+            return;
+        }
         browser.openTreeRow(row);
     }
 
