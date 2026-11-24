@@ -72,7 +72,17 @@ impl InputMap {
             };
             let value = value_of(raw, field.width);
             let known = previous.get(&field.control).copied();
-            if known.is_some_and(|known| (known - value).abs() < f32::EPSILON) {
+            // A button is exact; a knob is not. Sixteen bits of travel jitter by a step or two when nothing is touched,
+            // and every one of those steps would be a command to the engine: what looks like a jump is the program
+            // obeying noise. Two steps of the field's own resolution is the deadband.
+            let deadband = if field.width == 1 {
+                0.0
+            } else {
+                2.0 / f32::from(
+                    u16::try_from((1_u32 << field.width.min(16)) - 1).unwrap_or(u16::MAX),
+                )
+            };
+            if known.is_some_and(|known| (known - value).abs() <= deadband) {
                 continue;
             }
             previous.insert(field.control.clone(), value);
@@ -247,6 +257,38 @@ deck_a.crossfader 2 12 0 16
             (events[0].value - 0.5).abs() < 0.001,
             "{:?}",
             events[0].value
+        );
+    }
+
+    #[test]
+    fn a_knob_ignores_the_jitter_of_its_lowest_bits() {
+        // Sixteen bits of travel jitter by a step or two on their own; a command per step would look like a fader that
+        // jumps while nobody touches it.
+        let map = parse_inputs("deck_a.tempo 2 12 0 16\n").expect("the map parses");
+        let mut previous = HashMap::new();
+        let mut payload = vec![0_u8; 20];
+        payload[12] = 0x00;
+        payload[13] = 0x80;
+        assert_eq!(
+            map.decode(2, &payload, &mut previous).len(),
+            1,
+            "the first value"
+        );
+        payload[12] = 0x01;
+        assert!(
+            map.decode(2, &payload, &mut previous).is_empty(),
+            "one step is noise"
+        );
+        payload[12] = 0x02;
+        assert!(
+            map.decode(2, &payload, &mut previous).is_empty(),
+            "two steps are noise"
+        );
+        payload[12] = 0x40;
+        assert_eq!(
+            map.decode(2, &payload, &mut previous).len(),
+            1,
+            "a real move"
         );
     }
 

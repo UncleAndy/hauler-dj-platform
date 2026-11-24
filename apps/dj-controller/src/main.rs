@@ -1012,7 +1012,7 @@ fn inputs_loop(
             let Some((deck, command)) = mapping.resolve_control(&event, running, cue_present)
             else {
                 println!(
-                    "dj-controller: at {now} ms {} = {:.0} (report {report}) asks for nothing; deck running {running}",
+                    "dj-controller: at {now} ms {} = {:.3} (report {report}) asks for nothing; deck running {running}",
                     event.control, event.value
                 );
                 continue;
@@ -1033,7 +1033,7 @@ fn inputs_loop(
                 last_press.insert(event.control.clone(), now);
             }
             println!(
-                "dj-controller: at {now} ms {} = {:.0} (report {report}) → {command:?}",
+                "dj-controller: at {now} ms {} = {:.3} (report {report}) → {command:?}",
                 event.control, event.value
             );
             let asked = vec![(event.control.clone(), deck, command)];

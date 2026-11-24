@@ -8,8 +8,13 @@
 #
 # `control` is the name the binding table uses (`deck_a.play_pause`, `mixer.crossfader`, `deck_b.hotcue3`); `report` is
 # the HID report number the device sends; `byte` counts from the first byte **after** the report number; `bit` is the bit
-# inside that byte and `width` how many bits the field takes (1 for a button, 8 for a knob, 16 for the tempo fader read
+# inside that byte and `width` how many bits the field takes (1 for a button, 16 for a knob or a fader, read
 # little-endian).
+#
+# A knob is sixteen bits, not eight: the device's public description gives `Pot.prototype.inBitLength = 16`, and the byte
+# offsets agree with it — the two channels of one knob are two bytes apart (the crossfader at 0, the channel faders at
+# 2, 4, 6 and 8, the bands at 44 and 46). Read as one byte, a knob jumps: the low byte of a sixteen-bit counter runs
+# round eight times while the knob turns once (owner's report, 24.11: "the faders jump and react wrongly").
 #
 # Provenance: `public-source` — read from Mixxx's public controller description
 # (`res/controllers/Traktor Kontrol S4 MK3.hid.xml` and `Traktor-Kontrol-S4-MK3.js`, GPL) as facts about the device, not
@@ -58,18 +63,18 @@ deck_b.pfl 1 7 6 1
 deck_c.pfl 1 7 2 1
 deck_d.pfl 1 7 7 1
 
-# --- knobs and faders, report 2 (one byte each, 0…255)
-mixer.crossfader 2 0 0 8
-deck_a.fader 2 2 0 8
-deck_b.fader 2 4 0 8
-deck_c.fader 2 6 0 8
-deck_d.fader 2 8 0 8
-deck_a.eq_high 2 44 0 8
-deck_a.eq_mid 2 46 0 8
-deck_a.eq_low 2 48 0 8
-deck_b.eq_high 2 50 0 8
-deck_b.eq_mid 2 52 0 8
-deck_b.eq_low 2 54 0 8
+# --- knobs and faders, report 2 (two bytes each, little-endian, 0…65535)
+mixer.crossfader 2 0 0 16
+deck_a.fader 2 2 0 16
+deck_b.fader 2 4 0 16
+deck_c.fader 2 6 0 16
+deck_d.fader 2 8 0 16
+deck_a.eq_high 2 44 0 16
+deck_a.eq_mid 2 46 0 16
+deck_a.eq_low 2 48 0 16
+deck_b.eq_high 2 50 0 16
+deck_b.eq_mid 2 52 0 16
+deck_b.eq_low 2 54 0 16
 
 # --- tempo faders, report 2 (two bytes, little-endian, 0…65535)
 deck_a.tempo 2 12 0 16

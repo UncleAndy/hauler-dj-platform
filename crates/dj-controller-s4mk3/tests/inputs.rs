@@ -73,7 +73,7 @@ fn the_shipped_map_carries_the_controls_this_program_binds() {
         .iter()
         .find(|field| field.control == "deck_a.eq_mid")
         .expect("the mid band");
-    assert_eq!(knob.width, 8);
+    assert_eq!(knob.width, 16, "a knob is sixteen bits, not eight");
 }
 
 #[test]
