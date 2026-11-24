@@ -45,6 +45,12 @@ Pane {
     // 14.11.2026) — and the place is remembered so the tree can light it.
     property string playlistPlace: "all"
     property string playlistPlaceName: ""
+    // The rail the panel walks with Shift held: the three places and, inside the playlists, the rows of the tree. A folded
+    // folder hides its children — the tree is a filter over the rows the engine publishes, not a second model.
+    property var folded: ({})
+    property int railIndex: 0
+    property int placeSeen: 0
+    property int placeToggleSeen: 0
     // The name a dialog is asking for, and what it will do with it when the DJ says yes.
     property string askedName: ""
     property string askedWhat: ""
@@ -148,6 +154,66 @@ Pane {
     // The rows the DJ picked: a list of paths, so a folder and a file can travel to the collection
     // together. Ctrl toggles one, Shift takes the run between the anchor and the click.
     property var selection: []
+
+    /// The rows the rail offers: collection, playlists, the tree under them (folded folders hidden), files.
+    readonly property var railRows: {
+        const rows = [
+            {kind: "collection", name: "Collection"},
+            {kind: "playlists", name: "Playlists"}
+        ];
+        if (Browser.inPlaylists) {
+            let hideBelow = -1;
+            const tree = Browser.playlistTree;
+            for (let index = 0; index < tree.length; ++index) {
+                const row = tree[index];
+                const depth = row.depth === undefined ? 0 : row.depth;
+                if (hideBelow >= 0 && depth > hideBelow) {
+                    continue;
+                }
+                hideBelow = -1;
+                rows.push(row);
+                if (row.kind === "folder" && browser.folded[row.folder]) {
+                    hideBelow = depth;
+                }
+            }
+        }
+        rows.push({kind: "files", name: "Files"});
+        return rows;
+    }
+
+    /// Move the rail's cursor and stand where it lands: a place opens, a tree row opens its playlist or folder.
+    function railStep(delta) {
+        const rows = browser.railRows;
+        if (rows.length === 0) {
+            return;
+        }
+        browser.railIndex = Math.max(0, Math.min(rows.length - 1, browser.railIndex + delta));
+        const row = rows[browser.railIndex];
+        if (!row) {
+            return;
+        }
+        if (row.kind === "collection" || row.kind === "playlists" || row.kind === "files") {
+            browser.showSection(row.kind);
+            return;
+        }
+        browser.openTreeRow(row);
+    }
+
+    /// Open or close the level the rail's cursor stands on: a folder in the playlist tree.
+    function railToggle() {
+        const rows = browser.railRows;
+        const row = rows[browser.railIndex];
+        if (!row || row.kind !== "folder") {
+            return;
+        }
+        const folded = {};
+        for (const key in browser.folded) {
+            folded[key] = browser.folded[key];
+        }
+        folded[row.folder] = !folded[row.folder];
+        browser.folded = folded;
+        browser.lastAction = (folded[row.folder] ? "folded " : "unfolded ") + row.folder;
+    }
 
     // A click in the tree: `All` and a folder are places to stand in, a playlist opens its tracks.
     function openTreeRow(row) {
@@ -496,6 +562,16 @@ Pane {
             // settling where the DJ put it (`--scroll-check`: 491 -> 473).
             if (Bridge.browserCursor.length === 0 && Browser.cursor.length > 0) {
                 Bridge.browserCursorTo(Browser.cursor);
+            }
+            // Shift on a deck turns the browse encoder into a walk through the rail, and its press into opening or closing the
+            // level the rail stands on. Both arrive as counted asks, so one turn is applied once.
+            if (Bridge.browserPlaceSeq !== browser.placeSeen) {
+                browser.placeSeen = Bridge.browserPlaceSeq;
+                browser.railStep(Bridge.browserPlaceStep);
+            }
+            if (Bridge.browserPlaceToggleSeq !== browser.placeToggleSeen) {
+                browser.placeToggleSeen = Bridge.browserPlaceToggleSeq;
+                browser.railToggle();
             }
         }
     }

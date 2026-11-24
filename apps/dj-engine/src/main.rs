@@ -2296,6 +2296,8 @@ fn serve_client(
                             BrowserChange::Open(open) => cells.set_browser_open(open),
                             BrowserChange::Cursor(path) => cells.set_browser_cursor(path),
                             BrowserChange::Step(delta) => cells.note_browser_step(delta),
+                            BrowserChange::PlaceStep(delta) => cells.note_browser_place(delta),
+                            BrowserChange::PlaceToggle => cells.note_browser_place_toggle(),
                         }
                         let ack = dj_domain::Ack::applied(command.id, 0);
                         if alerts.send(ServerMessage::Ack(ack)).is_err() {

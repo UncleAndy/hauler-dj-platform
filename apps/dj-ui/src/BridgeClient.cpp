@@ -2210,12 +2210,19 @@ void BridgeClient::handleMessage(const QJsonObject &message)
         const QString cursor = browser.value(QStringLiteral("cursor")).toString();
         const int stepSeq = browser.value(QStringLiteral("step_seq")).toInt();
         const int step = browser.value(QStringLiteral("step")).toInt();
+        const int placeSeq = browser.value(QStringLiteral("place_seq")).toInt();
+        const int placeStep = browser.value(QStringLiteral("place_step")).toInt();
+        const int placeToggleSeq = browser.value(QStringLiteral("place_toggle_seq")).toInt();
         if (open != m_browserOpen || cursor != m_browserCursor || stepSeq != m_browserStepSeq
-            || step != m_browserStep) {
+            || step != m_browserStep || placeSeq != m_browserPlaceSeq || placeStep != m_browserPlaceStep
+            || placeToggleSeq != m_browserPlaceToggleSeq) {
             m_browserOpen = open;
             m_browserCursor = cursor;
             m_browserStepSeq = stepSeq;
             m_browserStep = step;
+            m_browserPlaceSeq = placeSeq;
+            m_browserPlaceStep = placeStep;
+            m_browserPlaceToggleSeq = placeToggleSeq;
             emit browserChanged();
         }
         // The snapshot says which file each deck holds, and the engine is the one that knows. A client
@@ -2521,6 +2528,21 @@ int BridgeClient::browserStepSeq() const
 int BridgeClient::browserStep() const
 {
     return m_browserStep;
+}
+
+int BridgeClient::browserPlaceSeq() const
+{
+    return m_browserPlaceSeq;
+}
+
+int BridgeClient::browserPlaceStep() const
+{
+    return m_browserPlaceStep;
+}
+
+int BridgeClient::browserPlaceToggleSeq() const
+{
+    return m_browserPlaceToggleSeq;
 }
 
 void BridgeClient::browserShow(bool open)

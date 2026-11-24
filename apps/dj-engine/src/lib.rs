@@ -1208,6 +1208,25 @@ impl StateCells {
         guard.cursor = path;
     }
 
+    /// Count a move of the left block, where the publisher will find it.
+    pub fn note_browser_place(&self, delta: i32) {
+        let mut guard = self
+            .browser
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        guard.place_seq = guard.place_seq.wrapping_add(1);
+        guard.place_step = delta;
+    }
+
+    /// Count a fold or unfold of the left block's current level.
+    pub fn note_browser_place_toggle(&self) {
+        let mut guard = self
+            .browser
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        guard.place_toggle_seq = guard.place_toggle_seq.wrapping_add(1);
+    }
+
     /// Count a nudge from the panel: the sequence number is what makes each turn applied exactly once.
     pub fn note_browser_step(&self, delta: i32) {
         let mut guard = self
@@ -2283,6 +2302,10 @@ pub enum BrowserChange {
     Cursor(Option<String>),
     /// Move the cursor a row down (positive) or up.
     Step(i32),
+    /// Move the left block — collection, playlists, files and the playlist tree — a row down (positive) or up.
+    PlaceStep(i32),
+    /// Open or close the level the left block's cursor is on.
+    PlaceToggle,
 }
 
 /// Decide where a command goes without applying it.
@@ -2302,6 +2325,8 @@ pub fn route(command: &ScheduledCommand) -> Routed {
             Routed::Browser(BrowserChange::Cursor(Some(path.clone())))
         }
         DjCommand::BrowserStep { delta } => Routed::Browser(BrowserChange::Step(*delta)),
+        DjCommand::BrowserPlaceStep { delta } => Routed::Browser(BrowserChange::PlaceStep(*delta)),
+        DjCommand::BrowserPlaceToggle => Routed::Browser(BrowserChange::PlaceToggle),
         DjCommand::Eject { deck } => Routed::Eject { deck: *deck },
         DjCommand::Import {
             paths,

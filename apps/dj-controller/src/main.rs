@@ -1301,14 +1301,31 @@ fn panel_command(
             let open = playing.lock().ok()?.browser_open;
             pressed.then_some(dj_domain::DjCommand::BrowserShow { open: !open })
         }
-        "panel.encoder" | "panel.encoder_right" => Some(dj_domain::DjCommand::BrowserStep {
-            delta: if pressed { 1 } else { -1 },
-        }),
+        "panel.encoder" | "panel.encoder_right" => {
+            // Shift held on that side turns the same knob into a walk through the left block: the collection, the playlists
+            // and the files, and the tree under the playlists. The rows of a list stay where they were — a DJ scrolling
+            // tracks does not want the rail to move, and the other way round.
+            let index = usize::from(event.control == "panel.encoder_right");
+            let shift = playing
+                .lock()
+                .ok()
+                .is_some_and(|state| state.shift.get(index).copied().unwrap_or(false));
+            let delta = if pressed { 1 } else { -1 };
+            Some(if shift {
+                dj_domain::DjCommand::BrowserPlaceStep { delta }
+            } else {
+                dj_domain::DjCommand::BrowserStep { delta }
+            })
+        }
         "panel.encoder_press" => {
             if !pressed {
                 return None;
             }
             let state = playing.lock().ok()?;
+            if state.shift.first().copied().unwrap_or(false) {
+                // Shift + press opens or closes the level the rail's cursor stands on.
+                return Some(dj_domain::DjCommand::BrowserPlaceToggle);
+            }
             let path = state.browser_cursor.clone()?;
             Some(dj_domain::DjCommand::Load {
                 deck: state.panel_left,
@@ -1320,6 +1337,9 @@ fn panel_command(
                 return None;
             }
             let state = playing.lock().ok()?;
+            if state.shift.get(1).copied().unwrap_or(false) {
+                return Some(dj_domain::DjCommand::BrowserPlaceToggle);
+            }
             let path = state.browser_cursor.clone()?;
             Some(dj_domain::DjCommand::Load {
                 deck: state.panel_right,
@@ -2823,6 +2843,52 @@ mod tests {
         if let Err(text) = refused {
             assert!(text.contains("--nonsense"), "{text}");
         }
+    }
+
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn shift_sends_the_encoder_to_the_left_block() {
+        // Shift held on a deck turns the browse encoder into a walk through the collection, the playlists and the files, and
+        // its press into opening or closing the level the rail stands on (owner's report, 24.11: with Shift the cursor still
+        // moved through the track list).
+        let playing: Playing =
+            std::sync::Arc::new(std::sync::Mutex::new(super::DeckFactsShared::default()));
+        let right = dj_controller_core::ControlEvent::level("panel.encoder", 1.0);
+        let press = dj_controller_core::ControlEvent::button("panel.encoder_press", true);
+        {
+            let mut state = playing.lock().expect("the state");
+            state.browser_cursor = Some("/music/one.flac".to_string());
+        }
+        assert_eq!(
+            super::panel_command(&right, &playing),
+            Some(dj_domain::DjCommand::BrowserStep { delta: 1 }),
+            "no Shift: the rows of the list"
+        );
+        {
+            let mut state = playing.lock().expect("the state");
+            state.shift[0] = true;
+        }
+        assert_eq!(
+            super::panel_command(&right, &playing),
+            Some(dj_domain::DjCommand::BrowserPlaceStep { delta: 1 }),
+            "Shift: the left block"
+        );
+        assert_eq!(
+            super::panel_command(&press, &playing),
+            Some(dj_domain::DjCommand::BrowserPlaceToggle),
+            "Shift + press: open or close the level"
+        );
+        // The right side has its own Shift.
+        let right_press =
+            dj_controller_core::ControlEvent::button("panel.encoder_press_right", true);
+        assert_eq!(
+            super::panel_command(&right_press, &playing),
+            Some(dj_domain::DjCommand::Load {
+                deck: dj_domain::DeckId::B,
+                path: "/music/one.flac".to_string()
+            }),
+            "the right deck's Shift is not held, so it loads"
+        );
     }
 
     #[test]

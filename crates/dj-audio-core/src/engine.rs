@@ -187,7 +187,9 @@ impl Engine {
             }
             DjCommand::BrowserShow { .. }
             | DjCommand::BrowserCursor { .. }
-            | DjCommand::BrowserStep { .. } => {
+            | DjCommand::BrowserStep { .. }
+            | DjCommand::BrowserPlaceStep { .. }
+            | DjCommand::BrowserPlaceToggle => {
                 Some(Ack::rejected(command_id, RejectReason::NotSupported))
             }
             DjCommand::QueryPlaylist { .. } | DjCommand::Playlists { .. } => {

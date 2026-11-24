@@ -400,6 +400,10 @@ class BridgeClient : public QObject
     Q_PROPERTY(int browserStepSeq READ browserStepSeq NOTIFY browserChanged)
     // Rows the last nudge asked for; negative is up.
     Q_PROPERTY(int browserStep READ browserStep NOTIFY browserChanged)
+    // The left block of the browser: the collection, the playlists and the files, and the tree under the playlists.
+    Q_PROPERTY(int browserPlaceSeq READ browserPlaceSeq NOTIFY browserChanged)
+    Q_PROPERTY(int browserPlaceStep READ browserPlaceStep NOTIFY browserChanged)
+    Q_PROPERTY(int browserPlaceToggleSeq READ browserPlaceToggleSeq NOTIFY browserChanged)
 
 public:
     explicit BridgeClient(QObject *parent = nullptr);
@@ -439,6 +443,9 @@ public:
     QString browserCursor() const;
     int browserStepSeq() const;
     int browserStep() const;
+    int browserPlaceSeq() const;
+    int browserPlaceStep() const;
+    int browserPlaceToggleSeq() const;
     /// Ask the engine for a page of the collection (DJP-MEDIA-007).
     ///
     /// `query` is `{id, order: [{column, ascending}], genres, search, offset, limit}` — the words of the
@@ -667,6 +674,9 @@ private:
     QString m_browserCursor;
     int m_browserStepSeq = 0;
     int m_browserStep = 0;
+    int m_browserPlaceSeq = 0;
+    int m_browserPlaceStep = 0;
+    int m_browserPlaceToggleSeq = 0;
     qulonglong m_epoch = 0;
     int m_nextCommandId = 1;
     /// What each command id asked for, so a refusal can name it: "command 12 (Load) refused: Busy" says

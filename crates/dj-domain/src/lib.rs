@@ -482,6 +482,16 @@ pub enum DjCommand {
         /// The deck that side drives.
         deck: DeckId,
     },
+    /// Move the browser's own left block — the collection, the playlists and the files — a row down (positive) or up.
+    ///
+    /// The same shape as `BrowserStep`, and for the same reason: the window is the only client that knows what the rail is
+    /// showing and how deep the tree is, so the panel asks for a move rather than naming a row.
+    BrowserPlaceStep {
+        /// Rows to move; negative is up.
+        delta: i32,
+    },
+    /// Open or close the level the left block's cursor is on: a folder in the playlist tree, or the place itself.
+    BrowserPlaceToggle,
     /// Tell the engine where the browser's cursor stands, so the panel knows what a press would load.
     BrowserCursor {
         /// The path the cursor is on, as the window spells it.
@@ -900,6 +910,8 @@ impl DjCommand {
             | DjCommand::Load { .. }
             // A nudge is one row of a list: dropping it loses the row the DJ turned to.
             | DjCommand::BrowserStep { .. }
+            | DjCommand::BrowserPlaceStep { .. }
+            | DjCommand::BrowserPlaceToggle
             // Which deck a side drives: losing it puts a press into a deck nobody is looking at.
             | DjCommand::PanelDeck { .. }
             | DjCommand::BrowserShow { .. }
@@ -1934,6 +1946,16 @@ pub struct BrowserState {
     /// Rows the last nudge asked the cursor to move; negative is up.
     #[serde(default, skip_serializing_if = "is_zero_i32")]
     pub step: i32,
+    /// How many moves of the **left block** the panel has asked for: the collection, the playlists and the files, and the
+    /// rows of the playlist tree under them. Counted like `step_seq`, so one turn is applied once.
+    #[serde(default, skip_serializing_if = "is_zero_count")]
+    pub place_seq: u64,
+    /// Rows the last move of the left block asked for; negative is up.
+    #[serde(default, skip_serializing_if = "is_zero_i32")]
+    pub place_step: i32,
+    /// How many fold/unfold asks the panel has made: with Shift held, the press of the encoder opens or closes a level.
+    #[serde(default, skip_serializing_if = "is_zero_count")]
+    pub place_toggle_seq: u64,
 }
 
 /// Whether the panel drives the decks a session starts with: left A, right B.
@@ -1962,6 +1984,9 @@ impl Default for BrowserState {
             cursor: None,
             step_seq: 0,
             step: 0,
+            place_seq: 0,
+            place_step: 0,
+            place_toggle_seq: 0,
         }
     }
 }
