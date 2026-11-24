@@ -121,6 +121,22 @@ deck_c.gain 2 14 0 12
 deck_d.gain 2 20 0 12
 mixer.master 2 22 0 12
 
+# --- the quick effect: on/off and amount per deck, and the five select keys the mixer shares
+# (`quickEffectButton` inByte 7, `quickEffectKnob` inByte 64/66/62/68, `FX SELECT` inByte 8).
+deck_a.fx 1 7 0 1
+deck_b.fx 1 7 5 1
+deck_c.fx 1 7 1 1
+deck_d.fx 1 7 4 1
+deck_a.fx_amount 2 64 0 12
+deck_b.fx_amount 2 66 0 12
+deck_c.fx_amount 2 62 0 12
+deck_d.fx_amount 2 68 0 12
+panel.fx_filter 1 8 7 1
+panel.fx_1 1 8 5 1
+panel.fx_2 1 8 1 1
+panel.fx_3 1 8 6 1
+panel.fx_4 1 8 0 1
+
 # --- tempo faders, report 2 (two bytes, little-endian, 0…65535)
 deck_a.tempo 2 12 0 12
 deck_b.tempo 2 10 0 12

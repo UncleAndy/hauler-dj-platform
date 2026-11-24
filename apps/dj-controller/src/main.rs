@@ -1145,6 +1145,102 @@ fn inputs_loop(
                 }
                 continue;
             }
+            // FX: the on/off button and the amount knob are per deck, the five select keys are the mixer's own. The patch
+            // travels whole (kind + amount + enabled), so each control reads the deck's current patch and flips just its
+            // own field (owner's request, 24.11).
+            if event.control.ends_with(".fx") || event.control.ends_with(".fx_amount") {
+                let Some((deck, _)) = dj_controller_core::BindableDeck::from_control(&event.control) else {
+                    continue;
+                };
+                let deck = deck.id();
+                let index = deck_index(deck);
+                let current = playing
+                    .lock()
+                    .ok()
+                    .and_then(|state| state.fx.get(index).copied())
+                    .unwrap_or_default();
+                let patch = if event.control.ends_with(".fx_amount") {
+                    dj_domain::FxPatch {
+                        amount: event.value.clamp(0.0, 1.0),
+                        ..current
+                    }
+                } else {
+                    if event.value <= 0.5 {
+                        continue;
+                    }
+                    dj_domain::FxPatch {
+                        enabled: !current.enabled,
+                        ..current
+                    }
+                };
+                let command = dj_domain::DjCommand::SetDeckFx { deck, patch };
+                let analog = map
+                    .field_of(&event.control)
+                    .is_some_and(|field| field.width > 1);
+                if is_double_touch(analog, event.value, last_press.get(&event.control).copied(), now) {
+                    continue;
+                }
+                if !analog && event.value > 0.5 {
+                    last_press.insert(event.control.clone(), now);
+                }
+                println!(
+                    "dj-controller: at {now} ms {} = {:.3} (report {report}) → {command:?}",
+                    event.control, event.value
+                );
+                if analog {
+                    last_positions.insert(event.control.clone(), command.clone());
+                    if let Some(slot) = pending.iter_mut().find(|(control, _)| *control == event.control) {
+                        slot.1 = command;
+                    } else {
+                        pending.push((event.control.clone(), command));
+                    }
+                } else {
+                    let asked = vec![(event.control.clone(), Some(deck), command)];
+                    if let Err(reason) = send_commands(endpoint, &asked) {
+                        println!(
+                            "dj-controller: {} did not reach the engine: {reason}",
+                            event.control
+                        );
+                    }
+                }
+                continue;
+            }
+            if event.control.starts_with("panel.fx_") {
+                if event.value <= 0.5 {
+                    continue;
+                }
+                let kind = match event.control.as_str() {
+                    "panel.fx_filter" => dj_domain::FxKind::Filter,
+                    "panel.fx_1" => dj_domain::FxKind::Echo,
+                    "panel.fx_2" => dj_domain::FxKind::Roll,
+                    "panel.fx_3" => dj_domain::FxKind::Flanger,
+                    "panel.fx_4" => dj_domain::FxKind::Phaser,
+                    _ => continue,
+                };
+                println!(
+                    "dj-controller: at {now} ms {} = 1 (report {report}) → sets {kind:?} on every deck",
+                    event.control
+                );
+                // The five keys are the mixer's own: one press sets the effect on all four decks. Bitcrusher and Noise are
+                // not on the panel — they stay reachable from the window.
+                for (index, deck) in [dj_domain::DeckId::A, dj_domain::DeckId::B, dj_domain::DeckId::C, dj_domain::DeckId::D]
+                    .into_iter()
+                    .enumerate()
+                {
+                    let current = playing
+                        .lock()
+                        .ok()
+                        .and_then(|state| state.fx.get(index).copied())
+                        .unwrap_or_default();
+                    let patch = dj_domain::FxPatch { kind, ..current };
+                    pending.push((
+                        event.control.clone(),
+                        dj_domain::DjCommand::SetDeckFx { deck, patch },
+                    ));
+                }
+                flush_pending(&mut pending, &mut link, endpoint, &mut waiting_said);
+                continue;
+            }
             if event.control.starts_with("panel.") {
                 match panel_command(&event, &playing) {
                     Some(command) => {
@@ -1619,6 +1715,9 @@ struct DeckFactsShared {
     active_loop: [bool; 4],
     /// Whether the channel feeds the headphones: the PFL button toggles against this, not against a guess.
     monitoring: [bool; 4],
+    /// Each deck's effect, whole: the patch travels complete, so a knob or a key reads the current kind, amount and
+    /// switch and flips just its own field.
+    fx: [dj_domain::FxPatch; 4],
     /// What the panel last asked the engine for, per channel: a fader thrown to the top must be seen at the top by the
     /// next snapshot, and a disagreement is said out loud rather than left as "it stopped half way".
     fader_asked: [Option<f32>; 4],
@@ -1643,6 +1742,7 @@ impl Default for DeckFactsShared {
             loops: [[false; 8]; 4],
             active_loop: [false; 4],
             monitoring: [false; 4],
+            fx: [dj_domain::FxPatch::default(); 4],
             fader_asked: [None; 4],
             browser_open: true,
             browser_cursor: None,
@@ -2339,6 +2439,7 @@ fn lights_show(
                             deck.pad_loops.get(slot).is_some_and(Option::is_some);
                     }
                     state.active_loop[index] = deck.loop_region.is_some();
+                    state.fx[index] = deck.fx;
                 }
                 state.browser_open = snapshot.browser.open;
                 state.panel_left = snapshot.panel.left;
