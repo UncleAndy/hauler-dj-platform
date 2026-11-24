@@ -2149,6 +2149,16 @@ Pane {
                     font.pixelSize: browser.titleFont
                     color: UiSettings.themeText
                 }
+                // What the list is showing right now: the section, or the playlist the DJ opened. One line
+                // next to the title, so a playlist opened from the tree is named instead of guessed.
+                Label {
+                    objectName: "browserPlace"
+                    text: browser.section === "playlists"
+                          ? Browser.playlistName
+                          : (browser.section === "collection" ? qsTr("Collection") : qsTr("Files"))
+                    color: UiSettings.themeTextDim
+                    font.pixelSize: browser.headerFont
+                }
                 // The rows are a window over the index, not a walk over the disks: the header says
                 // which one the DJ is looking at, so a batch that arrives later is not a surprise.
                 Label {
