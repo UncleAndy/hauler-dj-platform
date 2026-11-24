@@ -229,8 +229,9 @@ pub struct Show {
     pub hotcues: [[Option<Pad>; 8]; 2],
     /// Playing, for the left and the right deck.
     pub playing: [bool; 2],
-    /// Monitoring in the headphones (the CUE button), for the left and the right deck.
-    pub monitoring: [bool; 2],
+    /// Monitoring in the headphones (the CUE button), one per channel: the panel has a headphone button on each of the
+    /// four strips, and it lights its own, not the pad next to it (owner's report, 24.11).
+    pub monitoring: [bool; 4],
     /// Sync engaged, for the left and the right deck.
     pub sync: [bool; 2],
     /// FX on, for decks A, B, C and D: the mixer section has a button for each.
@@ -342,18 +343,28 @@ pub fn report_with(show: &Show, palette: &Palette) -> LightsReport {
     }
     for side in 0..2 {
         let names = if side == 0 {
-            ("Left PLAY button", "Left CUE", "Sync/Lock")
+            ("Left PLAY button", "Sync/Lock")
         } else {
-            ("Right PLAY button", "Right CUE", "Right Sync")
+            ("Right PLAY button", "Right Sync")
         };
         if show.playing[side] {
             set(control(names.0), bright(palette.play.code()));
         }
-        if show.monitoring[side] {
-            set(control(names.1), bright(palette.cue.code()));
-        }
         if show.sync[side] {
-            set(control(names.2), bright(palette.sync.code()));
+            set(control(names.1), bright(palette.sync.code()));
+        }
+    }
+    // Monitoring is per channel, not per platter: the button lives on the strip and carries the channel's own CUE byte.
+    // `byte_of("Left CUE")` would find the pad `Left CUE1` first, which is exactly the wrong light (owner's report, 24.11).
+    for (deck, lit) in show.monitoring.iter().enumerate() {
+        if *lit {
+            let name = match deck {
+                0 => "Deck A CUE (headphones)",
+                1 => "Deck B CUE",
+                2 => "Deck C CUE",
+                _ => "Deck D CUE",
+            };
+            set(control(name), bright(palette.cue.code()));
         }
     }
     for (deck, lit) in show.fx.iter().enumerate() {

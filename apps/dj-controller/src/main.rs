@@ -441,6 +441,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
             night,
             &palette,
             inputs_map.as_deref(),
+            config.controller.pfl,
         ),
         Mode::InputsWatch => inputs_watch(&devices, watch_seconds),
         Mode::InputsLearn => inputs_learn(&devices, pick_out.as_deref()),
@@ -884,6 +885,7 @@ fn serve(
     night: bool,
     palette: &dj_controller_s4mk3::lights::Palette,
     inputs_file: Option<&str>,
+    pfl_mode: dj_config::PflMode,
 ) -> Result<(), String> {
     let Some(endpoint) = engine else {
         return Err(format!("--serve wants --engine <endpoint>. {USAGE}"));
@@ -912,7 +914,7 @@ fn serve(
                         .collect::<Vec<_>>()
                         .join(", ")
                 );
-                inputs_loop(reports, &endpoint, map, state);
+                inputs_loop(reports, &endpoint, map, state, pfl_mode);
             }
             Err(reason) => println!("dj-controller: {reason}; presses ask for nothing"),
         });
@@ -968,6 +970,7 @@ fn inputs_loop(
     endpoint: &str,
     map: dj_controller_s4mk3::inputs::InputMap,
     playing: Playing,
+    pfl_mode: dj_config::PflMode,
 ) {
     let mapping = Mapping::new();
     let mut previous = std::collections::HashMap::new();
@@ -1093,6 +1096,53 @@ fn inputs_loop(
                     "dj-controller: at {now} ms {} = {:.0} (report {report})",
                     event.control, event.value
                 );
+                continue;
+            }
+            // The headphone (PFL) button: hold while pressed, or a switch, whichever the settings ask for. A mixer
+            // command, so it is never re-routed to the deck a side drives — the strip's CUE is the strip's own.
+            if event.control.ends_with(".pfl") {
+                let Some((deck, _)) = dj_controller_core::BindableDeck::from_control(&event.control) else {
+                    continue;
+                };
+                let deck = deck.id();
+                let pressed = event.value > 0.5;
+                if is_double_touch(
+                    false,
+                    event.value,
+                    last_press.get(&event.control).copied(),
+                    now,
+                ) {
+                    continue;
+                }
+                if pressed {
+                    last_press.insert(event.control.clone(), now);
+                }
+                let on = match pfl_mode {
+                    dj_config::PflMode::Hold => pressed,
+                    dj_config::PflMode::Toggle => {
+                        if !pressed {
+                            continue;
+                        }
+                        let current = playing
+                            .lock()
+                            .ok()
+                            .and_then(|state| state.monitoring.get(deck_index(deck)).copied())
+                            .unwrap_or(false);
+                        !current
+                    }
+                };
+                let command = dj_domain::DjCommand::SetChannelCue { deck, on };
+                println!(
+                    "dj-controller: at {now} ms {} = {:.0} (report {report}) → {command:?}",
+                    event.control, event.value
+                );
+                let asked = vec![(event.control.clone(), Some(deck), command)];
+                if let Err(reason) = send_commands(endpoint, &asked) {
+                    println!(
+                        "dj-controller: {} did not reach the engine: {reason}",
+                        event.control
+                    );
+                }
                 continue;
             }
             if event.control.starts_with("panel.") {
@@ -1567,6 +1617,8 @@ struct DeckFactsShared {
     loops: [[bool; 8]; 4],
     /// Whether the deck has a loop of its own that an empty pad would take.
     active_loop: [bool; 4],
+    /// Whether the channel feeds the headphones: the PFL button toggles against this, not against a guess.
+    monitoring: [bool; 4],
     /// What the panel last asked the engine for, per channel: a fader thrown to the top must be seen at the top by the
     /// next snapshot, and a disagreement is said out loud rather than left as "it stopped half way".
     fader_asked: [Option<f32>; 4],
@@ -1590,6 +1642,7 @@ impl Default for DeckFactsShared {
             cues: [[false; 8]; 4],
             loops: [[false; 8]; 4],
             active_loop: [false; 4],
+            monitoring: [false; 4],
             fader_asked: [None; 4],
             browser_open: true,
             browser_cursor: None,
@@ -2083,7 +2136,7 @@ fn show_from_facts(decks: &[DeckFacts; 4], sides: [usize; 2]) -> dj_controller_s
     dj_controller_s4mk3::lights::Show {
         hotcues: [left.hotcues, right.hotcues],
         playing: [left.playing, right.playing],
-        monitoring: [left.monitoring, right.monitoring],
+        monitoring: [decks[0].monitoring, decks[1].monitoring, decks[2].monitoring, decks[3].monitoring],
         sync: [left.sync, right.sync],
         fx: [decks[0].fx, decks[1].fx, decks[2].fx, decks[3].fx],
     }
@@ -2262,6 +2315,7 @@ fn lights_show(
             {
                 for (index, deck) in facts.iter().enumerate() {
                     state.playing[index] = deck.playing;
+                    state.monitoring[index] = deck.monitoring;
                 }
                 for (index, deck) in snapshot.decks.iter().enumerate().take(4) {
                     if let Some(asked) = state.fader_asked[index]

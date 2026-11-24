@@ -78,6 +78,23 @@ pub struct ControllerSettings {
     /// The colours the panel shows. Data, not code: the panel is in the owner's hands, not in the author's.
     #[serde(default)]
     pub lights: ControllerLights,
+    /// How the headphone (PFL) button behaves: monitoring while held, or switched on and off by each press.
+    #[serde(default)]
+    pub pfl: PflMode,
+}
+
+/// How a headphone (PFL) button drives monitoring.
+///
+/// Both belong to the controller: a DJ who rides a button while listening wants it held, and a DJ who sets up the next
+/// deck wants one press to leave the channel in the headphones (owner's request, 24.11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PflMode {
+    /// The channel is in the headphones only while the button is held.
+    #[default]
+    Hold,
+    /// One press puts the channel in the headphones, the next takes it out.
+    Toggle,
 }
 
 /// Which colour every state of the panel uses, in the device's own names.
@@ -178,6 +195,7 @@ impl Default for ControllerSettings {
             driver: ControllerDriver::None,
             device: None,
             lights: ControllerLights::default(),
+            pfl: PflMode::default(),
         }
     }
 }
@@ -918,6 +936,7 @@ mod tests {
                 driver: ControllerDriver::S4Mk3,
                 device: None,
                 lights: ControllerLights::default(),
+                pfl: PflMode::default(),
             },
             ..Config::default()
         };

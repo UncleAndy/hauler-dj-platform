@@ -197,14 +197,14 @@ fn a_lit_hotcue_lights_the_slot_the_map_names() {
 fn playing_monitoring_and_sync_use_their_own_bytes() {
     let show = Show {
         playing: [false, true],
-        monitoring: [true, false],
+        monitoring: [true, false, false, false],
         sync: [true, false],
         ..Show::default()
     };
     let report = report_for(&show);
 
     let playing = byte_of("Right PLAY").expect("the map has the right play button");
-    let monitoring = byte_of("Left CUE").expect("the map has the left cue");
+    let monitoring = byte_of("Deck A CUE").expect("the map has the deck a cue");
     let sync = byte_of("Sync/Lock").expect("the map has sync");
     assert_eq!(
         report.body[usize::from(playing)],
@@ -449,7 +449,7 @@ fn the_settings_choose_the_colours() {
     let show = Show {
         hotcues,
         playing: [true, false],
-        monitoring: [false, true],
+        monitoring: [false, true, false, false],
         sync: [true, false],
         fx: [false, false, true, false],
     };
@@ -457,7 +457,7 @@ fn the_settings_choose_the_colours() {
     assert_eq!(report.body[0], bright(Colour::Purple.code()), "the hotcue");
     let play = byte_of("Left PLAY").expect("the map has it");
     assert_eq!(report.body[usize::from(play)], bright(Colour::Red.code()));
-    let cue = byte_of("Right CUE").expect("the map has it");
+    let cue = byte_of("Deck B CUE").expect("the map has it");
     assert_eq!(report.body[usize::from(cue)], bright(Colour::Salmon.code()));
     let fx = byte_of("Deck C FX").expect("the map has it");
     assert_eq!(report.body[usize::from(fx)], bright(Colour::Sky.code()));

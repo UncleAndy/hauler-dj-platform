@@ -419,6 +419,9 @@ Popup {
                 { label: qsTr("Device"),
                   hint: qsTr("The HID node to open, when the driver should not search for it by itself. Empty means search: the service looks for the vendor and product the driver knows."),
                   path: "engine:controller.device", kind: "text" },
+                { label: qsTr("Headphone button"),
+                  hint: qsTr("How the channel's headphone (CUE) button behaves. Hold keeps the channel in the headphones only while the button is pressed; Toggle switches monitoring on with one press and off with the next."),
+                  path: "engine:controller.pfl", kind: "choice", values: ["hold", "toggle"] },
                 // The panel's colours are settings, not taste baked into code: the same eighteen names the device's own
                 // protocol uses, and whichever a person picks is what the panel shows.
                 { label: qsTr("Light the whole panel"),
