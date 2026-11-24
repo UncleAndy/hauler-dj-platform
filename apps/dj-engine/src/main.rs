@@ -816,7 +816,10 @@ fn run(argv: &[String]) -> Result<(), String> {
             index,
             ChannelSettings {
                 trim_db: 0.0,
-                fader: 1.0,
+                // Closed, like the faders on the panel: the controller only reports a knob when a hand moves it, so this
+                // number is what the window shows until the first touch, and a channel that starts at unity opens a track
+                // into the room by itself (owner's decision, 24.11).
+                fader: 0.0,
                 // Replaced below by the deck's side of the crossfader.
                 assign: CrossAssign::Thru,
                 cue: false,
@@ -2278,6 +2281,28 @@ fn serve_client(
                 // A load is answered here, not by the audio callback: it is `Accepted`, and the
                 // deck becomes playable only when the state says `Ready`.
                 match dj_engine::route(&command) {
+                    dj_engine::Routed::PanelDeck { side, deck } => {
+                        cells.set_panel_deck(side, deck);
+                        let ack = dj_domain::Ack::applied(command.id, 0);
+                        if alerts.send(ServerMessage::Ack(ack)).is_err() {
+                            return;
+                        }
+                        continue;
+                    }
+                    dj_engine::Routed::Browser(change) => {
+                        // A place in a list, not a sound: applied where the command arrived, acknowledged at once.
+                        use dj_engine::BrowserChange;
+                        match change {
+                            BrowserChange::Open(open) => cells.set_browser_open(open),
+                            BrowserChange::Cursor(path) => cells.set_browser_cursor(path),
+                            BrowserChange::Step(delta) => cells.note_browser_step(delta),
+                        }
+                        let ack = dj_domain::Ack::applied(command.id, 0);
+                        if alerts.send(ServerMessage::Ack(ack)).is_err() {
+                            return;
+                        }
+                        continue;
+                    }
                     dj_engine::Routed::Load(request) => {
                         // A deck that is playing refuses a load: cutting the track the room is
                         // dancing to is the one mistake a DJ never forgives. The playing flag comes

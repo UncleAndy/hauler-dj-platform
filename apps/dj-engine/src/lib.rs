@@ -448,6 +448,8 @@ pub fn snapshot(
     let mut published_decks: Vec<DeckSnapshot> = decks.iter().map(Deck::snapshot).collect();
     fill_phase_errors(&mut published_decks, beats_per_bar(decks));
     Snapshot {
+        panel: dj_domain::PanelDecks::default(),
+        browser: dj_domain::BrowserState::default(),
         model: Default::default(),
         playlists: None,
         playlist_page: None,
@@ -1108,6 +1110,13 @@ pub struct StateCells {
     /// The last playlist page asked for, in its own cell: two questions in flight must not overwrite each
     /// other's answers.
     playlist_page: std::sync::Mutex<Option<dj_domain::CollectionPage>>,
+    /// Which deck each side of the panel drives: written by the command thread, read by the publisher.
+    panel: std::sync::Mutex<dj_domain::PanelDecks>,
+    /// Where the browser stands: on screen or folded away, what its cursor points at, the last nudge.
+    ///
+    /// Two clients share this and neither is the audio callback: the window publishes its cursor, the panel asks for a
+    /// row, and the publisher reads the whole thing into every snapshot.
+    browser: std::sync::Mutex<dj_domain::BrowserState>,
     /// The genres of the collection, with their counts: the answer to the genre question.
     genres: std::sync::Mutex<Vec<dj_domain::GenreCount>>,
 }
@@ -1170,6 +1179,43 @@ impl StateCells {
             guard.push(false);
         }
         guard[deck] = on;
+    }
+
+    /// Put the deck a side of the panel drives where the publisher will find it.
+    pub fn set_panel_deck(&self, side: dj_domain::PanelSide, deck: dj_domain::DeckId) {
+        let mut guard = self.panel.lock().unwrap_or_else(|error| error.into_inner());
+        match side {
+            dj_domain::PanelSide::Left => guard.left = deck,
+            dj_domain::PanelSide::Right => guard.right = deck,
+        }
+    }
+
+    /// Show or fold away the browser where the publisher will find it.
+    pub fn set_browser_open(&self, open: bool) {
+        let mut guard = self
+            .browser
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        guard.open = open;
+    }
+
+    /// Put the browser's cursor where the publisher will find it.
+    pub fn set_browser_cursor(&self, path: Option<String>) {
+        let mut guard = self
+            .browser
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        guard.cursor = path;
+    }
+
+    /// Count a nudge from the panel: the sequence number is what makes each turn applied exactly once.
+    pub fn note_browser_step(&self, delta: i32) {
+        let mut guard = self
+            .browser
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        guard.step_seq = guard.step_seq.wrapping_add(1);
+        guard.step = delta;
     }
 
     /// What the publisher reads for one deck.
@@ -1347,6 +1393,8 @@ impl StateCells {
             collection: std::sync::Mutex::new(None),
             playlists: std::sync::Mutex::new(None),
             playlist_page: std::sync::Mutex::new(None),
+            panel: std::sync::Mutex::new(dj_domain::PanelDecks::default()),
+            browser: std::sync::Mutex::new(dj_domain::BrowserState::default()),
             genres: std::sync::Mutex::new(Vec::new()),
         }
     }
@@ -1693,6 +1741,12 @@ impl StateCells {
             },
             // The page is not an atomic cell: it is written and read on the engine's own thread, under
             // the mutex that guards the import for the same reason.
+            panel: *self.panel.lock().unwrap_or_else(|error| error.into_inner()),
+            browser: self
+                .browser
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .clone(),
             collection: self
                 .collection
                 .lock()
@@ -2052,6 +2106,15 @@ pub enum Routed {
     Render,
     /// Handed to the loader; the state reports `Ready` when the deck is playable.
     Load(LoadRequest),
+    /// Applied here, on the command thread: which deck a side drives is a choice, not a sound.
+    PanelDeck {
+        /// Which side of the panel.
+        side: dj_domain::PanelSide,
+        /// The deck it drives.
+        deck: dj_domain::DeckId,
+    },
+    /// Applied here, on the command thread: the browser is a place in a list, not a sound.
+    Browser(BrowserChange),
     /// Handed to the loader, which asks the graph to clear the deck.
     Eject {
         /// Target deck.
@@ -2208,6 +2271,20 @@ pub fn collection_row(row: &dj_library::TrackRow) -> dj_domain::CollectionRow {
     }
 }
 
+/// What a browser command asks of the engine's browser state.
+///
+/// Nothing here touches audio: it is the window's place in a list, carried through the engine because the panel and the
+/// window have no other channel.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BrowserChange {
+    /// Show the browser or fold it away.
+    Open(bool),
+    /// The row the cursor stands on.
+    Cursor(Option<String>),
+    /// Move the cursor a row down (positive) or up.
+    Step(i32),
+}
+
 /// Decide where a command goes without applying it.
 pub fn route(command: &ScheduledCommand) -> Routed {
     match &command.command {
@@ -2216,6 +2293,15 @@ pub fn route(command: &ScheduledCommand) -> Routed {
             deck: *deck,
             path: path.clone(),
         }),
+        DjCommand::PanelDeck { side, deck } => Routed::PanelDeck {
+            side: *side,
+            deck: *deck,
+        },
+        DjCommand::BrowserShow { open } => Routed::Browser(BrowserChange::Open(*open)),
+        DjCommand::BrowserCursor { path } => {
+            Routed::Browser(BrowserChange::Cursor(Some(path.clone())))
+        }
+        DjCommand::BrowserStep { delta } => Routed::Browser(BrowserChange::Step(*delta)),
         DjCommand::Eject { deck } => Routed::Eject { deck: *deck },
         DjCommand::Import {
             paths,

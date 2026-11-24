@@ -27,6 +27,19 @@ Item {
 
     function toggleBrowser() {
         shell.browserOpen = !shell.browserOpen;
+        // Said to the engine as well, because the panel's VIEW button says the same thing: one browser, one answer, and
+        // the two buttons can never disagree about whether the collection is on screen.
+        Bridge.browserShow(shell.browserOpen);
+    }
+
+    Connections {
+        target: Bridge
+        function onBrowserChanged() {
+            // Only when the engine disagrees: a binding would fight the click that is just being handled.
+            if (shell.browserOpen !== Bridge.browserOpen) {
+                shell.browserOpen = Bridge.browserOpen;
+            }
+        }
     }
 
     // What the arrangement puts where. One instance per deck, always: a deck named twice would give the

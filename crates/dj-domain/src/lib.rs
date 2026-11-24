@@ -467,6 +467,34 @@ pub enum DjCommand {
         /// Absolute path as the client spelled it.
         path: String,
     },
+    /// Show the browser or fold it away.
+    ///
+    /// The panel has a VIEW button and the window has one of its own; both say the same thing here, so the two can
+    /// never disagree about whether the collection is on screen.
+    BrowserShow {
+        /// True to put the browser on screen, false to fold it away.
+        open: bool,
+    },
+    /// Say which deck a side of the panel is driving, so the window can show it and a press knows where to load.
+    PanelDeck {
+        /// Which side of the panel.
+        side: PanelSide,
+        /// The deck that side drives.
+        deck: DeckId,
+    },
+    /// Tell the engine where the browser's cursor stands, so the panel knows what a press would load.
+    BrowserCursor {
+        /// The path the cursor is on, as the window spells it.
+        path: String,
+    },
+    /// Move the browser's cursor a row down (positive) or up (negative), as the browse encoder turns.
+    ///
+    /// A step, not a row number: the window is the only client that knows which list is showing, and a row number from
+    /// the panel would mean a different track in the files list than in the collection.
+    BrowserStep {
+        /// Rows to move; negative is up.
+        delta: i32,
+    },
     /// Measure the deck's tempo again and replace the stored grid (B02, DJP-MEDIA-006).
     ///
     /// The deck's own analysis runs once, at load; this is the DJ saying "measure it again", after the
@@ -870,6 +898,12 @@ impl DjCommand {
             | DjCommand::Master { .. }
             | DjCommand::MasterOff
             | DjCommand::Load { .. }
+            // A nudge is one row of a list: dropping it loses the row the DJ turned to.
+            | DjCommand::BrowserStep { .. }
+            // Which deck a side drives: losing it puts a press into a deck nobody is looking at.
+            | DjCommand::PanelDeck { .. }
+            | DjCommand::BrowserShow { .. }
+            | DjCommand::BrowserCursor { .. }
             | DjCommand::AnalyzeTempo { .. }
             | DjCommand::EditGrid { .. }
             | DjCommand::SetAnalysisLock { .. }
@@ -1503,7 +1537,10 @@ pub struct DeckSnapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slip_frame: Option<SourceFrame>,
     /// Channel fader in force, linear: 1.0 is unity, 0.0 is silence.
-    #[serde(default = "unity")]
+    ///
+    /// A snapshot without the number means the channel was never touched, and a channel that was never touched stands
+    /// closed: unity here would open a track into the room on its own (owner's decision, 24.11).
+    #[serde(default)]
     pub fader: f32,
     /// True when this channel feeds the headphones (monitoring). Left off the wire when it does not.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -1877,7 +1914,91 @@ pub struct PlaylistQuery {
     pub limit: usize,
 }
 
-/// The answer to a query: the rows of the page, and how many the filter found in all.
+/// Where the browser stands: whether it is on screen, what its cursor points at, and the last nudge from the panel.
+///
+/// The window is the only client that knows which list is showing — a folder, the collection or a playlist — and the
+/// panel cannot ask it directly: every client talks to the engine and to nothing else. So the browser's place travels
+/// through the engine. The window publishes the row its cursor stands on; the panel asks for one row up or down; and the
+/// window moves its own highlight, because it is the one that knows what a row is.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BrowserState {
+    /// Whether the browser is on screen. Open until someone folds it away.
+    #[serde(default = "browser_open_by_default")]
+    pub open: bool,
+    /// The path the cursor stands on, as the window remembers it. Absent while nothing is selected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    /// How many nudges the panel has asked for: a reader applies each sequence number once.
+    #[serde(default, skip_serializing_if = "is_zero_count")]
+    pub step_seq: u64,
+    /// Rows the last nudge asked the cursor to move; negative is up.
+    #[serde(default, skip_serializing_if = "is_zero_i32")]
+    pub step: i32,
+}
+
+/// Whether the panel drives the decks a session starts with: left A, right B.
+fn is_resting_panel(decks: &PanelDecks) -> bool {
+    *decks == PanelDecks::default()
+}
+
+/// Whether the browser is where a session starts: open, nothing selected, no nudge standing.
+fn is_resting_browser(state: &BrowserState) -> bool {
+    state.open && state.cursor.is_none() && state.step_seq == 0 && state.step == 0
+}
+
+fn browser_open_by_default() -> bool {
+    true
+}
+
+fn is_zero_i32(value: &i32) -> bool {
+    *value == 0
+}
+
+impl Default for BrowserState {
+    /// A program that hides the collection on start hides the music.
+    fn default() -> Self {
+        Self {
+            open: true,
+            cursor: None,
+            step_seq: 0,
+            step: 0,
+        }
+    }
+}
+
+/// Which deck each side of the panel is driving.
+///
+/// The S4 has one deck switch per side: the left side moves between decks A and C, the right between B and D. That choice
+/// belongs to the controller and has to be visible in the window — a press that loads into a deck nobody is looking at is
+/// a press the DJ cannot predict. The engine carries it because it is the one channel every client shares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PanelDecks {
+    /// The deck the left side of the panel drives: A or C.
+    pub left: DeckId,
+    /// The deck the right side drives: B or D.
+    pub right: DeckId,
+}
+
+impl Default for PanelDecks {
+    /// Left is A and right is B until the deck switch says otherwise: that is where a set begins.
+    fn default() -> Self {
+        Self {
+            left: DeckId::A,
+            right: DeckId::B,
+        }
+    }
+}
+
+/// Which side of the panel a deck switch belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PanelSide {
+    /// The left side: decks A and C.
+    Left,
+    /// The right side: decks B and D.
+    Right,
+}
+
+/// One page of the collection, or of a playlist.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CollectionPage {
     /// The `id` of the question this answers.
@@ -2024,6 +2145,15 @@ pub struct Snapshot {
     /// The analysis the DJ started from the collection: progress, absent when none ran.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub analysis: Option<AnalyzeState>,
+    /// Which deck each side of the panel drives: the deck switch moves it, and a load from the panel lands there.
+    #[serde(default, skip_serializing_if = "is_resting_panel")]
+    pub panel: PanelDecks,
+    /// Where the browser stands: on screen or folded away, what its cursor points at, and the last nudge from the panel.
+    ///
+    /// Skipped while it is where a session begins, so a wire that never touched the browser stays byte-identical to what
+    /// it was before the panel could move it.
+    #[serde(default, skip_serializing_if = "is_resting_browser")]
+    pub browser: BrowserState,
     /// The last collection page the engine was asked for: the browser reads it from here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collection: Option<CollectionPage>,

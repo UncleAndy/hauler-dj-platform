@@ -36,6 +36,38 @@
 # More controls are learned on the panel: `dj-controller --inputs-learn` asks for one button at a time and writes what it
 # saw to `~/.local/share/hauler-dj/inputs-map.txt`. A learned line never overrides a line from this file.
 
+# --- the browser: the VIEW button and the browse encoder, report 1
+#
+# Read from the public description (`libraryViewButton`, `libraryEncoder`, `libraryEncoderPress`), the same source as the
+# rest of this file, and waiting to be confirmed by hand: press VIEW, turn the encoder, press it in.
+#
+# `relative`: the encoder's byte counts steps and runs round, so it says which way it turned, never where it is. A turn to
+# the right arrives as 1.0, a turn to the left as 0.0, and the magnitude is not carried — the same as Mixxx's own encoder
+# handling, because one step of a hand's turn is one row.
+#
+# Both sides: the S4 has a VIEW button, a browse encoder and its press on each deck, and either side must move the same
+# browser — the owner's report was that only the left one worked (24.11).
+panel.view 1 1 0 1
+panel.encoder 1 20 0 4 relative
+panel.encoder_press 1 0 1 1
+panel.view_right 1 9 0 1
+panel.encoder_right 1 21 4 4 relative
+panel.encoder_press_right 1 10 1 1
+
+# --- the four deck select buttons: A and C on the left side, B and D on the right.
+#
+# Four buttons, not two toggles: the panel has a select button per deck, and the public description lists a pair per deck
+# side (`deckButtonLeft`/`deckButtonRight` of each deck object). The owner pressed one and nothing happened because the map
+# had two toggles at the wrong bits (report, 24.11).
+panel.deck_a 1 5 2 1
+panel.deck_c 1 5 3 1
+panel.deck_b 1 14 2 1
+panel.deck_d 1 14 3 1
+
+# --- Shift, report 1: with it held the encoder walks the left block instead of the rows
+deck_a.shift 1 5 1 1
+deck_b.shift 1 14 1 1
+
 # --- transport, report 1
 deck_a.play_pause 1 4 0 1
 deck_a.cue 1 4 1 1

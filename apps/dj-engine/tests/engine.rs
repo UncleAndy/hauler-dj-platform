@@ -1650,3 +1650,22 @@ fn a_forty_four_one_file_plays_for_its_recorded_length() {
         "a second of device time consumed {consumed} source frames of a 44.1 kHz file"
     );
 }
+
+#[test]
+fn the_browser_keeps_its_place_in_the_snapshot() {
+    // The panel and the window share no channel of their own: the browser's place — on screen or folded away, the row the
+    // cursor stands on, the last nudge — travels in every snapshot.
+    let cells = StateCells::new();
+    cells.set_browser_open(false);
+    cells.note_browser_step(1);
+    cells.note_browser_step(-1);
+    cells.set_browser_cursor(Some("/music/a.flac".to_string()));
+    let snapshot = cells.read(&[], 48_000, 1, 1);
+    assert!(!snapshot.browser.open, "folded away");
+    assert_eq!(snapshot.browser.step_seq, 2, "every turn is counted");
+    assert_eq!(
+        snapshot.browser.step, -1,
+        "the last one is what a reader applies"
+    );
+    assert_eq!(snapshot.browser.cursor.as_deref(), Some("/music/a.flac"));
+}

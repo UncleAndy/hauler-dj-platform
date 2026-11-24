@@ -593,8 +593,12 @@ Pane {
             }
 
             // The channel fader as the engine published it: 1.0 is unity, 0.0 is silence.
+            //
+            // A snapshot that does not carry the number means the engine holds the default, and the default is a closed
+            // fader — `1.0` here made every channel look open at startup, because zero is not written to the wire
+            // (owner's report, 24.11).
             readonly property real fader: strip.deck !== null && strip.deck.fader !== undefined
-                                          ? strip.deck.fader : 1.0
+                                          ? strip.deck.fader : 0.0
             // What the last wheel step sent, so a check can see the wheel working.
             property real lastWheelFader: -1
             // One notch is five percent of the throw: fine enough to ride, coarse enough to move.

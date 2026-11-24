@@ -149,6 +149,8 @@ fn acks_report_applied_sample_and_rejection_reason() {
 #[test]
 fn a_snapshot_is_self_describing_enough_to_be_refused() {
     let snapshot = Snapshot {
+        panel: dj_domain::PanelDecks::default(),
+        browser: dj_domain::BrowserState::default(),
         model: Default::default(),
         playlists: None,
         playlist_page: None,

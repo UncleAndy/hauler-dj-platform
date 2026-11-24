@@ -364,6 +364,10 @@ int runGainCheck(BridgeClient& bridge, const QString& socketPath, int timeoutMs)
     // carrying, and a check that expects unity there measures the loader, not the command.
     double gainBStart = -1.0;
     double faderBStart = -1.0;
+    // Deck C's fader before the gain command: the gain must not move it, and "not moved" is measured against where it stood,
+    // not against unity. A channel starts with its fader down (the panel reports its knobs only when a hand moves one), so
+    // unity here was the check reading its own assumption (owner's rule, 24.11).
+    double faderCStart = -1.0;
     const char* failure = nullptr;
 
     const auto read = [&]() {
@@ -387,6 +391,7 @@ int runGainCheck(BridgeClient& bridge, const QString& socketPath, int timeoutMs)
         case AwaitSnapshot:
             gainBStart = gainB;
             faderBStart = faderB;
+            faderCStart = faderC;
             std::fprintf(stdout, "dj-ui: sent gain 0.25 to deck C (deck B starts at %.3f)\n",
                          gainBStart);
             phase = GainSent;
@@ -394,7 +399,7 @@ int runGainCheck(BridgeClient& bridge, const QString& socketPath, int timeoutMs)
             break;
         case GainSent:
             if (std::abs(gainC - 0.25) < 0.01) {
-                if (std::abs(faderC - 1.0) > 0.01) {
+                if (faderCStart >= 0.0 && std::abs(faderC - faderCStart) > 0.01) {
                     failure = "the gain command moved the channel fader";
                     phase = Finished;
                     loop.quit();

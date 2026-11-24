@@ -979,6 +979,21 @@ fn inputs_loop(
     let mut pending: Vec<(String, dj_domain::DjCommand)> = Vec::new();
     let mut last_flush = std::time::Instant::now();
     let mut queued: Option<Vec<u8>> = None;
+    // What the panel said first, once: the owner's complaint is that the window starts with the faders open while the panel
+    // has them closed, and this line says which half is telling the truth.
+    // The last position of every knob and fader the panel reported: what the engine is told again whenever the link is
+    // re-made, so the window can never keep the engine's defaults while the panel stands somewhere else.
+    let mut last_positions: std::collections::HashMap<String, dj_domain::DjCommand> =
+        std::collections::HashMap::new();
+    let mut first_positions = 0_usize;
+    // What the panel actually said in the first seconds: report ids seen, events decoded, positions sent. One line, and
+    // "the window starts with the faders open" stops being a guess about which half is wrong.
+    let mut seen_reports = 0_usize;
+    let mut seen_events = 0_usize;
+    let mut seen_reports_ids: Vec<u8> = Vec::new();
+    let mut counted = false;
+    let counting_from = std::time::Instant::now();
+    let mut waiting_said = false;
     loop {
         let report_bytes = match queued.take() {
             Some(report) => report,
@@ -986,7 +1001,7 @@ fn inputs_loop(
                 Ok(report) => report,
                 Err(_) => {
                     println!("dj-controller: the panel stopped answering; no more presses");
-                    flush_pending(&mut pending, &mut link, endpoint);
+                    flush_pending(&mut pending, &mut link, endpoint, &mut waiting_said);
                     return;
                 }
             },
@@ -994,16 +1009,32 @@ fn inputs_loop(
         if report_bytes.len() < 2 {
             continue;
         }
+        seen_reports += 1;
+        if !seen_reports_ids.contains(&report_bytes[0]) {
+            seen_reports_ids.push(report_bytes[0]);
+        }
         let report = report_bytes[0];
         let payload = &report_bytes[1..];
         let _ = &pending;
         for event in map.decode(report, payload, &mut previous) {
+            if first_positions < 24
+                && map
+                    .field_of(&event.control)
+                    .is_some_and(|field| field.width > 1)
+            {
+                if first_positions == 0 {
+                    println!("dj-controller: the panel's starting positions:");
+                }
+                first_positions += 1;
+                println!(
+                    "dj-controller:   {} = {:.3} (report {report})",
+                    event.control, event.value
+                );
+            }
             // A PLAY button asks for the opposite of what the deck is doing, so the deck's own state is part of the
             // question.
             let (running, pad) = match playing.lock() {
-                Ok(state) => match dj_controller_core::BindableDeck::from_control(&event.control)
-                    .map(|(deck, _)| deck.id())
-                {
+                Ok(state) => match driving_deck(&event.control, &state) {
                     Some(deck) => {
                         let index = deck_index(deck);
                         let slot = match dj_controller_core::intent_for(&event.control) {
@@ -1036,6 +1067,68 @@ fn inputs_loop(
             // Every event is written down with its time: "the deck started by itself" is answered by reading what came
             // in and when, not by guessing (owner's report, 24.11).
             let now = started.elapsed().as_millis();
+            // The browser is not a deck's: one VIEW button and one encoder serve both decks and the window, so they are
+            // answered before the binding table, which speaks only about decks.
+            if event.control.starts_with("panel.deck_") {
+                if event.value > 0.5 {
+                    let command = panel_deck_command(&event.control);
+                    if let Some((deck, command)) = command {
+                        println!(
+                            "dj-controller: at {now} ms {} = 1 (report {report}) → the panel drives {deck:?}",
+                            event.control
+                        );
+                        pending.push((event.control.clone(), command));
+                        flush_pending(&mut pending, &mut link, endpoint, &mut waiting_said);
+                    }
+                }
+                continue;
+            }
+            // Shift is a state, not a command: it decides what the next turn of the encoder means.
+            if event.control.ends_with(".shift") {
+                let index = usize::from(!event.control.starts_with("deck_a"));
+                if let Ok(mut state) = playing.lock() {
+                    state.shift[index] = event.value > 0.5;
+                }
+                println!(
+                    "dj-controller: at {now} ms {} = {:.0} (report {report})",
+                    event.control, event.value
+                );
+                continue;
+            }
+            if event.control.starts_with("panel.") {
+                match panel_command(&event, &playing) {
+                    Some(command) => {
+                        println!(
+                            "dj-controller: at {now} ms {} = {:.0} (report {report}) → {command:?}",
+                            event.control, event.value
+                        );
+                        if let Ok(mut state) = playing.lock()
+                            && let dj_domain::DjCommand::BrowserShow { open } = &command
+                        {
+                            // Said here as well as in the engine: a second press must fold the browser back, not ask for
+                            // the same thing twice while the snapshot is on its way.
+                            state.browser_open = *open;
+                        }
+                        // Every turn is its own row: nothing is coalesced, or a fast turn would move one row.
+                        pending.push((event.control.clone(), command));
+                        flush_pending(&mut pending, &mut link, endpoint, &mut waiting_said);
+                    }
+                    None => {
+                        if event.control.starts_with("panel.encoder_press") && event.value > 0.5 {
+                            let held = playing
+                                .lock()
+                                .ok()
+                                .and_then(|state| state.browser_cursor.clone());
+                            println!(
+                                "dj-controller: at {now} ms {} — the browser has no row selected (the engine's cursor: {})",
+                                event.control,
+                                held.unwrap_or_else(|| "none".to_string())
+                            );
+                        }
+                    }
+                }
+                continue;
+            }
             let Some((deck, command)) = mapping.resolve_control(&event, running, pad) else {
                 println!(
                     "dj-controller: at {now} ms {} = {:.3} (report {report}) asks for nothing; deck running {running}",
@@ -1080,12 +1173,17 @@ fn inputs_loop(
                 event.value,
                 raw.unwrap_or_default()
             );
+            // The buttons of a side go to the deck that side is switched to: the transport and the pads of the left half of
+            // the panel are named `deck_a` in the map, and A stops meaning anything once the side is on C.
+            let command = follow_side(command, &event.control, &playing);
             if let dj_domain::DjCommand::SetChannelFader { deck, position } = &command
                 && let Ok(mut state) = playing.lock()
             {
                 state.fader_asked[deck_index(*deck)] = Some(*position);
             }
             if analog {
+                seen_events += 1;
+                last_positions.insert(event.control.clone(), command.clone());
                 // One entry per control, the newest wins.
                 if let Some(slot) = pending
                     .iter_mut()
@@ -1110,15 +1208,250 @@ fn inputs_loop(
         match reports.try_recv() {
             Ok(next) => queued = Some(next),
             Err(_) => {
-                flush_pending(&mut pending, &mut link, endpoint);
+                flush_pending(&mut pending, &mut link, endpoint, &mut waiting_said);
                 last_flush = std::time::Instant::now();
             }
         }
+        if !counted && counting_from.elapsed() > std::time::Duration::from_secs(2) {
+            counted = true;
+            println!(
+                "dj-controller: 2 s in: {seen_reports} reports (ids {seen_reports_ids:?}), {seen_events} events, {} positions known",
+                last_positions.len()
+            );
+        }
         if last_flush.elapsed() > std::time::Duration::from_millis(10) {
-            flush_pending(&mut pending, &mut link, endpoint);
+            // No link: put every known position back in the queue before trying again. The first positions of a session
+            // arrive before the engine answers, and a position that is never sent stays wrong in the window until a hand
+            // happens to move that very control (owner's report, 24.11).
+            if link.is_none() && !last_positions.is_empty() {
+                for (control, command) in &last_positions {
+                    if !pending.iter().any(|(queued, _)| queued == control) {
+                        pending.push((control.clone(), command.clone()));
+                    }
+                }
+            }
+            flush_pending(&mut pending, &mut link, endpoint, &mut waiting_said);
             last_flush = std::time::Instant::now();
         }
     }
+}
+
+/// One owner of the panel, or none.
+///
+/// A second `dj-controller` on the same device does not queue behind the first: two readers **split** the report stream
+/// between them, and each process sees about half of what the hand does. The owner's symptom was exactly that — the window
+/// kept the engine's defaults until one fader happened to move, because its positions had gone to the other reader. Two
+/// writers are no better: the panel ends up dark, flickering or both, depending on who wrote last.
+fn claim_panel() -> Result<std::path::PathBuf, String> {
+    let directory = std::env::var("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir());
+    let path = directory.join("hauler-dj-controller.pid");
+    for attempt in 0..2_u8 {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                use std::io::Write as _;
+                let _ = writeln!(file, "{}", std::process::id());
+                return Ok(path);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let held = std::fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|text| text.trim().parse::<u32>().ok());
+                if let Some(pid) = held
+                    && pid != std::process::id()
+                    && std::path::Path::new(&format!("/proc/{pid}")).exists()
+                {
+                    return Err(format!(
+                        "another dj-controller already drives the panel (pid {pid}): two readers split the reports \
+                         and two writers fight over the lights, so this one stops"
+                    ));
+                }
+                // A leftover from a process that is gone: taken over.
+                let _ = std::fs::remove_file(&path);
+                if attempt == 1 {
+                    return Err(format!("{} cannot be taken", path.display()));
+                }
+            }
+            Err(error) => return Err(format!("{} cannot be written: {error}", path.display())),
+        }
+    }
+    Err(format!("{} cannot be taken", path.display()))
+}
+
+/// What the browser's own controls ask of the engine, if anything.
+///
+/// - **VIEW** folds the browser away or brings it back: the one thing both the panel and the window can do to it.
+/// - **The encoder's turn** moves the cursor one row. A relative field says which way it went (1.0 right, 0.0 left), not
+///   how far: one step is one row, the same as Mixxx's own encoder handling.
+/// - **The encoder's press** loads the row the cursor stands on, into a deck that is standing still. A playing deck
+///   refuses a load, and a press that cut the track the room is dancing to would be the one mistake the panel must not be
+///   able to make; with both decks playing the press names deck B and the engine refuses it, which is said out loud.
+fn panel_command(
+    event: &dj_controller_core::ControlEvent,
+    playing: &Playing,
+) -> Option<dj_domain::DjCommand> {
+    let pressed = event.value > 0.5;
+    match event.control.as_str() {
+        "panel.view" | "panel.view_right" => {
+            let open = playing.lock().ok()?.browser_open;
+            pressed.then_some(dj_domain::DjCommand::BrowserShow { open: !open })
+        }
+        "panel.encoder" | "panel.encoder_right" => Some(dj_domain::DjCommand::BrowserStep {
+            delta: if pressed { 1 } else { -1 },
+        }),
+        "panel.encoder_press" => {
+            if !pressed {
+                return None;
+            }
+            let state = playing.lock().ok()?;
+            let path = state.browser_cursor.clone()?;
+            Some(dj_domain::DjCommand::Load {
+                deck: state.panel_left,
+                path,
+            })
+        }
+        "panel.encoder_press_right" => {
+            if !pressed {
+                return None;
+            }
+            let state = playing.lock().ok()?;
+            let path = state.browser_cursor.clone()?;
+            Some(dj_domain::DjCommand::Load {
+                deck: state.panel_right,
+                path,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// The deck a control of the panel actually commands.
+///
+/// The map names the panel's halves `deck_a` and `deck_b`; a side switched to C or D still sends `deck_a.*`, so the state a
+/// press is judged by — is the deck playing? does the pad hold a cue? — must come from the deck the side drives. Reading A
+/// while the DJ watches C made PLAY start C instead of stopping it, because A was the deck that was standing still
+/// (owner's report, 24.11).
+fn driving_deck(control: &str, state: &DeckFactsShared) -> Option<dj_domain::DeckId> {
+    if control.starts_with("deck_a.") {
+        return Some(state.panel_left);
+    }
+    if control.starts_with("deck_b.") {
+        return Some(state.panel_right);
+    }
+    dj_controller_core::BindableDeck::from_control(control).map(|(deck, _)| deck.id())
+}
+
+/// Send a command to the deck the side of the panel is switched to.
+///
+/// The map names the panel's own halves `deck_a` and `deck_b`, because that is what they were when a session began. Once a
+/// side is switched to C or D, every transport and pad command from that half must go to that deck — a PLAY that starts A
+/// while the DJ is looking at C is worse than a dark button. Mixer controls are left alone: the four channel faders and
+/// the equalisers belong to channels, not to the decks the sides drive.
+fn follow_side(
+    command: dj_domain::DjCommand,
+    control: &str,
+    playing: &Playing,
+) -> dj_domain::DjCommand {
+    let target = if control.starts_with("deck_a.") {
+        playing.lock().ok().map(|state| state.panel_left)
+    } else if control.starts_with("deck_b.") {
+        playing.lock().ok().map(|state| state.panel_right)
+    } else {
+        None
+    };
+    let Some(target) = target else {
+        return command;
+    };
+    command_for_deck(command, target)
+}
+
+/// The same command, addressed to another deck.
+fn command_for_deck(
+    command: dj_domain::DjCommand,
+    deck: dj_domain::DeckId,
+) -> dj_domain::DjCommand {
+    use dj_domain::DjCommand;
+    match command {
+        DjCommand::Play { enabled, .. } => DjCommand::Play { deck, enabled },
+        DjCommand::Cue { action, .. } => DjCommand::Cue { deck, action },
+        DjCommand::Sync { mode, .. } => DjCommand::Sync { deck, mode },
+        DjCommand::Metronome { enabled, .. } => DjCommand::Metronome { deck, enabled },
+        DjCommand::SetCueMeta {
+            slot, label, color, ..
+        } => DjCommand::SetCueMeta {
+            deck,
+            slot,
+            label,
+            color,
+        },
+        DjCommand::SetPadLoop { slot, .. } => DjCommand::SetPadLoop { deck, slot },
+        other => other,
+    }
+}
+
+/// The byte of a deck's own select button, by the name the lights map gives it.
+fn deck_select_byte(deck: dj_domain::DeckId) -> Option<u8> {
+    let name = match deck {
+        dj_domain::DeckId::A => "Deck select A",
+        dj_domain::DeckId::B => "Deck select B",
+        dj_domain::DeckId::C => "Deck select C",
+        dj_domain::DeckId::D => "Deck select D",
+    };
+    dj_controller_s4mk3::lights::byte_of(name)
+}
+
+/// Light the select button of the deck each side drives, and let its neighbour sit back.
+///
+/// The panel has a select button per deck; the one the side is on is bright, the other is faint — the same "on" and
+/// "off" brightness as the rest of the panel, so the pair reads as one choice rather than two lamps.
+fn paint_deck_select(
+    report: &mut dj_controller_s4mk3::lights::LightsReport,
+    left: dj_domain::DeckId,
+    right: dj_domain::DeckId,
+    palette: &dj_controller_s4mk3::lights::Palette,
+    night: bool,
+) {
+    let sides = [
+        (left, [dj_domain::DeckId::A, dj_domain::DeckId::C]),
+        (right, [dj_domain::DeckId::B, dj_domain::DeckId::D]),
+    ];
+    for (chosen, pair) in sides {
+        for deck in pair {
+            let Some(byte) = deck_select_byte(deck) else {
+                continue;
+            };
+            let Some(slot) = report.body.get_mut(usize::from(byte)) else {
+                continue;
+            };
+            *slot = if deck == chosen {
+                dj_controller_s4mk3::lights::bright(palette.resting.code())
+            } else if night {
+                dj_controller_s4mk3::lights::dim(palette.resting.code())
+            } else {
+                0
+            };
+        }
+    }
+}
+
+/// The deck a select button names, and the command that says the side drives it.
+///
+/// Four buttons, one per deck: A and C sit on the left side, B and D on the right. The engine carries the choice so the
+/// window can show it and so a press of the browse encoder on that side knows where to load.
+fn panel_deck_command(control: &str) -> Option<(dj_domain::DeckId, dj_domain::DjCommand)> {
+    let (deck, side) = match control {
+        "panel.deck_a" => (dj_domain::DeckId::A, dj_domain::PanelSide::Left),
+        "panel.deck_c" => (dj_domain::DeckId::C, dj_domain::PanelSide::Left),
+        "panel.deck_b" => (dj_domain::DeckId::B, dj_domain::PanelSide::Right),
+        "panel.deck_d" => (dj_domain::DeckId::D, dj_domain::PanelSide::Right),
+        _ => return None,
+    };
+    Some((deck, dj_domain::DjCommand::PanelDeck { side, deck }))
 }
 
 /// Whether a press is the second half of a light touch on the same button.
@@ -1135,6 +1468,7 @@ fn flush_pending(
     pending: &mut Vec<(String, dj_domain::DjCommand)>,
     link: &mut Option<EngineLink>,
     endpoint: &str,
+    waiting_said: &mut bool,
 ) {
     if pending.is_empty() {
         return;
@@ -1143,9 +1477,29 @@ fn flush_pending(
         *link = EngineLink::connect(endpoint).ok();
     }
     let Some(open) = link.as_mut() else {
-        pending.clear();
+        if !*waiting_said {
+            println!(
+                "dj-controller: the engine is not answering yet; {} positions are waiting",
+                pending.len()
+            );
+            *waiting_said = true;
+        }
+        // Kept, not dropped: the first positions of the session arrive before the engine answers, and dropping them left
+        // every fader in the window where the engine's defaults put it until a hand moved it again. Bounded, so a panel
+        // turned while the engine is away cannot grow this without limit.
+        if pending.len() > 64 {
+            let excess = pending.len() - 64;
+            pending.drain(..excess);
+        }
         return;
     };
+    if *waiting_said {
+        println!(
+            "dj-controller: the engine answered; sending {} waiting positions",
+            pending.len()
+        );
+        *waiting_said = false;
+    }
     for (control, command) in pending.drain(..) {
         if let Err(reason) = open.send(&command) {
             println!("dj-controller: {control} did not reach the engine: {reason}");
@@ -1171,7 +1525,7 @@ fn deck_index(deck: dj_domain::DeckId) -> usize {
 /// Two readers: the lights and the presses. A PLAY button asks for the opposite of what the deck is doing, and a hotcue
 /// pad jumps to its slot when the slot holds a cue and stores one when it does not — both are questions about the decks,
 /// not about the panel.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug)]
 struct DeckFactsShared {
     playing: [bool; 4],
     cues: [[bool; 8]; 4],
@@ -1182,6 +1536,34 @@ struct DeckFactsShared {
     /// What the panel last asked the engine for, per channel: a fader thrown to the top must be seen at the top by the
     /// next snapshot, and a disagreement is said out loud rather than left as "it stopped half way".
     fader_asked: [Option<f32>; 4],
+    /// Whether the browser is on the screen: the VIEW button asks for the opposite of this.
+    browser_open: bool,
+    /// The path the window's browser cursor stands on: what a press of the encoder loads.
+    browser_cursor: Option<String>,
+    /// Shift of each deck side: with it held, the encoder walks the left block instead of the rows.
+    shift: [bool; 2],
+    /// The deck each side of the panel drives: the deck switch moves it, and a load lands there. Left is A and right is B
+    /// until the switch says otherwise.
+    panel_left: dj_domain::DeckId,
+    panel_right: dj_domain::DeckId,
+}
+
+impl Default for DeckFactsShared {
+    /// The browser is open until someone folds it away, and nothing is selected until the window says so.
+    fn default() -> Self {
+        Self {
+            playing: [false; 4],
+            cues: [[false; 8]; 4],
+            loops: [[false; 8]; 4],
+            active_loop: [false; 4],
+            fader_asked: [None; 4],
+            browser_open: true,
+            browser_cursor: None,
+            shift: [false; 2],
+            panel_left: dj_domain::DeckId::A,
+            panel_right: dj_domain::DeckId::B,
+        }
+    }
 }
 
 type Playing = std::sync::Arc<std::sync::Mutex<DeckFactsShared>>;
@@ -1659,12 +2041,16 @@ struct DeckFacts {
 /// Two halves again: hotcues, `PLAY`, `CUE` and sync belong to the decks with platters — the left and right pairs — while
 /// the mixer section has an FX button for each of the four decks the program runs. Decks C and D have no platter on this
 /// controller, so nothing else of theirs can be lit.
-fn show_from_facts(decks: &[DeckFacts; 4]) -> dj_controller_s4mk3::lights::Show {
+fn show_from_facts(decks: &[DeckFacts; 4], sides: [usize; 2]) -> dj_controller_s4mk3::lights::Show {
+    // The panel's two sides show the two decks they are switched to, not always A and B: a side on C must light C's
+    // transport, C's pads and C's loop, or the panel lies about the deck the DJ is working on (owner's report, 24.11).
+    let left = decks.get(sides[0]).copied().unwrap_or_default();
+    let right = decks.get(sides[1]).copied().unwrap_or_default();
     dj_controller_s4mk3::lights::Show {
-        hotcues: [decks[0].hotcues, decks[1].hotcues],
-        playing: [decks[0].playing, decks[1].playing],
-        monitoring: [decks[0].monitoring, decks[1].monitoring],
-        sync: [decks[0].sync, decks[1].sync],
+        hotcues: [left.hotcues, right.hotcues],
+        playing: [left.playing, right.playing],
+        monitoring: [left.monitoring, right.monitoring],
+        sync: [left.sync, right.sync],
         fx: [decks[0].fx, decks[1].fx, decks[2].fx, decks[3].fx],
     }
 }
@@ -1760,6 +2146,7 @@ fn lights_show(
     };
     // Without a device the show says what it would light: that is the half a person can check without the controller,
     // and the only half a machine with no panel can test at all.
+    let _panel = claim_panel()?;
     let mut sink = if devices.is_empty() {
         None
     } else {
@@ -1865,8 +2252,20 @@ fn lights_show(
                     }
                     state.active_loop[index] = deck.loop_region.is_some();
                 }
+                state.browser_open = snapshot.browser.open;
+                state.panel_left = snapshot.panel.left;
+                state.panel_right = snapshot.panel.right;
+                state.browser_cursor = snapshot.browser.cursor.clone();
             }
-            let show = show_from_facts(&facts);
+            let (side_left, side_right) = playing
+                .and_then(|playing| {
+                    playing
+                        .lock()
+                        .ok()
+                        .map(|state| (state.panel_left.index(), state.panel_right.index()))
+                })
+                .unwrap_or((0, 1));
+            let show = show_from_facts(&facts, [side_left, side_right]);
             // What the pads are made of, once per change: a pad that goes dark after a load is answered by looking at what the
             // snapshot actually carried, not by guessing which branch of the colouring was taken.
             let pads_now: Vec<String> = snapshot
@@ -1899,6 +2298,18 @@ fn lights_show(
             } else {
                 dj_controller_s4mk3::lights::report_with(&show, palette)
             };
+            // The deck each side drives is marked on the panel itself: its select button is the bright one, so a hand can
+            // see where a load would land without looking at the screen.
+            let (panel_left, panel_right) = playing
+                .and_then(|playing| {
+                    playing
+                        .lock()
+                        .ok()
+                        .map(|state| (state.panel_left, state.panel_right))
+                })
+                .unwrap_or((dj_domain::DeckId::A, dj_domain::DeckId::B));
+            let mut report = report;
+            paint_deck_select(&mut report, panel_left, panel_right, palette, night);
             let wire = report.wire(with_id);
             if last.as_ref() == Some(&wire) {
                 continue;
@@ -2170,6 +2581,12 @@ impl EngineLink {
             if let ServerMessage::Ack(ack) = message
                 && ack.command_id == id
             {
+                // A refusal is not a send. The engine says why — a deck that is playing refuses a load, because cutting
+                // the track the room is dancing to is the one mistake a DJ never forgives — and swallowing that here
+                // would leave the DJ pressing a button that does nothing at all.
+                if let dj_domain::AckStatus::Rejected(reason) = ack.status {
+                    return Err(format!("the engine refused it: {reason:?}"));
+                }
                 return Ok(());
             }
         }
@@ -2350,7 +2767,7 @@ mod tests {
             DeckFacts::default(),
             DeckFacts::default(),
         ];
-        let show = show_from_facts(&decks);
+        let show = show_from_facts(&decks, [0, 1]);
         assert!(show.playing[0] && !show.playing[1]);
         assert!(show.monitoring[0] && !show.monitoring[1]);
         assert!(!show.sync[0] && !show.sync[1]);
@@ -2374,7 +2791,7 @@ mod tests {
                 ..DeckFacts::default()
             },
         ];
-        let show = show_from_facts(&decks);
+        let show = show_from_facts(&decks, [0, 1]);
         assert_eq!(show.fx, [false, false, true, true]);
     }
 
@@ -2406,6 +2823,147 @@ mod tests {
         if let Err(text) = refused {
             assert!(text.contains("--nonsense"), "{text}");
         }
+    }
+
+    #[test]
+    fn a_press_is_judged_by_the_deck_the_side_drives() {
+        let state = super::DeckFactsShared {
+            panel_left: dj_domain::DeckId::C,
+            ..super::DeckFactsShared::default()
+        };
+        // The left half of the panel still says `deck_a` in the map, but it commands C.
+        assert_eq!(
+            super::driving_deck("deck_a.play_pause", &state),
+            Some(dj_domain::DeckId::C)
+        );
+        assert_eq!(
+            super::driving_deck("deck_b.play_pause", &state),
+            Some(dj_domain::DeckId::B)
+        );
+        // A mixer control keeps its own deck: the channel fader is a channel, not a side.
+        assert_eq!(
+            super::driving_deck("deck_c.fader", &state),
+            Some(dj_domain::DeckId::C)
+        );
+    }
+
+    #[test]
+    fn the_deck_each_side_drives_is_the_bright_one() {
+        let palette = dj_controller_s4mk3::lights::Palette::default();
+        let mut report = dj_controller_s4mk3::lights::report_at_rest(
+            &dj_controller_s4mk3::lights::Show::default(),
+            &palette,
+        );
+        super::paint_deck_select(
+            &mut report,
+            dj_domain::DeckId::A,
+            dj_domain::DeckId::B,
+            &palette,
+            true,
+        );
+        let byte = |deck| usize::from(super::deck_select_byte(deck).unwrap_or(0));
+        let bright = dj_controller_s4mk3::lights::bright(palette.resting.code());
+        let faint = dj_controller_s4mk3::lights::dim(palette.resting.code());
+        assert_eq!(
+            report.body[byte(dj_domain::DeckId::A)],
+            bright,
+            "the deck the left side drives is bright"
+        );
+        assert_eq!(
+            report.body[byte(dj_domain::DeckId::C)],
+            faint,
+            "the other deck of that side sits back"
+        );
+        // The switch moves the light with it.
+        super::paint_deck_select(
+            &mut report,
+            dj_domain::DeckId::C,
+            dj_domain::DeckId::D,
+            &palette,
+            true,
+        );
+        assert_eq!(report.body[byte(dj_domain::DeckId::C)], bright);
+        assert_eq!(report.body[byte(dj_domain::DeckId::A)], faint);
+        assert_eq!(report.body[byte(dj_domain::DeckId::D)], bright);
+        assert_eq!(report.body[byte(dj_domain::DeckId::B)], faint);
+    }
+
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn the_browser_controls_say_what_the_panel_asks() {
+        let playing: Playing =
+            std::sync::Arc::new(std::sync::Mutex::new(super::DeckFactsShared::default()));
+        // VIEW asks for the opposite of what is on screen, so one button does both.
+        let view = dj_controller_core::ControlEvent::button("panel.view", true);
+        assert_eq!(
+            super::panel_command(&view, &playing),
+            Some(dj_domain::DjCommand::BrowserShow { open: false })
+        );
+        let release = dj_controller_core::ControlEvent::button("panel.view", false);
+        assert_eq!(
+            super::panel_command(&release, &playing),
+            None,
+            "letting go asks for nothing"
+        );
+        // A turn is one row: right is 1.0, left is 0.0.
+        let right = dj_controller_core::ControlEvent::level("panel.encoder", 1.0);
+        assert_eq!(
+            super::panel_command(&right, &playing),
+            Some(dj_domain::DjCommand::BrowserStep { delta: 1 })
+        );
+        let left = dj_controller_core::ControlEvent::level("panel.encoder", 0.0);
+        assert_eq!(
+            super::panel_command(&left, &playing),
+            Some(dj_domain::DjCommand::BrowserStep { delta: -1 })
+        );
+        // A press with nothing selected loads nothing, and says so instead of guessing a row.
+        let press = dj_controller_core::ControlEvent::button("panel.encoder_press", true);
+        assert_eq!(super::panel_command(&press, &playing), None);
+        // With a row selected the standing deck takes it.
+        {
+            let mut state = playing.lock().expect("the state");
+            state.browser_cursor = Some("/music/one.flac".to_string());
+        }
+        assert_eq!(
+            super::panel_command(&press, &playing),
+            Some(dj_domain::DjCommand::Load {
+                deck: dj_domain::DeckId::A,
+                path: "/music/one.flac".to_string()
+            })
+        );
+        // The right encoder loads into the right side's deck, whatever the left one is doing.
+        let press_right =
+            dj_controller_core::ControlEvent::button("panel.encoder_press_right", true);
+        assert_eq!(
+            super::panel_command(&press_right, &playing),
+            Some(dj_domain::DjCommand::Load {
+                deck: dj_domain::DeckId::B,
+                path: "/music/one.flac".to_string()
+            })
+        );
+        // The deck switch moves a side to its second deck, and a press follows it there.
+        let switch = dj_controller_core::ControlEvent::button("panel.deck_c", true);
+        assert_eq!(
+            super::panel_deck_command("panel.deck_c").map(|(deck, _)| deck),
+            Some(dj_domain::DeckId::C),
+            "the C button names deck C, it does not toggle"
+        );
+        assert_eq!(
+            super::panel_deck_command("panel.deck_d").map(|(deck, _)| deck),
+            Some(dj_domain::DeckId::D)
+        );
+        {
+            let mut state = playing.lock().expect("the state");
+            state.panel_left = dj_domain::DeckId::C;
+        }
+        assert_eq!(
+            super::panel_command(&press, &playing),
+            Some(dj_domain::DjCommand::Load {
+                deck: dj_domain::DeckId::C,
+                path: "/music/one.flac".to_string()
+            })
+        );
+        let _ = switch;
     }
 
     #[test]

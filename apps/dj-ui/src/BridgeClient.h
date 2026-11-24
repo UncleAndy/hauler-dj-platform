@@ -391,6 +391,15 @@ class BridgeClient : public QObject
     Q_PROPERTY(qulonglong epoch READ epoch NOTIFY connectedChanged)
     // Where the load dialog starts: $HOME/Music when it exists, otherwise the home directory.
     Q_PROPERTY(QString homeFolder READ homeFolder CONSTANT)
+    // Where the browser stands, as the engine carries it: whether it is on screen, the row its cursor is on, and the last
+    // nudge from the panel. The panel and the window have no other channel, and a VIEW press must fold away the same
+    // browser the DJ is looking at.
+    Q_PROPERTY(bool browserOpen READ browserOpen NOTIFY browserChanged)
+    Q_PROPERTY(QString browserCursor READ browserCursor NOTIFY browserChanged)
+    // Every nudge the panel has asked for, counted: a reader applies each number once, so a step is never taken twice.
+    Q_PROPERTY(int browserStepSeq READ browserStepSeq NOTIFY browserChanged)
+    // Rows the last nudge asked for; negative is up.
+    Q_PROPERTY(int browserStep READ browserStep NOTIFY browserChanged)
 
 public:
     explicit BridgeClient(QObject *parent = nullptr);
@@ -419,6 +428,17 @@ public:
     // Prepare a file into a deck. Acknowledged as accepted, not applied: the deck is playable when
     // a snapshot reports `Ready` (ADR-0008).
     Q_INVOKABLE int load(const QString &deck, const QString &path);
+    /// Show the browser or fold it away, for every client: the panel's VIEW button and the window's own.
+    Q_INVOKABLE void browserShow(bool open);
+    /// Tell the engine which row the window's cursor stands on, so a press of the panel's encoder knows what to load.
+    Q_INVOKABLE void browserCursorTo(const QString &path);
+    /// Send a command without touching the status line: the browser moves far more often than a deck does.
+    void sendQuiet(const QJsonObject &command);
+    /// Read a browser property from the last snapshot.
+    bool browserOpen() const;
+    QString browserCursor() const;
+    int browserStepSeq() const;
+    int browserStep() const;
     /// Ask the engine for a page of the collection (DJP-MEDIA-007).
     ///
     /// `query` is `{id, order: [{column, ascending}], genres, search, offset, limit}` — the words of the
@@ -584,6 +604,8 @@ signals:
     /// The endpoint moved: the shell is now asking another name for the engine.
     void endpointChanged();
     void snapshotChanged();
+    /// The browser moved: on screen or folded away, or its cursor stands somewhere else, or the panel asked for a row.
+    void browserChanged();
     // An ack arrived: the engine applied (or refused) command `id`.
     void acked(int id, bool applied, bool rejected, QString reason);
     // Something went wrong at the transport level; the UI must show it rather than pretend.
@@ -640,6 +662,11 @@ private:
     // Called with the folder a track was loaded from, so the browser can open there next time.
     std::function<void(const QString &)> m_loadFolder;
     QVariantMap m_snapshot;
+    /// What the browser's own cell said last, so a signal is only sent when it moved.
+    bool m_browserOpen = true;
+    QString m_browserCursor;
+    int m_browserStepSeq = 0;
+    int m_browserStep = 0;
     qulonglong m_epoch = 0;
     int m_nextCommandId = 1;
     /// What each command id asked for, so a refusal can name it: "command 12 (Load) refused: Busy" says

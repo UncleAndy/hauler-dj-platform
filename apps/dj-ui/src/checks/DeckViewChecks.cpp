@@ -2770,27 +2770,32 @@ int runLayoutCheck(QQmlApplicationEngine& engine, LayoutSettings& layout, UiSett
         }
     }
 
-    // And the fader has to be painted, not merely placed: at rest it stands at unity, which for a
-    // channel fader is the top of the scale, so a bright line must cross the meter there over a
-    // dark background.
+    // And the fader has to be painted, not merely placed: a bright line must cross the meter wherever the handle stands.
+    //
+    // The sample point comes from the handle's own position, not from an assumed unity: a channel starts with its fader
+    // **down** now (the panel is silent about its knobs until a hand moves one, so the default is what the window shows),
+    // and looking for the line at the top of the scale read a correctly drawn fader as an empty meter (owner's rule and
+    // the gate it broke, 24.11).
     if (auto* pointer = findItem(content, QStringLiteral("fader_A")); pointer != nullptr) {
         const QImage frame = window->grabWindow();
         if (!frame.isNull()) {
             const QPointF origin = pointer->mapToScene(QPointF(0, 0));
             const double ratio =
                 content->width() > 0 ? static_cast<double>(frame.width()) / content->width() : 1.0;
-            // The fader at unity sits on the first line of the scale, three pixels in from the top
-            // edge — the same inset the knob draws its travel with.
-            const double unityY = origin.y() + 3.0;
-            // Away from the middle: the grip sits there, and this is a check about the line.
+            const double position = qBound(0.0, pointer->property("position").toDouble(), 1.0);
+            // The travel is drawn three pixels in from each edge, the same inset the knob uses.
+            const double travel = pointer->height() - 6.0;
+            const double lineY = origin.y() + 3.0 + (1.0 - position) * travel;
+            // Away from the middle: the grip sits there, and this is a check about the line. The dark sample is taken at
+            // the middle of the travel, so it stays away from the handle wherever the handle is.
             const double sampleX = origin.x() + 4.0;
             const QColor onLine = frame.pixelColor(static_cast<int>(sampleX * ratio),
-                                                   static_cast<int>(unityY * ratio));
-            const QColor below =
-                frame.pixelColor(static_cast<int>(sampleX * ratio),
-                                 static_cast<int>((unityY + pointer->height() * 0.08) * ratio));
-            std::fprintf(stdout, "dj-ui: the gain pointer draws %s at unity over %s\n",
-                         qPrintable(onLine.name()), qPrintable(below.name()));
+                                                   static_cast<int>(lineY * ratio));
+            const QColor below = frame.pixelColor(
+                static_cast<int>(sampleX * ratio),
+                static_cast<int>((origin.y() + 3.0 + travel * 0.5) * ratio));
+            std::fprintf(stdout, "dj-ui: the gain pointer draws %s at %.2f over %s\n",
+                         qPrintable(onLine.name()), position, qPrintable(below.name()));
             if (!(onLine.lightness() > below.lightness() + 60)) {
                 std::fprintf(stderr, "dj-ui: the gain pointer is not drawn on the meter\n");
                 return 1;
@@ -5075,6 +5080,10 @@ int runMasterCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, UiSettin
             std::fprintf(stderr, "dj-ui: the master check could not load a track\n");
             return 1;
         }
+        // A channel starts with its fader down — the panel only reports its knobs when a hand moves one, so the default is
+        // what the window shows, and the safe default is silence. The DJ's own gesture opens the channel, and the check makes
+        // it before it expects sound: a meter at zero with the fader down is the program being right, not deaf.
+        bridge->setChannelFader(QStringLiteral("A"), 1.0);
         bridge->play(QStringLiteral("A"), true);
         QElapsedTimer playing;
         playing.start();

@@ -181,6 +181,15 @@ impl Engine {
                 Some(Ack::rejected(command_id, RejectReason::NotSupported))
             }
             // The playlists are the index's business too, not the audio path's.
+            // The browser's place in a list is the window's, carried by the engine: not the audio path's business.
+            DjCommand::PanelDeck { .. } => {
+                Some(Ack::rejected(command_id, RejectReason::NotSupported))
+            }
+            DjCommand::BrowserShow { .. }
+            | DjCommand::BrowserCursor { .. }
+            | DjCommand::BrowserStep { .. } => {
+                Some(Ack::rejected(command_id, RejectReason::NotSupported))
+            }
             DjCommand::QueryPlaylist { .. } | DjCommand::Playlists { .. } => {
                 Some(Ack::rejected(command_id, RejectReason::NotSupported))
             }
@@ -292,6 +301,8 @@ impl Engine {
     /// audio callback.
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
+            panel: dj_domain::PanelDecks::default(),
+            browser: dj_domain::BrowserState::default(),
             hamster: false,
             model: Default::default(),
             import: None,
@@ -365,7 +376,7 @@ impl Engine {
                 slip: false,
                 slip_frame: None,
                 // The A01 renderer is a bare tone: no mixer, so no channel fader or EQ.
-                fader: 1.0,
+                fader: 0.0,
                 eq: dj_domain::EqGains::FLAT,
                 // One generated tone has nobody to follow and nothing to lead.
                 master: false,

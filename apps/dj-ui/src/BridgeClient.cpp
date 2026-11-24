@@ -2203,6 +2203,21 @@ void BridgeClient::handleMessage(const QJsonObject &message)
 
     if (message.contains(QStringLiteral("Snapshot"))) {
         m_snapshot = message.value(QStringLiteral("Snapshot")).toObject().toVariantMap();
+        // The browser's place, said only when it moves: a signal on every snapshot would redraw the list forty times a
+        // second and fight the DJ's own scrolling.
+        const QVariantMap browser = m_snapshot.value(QStringLiteral("browser")).toMap();
+        const bool open = browser.value(QStringLiteral("open"), true).toBool();
+        const QString cursor = browser.value(QStringLiteral("cursor")).toString();
+        const int stepSeq = browser.value(QStringLiteral("step_seq")).toInt();
+        const int step = browser.value(QStringLiteral("step")).toInt();
+        if (open != m_browserOpen || cursor != m_browserCursor || stepSeq != m_browserStepSeq
+            || step != m_browserStep) {
+            m_browserOpen = open;
+            m_browserCursor = cursor;
+            m_browserStepSeq = stepSeq;
+            m_browserStep = step;
+            emit browserChanged();
+        }
         // The snapshot says which file each deck holds, and the engine is the one that knows. A client
         // that was started against a running engine (or restarted while the decks keep their tracks)
         // has no path of its own; without this the lock and the grid edits went out with an empty path
@@ -2486,6 +2501,63 @@ int BridgeClient::cancelAnalysis()
     // button that does nothing, which is how "Cancel does not cancel" is reported.
     setStatus(QStringLiteral("stopping the analysis"));
     return id;
+}
+
+bool BridgeClient::browserOpen() const
+{
+    return m_browserOpen;
+}
+
+QString BridgeClient::browserCursor() const
+{
+    return m_browserCursor;
+}
+
+int BridgeClient::browserStepSeq() const
+{
+    return m_browserStepSeq;
+}
+
+int BridgeClient::browserStep() const
+{
+    return m_browserStep;
+}
+
+void BridgeClient::browserShow(bool open)
+{
+    QJsonObject options;
+    options.insert(QStringLiteral("open"), open);
+    QJsonObject command;
+    command.insert(QStringLiteral("BrowserShow"), options);
+    sendQuiet(command);
+}
+
+void BridgeClient::sendQuiet(const QJsonObject &command)
+{
+    // No status line and no pending counter: the browser's place changes as often as the DJ moves the cursor, and a
+    // status write per move redraws the whole window — which is what kept a list from settling where it was put
+    // (measured: `--scroll-check` read the content still gliding, 491 -> 473).
+    QJsonObject scheduled;
+    scheduled.insert(QStringLiteral("id"), m_nextCommandId++);
+    scheduled.insert(QStringLiteral("effective_sample"), 0);
+    scheduled.insert(QStringLiteral("command"), command);
+    QJsonObject message;
+    message.insert(QStringLiteral("Command"), scheduled);
+    sendJson(message);
+}
+
+void BridgeClient::browserCursorTo(const QString &path)
+{
+    // The row the window is on, told once: the engine echoes it back in every snapshot, and sending it again on every
+    // echo would be a command per snapshot.
+    if (path == m_browserCursor) {
+        return;
+    }
+    QJsonObject options;
+    options.insert(QStringLiteral("path"), path);
+    QJsonObject command;
+    command.insert(QStringLiteral("BrowserCursor"), options);
+    sendQuiet(command);
 }
 
 int BridgeClient::load(const QString &deck, const QString &path)

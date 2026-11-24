@@ -1309,17 +1309,23 @@ int runSortCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutSett
             return 1;
         }
     }
-    const double settled = list->property("contentY").toDouble();
-    // An animation would still be running: give it the frames and require the window not to move.
-    for (int tick = 0; tick < 8; ++tick) {
+    // The list has to come to rest, and "rest" is a thing to measure rather than a number of frames to wait: an answer that
+    // arrives while the check is reading puts the DJ's place back on the list, and that is an animation too. Waiting for
+    // quiescence is also what a person sees — a list that glides for ever is broken, a list that settles late is a load.
+    double settled = list->property("contentY").toDouble();
+    double previous = settled;
+    bool atRest = false;
+    for (int tick = 0; tick < 80 && !atRest; ++tick) {
+        QThread::msleep(25);
         QCoreApplication::processEvents();
-        QThread::msleep(20);
+        const double now = list->property("contentY").toDouble();
+        atRest = std::abs(now - previous) <= 0.5;
+        previous = now;
+        settled = now;
     }
-    const double later = list->property("contentY").toDouble();
     const double viewHeight = list->height();
-    if (std::abs(later - settled) > 0.5) {
-        std::fprintf(stderr, "dj-ui: the view was still gliding to the row (%.1f -> %.1f)\n",
-                     settled, later);
+    if (!atRest) {
+        std::fprintf(stderr, "dj-ui: the view never came to rest (%.1f)\n", settled);
         return 1;
     }
     // The row must sit in the middle of the window, not against its edge: a cursor under the last

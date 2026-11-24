@@ -27,6 +27,8 @@ pub struct Field {
     pub bit: usize,
     /// How many bits wide: 1 for a button, 12 for an encoder, 16 for a fader.
     pub width: usize,
+    /// Whether the field counts turns rather than states: a browse encoder says "one step right", not "row seven".
+    pub relative: bool,
 }
 
 /// Every control the map knows, and where it lives.
@@ -90,6 +92,31 @@ impl InputMap {
                 continue;
             };
             let value = value_of(raw, field.width);
+            if field.relative {
+                // A turn is a direction, not a position: the encoder's byte counts steps and runs round, so comparing
+                // two values would report a jump from the top to the bottom as a huge move in one direction. The rule is
+                // the one Mixxx's own encoder uses: a step up is "right", a step down is "left", and a wrapped step is
+                // the direction the wrap makes it. The first report of a session only teaches the resting value.
+                let known = previous.get(&field.control).copied();
+                previous.insert(field.control.clone(), value);
+                let Some(known) = known else {
+                    continue;
+                };
+                let right = if known == 1.0 && value == 0.0 {
+                    true
+                } else if known == 0.0 && value == 1.0 {
+                    false
+                } else if (known - value).abs() <= f32::EPSILON {
+                    continue;
+                } else {
+                    value > known
+                };
+                events.push(ControlEvent::level(
+                    field.control.clone(),
+                    if right { 1.0 } else { 0.0 },
+                ));
+                continue;
+            }
             let known = previous.get(&field.control).copied();
             // A button is exact; a knob is not. Sixteen bits of travel jitter by a step or two when nothing is touched,
             // and every one of those steps would be a command to the engine: what looks like a jump is the program
@@ -190,9 +217,9 @@ pub fn parse_inputs(text: &str) -> Result<InputMap, String> {
             continue;
         }
         let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() != 5 {
+        if parts.len() != 5 && !(parts.len() == 6 && parts[5] == "relative") {
             return Err(format!(
-                "line {}: wanted control, report, byte, bit, width; got {line}",
+                "line {}: wanted control, report, byte, bit, width, and an optional `relative`; got {line}",
                 number + 1
             ));
         }
@@ -225,6 +252,7 @@ pub fn parse_inputs(text: &str) -> Result<InputMap, String> {
             byte,
             bit,
             width,
+            relative: parts.len() == 6,
         });
     }
     Ok(InputMap { fields })
@@ -328,5 +356,70 @@ deck_a.crossfader 2 12 0 16
         let error = parse_inputs("deck_a.play 1 4 0 1\ndeck_a.play 1 5 0 1\n")
             .expect_err("one control twice");
         assert!(error.contains("already in the map"), "{error}");
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
+mod browser_tests {
+    use super::*;
+
+    #[test]
+    fn a_turn_says_which_way_it_went() {
+        // A relative field counts steps and runs round: the first report teaches the resting value, a step up is "right",
+        // a step down is "left", and a wrap is a step in the direction the wrap makes it.
+        let map = parse_inputs("panel.encoder 1 20 0 4 relative").expect("the map");
+        let mut previous = HashMap::new();
+        let mut payload = [0_u8; 32];
+        assert!(
+            map.decode(1, &payload, &mut previous).is_empty(),
+            "the resting value is not a turn"
+        );
+        let value = |events: &[ControlEvent]| events.first().map(|event| event.value);
+        payload[20] = 3;
+        assert_eq!(
+            value(&map.decode(1, &payload, &mut previous)),
+            Some(1.0),
+            "right"
+        );
+        payload[20] = 1;
+        assert_eq!(
+            value(&map.decode(1, &payload, &mut previous)),
+            Some(0.0),
+            "left"
+        );
+        payload[20] = 15;
+        assert_eq!(
+            value(&map.decode(1, &payload, &mut previous)),
+            Some(1.0),
+            "right, up to the top"
+        );
+        payload[20] = 0;
+        assert_eq!(
+            value(&map.decode(1, &payload, &mut previous)),
+            Some(1.0),
+            "round the top is still right, not a jump to the bottom of the range"
+        );
+        payload[20] = 15;
+        assert_eq!(
+            value(&map.decode(1, &payload, &mut previous)),
+            Some(0.0),
+            "and round the bottom is left"
+        );
+    }
+
+    #[test]
+    fn the_map_that_ships_has_the_browser_controls() {
+        let map = InputMap::built_in();
+        let encoder = map.field_of("panel.encoder").expect("the browse encoder");
+        assert!(
+            encoder.relative,
+            "an encoder counts steps, it does not hold a position"
+        );
+        assert!(map.field_of("panel.view").is_some(), "the VIEW button");
+        assert!(
+            map.field_of("panel.encoder_press").is_some(),
+            "and the press of the encoder"
+        );
     }
 }

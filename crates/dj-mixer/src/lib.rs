@@ -49,10 +49,16 @@ pub struct ChannelSettings {
 }
 
 impl Default for ChannelSettings {
+    /// A channel starts with its fader **down**.
+    ///
+    /// The controller only reports a knob when the hand moves it — the panel is silent about its positions until it is
+    /// touched (measured with `--inputs-watch`: at rest only the jog counters arrive, report 3). So whatever the engine
+    /// holds is what the window shows until the first touch, and "open" was a lie: the DJ's faders stand closed, and a
+    /// channel that starts at unity opens a track into the room the moment it is loaded (owner's decision, 24.11).
     fn default() -> Self {
         Self {
             trim_db: 0.0,
-            fader: 1.0,
+            fader: 0.0,
             assign: CrossAssign::Thru,
             cue: false,
         }

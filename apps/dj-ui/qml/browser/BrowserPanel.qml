@@ -25,6 +25,8 @@ Pane {
     property var shownDecks: ["A", "B", "C", "D"]
     // What the last activation did: read by --browser-check, so the click path can be measured.
     property string lastAction: ""
+    // The last nudge the panel asked for, as a number: applied once, so a step is never taken twice.
+    property int browserStepSeen: 0
     // A load in flight: what was asked for, and how long the deck has had to take it.
     property string pendingDeck: ""
     property string pendingPath: ""
@@ -471,6 +473,40 @@ Pane {
         // The row the DJ is on sits in the middle of the window, not against its edge: a list that
         // parks the cursor under the last visible row gives the eye nothing below it to read next.
         list.positionViewAtIndex(next, ListView.Center);
+    }
+
+    // The engine is the channel between the panel and this window: the browse encoder asks for a row, and the row the
+    // cursor stands on is published back so a press of the encoder knows what to load. The list that is showing decides
+    // what a step means — a folder, the collection and a playlist are three different lists.
+    Connections {
+        target: Bridge
+        function onBrowserChanged() {
+            if (Bridge.browserStepSeq !== browser.browserStepSeen) {
+                browser.browserStepSeen = Bridge.browserStepSeq;
+                browser.stepCursor(Bridge.browserStep);
+            }
+            // The highlight follows the remembered cursor through its own binding, and the list is not scrolled from here: a
+            // second `positionViewAtIndex` fights the DJ's own scrolling and the glide it leaves behind outlives the gesture.
+            // The engine's cursor is not applied back to the window: the window is the only client that sets it, and putting
+            // an older one back in the middle of a Shift+arrow run fights the keys (measured: `--selection-check`,
+            // `--scroll-check`). What it is for is the panel — a press of the encoder loads the row it names.
+            // And once, when the engine knows nothing yet: a cursor set before the link came up was never published at all,
+            // and a press of the panel's encoder then found no row to load. Only the empty case is repeated here — telling
+            // the engine the cursor on every snapshot is a command per snapshot, and the traffic it makes keeps a list from
+            // settling where the DJ put it (`--scroll-check`: 491 -> 473).
+            if (Bridge.browserCursor.length === 0 && Browser.cursor.length > 0) {
+                Bridge.browserCursorTo(Browser.cursor);
+            }
+        }
+    }
+
+    // Wherever the cursor goes — a click, an arrow key, the panel's encoder — the engine is told, because a press of the
+    // panel's encoder loads the row it points at.
+    Connections {
+        target: Browser
+        function onCursorChanged() {
+            Bridge.browserCursorTo(Browser.cursor);
+        }
     }
 
     /// The row the cursor stands on, or -1 when the list has no cursor yet.
