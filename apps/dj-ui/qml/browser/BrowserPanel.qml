@@ -1936,6 +1936,14 @@ Pane {
                     // that is lit (owner's report, 24.11).
                     readonly property bool walked: browser.railSection === key && browser.railTreeRow <= 0
                     color: walked || dropTarget ? UiSettings.themeAccentDim : "transparent"
+                    // The rail is the mouse's too: a wheel over a place moves the same single cursor the encoder moves, so the
+                    // hand on the controller and the hand on the mouse mean the same thing (owner's request, 24.11).
+                    WheelHandler {
+                        onWheel: event => browser.railStep(event.angleDelta.y > 0 ? -1 : 1)
+                    }
+                    TapHandler {
+                        onTapped: browser.railStep(0)
+                    }
                     border.width: walked ? 1 : 0
                     border.color: UiSettings.themeAccent
                     radius: 2
@@ -2019,6 +2027,9 @@ Pane {
                                                           === treeRow.modelData.folder
                     border.width: treeRow.walked ? 1 : 0
                     border.color: UiSettings.themeAccent
+                    WheelHandler {
+                        onWheel: event => browser.railStep(event.angleDelta.y > 0 ? -1 : 1)
+                    }
                     color: treeRow.walked ? UiSettings.themeAccentDim
                                           : (treeRow.dropTarget ? UiSettings.themeAccentDim
                                                                : "transparent")
