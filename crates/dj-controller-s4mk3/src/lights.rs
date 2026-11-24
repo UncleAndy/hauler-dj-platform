@@ -547,15 +547,14 @@ pub fn meter_report(levels: &[(f32, bool); 4]) -> LightsReport {
                     *slot = 127;
                 }
             }
-            if partial > 0.5 && full < segments
+            if partial > 0.5
+                && full < segments
                 && let Some(slot) = body.get_mut(base + full + 1)
             {
                 *slot = 125;
             }
         }
-        if *clipped
-            && let Some(slot) = body.get_mut(base + segments + 1)
-        {
+        if *clipped && let Some(slot) = body.get_mut(base + segments + 1) {
             *slot = 127;
         }
     }

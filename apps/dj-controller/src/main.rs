@@ -1101,7 +1101,9 @@ fn inputs_loop(
             // The headphone (PFL) button: hold while pressed, or a switch, whichever the settings ask for. A mixer
             // command, so it is never re-routed to the deck a side drives — the strip's CUE is the strip's own.
             if event.control.ends_with(".pfl") {
-                let Some((deck, _)) = dj_controller_core::BindableDeck::from_control(&event.control) else {
+                let Some((deck, _)) =
+                    dj_controller_core::BindableDeck::from_control(&event.control)
+                else {
                     continue;
                 };
                 let deck = deck.id();
@@ -1149,7 +1151,9 @@ fn inputs_loop(
             // travels whole (kind + amount + enabled), so each control reads the deck's current patch and flips just its
             // own field (owner's request, 24.11).
             if event.control.ends_with(".fx") || event.control.ends_with(".fx_amount") {
-                let Some((deck, _)) = dj_controller_core::BindableDeck::from_control(&event.control) else {
+                let Some((deck, _)) =
+                    dj_controller_core::BindableDeck::from_control(&event.control)
+                else {
                     continue;
                 };
                 let deck = deck.id();
@@ -1177,7 +1181,12 @@ fn inputs_loop(
                 let analog = map
                     .field_of(&event.control)
                     .is_some_and(|field| field.width > 1);
-                if is_double_touch(analog, event.value, last_press.get(&event.control).copied(), now) {
+                if is_double_touch(
+                    analog,
+                    event.value,
+                    last_press.get(&event.control).copied(),
+                    now,
+                ) {
                     continue;
                 }
                 if !analog && event.value > 0.5 {
@@ -1189,7 +1198,10 @@ fn inputs_loop(
                 );
                 if analog {
                     last_positions.insert(event.control.clone(), command.clone());
-                    if let Some(slot) = pending.iter_mut().find(|(control, _)| *control == event.control) {
+                    if let Some(slot) = pending
+                        .iter_mut()
+                        .find(|(control, _)| *control == event.control)
+                    {
                         slot.1 = command;
                     } else {
                         pending.push((event.control.clone(), command));
@@ -1223,9 +1235,14 @@ fn inputs_loop(
                 );
                 // The five keys are the mixer's own: one press sets the effect on all four decks. Bitcrusher and Noise are
                 // not on the panel — they stay reachable from the window.
-                for (index, deck) in [dj_domain::DeckId::A, dj_domain::DeckId::B, dj_domain::DeckId::C, dj_domain::DeckId::D]
-                    .into_iter()
-                    .enumerate()
+                for (index, deck) in [
+                    dj_domain::DeckId::A,
+                    dj_domain::DeckId::B,
+                    dj_domain::DeckId::C,
+                    dj_domain::DeckId::D,
+                ]
+                .into_iter()
+                .enumerate()
                 {
                     let current = playing
                         .lock()
@@ -2236,7 +2253,12 @@ fn show_from_facts(decks: &[DeckFacts; 4], sides: [usize; 2]) -> dj_controller_s
     dj_controller_s4mk3::lights::Show {
         hotcues: [left.hotcues, right.hotcues],
         playing: [left.playing, right.playing],
-        monitoring: [decks[0].monitoring, decks[1].monitoring, decks[2].monitoring, decks[3].monitoring],
+        monitoring: [
+            decks[0].monitoring,
+            decks[1].monitoring,
+            decks[2].monitoring,
+            decks[3].monitoring,
+        ],
         sync: [left.sync, right.sync],
         fx: [decks[0].fx, decks[1].fx, decks[2].fx, decks[3].fx],
     }

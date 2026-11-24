@@ -531,10 +531,22 @@ mod tests {
     #[test]
     fn a_gain_knob_and_the_master_follow_the_window_s_law() {
         // The gain knob stands at unity in the middle, cuts to −40 dB and boosts to +6 dB through the window's cubic.
-        assert!((gain_decibels(0.5) - 0.0).abs() < 1e-6, "the middle is unity");
-        assert!((gain_decibels(1.0) - 6.0).abs() < 1e-6, "the top is the boost");
-        assert!((gain_decibels(0.0) + 40.0).abs() < 1e-6, "the bottom is the cut");
-        assert!((gain_linear(0.5) - 1.0).abs() < 1e-6, "unity is a gain of one");
+        assert!(
+            (gain_decibels(0.5) - 0.0).abs() < 1e-6,
+            "the middle is unity"
+        );
+        assert!(
+            (gain_decibels(1.0) - 6.0).abs() < 1e-6,
+            "the top is the boost"
+        );
+        assert!(
+            (gain_decibels(0.0) + 40.0).abs() < 1e-6,
+            "the bottom is the cut"
+        );
+        assert!(
+            (gain_linear(0.5) - 1.0).abs() < 1e-6,
+            "unity is a gain of one"
+        );
         // The master only attenuates: unity at the top, silence (10^-3) at the foot, linear in decibels.
         assert!((master_gain(1.0) - 1.0).abs() < 1e-6);
         assert!(master_gain(0.0) < 0.01 && master_gain(0.0) > 0.0);
