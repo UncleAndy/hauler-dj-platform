@@ -1302,19 +1302,23 @@ fn panel_command(
             pressed.then_some(dj_domain::DjCommand::BrowserShow { open: !open })
         }
         "panel.encoder" | "panel.encoder_right" => {
-            // Shift held on that side turns the same knob into a walk through the left block: the collection, the playlists
-            // and the files, and the tree under the playlists. The rows of a list stay where they were — a DJ scrolling
-            // tracks does not want the rail to move, and the other way round.
+            // Shift turns the same knob into a walk through the left block: the collection, the playlists and the files, and
+            // the tree under them. The rows of a list stay where they were — a DJ scrolling tracks does not want the rail to
+            // move, and the other way round.
+            //
+            // The panel has **one** browse encoder and two Shift keys, so either key makes the rail: which hand reached for
+            // Shift says nothing about what the knob should walk (owner's report, 24.11: the left encoder with the right
+            // deck's Shift did nothing).
             let index = usize::from(event.control == "panel.encoder_right");
-            let shift = playing
-                .lock()
-                .ok()
-                .is_some_and(|state| state.shift.get(index).copied().unwrap_or(false));
+            let shift = playing.lock().ok().is_some_and(|state| {
+                state.shift.first().copied().unwrap_or(false)
+                    || state.shift.get(1).copied().unwrap_or(false)
+            });
             let delta = if pressed { 1 } else { -1 };
             // Said out loud: a Shift that never arrives looks exactly like a Shift the panel ignores, and this line tells the
             // two apart without another round of guessing (owner's report, 24.11).
             println!(
-                "dj-controller: {} turn, shift on this side: {shift}",
+                "dj-controller: {} turn, shift held: {shift}",
                 if index == 0 { "left" } else { "right" }
             );
             Some(if shift {
@@ -1328,7 +1332,9 @@ fn panel_command(
                 return None;
             }
             let state = playing.lock().ok()?;
-            if state.shift.first().copied().unwrap_or(false) {
+            if state.shift.first().copied().unwrap_or(false)
+                || state.shift.get(1).copied().unwrap_or(false)
+            {
                 // Shift + press opens or closes the level the rail's cursor stands on.
                 return Some(dj_domain::DjCommand::BrowserPlaceToggle);
             }
@@ -1343,7 +1349,9 @@ fn panel_command(
                 return None;
             }
             let state = playing.lock().ok()?;
-            if state.shift.get(1).copied().unwrap_or(false) {
+            if state.shift.first().copied().unwrap_or(false)
+                || state.shift.get(1).copied().unwrap_or(false)
+            {
                 return Some(dj_domain::DjCommand::BrowserPlaceToggle);
             }
             let path = state.browser_cursor.clone()?;
@@ -2884,16 +2892,25 @@ mod tests {
             Some(dj_domain::DjCommand::BrowserPlaceToggle),
             "Shift + press: open or close the level"
         );
-        // The right side has its own Shift.
+        // One browse encoder, two Shift keys: with either held, a press opens or closes the level instead of loading a track
+        // under the DJ's hands.
         let right_press =
             dj_controller_core::ControlEvent::button("panel.encoder_press_right", true);
+        assert_eq!(
+            super::panel_command(&right_press, &playing),
+            Some(dj_domain::DjCommand::BrowserPlaceToggle)
+        );
+        {
+            let mut state = playing.lock().expect("the state");
+            state.shift[0] = false;
+        }
         assert_eq!(
             super::panel_command(&right_press, &playing),
             Some(dj_domain::DjCommand::Load {
                 deck: dj_domain::DeckId::B,
                 path: "/music/one.flac".to_string()
             }),
-            "the right deck's Shift is not held, so it loads"
+            "no Shift: the press loads the row"
         );
     }
 
