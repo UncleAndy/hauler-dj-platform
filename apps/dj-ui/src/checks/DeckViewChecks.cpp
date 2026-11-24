@@ -3466,9 +3466,18 @@ int runPitchCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, QCommandL
     send(QEvent::MouseMove, centre - QPointF(0, 10));
     pump(30);
     const double asked = pitch->property("lastRatio").toDouble();
-    const double playing = tempoOf("A");
-    const double other = tempoOf("B");
     const double expected = 1.0 + 10.0 * perPixel;
+    // The deck walks to the tempo the hand asks for, so the engine's ratio is not the ask right away.
+    // A busy machine left the read mid-walk (1,0242 against 1,0256) and reddened the gate on a value that
+    // was still moving: wait for the ratio to arrive, at most a second and a half, then compare.
+    double playing = tempoOf("A");
+    QElapsedTimer walk;
+    walk.start();
+    while (walk.elapsed() < 1500 && std::abs(playing - expected) > 0.001) {
+        pump(2);
+        playing = tempoOf("A");
+    }
+    const double other = tempoOf("B");
     std::fprintf(stdout,
                  "dj-ui: ten pixels up the pitch fader asks for %.4f and the engine plays at "
                  "%.4f (deck B at %.3f)\n",
@@ -3501,17 +3510,26 @@ int runPitchCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, QCommandL
         // rather than measuring the load.
         // From a known place, far enough from the end: a deck that runs out of clip half way
         // through the window stops dead, and the average then reads exactly like a deck running
-        // slow. Left over from an earlier check, a short clip can be a second from its end.
+        // slow. Left over from an earlier check, a short clip can be a second from its end — or,
+        // worse, it can have already run out: a deck stopped at the end of a short clip reads
+        // frame 0 with the whole clip still remaining, so the `remaining < 4 s` guard does not see
+        // it and the play above does not restart it (the shared engine handed the pitch check a
+        // deck that the scratch check had played to the end of its eight-second fixture). Ask for a
+        // known place whenever the deck is not already moving from one, then play again.
         double remaining = 0.0;
+        bool playingNow = false;
         for (const QVariant& entry : bridge->snapshot().value(QStringLiteral("decks")).toList()) {
             const QVariantMap map = entry.toMap();
             if (map.value(QStringLiteral("deck")).toString() == QStringLiteral("A")) {
                 remaining = map.value(QStringLiteral("remaining_frames")).toDouble();
+                playingNow = map.value(QStringLiteral("playing")).toBool();
             }
         }
-        if (remaining < 48000.0 * 4) {
+        if (remaining < 48000.0 * 4 || !playingNow) {
             bridge->seek(QStringLiteral("A"), 0);
             pump(40);
+            bridge->play(QStringLiteral("A"), true);
+            pump(20);
         }
         const double before = frameOf();
         QElapsedTimer start;
@@ -6076,7 +6094,13 @@ int runScratchCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, QComman
                      "dj-ui: the motor did not take the record back after the hand let go\n");
         return 1;
     }
-    if (frame() < moved) {
+    // The release fade is the deck's own business and takes a few blocks: the head sits briefly behind
+    // the point the hand left while the motor is being handed back. A busy machine stretched that gap
+    // past the instant the `playing` flag flips, so the read saw the record behind the release point
+    // (49746 against 50578) and reddened the gate on a head that was still settling. Wait for the head
+    // to reach the release point — at most a second and a half — and only then require it to have gone
+    // forward, never backward.
+    if (!waitFor([&]() { return frame() >= moved; }, 1500)) {
         std::fprintf(stderr, "dj-ui: the motor carried the record backwards (%lld -> %lld)\n",
                      static_cast<long long>(moved), static_cast<long long>(frame()));
         return 1;
