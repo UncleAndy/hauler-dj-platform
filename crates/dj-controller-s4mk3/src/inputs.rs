@@ -97,6 +97,46 @@ fn value_of(raw: u16, width: usize) -> f32 {
     f32::from(raw) / top as f32
 }
 
+/// The shipped map with a learned one laid over it.
+///
+/// A line from the shipped file wins: it was confirmed by pressing the button. A learned line can add a control the
+/// shipped file does not have, and a learned line that contradicts the shipped one is reported and dropped — a file left
+/// over from an earlier attempt must not put a command on the wrong button.
+#[must_use]
+pub fn merge(shipped: &InputMap, learned: &InputMap) -> (InputMap, Vec<String>) {
+    let mut merged = shipped.clone();
+    let mut notes = Vec::new();
+    for field in &learned.fields {
+        match merged
+            .fields
+            .iter()
+            .find(|known| known.control == field.control)
+        {
+            Some(known) if known == field => {}
+            Some(known) => notes.push(format!(
+                "{}: выучено report {} byte {} bit {}, а в поставленной карте report {} byte {} bit {} — оставляю \
+                 поставленную",
+                field.control, field.report, field.byte, field.bit, known.report, known.byte, known.bit
+            )),
+            None => {
+                if merged
+                    .fields
+                    .iter()
+                    .any(|known| known.report == field.report && known.byte == field.byte && known.bit == field.bit)
+                {
+                    notes.push(format!(
+                        "{}: report {} byte {} bit {} уже занят другим контролем — строку не беру",
+                        field.control, field.report, field.byte, field.bit
+                    ));
+                    continue;
+                }
+                merged.fields.push(field.clone());
+            }
+        }
+    }
+    (merged, notes)
+}
+
 /// Reads the map file.
 ///
 /// Damage is an error with a line number, never a silent skip: a map with one wrong line puts a command on the wrong

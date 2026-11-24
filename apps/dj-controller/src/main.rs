@@ -924,14 +924,20 @@ fn load_inputs(named: Option<&str>) -> Result<dj_controller_s4mk3::inputs::Input
             .map_err(|error| format!("{path} cannot be read: {error}"))?;
         return dj_controller_s4mk3::inputs::parse_inputs(&text);
     }
+    let shipped = dj_controller_s4mk3::inputs::InputMap::built_in();
     if let Some(path) = learned_inputs_path()
         && path.is_file()
     {
         let text = std::fs::read_to_string(&path)
             .map_err(|error| format!("{} cannot be read: {error}", path.display()))?;
-        return dj_controller_s4mk3::inputs::parse_inputs(&text);
+        let learned = dj_controller_s4mk3::inputs::parse_inputs(&text)?;
+        let (merged, notes) = dj_controller_s4mk3::inputs::merge(&shipped, &learned);
+        for note in notes {
+            println!("dj-controller: {note}");
+        }
+        return Ok(merged);
     }
-    Ok(dj_controller_s4mk3::inputs::InputMap::built_in())
+    Ok(shipped)
 }
 
 /// Where a learned map is kept: `$XDG_DATA_HOME/hauler-dj/inputs-map.txt`, beside the logs.

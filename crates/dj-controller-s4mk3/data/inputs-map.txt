@@ -1,16 +1,29 @@
-# Where each of the panel's own controls lives, learned on the panel.
+# Where each of the panel's own controls lives.
 #
 # Format, one control a line, five fields separated by spaces:
 #
 #   control            report  byte  bit  width
 #   deck_a.play        1       4     0    1
-#   deck_a.crossfader  2       12    0    16
+#   deck_b.sync        1       14    4    1
 #
 # `control` is the name the binding table uses (`deck_a.play`, `deck_b.sync`, `deck_a.cue`); `report` is the HID report
 # number the device sends; `byte` counts from the first byte **after** the report number; `bit` is the bit inside that
 # byte and `width` how many bits the field takes (1 for a button, 12 for an encoder, 16 for a fader read little-endian).
 #
-# Learned, never copied: `dj-controller --inputs-learn` asks for one button at a time and writes the line it saw. A map
-# that guesses puts a command on the wrong button, and the DJ finds out on stage.
+# Provenance of the six lines below: `public-source`, read from Mixxx's public controller description
+# (`res/controllers/Traktor Kontrol S4 MK3.hid.xml` and `Traktor-Kontrol-S4-MK3.js`, GPL) as a fact about the device,
+# not copied as code: deck buttons live in report 1, and the byte/bit of each is what that description says. The rest of
+# that table stays where it is — this file carries only the controls this program can bind, and every line is confirmed
+# by pressing the button and seeing the deck obey.
 #
-# Nothing learned yet: presses ask for nothing until this file has lines.
+# Report 3 is not here and will never be: it is the clock and the platters (counters at bytes 8 and 36, wheel positions
+# at 12 and 40), and it never carries a button.
+#
+# More controls are learned on the panel: `dj-controller --inputs-learn` asks for one button at a time and appends what
+# it saw to `~/.local/share/hauler-dj/inputs-map.txt`. A learned line never overrides a line from this file.
+deck_a.play 1 4 0 1
+deck_a.cue 1 4 1 1
+deck_a.sync 1 5 7 1
+deck_b.play 1 12 0 1
+deck_b.cue 1 14 5 1
+deck_b.sync 1 14 4 1
