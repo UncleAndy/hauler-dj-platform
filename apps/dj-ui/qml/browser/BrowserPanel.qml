@@ -238,23 +238,15 @@ Pane {
         if (!row) {
             return;
         }
-        if (row.kind === "playlists" || row.kind === "all") {
-            // `All` is the flattened list of every playlist: opening or closing it is the same act as opening the section,
-            // and both are levels the DJ reaches with Shift + press (owner's report, 24.11).
+        if (row.kind === "playlists") {
             browser.foldPlaylists = !browser.foldPlaylists;
             browser.lastAction = browser.foldPlaylists ? "playlists closed" : "playlists opened";
             return;
         }
-        if (row.kind !== "folder") {
-            return;
-        }
-        const folded = {};
-        for (const key in browser.folded) {
-            folded[key] = browser.folded[key];
-        }
-        folded[row.folder] = !folded[row.folder];
-        browser.folded = folded;
-        browser.lastAction = (folded[row.folder] ? "folded " : "unfolded ") + row.folder;
+        // A folder or `All` opens its contents by the same act a click makes: the tree is the window's, and it already knows how
+        // to open one level (`openTreeRow`). A second map of folded folders in this file only fought it, which is why the
+        // playlists inside a folder never appeared (owner's report, 24.11).
+        browser.openTreeRow(row);
     }
 
     // A click in the tree: `All` and a folder are places to stand in, a playlist opens its tracks.
