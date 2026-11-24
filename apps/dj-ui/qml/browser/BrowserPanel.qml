@@ -47,11 +47,9 @@ Pane {
     property string playlistPlaceName: ""
     // The rail the panel walks with Shift held: the three places and, inside the playlists, the rows of the tree. A folded
     // folder hides its children — the tree is a filter over the rows the engine publishes, not a second model.
-    property var folded: ({})
     // The whole tree under `Playlists`, open or closed: the section is a level too, and closing it is what the press does when
     // the cursor stands on the section itself.
     property bool foldPlaylists: true
-    property int railIndex: 0
     property int placeSeen: 0
     property int placeToggleSeen: 0
     // The name a dialog is asking for, and what it will do with it when the DJ says yes.
@@ -158,85 +156,61 @@ Pane {
     // together. Ctrl toggles one, Shift takes the run between the anchor and the click.
     property var selection: []
 
-    /// The rows the rail offers: collection, playlists, the tree under them (folded folders hidden), files.
+    /// The rows the rail offers: collection, playlists, the tree under them, files.
     readonly property var railRows: {
         const rows = [
             {kind: "collection", name: "Collection"},
             {kind: "playlists", name: "Playlists"}
         ];
         if (Browser.inPlaylists && !browser.foldPlaylists) {
-            let hideBelow = -1;
             const tree = Browser.playlistTree;
             for (let index = 0; index < tree.length; ++index) {
-                const row = tree[index];
-                const depth = row.depth === undefined ? 0 : row.depth;
-                if (hideBelow >= 0 && depth > hideBelow) {
-                    continue;
-                }
-                hideBelow = -1;
-                rows.push(row);
-                if (row.kind === "folder" && browser.folded[row.folder]) {
-                    hideBelow = depth;
-                }
+                rows.push(tree[index]);
             }
         }
         rows.push({kind: "files", name: "Files"});
         return rows;
     }
 
-    /// Where the rail's cursor stands: the section it is on, or the row of the tree. The rail is walked blind otherwise —
-    /// the DJ pressed Shift and turned, and nothing on the screen said where the cursor had gone (owner's report, 24.11).
-    readonly property string railSection: {
-        const rows = browser.railRows;
-        const row = rows[browser.railIndex];
-        if (!row) {
-            return "";
-        }
-        return row.kind;
-    }
+    /// Where the cursor stands: the section the list is showing, read from the window itself. The cursor is not a second
+    /// piece of state — a marker that can disagree with the list is what left it standing on `Playlists` after a click on a
+    /// playlist (owner's report, 24.11).
+    readonly property string railSection: Browser.inPlaylists
+                                          ? "playlists"
+                                          : (Browser.mode === "collection" ? "collection" : "files")
 
-    /// The tree row the rail's cursor is on, or -1 when it stands on a section: the tree starts after Collection and
-    /// Playlists, which are the first two rows of the rail.
+    /// The tree row under the cursor, or -1: the playlist the window has open, or the folder it stands in. The tree rows
+    /// start after `Collection` and `Playlists`.
     readonly property int railTreeRow: {
-        const rows = browser.railRows;
-        const row = rows[browser.railIndex];
-        if (!row || row.kind === "collection" || row.kind === "playlists" || row.kind === "files") {
+        if (!Browser.inPlaylists) {
             return -1;
         }
-        return browser.railIndex - 2;
-    }
-
-    /// Put the rail's cursor on the place the list is showing, so the rail has **one** cursor and it always means the same
-    /// thing: where the DJ is. Two markers — one for what is shown, one for where the knob points — read as two answers to
-    /// one question (owner's report, 24.11).
-    function placeRailOn(kind, row) {
         const rows = browser.railRows;
-        if (kind === "collection") {
-            browser.railIndex = 0;
-            return;
-        }
-        if (kind === "playlists") {
-            browser.railIndex = 1;
-            return;
-        }
-        if (kind === "files") {
-            browser.railIndex = Math.max(0, rows.length - 1);
-            return;
-        }
-        for (let index = 0; index < rows.length; ++index) {
-            const candidate = rows[index];
-            if (!candidate || candidate.kind !== kind) {
+        for (let index = 2; index < rows.length - 1; ++index) {
+            const row = rows[index];
+            if (!row) {
                 continue;
             }
-            if (kind === "folder" && candidate.folder === row.folder) {
-                browser.railIndex = index;
-                return;
-            }
-            if ((kind === "playlist" || kind === "all") && candidate.id === row.id) {
-                browser.railIndex = index;
-                return;
+            const sameAll = row.kind === "all" && Browser.playlistPlace === "all";
+            const sameFolder = row.kind === "folder" && Browser.playlistPlace === "folder"
+                               && row.folder === Browser.playlistPlaceName;
+            const samePlaylist = row.kind === "playlist" && Browser.playlistId !== 0
+                                 && row.id === Browser.playlistId;
+            if (sameAll || sameFolder || samePlaylist) {
+                return index - 2;
             }
         }
+        return -1;
+    }
+
+    /// The row of `railRows` the cursor is on, derived from what the window shows: there is nothing to keep in step.
+    function railCurrentRow() {
+        const rows = browser.railRows;
+        if (!Browser.inPlaylists) {
+            return Browser.mode === "collection" ? 0 : Math.max(0, rows.length - 1);
+        }
+        const treeRow = browser.railTreeRow;
+        return treeRow >= 0 ? treeRow + 2 : 1;
     }
 
     /// Move the rail's cursor and stand where it lands: a place opens, a tree row opens its playlist or folder.
@@ -245,8 +219,8 @@ Pane {
         if (rows.length === 0) {
             return;
         }
-        browser.railIndex = Math.max(0, Math.min(rows.length - 1, browser.railIndex + delta));
-        const row = rows[browser.railIndex];
+        const next = Math.max(0, Math.min(rows.length - 1, browser.railCurrentRow() + delta));
+        const row = rows[next];
         if (!row) {
             return;
         }
@@ -255,19 +229,16 @@ Pane {
             return;
         }
         browser.openTreeRow(row);
-        // The tree under the playlists is walked too — that is what an open level is for — and the row the cursor stands on is
-        // brought into view, because a row the DJ cannot see is a row the DJ cannot stop on.
         const treeRow = browser.railTreeRow;
         if (treeRow >= 0) {
             playlistTreeList.positionViewAtIndex(treeRow, ListView.Contain);
         }
     }
 
-    /// Open or close the level the rail's cursor stands on: the whole tree when it stands on `Playlists`, a folder's
-    /// children when it stands on a folder.
+    /// Open or close the level the rail's cursor stands on: the tree under `Playlists`, or a folder's children.
     function railToggle() {
         const rows = browser.railRows;
-        const row = rows[browser.railIndex];
+        const row = rows[browser.railCurrentRow()];
         if (!row) {
             return;
         }
@@ -276,9 +247,6 @@ Pane {
             browser.lastAction = browser.foldPlaylists ? "playlists closed" : "playlists opened";
             return;
         }
-        // Opening a level is the window's own call — `togglePlaylistNode` — the same one a click on the twisty makes. Selecting
-        // the place (`openTreeRow`) is a different act: it shows the tracks of a playlist, and it was why nothing went deeper
-        // than the first level (owner's report, 24.11).
         if (row.kind === "all") {
             Browser.togglePlaylistNode("all", "");
             return;
@@ -303,7 +271,6 @@ Pane {
         }
         browser.playlistPlace = row.kind;
         browser.playlistPlaceName = row.kind === "folder" ? row.folder : "";
-        browser.placeRailOn(row.kind === "all" ? "all" : row.kind, row);
         Browser.openPlaylist(0, row.kind === "all" ? "All" : row.name);
         browser.lastAction = row.kind + " " + row.name;
         return true;
@@ -1168,7 +1135,6 @@ Pane {
 
     // A section is a place, not a label: pressing one moves the list there.
     function showSection(key) {
-        browser.placeRailOn(key, null);
         if (key === "collection") {
             Browser.openCollection(LayoutState.collectionRoots);
             browser.lastAction = "collection " + Browser.folder;
