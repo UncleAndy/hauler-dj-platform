@@ -395,6 +395,10 @@ fn run(arguments: &[String]) -> Result<(), String> {
     // The colours the panel shows are settings: the file decides, and `--rest` overrides one of them for a night of
     // trying colours out.
     let mut palette = palette_from(&config.controller.lights);
+    println!(
+        "dj-controller: palette hotcue {:?}, loop {:?}, resting {:?}, night {}",
+        palette.hotcue, palette.loop_, palette.resting, config.controller.lights.night
+    );
     if let Some(resting) = rest_colour {
         palette.resting = resting;
     }
@@ -1794,6 +1798,7 @@ fn lights_show(
     let mut waiting_said = false;
     // One line a second at most: a fader that disagrees would otherwise flood the log the moment it is touched.
     let mut last_fader_note = std::time::Instant::now() - std::time::Duration::from_secs(5);
+    let mut last_pads = String::new();
     loop {
         let (mut client, _welcome) = match dj_bridge::connect_with_timeout(
             std::path::Path::new(endpoint),
@@ -1860,6 +1865,31 @@ fn lights_show(
                 }
             }
             let show = show_from_facts(&facts);
+            // What the pads are made of, once per change: a pad that goes dark after a load is answered by looking at what the
+            // snapshot actually carried, not by guessing which branch of the colouring was taken.
+            let pads_now: Vec<String> = snapshot
+                .decks
+                .iter()
+                .take(2)
+                .map(|deck| {
+                    let cues: Vec<usize> = (0..8)
+                        .filter(|slot| deck.hotcues.get(*slot).is_some_and(Option::is_some))
+                        .collect();
+                    let loops: Vec<usize> = (0..8)
+                        .filter(|slot| deck.pad_loops.get(*slot).is_some_and(Option::is_some))
+                        .collect();
+                    format!(
+                        "{:?} loaded {} cues {cues:?} loops {loops:?}",
+                        deck.deck,
+                        deck.track.is_some()
+                    )
+                })
+                .collect();
+            let pads_line = pads_now.join("; ");
+            if pads_line != last_pads {
+                println!("dj-controller: pads {pads_line}");
+                last_pads = pads_line;
+            }
             // In a dark booth everything glows faintly and the active controls stand out; outside it the panel is dark
             // where nothing happens.
             let report = if night {
