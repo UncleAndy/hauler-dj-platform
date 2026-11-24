@@ -67,6 +67,21 @@ impl EqBand {
     }
 }
 
+/// What a deck has on one pad, as the window sees it.
+///
+/// A pad holds a point or a loop, never both, and calling "the pad is empty" a pad that holds a **loop** made the panel
+/// write a cue into it: the loop vanished from the panel while the window still showed it (owner's report, 24.11). So the
+/// three facts travel together.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PadState {
+    /// The slot holds a cue point.
+    pub cue: bool,
+    /// The slot holds a loop.
+    pub looped: bool,
+    /// The deck has a loop of its own that an empty pad would take.
+    pub active_loop: bool,
+}
+
 /// The deck's pitch range, either side of unity: what a fader at its end asks for.
 pub const PITCH_RANGE: f32 = 0.16;
 
@@ -278,7 +293,7 @@ impl Mapping {
         &self,
         event: &crate::ControlEvent,
         running: bool,
-        cue_present: bool,
+        pad: PadState,
     ) -> Option<(Option<DeckId>, DjCommand)> {
         let deck = BindableDeck::from_control(&event.control).map(|(deck, _)| deck.id());
         let intent = intent_for(&event.control).or_else(|| mixer_intent_for(&event.control))?;
@@ -311,14 +326,23 @@ impl Mapping {
                 if !pressed {
                     return None;
                 }
-                Some(DjCommand::Cue {
-                    deck: deck?,
-                    action: if cue_present {
-                        CueAction::Jump(slot)
-                    } else {
-                        CueAction::Set(slot)
-                    },
-                })
+                let deck = deck?;
+                // The window's own rule, button for button: a pad with something on it jumps to it — a loop is jumped to
+                // the same way a cue is —, an empty pad takes the deck's active loop when there is one, and only a pad
+                // with neither stores a cue.
+                if pad.cue || pad.looped {
+                    Some(DjCommand::Cue {
+                        deck,
+                        action: CueAction::Jump(slot),
+                    })
+                } else if pad.active_loop {
+                    Some(DjCommand::SetPadLoop { deck, slot })
+                } else {
+                    Some(DjCommand::Cue {
+                        deck,
+                        action: CueAction::Set(slot),
+                    })
+                }
             }
             _ => {
                 let command = intent.command(deck?, pressed, running)?;
@@ -352,14 +376,14 @@ mod tests {
     fn a_tempo_fader_asks_for_the_rate_it_stands_at() {
         let mapping = Mapping::new();
         let middle = ControlEvent::level("deck_a.tempo", 0.5);
-        match mapping.resolve_control(&middle, false, false) {
+        match mapping.resolve_control(&middle, false, PadState::default()) {
             Some((Some(DeckId::A), DjCommand::SetTempoRatio { ratio, .. })) => {
                 assert!((ratio - 1.0).abs() < 1e-9, "{ratio}");
             }
             other => panic!("{other:?}"),
         }
         let top = ControlEvent::level("deck_a.tempo", 1.0);
-        match mapping.resolve_control(&top, false, false) {
+        match mapping.resolve_control(&top, false, PadState::default()) {
             Some((Some(DeckId::A), DjCommand::SetTempoRatio { ratio, .. })) => {
                 assert!(
                     (ratio - f64::from(1.0 + PITCH_RANGE)).abs() < 1e-6,
@@ -369,7 +393,7 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let bottom = ControlEvent::level("deck_a.tempo", 0.0);
-        match mapping.resolve_control(&bottom, false, false) {
+        match mapping.resolve_control(&bottom, false, PadState::default()) {
             Some((Some(DeckId::A), DjCommand::SetTempoRatio { ratio, .. })) => {
                 assert!(
                     (ratio - f64::from(1.0 - PITCH_RANGE)).abs() < 1e-6,
@@ -384,7 +408,7 @@ mod tests {
     fn faders_and_the_crossfader_carry_their_position() {
         let mapping = Mapping::new();
         let fader = ControlEvent::level("deck_b.fader", 0.7);
-        match mapping.resolve_control(&fader, false, false) {
+        match mapping.resolve_control(&fader, false, PadState::default()) {
             Some((Some(DeckId::B), DjCommand::SetChannelFader { position, .. })) => {
                 assert!((position - fader_value(0.7)).abs() < 1e-6, "{position}");
                 assert!(
@@ -396,7 +420,7 @@ mod tests {
         }
         let crossfader = ControlEvent::level("mixer.crossfader", 0.25);
         assert_eq!(
-            mapping.resolve_control(&crossfader, false, false),
+            mapping.resolve_control(&crossfader, false, PadState::default()),
             Some((None, DjCommand::SetCrossfader { position: 0.25 })),
             "the crossfader belongs to the mixer, not to a deck"
         );
@@ -421,7 +445,7 @@ mod tests {
         }
         let mapping = Mapping::new();
         let event = ControlEvent::level("deck_a.fader", 0.5);
-        match mapping.resolve_control(&event, false, false) {
+        match mapping.resolve_control(&event, false, PadState::default()) {
             Some((Some(DeckId::A), DjCommand::SetChannelFader { position, .. })) => {
                 assert!((position - 0.125).abs() < 1e-3, "{position}");
             }
@@ -447,7 +471,7 @@ mod tests {
         );
         let mapping = Mapping::new();
         let knob = ControlEvent::level("deck_a.eq_low", 0.75);
-        match mapping.resolve_control(&knob, false, false) {
+        match mapping.resolve_control(&knob, false, PadState::default()) {
             Some((Some(DeckId::A), DjCommand::SetChannelEq { band, gain_db, .. })) => {
                 assert_eq!(band, dj_domain::EqBand::Low);
                 assert!((gain_db - 3.0).abs() < 1e-6, "{gain_db}");
@@ -461,7 +485,7 @@ mod tests {
         let mapping = Mapping::new();
         let press = ControlEvent::button("deck_a.pfl", true);
         assert_eq!(
-            mapping.resolve_control(&press, false, false),
+            mapping.resolve_control(&press, false, PadState::default()),
             Some((
                 Some(DeckId::A),
                 DjCommand::SetChannelCue {
@@ -472,7 +496,7 @@ mod tests {
         );
         let release = ControlEvent::button("deck_a.pfl", false);
         assert_eq!(
-            mapping.resolve_control(&release, false, false),
+            mapping.resolve_control(&release, false, PadState::default()),
             Some((
                 Some(DeckId::A),
                 DjCommand::SetChannelCue {
@@ -484,11 +508,39 @@ mod tests {
     }
 
     #[test]
-    fn a_hotcue_pad_jumps_to_its_slot_or_stores_one() {
+    fn a_pad_jumps_to_what_it_holds_and_never_overwrites_a_loop() {
         let mapping = Mapping::new();
         let press = ControlEvent::button("deck_a.hotcue3", true);
+        let with_cue = PadState {
+            cue: true,
+            looped: false,
+            active_loop: false,
+        };
+        let with_loop = PadState {
+            cue: false,
+            looped: true,
+            active_loop: false,
+        };
+        let with_active_loop = PadState {
+            cue: false,
+            looped: false,
+            active_loop: true,
+        };
+        // A slot with a cue jumps to it.
         assert_eq!(
-            mapping.resolve_control(&press, false, true),
+            mapping.resolve_control(&press, false, with_cue),
+            Some((
+                Some(DeckId::A),
+                DjCommand::Cue {
+                    deck: DeckId::A,
+                    action: dj_domain::CueAction::Jump(2)
+                }
+            ))
+        );
+        // A slot with a loop jumps to it the same way. Calling it empty wrote a cue into the slot and the loop vanished
+        // from the panel (owner's report, 24.11).
+        assert_eq!(
+            mapping.resolve_control(&press, false, with_loop),
             Some((
                 Some(DeckId::A),
                 DjCommand::Cue {
@@ -496,21 +548,33 @@ mod tests {
                     action: dj_domain::CueAction::Jump(2)
                 }
             )),
-            "a slot with a cue is jumped to"
+            "a loop pad is jumped to, not overwritten"
         );
+        // An empty pad takes the deck's own loop when one is active.
         assert_eq!(
-            mapping.resolve_control(&press, false, false),
+            mapping.resolve_control(&press, false, with_active_loop),
+            Some((
+                Some(DeckId::A),
+                DjCommand::SetPadLoop {
+                    deck: DeckId::A,
+                    slot: 2
+                }
+            ))
+        );
+        // A pad with nothing at all and no active loop stores a cue.
+        assert_eq!(
+            mapping.resolve_control(&press, false, PadState::default()),
             Some((
                 Some(DeckId::A),
                 DjCommand::Cue {
                     deck: DeckId::A,
                     action: dj_domain::CueAction::Set(2)
                 }
-            )),
-            "an empty slot is stored"
+            ))
         );
+        // Releasing asks for nothing, whatever the pad holds.
         let release = ControlEvent::button("deck_a.hotcue3", false);
-        assert_eq!(mapping.resolve_control(&release, false, true), None);
+        assert_eq!(mapping.resolve_control(&release, false, with_cue), None);
     }
 
     #[test]

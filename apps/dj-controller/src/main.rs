@@ -996,7 +996,7 @@ fn inputs_loop(
         for event in map.decode(report, payload, &mut previous) {
             // A PLAY button asks for the opposite of what the deck is doing, so the deck's own state is part of the
             // question.
-            let (running, cue_present) = match playing.lock() {
+            let (running, pad) = match playing.lock() {
                 Ok(state) => match dj_controller_core::BindableDeck::from_control(&event.control)
                     .map(|(deck, _)| deck.id())
                 {
@@ -1008,23 +1008,31 @@ fn inputs_loop(
                         };
                         (
                             state.playing.get(index).copied().unwrap_or(false),
-                            state
-                                .cues
-                                .get(index)
-                                .and_then(|slots| slots.get(slot))
-                                .copied()
-                                .unwrap_or(false),
+                            dj_controller_core::PadState {
+                                cue: state
+                                    .cues
+                                    .get(index)
+                                    .and_then(|slots| slots.get(slot))
+                                    .copied()
+                                    .unwrap_or(false),
+                                looped: state
+                                    .loops
+                                    .get(index)
+                                    .and_then(|slots| slots.get(slot))
+                                    .copied()
+                                    .unwrap_or(false),
+                                active_loop: state.active_loop.get(index).copied().unwrap_or(false),
+                            },
                         )
                     }
-                    None => (false, false),
+                    None => (false, dj_controller_core::PadState::default()),
                 },
-                Err(_) => (false, false),
+                Err(_) => (false, dj_controller_core::PadState::default()),
             };
             // Every event is written down with its time: "the deck started by itself" is answered by reading what came
             // in and when, not by guessing (owner's report, 24.11).
             let now = started.elapsed().as_millis();
-            let Some((deck, command)) = mapping.resolve_control(&event, running, cue_present)
-            else {
+            let Some((deck, command)) = mapping.resolve_control(&event, running, pad) else {
                 println!(
                     "dj-controller: at {now} ms {} = {:.3} (report {report}) asks for nothing; deck running {running}",
                     event.control, event.value
@@ -1163,6 +1171,10 @@ fn deck_index(deck: dj_domain::DeckId) -> usize {
 struct DeckFactsShared {
     playing: [bool; 4],
     cues: [[bool; 8]; 4],
+    /// Pads that hold a loop rather than a cue: the two are jumped to the same way and must not be taken for empty.
+    loops: [[bool; 8]; 4],
+    /// Whether the deck has a loop of its own that an empty pad would take.
+    active_loop: [bool; 4],
     /// What the panel last asked the engine for, per channel: a fader thrown to the top must be seen at the top by the
     /// next snapshot, and a disagreement is said out loud rather than left as "it stopped half way".
     fader_asked: [Option<f32>; 4],
@@ -1841,7 +1853,10 @@ fn lights_show(
                     for slot in 0..8 {
                         state.cues[index][slot] =
                             deck.hotcues.get(slot).is_some_and(Option::is_some);
+                        state.loops[index][slot] =
+                            deck.pad_loops.get(slot).is_some_and(Option::is_some);
                     }
+                    state.active_loop[index] = deck.loop_region.is_some();
                 }
             }
             let show = show_from_facts(&facts);
