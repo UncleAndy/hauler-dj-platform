@@ -1956,9 +1956,9 @@ Pane {
                         text: title
                         font.pixelSize: browser.sectionFont
                         elide: Text.ElideRight
-                        color: current ? UiSettings.themeText
-                                       : (ready ? UiSettings.themeTextDim
-                                                : UiSettings.themeWaveOutline)
+                        color: walked || current ? UiSettings.themeText
+                                                 : (ready ? UiSettings.themeTextDim
+                                                          : UiSettings.themeWaveOutline)
                     }
                     MouseArea {
                         anchors.fill: parent
@@ -2030,7 +2030,7 @@ Pane {
                     WheelHandler {
                         onWheel: event => browser.railStep(event.angleDelta.y > 0 ? -1 : 1)
                     }
-                    color: treeRow.walked ? UiSettings.themeAccentDim
+                    color: treeRow.walked ? UiSettings.themeAccent
                                           : (treeRow.dropTarget ? UiSettings.themeAccentDim
                                                                : "transparent")
                     radius: 2
@@ -2049,7 +2049,7 @@ Pane {
                               ? Qt.font({family: browser.listFace.family,
                                          pixelSize: browser.listFace.pixelSize, bold: true})
                               : browser.listFace
-                        color: treeRow.chosen ? UiSettings.themeBackground
+                        color: treeRow.walked ? UiSettings.themeBackground
                                               : (treeRow.isAll ? UiSettings.themeHeaderText
                                                                : UiSettings.themeText)
                         // A node that holds playlists wears a mark that says whether it is open: a tree
