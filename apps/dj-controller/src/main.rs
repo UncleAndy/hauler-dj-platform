@@ -967,6 +967,8 @@ fn inputs_loop(
 ) {
     let mapping = Mapping::new();
     let mut previous = std::collections::HashMap::new();
+    let mut last_press: std::collections::HashMap<String, u128> = std::collections::HashMap::new();
+    let started = std::time::Instant::now();
     loop {
         let Ok(report_bytes) = reports.recv() else {
             println!("dj-controller: the panel stopped answering; no more presses");
@@ -987,9 +989,35 @@ fn inputs_loop(
                     Err(_) => None,
                 })
                 .unwrap_or(false);
+            // Every event is written down with its time: "the deck started by itself" is answered by reading what came
+            // in and when, not by guessing (owner's report, 24.11).
+            let now = started.elapsed().as_millis();
             let Some((deck, command)) = mapping.resolve(&event, running) else {
+                println!(
+                    "dj-controller: at {now} ms {} = {:.0} (report {report}) asks for nothing; deck running {running}",
+                    event.control, event.value
+                );
                 continue;
             };
+            // A light touch can arrive as two presses a few milliseconds apart, and the second one would undo the first.
+            // A hand cannot press the same button twice that fast.
+            if event.value > 0.5 {
+                if let Some(last) = last_press.get(&event.control)
+                    && now.saturating_sub(*last) < 150
+                {
+                    println!(
+                        "dj-controller: at {now} ms {} ignored: the last press was {} ms ago",
+                        event.control,
+                        now.saturating_sub(*last)
+                    );
+                    continue;
+                }
+                last_press.insert(event.control.clone(), now);
+            }
+            println!(
+                "dj-controller: at {now} ms {} = {:.0} (report {report}) → {command:?}",
+                event.control, event.value
+            );
             let asked = vec![(event.control.clone(), deck, command)];
             if let Err(reason) = send_commands(endpoint, &asked) {
                 println!(

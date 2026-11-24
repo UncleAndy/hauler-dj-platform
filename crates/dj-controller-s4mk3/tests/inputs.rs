@@ -154,7 +154,7 @@ fn a_second_deck_s_button_is_a_different_intent() {
 fn a_learned_line_that_contradicts_the_shipped_one_loses() {
     // A file left over from an earlier attempt must not put a command on the wrong button.
     let shipped = InputMap::built_in();
-    let learned = parse_inputs("deck_a.play_pause 3 7 2 1\ndeck_a.pause 1 5 6 1\n")
+    let learned = parse_inputs("deck_a.play_pause 1 5 0 1\ndeck_a.pause 1 5 6 1\n")
         .expect("the learned map parses");
     let (merged, notes) = merge(&shipped, &learned);
     let play = merged
@@ -171,6 +171,35 @@ fn a_learned_line_that_contradicts_the_shipped_one_loses() {
             .fields()
             .iter()
             .any(|field| field.control == "deck_a.pause"),
+        "{:?}",
+        merged.fields()
+    );
+}
+
+#[test]
+fn a_learned_line_from_the_clock_report_is_dropped() {
+    // The report that carries the counters also carries nothing a hand presses. A line learned there fires several times
+    // a second on its own, and the application would start decks with nobody near the panel.
+    let shipped = InputMap::built_in();
+    let learned = parse_inputs("deck_a.play 3 7 2 1\ndeck_b.pause 3 9 0 1\n")
+        .expect("the learned map parses");
+    let (merged, notes) = merge(&shipped, &learned);
+    assert_eq!(notes.len(), 2, "{notes:?}");
+    assert!(notes[0].contains("часы и джоги"), "{notes:?}");
+    assert!(
+        !merged
+            .fields()
+            .iter()
+            .any(|field| field.control == "deck_a.play" || field.control == "deck_b.pause"),
+        "{:?}",
+        merged.fields()
+    );
+    // And nothing in the map lives in that report at all.
+    assert!(
+        merged
+            .fields()
+            .iter()
+            .all(|field| field.report != dj_controller_s4mk3::inputs::CLOCK_REPORT),
         "{:?}",
         merged.fields()
     );

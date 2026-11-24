@@ -102,11 +102,23 @@ fn value_of(raw: u16, width: usize) -> f32 {
 /// A line from the shipped file wins: it was confirmed by pressing the button. A learned line can add a control the
 /// shipped file does not have, and a learned line that contradicts the shipped one is reported and dropped — a file left
 /// over from an earlier attempt must not put a command on the wrong button.
+/// The report that is never a button: the clock and the platters, with counters that move by themselves.
+pub const CLOCK_REPORT: u8 = 3;
+
 #[must_use]
 pub fn merge(shipped: &InputMap, learned: &InputMap) -> (InputMap, Vec<String>) {
     let mut merged = shipped.clone();
     let mut notes = Vec::new();
     for field in &learned.fields {
+        // A line from a report that only carries counters fires by itself several times a second: learned that way, it
+        // started decks with nobody near the panel (owner's report, 24.11: "the deck starts by itself").
+        if field.report == CLOCK_REPORT {
+            notes.push(format!(
+                "{}: report {CLOCK_REPORT} — это часы и джоги, кнопок там нет; строку не беру",
+                field.control
+            ));
+            continue;
+        }
         match merged
             .fields
             .iter()
