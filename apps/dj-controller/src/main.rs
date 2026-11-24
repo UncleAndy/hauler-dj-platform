@@ -969,16 +969,30 @@ fn inputs_loop(
     let mut previous = std::collections::HashMap::new();
     let mut last_press: std::collections::HashMap<String, u128> = std::collections::HashMap::new();
     let started = std::time::Instant::now();
+    let mut link: Option<EngineLink> = None;
+    // The newest position of every knob and fader, sent on a short timer rather than once per report: a fast hand
+    // produces more positions than the engine needs, and what matters is where the hand stopped.
+    let mut pending: Vec<(String, dj_domain::DjCommand)> = Vec::new();
+    let mut last_flush = std::time::Instant::now();
+    let mut queued: Option<Vec<u8>> = None;
     loop {
-        let Ok(report_bytes) = reports.recv() else {
-            println!("dj-controller: the panel stopped answering; no more presses");
-            return;
+        let report_bytes = match queued.take() {
+            Some(report) => report,
+            None => match reports.recv() {
+                Ok(report) => report,
+                Err(_) => {
+                    println!("dj-controller: the panel stopped answering; no more presses");
+                    flush_pending(&mut pending, &mut link, endpoint);
+                    return;
+                }
+            },
         };
         if report_bytes.len() < 2 {
             continue;
         }
         let report = report_bytes[0];
         let payload = &report_bytes[1..];
+        let _ = &pending;
         for event in map.decode(report, payload, &mut previous) {
             // A PLAY button asks for the opposite of what the deck is doing, so the deck's own state is part of the
             // question.
@@ -1045,13 +1059,67 @@ fn inputs_loop(
                 event.value,
                 raw.unwrap_or_default()
             );
-            let asked = vec![(event.control.clone(), deck, command)];
-            if let Err(reason) = send_commands(endpoint, &asked) {
-                println!(
-                    "dj-controller: {} did not reach the engine: {reason}",
-                    event.control
-                );
+            let analog = map
+                .field_of(&event.control)
+                .is_some_and(|field| field.width > 1);
+            if analog {
+                // One entry per control, the newest wins.
+                if let Some(slot) = pending
+                    .iter_mut()
+                    .find(|(control, _)| *control == event.control)
+                {
+                    slot.1 = command;
+                } else {
+                    pending.push((event.control.clone(), command));
+                }
+            } else {
+                let asked = vec![(event.control.clone(), deck, command)];
+                if let Err(reason) = send_commands(endpoint, &asked) {
+                    println!(
+                        "dj-controller: {} did not reach the engine: {reason}",
+                        event.control
+                    );
+                }
             }
+        }
+        // A knob's newest position goes out as soon as the hand stops feeding reports, and never later than ten
+        // milliseconds: a fader thrown to the top must end at the top, not where the queue ran out.
+        match reports.try_recv() {
+            Ok(next) => queued = Some(next),
+            Err(_) => {
+                flush_pending(&mut pending, &mut link, endpoint);
+                last_flush = std::time::Instant::now();
+            }
+        }
+        if last_flush.elapsed() > std::time::Duration::from_millis(10) {
+            flush_pending(&mut pending, &mut link, endpoint);
+            last_flush = std::time::Instant::now();
+        }
+    }
+}
+
+/// Sends the newest position of every knob and fader that has one waiting.
+fn flush_pending(
+    pending: &mut Vec<(String, dj_domain::DjCommand)>,
+    link: &mut Option<EngineLink>,
+    endpoint: &str,
+) {
+    if pending.is_empty() {
+        return;
+    }
+    if link.is_none() {
+        *link = EngineLink::connect(endpoint).ok();
+    }
+    let Some(open) = link.as_mut() else {
+        pending.clear();
+        return;
+    };
+    for (control, command) in pending.drain(..) {
+        if let Err(reason) = open.send(&command) {
+            println!("dj-controller: {control} did not reach the engine: {reason}");
+            // The next flush opens a fresh connection: a broken pipe must not silence the panel for good.
+            *link = None;
+            return;
         }
     }
 }
@@ -1972,6 +2040,54 @@ fn replay(path: &str, endpoint: Option<&str>) -> Result<(), String> {
         return Ok(());
     };
     send_commands(endpoint, &commands)
+}
+
+/// One connection to the engine, kept open for as long as the service lives.
+///
+/// Opening a socket and shaking hands for every knob step was the bug behind "a fast fader stops before the top": each
+/// command travelled on its own connection, the engine saw them in whatever order they arrived, and an older value could
+/// land after a newer one. A knob is absolute, so the last value has to be the one that stays.
+struct EngineLink {
+    stream: std::os::unix::net::UnixStream,
+    next_id: u64,
+}
+
+impl EngineLink {
+    fn connect(endpoint: &str) -> Result<Self, String> {
+        let mut stream = dj_bridge::transport::connect(std::path::Path::new(endpoint))
+            .map_err(|error| format!("{endpoint} cannot be reached: {error}"))?;
+        dj_bridge::write_frame(
+            &mut stream,
+            &ClientMessage::Hello {
+                protocol: dj_domain::COMMAND_PROTOCOL.to_string(),
+            },
+        )
+        .map_err(|error| format!("the engine refused the handshake: {error}"))?;
+        Ok(Self { stream, next_id: 1 })
+    }
+
+    /// Sends one command and waits for its answer, so a failure is seen by the caller and not by silence.
+    fn send(&mut self, command: &dj_domain::DjCommand) -> Result<(), String> {
+        let id = self.next_id;
+        self.next_id = self.next_id.wrapping_add(1);
+        let scheduled = dj_domain::ScheduledCommand {
+            id,
+            // No clock of our own: the engine applies it at the next block, which is where a hand's command lands too.
+            effective_sample: 0,
+            command: command.clone(),
+        };
+        dj_bridge::write_frame(&mut self.stream, &ClientMessage::Command(scheduled))
+            .map_err(|error| format!("the command could not be sent: {error}"))?;
+        loop {
+            let message: ServerMessage = dj_bridge::read_frame(&mut self.stream)
+                .map_err(|error| format!("the engine stopped answering: {error}"))?;
+            if let ServerMessage::Ack(ack) = message
+                && ack.command_id == id
+            {
+                return Ok(());
+            }
+        }
+    }
 }
 
 /// Sends the commands to the engine and waits for their answers.

@@ -70,6 +70,20 @@ impl EqBand {
 /// The deck's pitch range, either side of unity: what a fader at its end asks for.
 pub const PITCH_RANGE: f32 = 0.16;
 
+/// The value a channel fader's handle position is worth, on the window's own law.
+///
+/// The window's fader is not linear: `UiSettings::faderCurveValue` puts the handle at
+/// `1 − curve(1 − where)`, where `curve` is the hyperbola `1,167·t / (0,167 + t)` through (0, 0), (½, 0,875) and
+/// (1, 1) — the B-taper of a channel strip, steep at the bottom, gentle at the top. A hardware fader's travel *is* the
+/// handle position, so the panel has to apply the same law; sending the travel straight through made the handle crawl at
+/// the bottom and leap at the top (owner's report, 24.11: "the faders move unevenly").
+#[must_use]
+pub fn fader_value(handle: f32) -> f32 {
+    let t = 1.0 - handle.clamp(0.0, 1.0);
+    let curve = 1.166_666_7 * t / (0.166_666_67 + t);
+    (1.0 - curve).clamp(0.0, 1.0)
+}
+
 /// Where a knob stands, in decibels, on the channel strip's own scale.
 ///
 /// The same convention the window's knobs use: the middle is 0 dB, the top is +6 dB, the far end of the cut is −26 dB and
@@ -277,7 +291,9 @@ impl Mapping {
             }
             Intent::ChannelFader => Some(DjCommand::SetChannelFader {
                 deck: deck?,
-                position: event.value.clamp(0.0, 1.0),
+                // The travel of the hardware fader is the handle's position; the law turns it into the value the engine
+                // wants.
+                position: fader_value(event.value),
             }),
             Intent::Crossfader => Some(DjCommand::SetCrossfader {
                 position: event.value.clamp(0.0, 1.0),
@@ -368,22 +384,49 @@ mod tests {
     fn faders_and_the_crossfader_carry_their_position() {
         let mapping = Mapping::new();
         let fader = ControlEvent::level("deck_b.fader", 0.7);
-        assert_eq!(
-            mapping.resolve_control(&fader, false, false),
-            Some((
-                Some(DeckId::B),
-                DjCommand::SetChannelFader {
-                    deck: DeckId::B,
-                    position: 0.7
-                }
-            ))
-        );
+        match mapping.resolve_control(&fader, false, false) {
+            Some((Some(DeckId::B), DjCommand::SetChannelFader { position, .. })) => {
+                assert!((position - fader_value(0.7)).abs() < 1e-6, "{position}");
+                assert!(
+                    position > 0.2 && position < 0.5,
+                    "the law, not the travel: {position}"
+                );
+            }
+            other => panic!("{other:?}"),
+        }
         let crossfader = ControlEvent::level("mixer.crossfader", 0.25);
         assert_eq!(
             mapping.resolve_control(&crossfader, false, false),
             Some((None, DjCommand::SetCrossfader { position: 0.25 })),
             "the crossfader belongs to the mixer, not to a deck"
         );
+    }
+
+    #[test]
+    fn a_channel_fader_follows_the_window_s_law() {
+        // The handle's travel is even; the value it is worth is not, and the law is the window's own.
+        assert!((fader_value(1.0) - 1.0).abs() < 1e-6, "the top is unity");
+        assert!(fader_value(0.0) < 1e-6, "the bottom is silence");
+        assert!(
+            (fader_value(0.5) - 0.125).abs() < 1e-3,
+            "half the travel is a quarter of the way up the range: {}",
+            fader_value(0.5)
+        );
+        // Monotone: a hand going up always goes up.
+        let mut previous = -1.0;
+        for step in 0..=100 {
+            let value = fader_value(step as f32 / 100.0);
+            assert!(value >= previous, "step {step}: {value} < {previous}");
+            previous = value;
+        }
+        let mapping = Mapping::new();
+        let event = ControlEvent::level("deck_a.fader", 0.5);
+        match mapping.resolve_control(&event, false, false) {
+            Some((Some(DeckId::A), DjCommand::SetChannelFader { position, .. })) => {
+                assert!((position - 0.125).abs() < 1e-3, "{position}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
