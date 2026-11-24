@@ -1032,9 +1032,18 @@ fn inputs_loop(
                 }
                 last_press.insert(event.control.clone(), now);
             }
+            let raw = map.raw_of(&event.control, report, payload).map(|raw| {
+                let top = match map.field_of(&event.control) {
+                    Some(field) => (1_u32 << field.width.min(16)) - 1,
+                    None => 0,
+                };
+                format!(", raw {raw} of {top}")
+            });
             println!(
-                "dj-controller: at {now} ms {} = {:.3} (report {report}) → {command:?}",
-                event.control, event.value
+                "dj-controller: at {now} ms {} = {:.3} (report {report}{}) → {command:?}",
+                event.control,
+                event.value,
+                raw.unwrap_or_default()
             );
             let asked = vec![(event.control.clone(), deck, command)];
             if let Err(reason) = send_commands(endpoint, &asked) {

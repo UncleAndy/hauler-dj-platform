@@ -67,13 +67,16 @@ fn the_shipped_map_carries_the_controls_this_program_binds() {
         .iter()
         .find(|field| field.control == "deck_a.tempo")
         .expect("the tempo fader");
-    assert_eq!(tempo.width, 16);
+    assert_eq!(tempo.width, 12, "the travel is 4095 counts");
     let knob = map
         .fields()
         .iter()
         .find(|field| field.control == "deck_a.eq_mid")
         .expect("the mid band");
-    assert_eq!(knob.width, 16, "a knob is sixteen bits, not eight");
+    assert_eq!(
+        knob.width, 12,
+        "a knob is twelve bits of value in a sixteen-bit field"
+    );
 }
 
 #[test]

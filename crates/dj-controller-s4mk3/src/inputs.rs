@@ -48,6 +48,25 @@ impl InputMap {
         &self.fields
     }
 
+    /// The field a control name stands for, when the map knows it.
+    #[must_use]
+    pub fn field_of(&self, control: &str) -> Option<&Field> {
+        self.fields.iter().find(|field| field.control == control)
+    }
+
+    /// The raw value a report carries for one field: what the device says, before any scaling.
+    ///
+    /// A hand asks "how much of the travel is left?" and the answer is a number of counts: a knob that reaches 16383 of
+    /// 65535 is a fourteen-bit knob, and the map is wrong, not the hand.
+    #[must_use]
+    pub fn raw_of(&self, control: &str, report_id: u8, payload: &[u8]) -> Option<u16> {
+        let field = self.field_of(control)?;
+        if field.report != report_id {
+            return None;
+        }
+        report::unsigned(payload, field.byte, field.bit, field.width)
+    }
+
     /// True while nothing has been learned yet: a panel whose presses ask for nothing.
     #[must_use]
     pub fn is_empty(&self) -> bool {
