@@ -18,14 +18,10 @@ deck_b.sync 1 14 4 1
 ";
 
 #[test]
-fn the_shipped_map_carries_the_six_bound_buttons() {
-    // Read from the device's public description and confirmed on the panel: deck buttons live in report 1, report 3 is
-    // the clock and the platters and never carries a button.
+fn the_shipped_map_carries_the_controls_this_program_binds() {
+    // Read from the device's public description and confirmed on the panel: buttons, pads and the headphone buttons in
+    // report 1, knobs and faders in report 2, and never anything in report 3 (the clock and the platters).
     let map = InputMap::built_in();
-    assert_eq!(map.fields().len(), 6, "{:?}", map.fields());
-    for field in map.fields() {
-        assert_eq!(field.report, 1, "{} is not in report 1", field.control);
-    }
     let names: Vec<&str> = map.fields().iter().map(|f| f.control.as_str()).collect();
     for wanted in [
         "deck_a.play_pause",
@@ -34,12 +30,50 @@ fn the_shipped_map_carries_the_six_bound_buttons() {
         "deck_b.play_pause",
         "deck_b.cue",
         "deck_b.sync",
+        "deck_a.hotcue1",
+        "deck_a.hotcue8",
+        "deck_b.hotcue1",
+        "deck_b.hotcue8",
+        "deck_a.pfl",
+        "deck_b.pfl",
+        "deck_a.fader",
+        "deck_b.fader",
+        "deck_a.eq_high",
+        "deck_a.eq_mid",
+        "deck_a.eq_low",
+        "deck_b.eq_high",
+        "deck_b.eq_mid",
+        "deck_b.eq_low",
+        "deck_a.tempo",
+        "deck_b.tempo",
+        "mixer.crossfader",
     ] {
         assert!(
             names.contains(&wanted),
             "{wanted} is missing from {names:?}"
         );
     }
+    for field in map.fields() {
+        assert!(
+            field.report == 1 || field.report == 2,
+            "{} lives in report {}, which is not a control report",
+            field.control,
+            field.report
+        );
+    }
+    // A tempo fader is sixteen bits over two bytes, a knob is one byte.
+    let tempo = map
+        .fields()
+        .iter()
+        .find(|field| field.control == "deck_a.tempo")
+        .expect("the tempo fader");
+    assert_eq!(tempo.width, 16);
+    let knob = map
+        .fields()
+        .iter()
+        .find(|field| field.control == "deck_a.eq_mid")
+        .expect("the mid band");
+    assert_eq!(knob.width, 8);
 }
 
 #[test]

@@ -3,32 +3,74 @@
 # Format, one control a line, five fields separated by spaces:
 #
 #   control            report  byte  bit  width
-#   deck_a.play        1       4     0    1
-#   deck_b.sync        1       14    4    1
+#   deck_a.play_pause  1       4     0    1
+#   deck_a.tempo       2       12    0    16
 #
-# `control` is the name the binding table uses (`deck_a.play`, `deck_b.sync`, `deck_a.cue`); `report` is the HID report
-# number the device sends; `byte` counts from the first byte **after** the report number; `bit` is the bit inside that
-# byte and `width` how many bits the field takes (1 for a button, 12 for an encoder, 16 for a fader read little-endian).
+# `control` is the name the binding table uses (`deck_a.play_pause`, `mixer.crossfader`, `deck_b.hotcue3`); `report` is
+# the HID report number the device sends; `byte` counts from the first byte **after** the report number; `bit` is the bit
+# inside that byte and `width` how many bits the field takes (1 for a button, 8 for a knob, 16 for the tempo fader read
+# little-endian).
 #
-# Provenance of the six lines below: `public-source`, read from Mixxx's public controller description
-# (`res/controllers/Traktor Kontrol S4 MK3.hid.xml` and `Traktor-Kontrol-S4-MK3.js`, GPL) as a fact about the device,
-# not copied as code: deck buttons live in report 1, and the byte/bit of each is what that description says. The rest of
-# that table stays where it is — this file carries only the controls this program can bind, and every line is confirmed
-# by pressing the button and seeing the deck obey.
-#
-#
-# The PLAY button is `play_pause`, not `play`: the same button starts the deck and stops it, which is what the button is
-# for and what a DJ's hand expects. The binding table answers it with the transport's own state, so the service has to
-# know what the deck is doing — it learns that from the snapshots it already receives for the lights.
+# Provenance: `public-source` — read from Mixxx's public controller description
+# (`res/controllers/Traktor Kontrol S4 MK3.hid.xml` and `Traktor-Kontrol-S4-MK3.js`, GPL) as facts about the device, not
+# copied as code. Buttons and pads live in report 1; knobs and faders in report 2; every line is confirmed by touching
+# the control and seeing the program obey.
 #
 # Report 3 is not here and will never be: it is the clock and the platters (counters at bytes 8 and 36, wheel positions
-# at 12 and 40), and it never carries a button.
+# at 12 and 40), and it never carries a button. A line learned there fires by itself and starts decks with nobody near
+# the panel.
 #
-# More controls are learned on the panel: `dj-controller --inputs-learn` asks for one button at a time and appends what
-# it saw to `~/.local/share/hauler-dj/inputs-map.txt`. A learned line never overrides a line from this file.
+# The pads of the left deck serve decks A and C (the deck button switches), and the right ones B and D; this file binds
+# them to A and B, because that is what the engine shows on the two panels.
+#
+# More controls are learned on the panel: `dj-controller --inputs-learn` asks for one button at a time and writes what it
+# saw to `~/.local/share/hauler-dj/inputs-map.txt`. A learned line never overrides a line from this file.
+
+# --- transport, report 1
 deck_a.play_pause 1 4 0 1
 deck_a.cue 1 4 1 1
 deck_a.sync 1 5 7 1
 deck_b.play_pause 1 12 0 1
 deck_b.cue 1 14 5 1
 deck_b.sync 1 14 4 1
+
+# --- hotcue pads, report 1: eight bits in one byte, first pad is the high bit of the pair
+deck_a.hotcue1 1 3 5 1
+deck_a.hotcue2 1 3 4 1
+deck_a.hotcue3 1 3 7 1
+deck_a.hotcue4 1 3 6 1
+deck_a.hotcue5 1 3 3 1
+deck_a.hotcue6 1 3 2 1
+deck_a.hotcue7 1 3 1 1
+deck_a.hotcue8 1 3 0 1
+deck_b.hotcue1 1 13 5 1
+deck_b.hotcue2 1 13 4 1
+deck_b.hotcue3 1 13 7 1
+deck_b.hotcue4 1 13 6 1
+deck_b.hotcue5 1 13 3 1
+deck_b.hotcue6 1 13 2 1
+deck_b.hotcue7 1 13 1 1
+deck_b.hotcue8 1 13 0 1
+
+# --- headphone buttons (PFL), report 1
+deck_a.pfl 1 7 3 1
+deck_b.pfl 1 7 6 1
+deck_c.pfl 1 7 2 1
+deck_d.pfl 1 7 7 1
+
+# --- knobs and faders, report 2 (one byte each, 0…255)
+mixer.crossfader 2 0 0 8
+deck_a.fader 2 2 0 8
+deck_b.fader 2 4 0 8
+deck_c.fader 2 6 0 8
+deck_d.fader 2 8 0 8
+deck_a.eq_high 2 44 0 8
+deck_a.eq_mid 2 46 0 8
+deck_a.eq_low 2 48 0 8
+deck_b.eq_high 2 50 0 8
+deck_b.eq_mid 2 52 0 8
+deck_b.eq_low 2 54 0 8
+
+# --- tempo faders, report 2 (two bytes, little-endian, 0…65535)
+deck_a.tempo 2 12 0 16
+deck_b.tempo 2 10 0 16

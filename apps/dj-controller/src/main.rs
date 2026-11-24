@@ -891,7 +891,7 @@ fn serve(
              learn them with --inputs-learn"
         );
     }
-    let playing: Playing = std::sync::Arc::new(std::sync::Mutex::new([false; 4]));
+    let playing: Playing = std::sync::Arc::new(std::sync::Mutex::new(DeckFactsShared::default()));
     if !map.is_empty() {
         // Opening the nodes takes a moment, and the panel must light at once: the search happens on the same thread that
         // will then read the presses.
@@ -982,17 +982,35 @@ fn inputs_loop(
         for event in map.decode(report, payload, &mut previous) {
             // A PLAY button asks for the opposite of what the deck is doing, so the deck's own state is part of the
             // question.
-            let running = dj_controller_core::BindableDeck::from_control(&event.control)
-                .map(|(deck, _)| deck.id())
-                .and_then(|deck| match playing.lock() {
-                    Ok(state) => state.get(deck_index(deck)).copied(),
-                    Err(_) => None,
-                })
-                .unwrap_or(false);
+            let (running, cue_present) = match playing.lock() {
+                Ok(state) => match dj_controller_core::BindableDeck::from_control(&event.control)
+                    .map(|(deck, _)| deck.id())
+                {
+                    Some(deck) => {
+                        let index = deck_index(deck);
+                        let slot = match dj_controller_core::intent_for(&event.control) {
+                            Some(dj_controller_core::Intent::Hotcue(slot)) => usize::from(slot),
+                            _ => 0,
+                        };
+                        (
+                            state.playing.get(index).copied().unwrap_or(false),
+                            state
+                                .cues
+                                .get(index)
+                                .and_then(|slots| slots.get(slot))
+                                .copied()
+                                .unwrap_or(false),
+                        )
+                    }
+                    None => (false, false),
+                },
+                Err(_) => (false, false),
+            };
             // Every event is written down with its time: "the deck started by itself" is answered by reading what came
             // in and when, not by guessing (owner's report, 24.11).
             let now = started.elapsed().as_millis();
-            let Some((deck, command)) = mapping.resolve(&event, running) else {
+            let Some((deck, command)) = mapping.resolve_control(&event, running, cue_present)
+            else {
                 println!(
                     "dj-controller: at {now} ms {} = {:.0} (report {report}) asks for nothing; deck running {running}",
                     event.control, event.value
@@ -1039,8 +1057,18 @@ fn deck_index(deck: dj_domain::DeckId) -> usize {
     }
 }
 
-/// What each transport is doing, filled from the snapshots the lights loop already receives.
-type Playing = std::sync::Arc<std::sync::Mutex<[bool; 4]>>;
+/// What the decks are doing, filled from the snapshots the lights loop already receives.
+///
+/// Two readers: the lights and the presses. A PLAY button asks for the opposite of what the deck is doing, and a hotcue
+/// pad jumps to its slot when the slot holds a cue and stores one when it does not — both are questions about the decks,
+/// not about the panel.
+#[derive(Clone, Copy, Debug, Default)]
+struct DeckFactsShared {
+    playing: [bool; 4],
+    cues: [[bool; 8]; 4],
+}
+
+type Playing = std::sync::Arc<std::sync::Mutex<DeckFactsShared>>;
 
 /// Reads the panel on a thread and hands the reports over a channel.
 ///
@@ -1691,7 +1719,13 @@ fn lights_show(
                 && let Ok(mut state) = playing.lock()
             {
                 for (index, deck) in facts.iter().enumerate() {
-                    state[index] = deck.playing;
+                    state.playing[index] = deck.playing;
+                }
+                for (index, deck) in snapshot.decks.iter().enumerate().take(4) {
+                    for slot in 0..8 {
+                        state.cues[index][slot] =
+                            deck.hotcues.get(slot).is_some_and(Option::is_some);
+                    }
                 }
             }
             let show = show_from_facts(&facts);
@@ -1913,7 +1947,9 @@ fn replay(path: &str, endpoint: Option<&str>) -> Result<(), String> {
             .map_err(|_| format!("{}:{}: {value} is not a number", number + 1, path))?;
         let event = ControlEvent::level(control.trim(), value);
         match mapping.resolve(&event, false) {
-            Some((deck, command)) => commands.push((control.trim().to_string(), deck, command)),
+            Some((deck, command)) => {
+                commands.push((control.trim().to_string(), Some(deck), command));
+            }
             None => println!(
                 "dj-controller: {} asks for nothing the engine knows ({control})",
                 line
@@ -1932,7 +1968,7 @@ fn replay(path: &str, endpoint: Option<&str>) -> Result<(), String> {
 /// Sends the commands to the engine and waits for their answers.
 fn send_commands(
     endpoint: &str,
-    commands: &[(String, dj_domain::DeckId, dj_domain::DjCommand)],
+    commands: &[(String, Option<dj_domain::DeckId>, dj_domain::DjCommand)],
 ) -> Result<(), String> {
     let mut stream = dj_bridge::transport::connect(std::path::Path::new(endpoint))
         .map_err(|error| format!("{endpoint} cannot be reached: {error}"))?;
