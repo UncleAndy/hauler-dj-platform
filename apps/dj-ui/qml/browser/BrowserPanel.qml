@@ -206,6 +206,39 @@ Pane {
         return browser.railIndex - 2;
     }
 
+    /// Put the rail's cursor on the place the list is showing, so the rail has **one** cursor and it always means the same
+    /// thing: where the DJ is. Two markers — one for what is shown, one for where the knob points — read as two answers to
+    /// one question (owner's report, 24.11).
+    function placeRailOn(kind, row) {
+        const rows = browser.railRows;
+        if (kind === "collection") {
+            browser.railIndex = 0;
+            return;
+        }
+        if (kind === "playlists") {
+            browser.railIndex = 1;
+            return;
+        }
+        if (kind === "files") {
+            browser.railIndex = Math.max(0, rows.length - 1);
+            return;
+        }
+        for (let index = 0; index < rows.length; ++index) {
+            const candidate = rows[index];
+            if (!candidate || candidate.kind !== kind) {
+                continue;
+            }
+            if (kind === "folder" && candidate.folder === row.folder) {
+                browser.railIndex = index;
+                return;
+            }
+            if ((kind === "playlist" || kind === "all") && candidate.id === row.id) {
+                browser.railIndex = index;
+                return;
+            }
+        }
+    }
+
     /// Move the rail's cursor and stand where it lands: a place opens, a tree row opens its playlist or folder.
     function railStep(delta) {
         const rows = browser.railRows;
@@ -270,6 +303,7 @@ Pane {
         }
         browser.playlistPlace = row.kind;
         browser.playlistPlaceName = row.kind === "folder" ? row.folder : "";
+        browser.placeRailOn(row.kind === "all" ? "all" : row.kind, row);
         Browser.openPlaylist(0, row.kind === "all" ? "All" : row.name);
         browser.lastAction = row.kind + " " + row.name;
         return true;
@@ -1134,6 +1168,7 @@ Pane {
 
     // A section is a place, not a label: pressing one moves the list there.
     function showSection(key) {
+        browser.placeRailOn(key, null);
         if (key === "collection") {
             Browser.openCollection(LayoutState.collectionRoots);
             browser.lastAction = "collection " + Browser.folder;
@@ -1897,11 +1932,11 @@ Pane {
                                                        && browser.playlistDropFolder.length === 0
                     // Walking the rail with Shift lights the row the cursor stands on, so the DJ sees the place change
                     // before the list beside it does.
-                    // The walked cursor is a frame, not a fill: the fill already says which section the list is showing, and
-                    // two fills read as two answers to the same question (owner's report, 24.11).
+                    // One marker for the rail: the row the cursor stands on is the row the list shows, so it is the only one
+                    // that is lit (owner's report, 24.11).
                     readonly property bool walked: browser.railSection === key && browser.railTreeRow <= 0
-                    color: current || dropTarget ? UiSettings.themeAccentDim : "transparent"
-                    border.width: walked ? 2 : 0
+                    color: walked || dropTarget ? UiSettings.themeAccentDim : "transparent"
+                    border.width: walked ? 1 : 0
                     border.color: UiSettings.themeAccent
                     radius: 2
                     Label {
@@ -1984,7 +2019,7 @@ Pane {
                                                           === treeRow.modelData.folder
                     border.width: treeRow.walked ? 1 : 0
                     border.color: UiSettings.themeAccent
-                    color: treeRow.chosen ? UiSettings.themeAccent
+                    color: treeRow.walked ? UiSettings.themeAccentDim
                                           : (treeRow.dropTarget ? UiSettings.themeAccentDim
                                                                : "transparent")
                     radius: 2
