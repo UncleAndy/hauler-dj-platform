@@ -50,7 +50,7 @@ Pane {
     property var folded: ({})
     // The whole tree under `Playlists`, open or closed: the section is a level too, and closing it is what the press does when
     // the cursor stands on the section itself.
-    property bool foldPlaylists: false
+    property bool foldPlaylists: true
     property int railIndex: 0
     property int placeSeen: 0
     property int placeToggleSeen: 0
@@ -238,7 +238,9 @@ Pane {
         if (!row) {
             return;
         }
-        if (row.kind === "playlists") {
+        if (row.kind === "playlists" || row.kind === "all") {
+            // `All` is the flattened list of every playlist: opening or closing it is the same act as opening the section,
+            // and both are levels the DJ reaches with Shift + press (owner's report, 24.11).
             browser.foldPlaylists = !browser.foldPlaylists;
             browser.lastAction = browser.foldPlaylists ? "playlists closed" : "playlists opened";
             return;
