@@ -1133,66 +1133,14 @@ fn inputs_learn(devices: &[DeviceInfo], out: Option<&str>) -> Result<(), String>
             .join(", ")
     );
 
-    // A panel that reports its whole state four times a second carries fields that move on their own: counters, clocks,
-    // the platter's own count. A learned "press" that is really a counter lights decks by itself on stage. So the walk
-    // first listens to a quiet panel — longer than one round of any counter it may have — and remembers every bit that
-    // was ever up. Those are never asked about, whatever they do later.
-    let quiet = std::time::Duration::from_secs(4);
+    // The panel does not send its whole state forever. Report 3 is the clock and the platters, and it comes about four
+    // times a second whether anything is touched or not — counters, wheel timestamps, nothing a hand presses. The
+    // buttons travel in reports 1 and 2, and those arrive **when something changes**, so a quiet panel sends nothing
+    // there at all. That is why a learned "button" was really a counter bit in report 3 (owner's reports, 24.11): the
+    // only thing that was moving.
     println!(
-        "dj-controller: {} с слушаю тихую панель — не трогайте её и не крутите ручки",
-        quiet.as_secs()
-    );
-    let mut ever_up: std::collections::HashSet<(u8, usize, usize)> =
-        std::collections::HashSet::new();
-    let mut last: std::collections::HashMap<u8, Vec<u8>> = std::collections::HashMap::new();
-    let mut sizes: std::collections::BTreeMap<u8, usize> = std::collections::BTreeMap::new();
-    let quiet_until = std::time::Instant::now() + quiet;
-    let mut reports_seen = 0_usize;
-    while std::time::Instant::now() < quiet_until {
-        let Ok(report) = reports.recv_timeout(std::time::Duration::from_millis(100)) else {
-            continue;
-        };
-        if report.len() < 2 {
-            continue;
-        }
-        reports_seen += 1;
-        let id = report[0];
-        let payload = report[1..].to_vec();
-        sizes.insert(id, payload.len());
-        for (byte, value) in payload.iter().enumerate() {
-            for bit in 0..8 {
-                if value & (1_u8 << bit) != 0 {
-                    ever_up.insert((id, byte, bit));
-                }
-            }
-        }
-        if let Some(previous) = last.get(&id) {
-            for byte in 0..payload.len().min(previous.len()) {
-                let changed = payload[byte] ^ previous[byte];
-                for bit in 0..8 {
-                    if changed & (1_u8 << bit) != 0 {
-                        ever_up.insert((id, byte, bit));
-                    }
-                }
-            }
-        }
-        last.insert(id, payload);
-    }
-    if reports_seen == 0 {
-        return Err("no node of the panel said anything: plugged in but quiet".to_string());
-    }
-    let shape: Vec<String> = sizes
-        .iter()
-        .map(|(id, size)| format!("report {id} ({size} bytes)"))
-        .collect();
-    println!(
-        "dj-controller: отчётов за {} с — {reports_seen}: {}",
-        quiet.as_secs(),
-        shape.join(", ")
-    );
-    println!(
-        "dj-controller: полей, которые уже были подняты или менялись, — {}; их не спрашиваю",
-        ever_up.len()
+        "dj-controller: пробы слышно — report 3 это часы и джоги (счётчики), кнопки приходят в report 1 и 2; \
+         обучение слушает только 1 и 2"
     );
 
     let mut learned: Vec<(String, u8, usize, usize)> = Vec::new();
@@ -1200,17 +1148,13 @@ fn inputs_learn(devices: &[DeviceInfo], out: Option<&str>) -> Result<(), String>
         println!(
             "dj-controller: нажмите и ПОДЕРЖИТЕ {label} около секунды, затем отпустите (20 с на кнопку)"
         );
-        let started = std::time::Instant::now();
-        let deadline = started + std::time::Duration::from_secs(20);
-        // How many reports in a row each field has been up, and for how long: a finger holds a button for several
-        // reports, a counter's bit flickers and comes back. The longest hold that then goes back down is the button.
-        let mut streak: std::collections::HashMap<(u8, usize, usize), usize> =
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        // Distinct states of each report, oldest first. The answer is a bit that was down, went up while the finger was
+        // on the button, and came back down when it was let go.
+        let mut history: std::collections::HashMap<u8, Vec<Vec<u8>>> =
             std::collections::HashMap::new();
-        let mut held_until: std::collections::HashMap<(u8, usize, usize), std::time::Instant> =
-            std::collections::HashMap::new();
-        let mut released: Vec<((u8, usize, usize), usize)> = Vec::new();
-        let multi_report = reports_seen as f32 / quiet.as_secs_f32() > 2.0;
-        while std::time::Instant::now() < deadline {
+        let mut found: Option<(u8, usize, usize, usize)> = None;
+        while found.is_none() && std::time::Instant::now() < deadline {
             let Ok(report) = reports.recv_timeout(std::time::Duration::from_millis(100)) else {
                 continue;
             };
@@ -1218,90 +1162,69 @@ fn inputs_learn(devices: &[DeviceInfo], out: Option<&str>) -> Result<(), String>
                 continue;
             }
             let id = report[0];
+            if id == 3 {
+                continue;
+            }
             let payload = report[1..].to_vec();
-            for (byte, value) in payload.iter().enumerate() {
+            let states = history.entry(id).or_default();
+            if states.last().is_some_and(|last| *last == payload) {
+                continue;
+            }
+            states.push(payload);
+            // Wait for enough states to see a whole press: down, up, down.
+            if states.len() < 3 {
+                continue;
+            }
+            let mut candidates: Vec<(u8, usize, usize, usize)> = Vec::new();
+            let bytes = states.iter().map(Vec::len).min().unwrap_or(0);
+            for byte in 0..bytes {
                 for bit in 0..8 {
-                    let key = (id, byte, bit);
-                    if ever_up.contains(&key) {
-                        continue;
-                    }
-                    if learned.iter().any(|(_, seen_report, seen_byte, seen_bit)| {
-                        *seen_report == id && *seen_byte == byte && *seen_bit == bit
-                    }) {
-                        continue;
-                    }
-                    if value & (1_u8 << bit) != 0 {
-                        let entry = streak.entry(key).or_insert(0);
-                        *entry += 1;
-                        if *entry >= 2 {
-                            held_until.insert(key, std::time::Instant::now());
-                        }
-                    } else if let Some(count) = streak.remove(&key) {
-                        if count >= 2 {
-                            released.push((key, count));
-                        }
-                        held_until.remove(&key);
-                    }
-                }
-            }
-            last.insert(id, payload);
-            // A press that is held and let go is the answer; a single report is not.
-            if !multi_report && !held_until.is_empty() {
-                // A panel that reports slower than twice a second cannot tell a hold from a blink: take the first bit
-                // that came up and stay honest about it in the log.
-                let key = *held_until.keys().next().unwrap_or(&(0, 0, 0));
-                released.push((key, 1));
-            }
-            if let Some((key, count)) = released.iter().max_by_key(|(_, count)| *count).copied() {
-                // A counter's bit also goes up and down, and the difference is that it comes back on its own. Watch the
-                // bit for a moment after the release: a finger does not press twice by accident, a carry does.
-                let watch_until =
-                    std::time::Instant::now() + std::time::Duration::from_millis(1500);
-                let mut came_back = false;
-                while std::time::Instant::now() < watch_until {
-                    let Ok(next) = reports.recv_timeout(std::time::Duration::from_millis(100))
-                    else {
+                    let track: Vec<bool> = states
+                        .iter()
+                        .map(|state| state[byte] & (1_u8 << bit) != 0)
+                        .collect();
+                    let first_up = track.iter().position(|up| *up);
+                    let Some(first_up) = first_up else {
                         continue;
                     };
-                    if next.len() >= 2
-                        && next[0] == key.0
-                        && next
-                            .get(key.1 + 1)
-                            .is_some_and(|value| value & (1_u8 << key.2) != 0)
-                    {
-                        came_back = true;
-                        break;
+                    // It must start down, run up, and come back down: a press, not a state that happens to be on.
+                    if first_up == 0 || *track.last().unwrap_or(&true) {
+                        continue;
                     }
+                    let run = track.iter().filter(|up| **up).count();
+                    candidates.push((id, byte, bit, run));
                 }
-                if came_back {
-                    println!(
-                        "dj-controller: report {} byte {} bit {} поднялся сам — это счётчик, не кнопка; жду дальше",
-                        key.0, key.1, key.2
-                    );
-                    ever_up.insert(key);
-                    continue;
-                }
-                println!(
-                    "dj-controller: {control} → report {} byte {} bit {} (держалось {} отчётов)",
-                    key.0, key.1, key.2, count
-                );
-                learned.push((control.to_string(), key.0, key.1, key.2));
-                // Let the hand go before the next question.
-                std::thread::sleep(std::time::Duration::from_millis(400));
-                while let Ok(stale) = reports.try_recv() {
-                    if stale.len() >= 2 {
-                        last.insert(stale[0], stale[1..].to_vec());
-                    }
-                }
-                break;
+            }
+            // One finger, one bit. More than one means either a chord or a field that lies, and guessing would put a
+            // command on the wrong button.
+            if candidates.len() == 1 {
+                found = candidates.pop();
             }
         }
-        if !learned.iter().any(|(name, _, _, _)| name == control) {
-            println!("dj-controller: {control}: не дождался нажатия с удержанием — пропускаю");
+        let Some((report, byte, bit, run)) = found else {
+            println!(
+                "dj-controller: {control}: не увидел нажатия и отпускания в report 1/2 — пропускаю"
+            );
+            continue;
+        };
+        if learned.iter().any(|(_, seen_report, seen_byte, seen_bit)| {
+            *seen_report == report && *seen_byte == byte && *seen_bit == bit
+        }) {
+            println!(
+                "dj-controller: {control}: report {report} byte {byte} bit {bit} уже занят другой кнопкой — пропускаю"
+            );
+            continue;
         }
+        println!(
+            "dj-controller: {control} → report {report} byte {byte} bit {bit} (был поднят {run} отчётов)"
+        );
+        learned.push((control.to_string(), report, byte, bit));
+        // The hand has to be off the button before the next question.
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        while reports.try_recv().is_ok() {}
     }
     if learned.is_empty() {
-        return Err("nothing was learned: no button was pressed and held".to_string());
+        return Err("nothing was learned: no button was pressed and let go".to_string());
     }
     let path = match out {
         Some(path) => path.to_string(),
@@ -1326,6 +1249,7 @@ fn inputs_learn(devices: &[DeviceInfo], out: Option<&str>) -> Result<(), String>
     );
     Ok(())
 }
+
 /// Put the panel out: every byte of the lights report dark.
 ///
 /// A panel left lit after the program closes is an instrument left on: the buttons stay glowing on a switched-off
