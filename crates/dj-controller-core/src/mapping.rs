@@ -36,6 +36,10 @@ pub enum Intent {
     ChannelFader,
     /// The crossfader: 0 is deck A, 1 is deck B.
     Crossfader,
+    /// A channel's gain (trim): lines a track's level up once, before the EQ.
+    ChannelGain,
+    /// The mixer's master level: a volume, not a trim, and it only attenuates.
+    MasterGain,
     /// Put the channel into the headphones, or take it out.
     ChannelCue,
     /// One band of the channel's equaliser.
@@ -116,6 +120,39 @@ pub fn eq_decibels(position: f32) -> f32 {
     }
 }
 
+/// Where a channel's gain (trim) knob stands, in decibels, on the window's own law.
+///
+/// The knob stands at unity (0 dB) in the middle, cuts to −40 dB on the left and boosts to +6 dB on the right — the same
+/// ends as the window's `TrimKnob`. The travel is not the range: the cubic `0,1·t + 0,9·t²` (the window's `gainCurveValue`
+/// with the trim's gradient 0.1) spends the fine control around unity and lets the ends move fast, so a hand turning the
+/// panel knob and one turning the window knob reach the same gain.
+#[must_use]
+pub fn gain_decibels(position: f32) -> f32 {
+    let position = position.clamp(0.0, 1.0);
+    let angle = (position - 0.5) * 270.0;
+    let share = angle.abs() / 135.0;
+    let curved = 0.1 * share + 0.9 * share * share;
+    if angle >= 0.0 {
+        curved * 6.0
+    } else {
+        -curved * 40.0
+    }
+}
+
+/// The channel gain as a linear multiplier, from the knob's position.
+#[must_use]
+pub fn gain_linear(position: f32) -> f32 {
+    10.0_f32.powf(gain_decibels(position) / 20.0)
+}
+
+/// The master knob's law: a volume, not a trim, so it only attenuates — linear in decibels from −60 dB at the foot to
+/// 0 dB at the top (the window's `MasterKnob`). The panel's master knob is the same one-sided scale.
+#[must_use]
+pub fn master_gain(position: f32) -> f32 {
+    let db = -60.0 * (1.0 - position.clamp(0.0, 1.0));
+    10.0_f32.powf(db / 20.0)
+}
+
 // The cue button: this program's cue point **is** hotcue slot 0 — the deck's own Cue button sets that slot with a
 // hold and jumps to it with a tap (owner's decision), and the engine's `DjCommand::Cue` works on slots. So the two
 // halves of the gesture have names of their own here rather than one name and a guess: `cue` jumps, `cue_set` stores.
@@ -147,6 +184,8 @@ impl Intent {
             Self::Tempo
             | Self::ChannelFader
             | Self::Crossfader
+            | Self::ChannelGain
+            | Self::MasterGain
             | Self::ChannelCue
             | Self::Eq(_)
             | Self::Hotcue(_) => None,
@@ -237,6 +276,7 @@ pub fn intent_for(control: &str) -> Option<Intent> {
         "cue_set" => Some(Intent::CueSet),
         "tempo" => Some(Intent::Tempo),
         "fader" => Some(Intent::ChannelFader),
+        "gain" => Some(Intent::ChannelGain),
         "pfl" => Some(Intent::ChannelCue),
         "eq_low" => Some(Intent::Eq(EqBand::Low)),
         "eq_mid" => Some(Intent::Eq(EqBand::Mid)),
@@ -250,6 +290,7 @@ pub fn intent_for(control: &str) -> Option<Intent> {
 pub fn mixer_intent_for(control: &str) -> Option<Intent> {
     match control {
         "mixer.crossfader" => Some(Intent::Crossfader),
+        "mixer.master" => Some(Intent::MasterGain),
         _ => None,
     }
 }
@@ -312,6 +353,13 @@ impl Mapping {
             }),
             Intent::Crossfader => Some(DjCommand::SetCrossfader {
                 position: event.value.clamp(0.0, 1.0),
+            }),
+            Intent::ChannelGain => Some(DjCommand::SetChannelGain {
+                deck: deck?,
+                linear_gain: gain_linear(event.value),
+            }),
+            Intent::MasterGain => Some(DjCommand::SetMasterGain {
+                linear_gain: master_gain(event.value),
             }),
             Intent::ChannelCue => Some(DjCommand::SetChannelCue {
                 deck: deck?,
@@ -478,6 +526,31 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn a_gain_knob_and_the_master_follow_the_window_s_law() {
+        // The gain knob stands at unity in the middle, cuts to −40 dB and boosts to +6 dB through the window's cubic.
+        assert!((gain_decibels(0.5) - 0.0).abs() < 1e-6, "the middle is unity");
+        assert!((gain_decibels(1.0) - 6.0).abs() < 1e-6, "the top is the boost");
+        assert!((gain_decibels(0.0) + 40.0).abs() < 1e-6, "the bottom is the cut");
+        assert!((gain_linear(0.5) - 1.0).abs() < 1e-6, "unity is a gain of one");
+        // The master only attenuates: unity at the top, silence (10^-3) at the foot, linear in decibels.
+        assert!((master_gain(1.0) - 1.0).abs() < 1e-6);
+        assert!(master_gain(0.0) < 0.01 && master_gain(0.0) > 0.0);
+        let mapping = Mapping::new();
+        let gain = ControlEvent::level("deck_a.gain", 0.5);
+        match mapping.resolve_control(&gain, false, PadState::default()) {
+            Some((Some(DeckId::A), DjCommand::SetChannelGain { linear_gain, .. })) => {
+                assert!((linear_gain - 1.0).abs() < 1e-6, "{linear_gain}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let master = ControlEvent::level("mixer.master", 1.0);
+        assert_eq!(
+            mapping.resolve_control(&master, false, PadState::default()),
+            Some((None, DjCommand::SetMasterGain { linear_gain: 1.0 })),
+        );
     }
 
     #[test]

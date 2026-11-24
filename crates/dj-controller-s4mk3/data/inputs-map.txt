@@ -113,6 +113,14 @@ deck_b.eq_high 2 50 0 12
 deck_b.eq_mid 2 52 0 12
 deck_b.eq_low 2 54 0 12
 
+# --- gain (trim) knobs and the master, report 2 (twelve-bit pots; `gain: {inByte: …}` and the master at 22 in the public
+# description)
+deck_a.gain 2 16 0 12
+deck_b.gain 2 18 0 12
+deck_c.gain 2 14 0 12
+deck_d.gain 2 20 0 12
+mixer.master 2 22 0 12
+
 # --- tempo faders, report 2 (two bytes, little-endian, 0…65535)
 deck_a.tempo 2 12 0 12
 deck_b.tempo 2 10 0 12
