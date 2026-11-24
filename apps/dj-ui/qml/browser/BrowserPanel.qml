@@ -181,6 +181,28 @@ Pane {
         return rows;
     }
 
+    /// Where the rail's cursor stands: the section it is on, or the row of the tree. The rail is walked blind otherwise —
+    /// the DJ pressed Shift and turned, and nothing on the screen said where the cursor had gone (owner's report, 24.11).
+    readonly property string railSection: {
+        const rows = browser.railRows;
+        const row = rows[browser.railIndex];
+        if (!row) {
+            return "";
+        }
+        return row.kind;
+    }
+
+    /// The tree row the rail's cursor is on, or -1 when it stands on a section: the tree starts after Collection and
+    /// Playlists, which are the first two rows of the rail.
+    readonly property int railTreeRow: {
+        const rows = browser.railRows;
+        const row = rows[browser.railIndex];
+        if (!row || row.kind === "collection" || row.kind === "playlists" || row.kind === "files") {
+            return -1;
+        }
+        return browser.railIndex - 2;
+    }
+
     /// Move the rail's cursor and stand where it lands: a place opens, a tree row opens its playlist or folder.
     function railStep(delta) {
         const rows = browser.railRows;
@@ -197,6 +219,12 @@ Pane {
             return;
         }
         browser.openTreeRow(row);
+        // The tree under the playlists is walked too — that is what an open level is for — and the row the cursor stands on is
+        // brought into view, because a row the DJ cannot see is a row the DJ cannot stop on.
+        const treeRow = browser.railTreeRow;
+        if (treeRow >= 0) {
+            playlistTreeList.positionViewAtIndex(treeRow, ListView.Contain);
+        }
     }
 
     /// Open or close the level the rail's cursor stands on: a folder in the playlist tree.
@@ -1852,7 +1880,12 @@ Pane {
                                                        && browser.playlistDropKnown
                                                        && key === "playlists"
                                                        && browser.playlistDropFolder.length === 0
-                    color: current || dropTarget ? UiSettings.themeAccentDim : "transparent"
+                    // Walking the rail with Shift lights the row the cursor stands on, so the DJ sees the place change
+                    // before the list beside it does.
+                    readonly property bool walked: browser.railSection === key && browser.railTreeRow <= 0
+                    color: current || dropTarget || walked ? UiSettings.themeAccentDim : "transparent"
+                    border.width: browser.railSection === key && browser.railTreeRow <= 0 ? 1 : 0
+                    border.color: UiSettings.themeAccent
                     radius: 2
                     Label {
                         objectName: "sectionLabel_" + key
@@ -1916,6 +1949,9 @@ Pane {
                     height: browser.rowHeight
                     readonly property int depth: treeRow.modelData.depth === undefined
                                                   ? 0 : treeRow.modelData.depth
+                    // The row the panel's own cursor stands on: the rail is walked from the encoder, and a row the DJ
+                    // cannot see is a row the DJ cannot stop on.
+                    readonly property bool walked: treeRow.index === browser.railTreeRow
                     readonly property bool chosen: Browser.playlistId === treeRow.modelData.id
                                                    && treeRow.modelData.kind === "playlist"
                     // `All` is neither a folder nor a playlist: it is the flat view of every playlist, and
@@ -1929,6 +1965,8 @@ Pane {
                                                        && treeRow.modelData.kind === "folder"
                                                        && browser.playlistDropFolder
                                                           === treeRow.modelData.folder
+                    border.width: treeRow.walked ? 1 : 0
+                    border.color: UiSettings.themeAccent
                     color: treeRow.chosen ? UiSettings.themeAccent
                                           : (treeRow.dropTarget ? UiSettings.themeAccentDim
                                                                : "transparent")
