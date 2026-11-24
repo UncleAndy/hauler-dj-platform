@@ -48,6 +48,9 @@ Pane {
     // The rail the panel walks with Shift held: the three places and, inside the playlists, the rows of the tree. A folded
     // folder hides its children — the tree is a filter over the rows the engine publishes, not a second model.
     property var folded: ({})
+    // The whole tree under `Playlists`, open or closed: the section is a level too, and closing it is what the press does when
+    // the cursor stands on the section itself.
+    property bool foldPlaylists: false
     property int railIndex: 0
     property int placeSeen: 0
     property int placeToggleSeen: 0
@@ -161,7 +164,7 @@ Pane {
             {kind: "collection", name: "Collection"},
             {kind: "playlists", name: "Playlists"}
         ];
-        if (Browser.inPlaylists) {
+        if (Browser.inPlaylists && !browser.foldPlaylists) {
             let hideBelow = -1;
             const tree = Browser.playlistTree;
             for (let index = 0; index < tree.length; ++index) {
@@ -227,11 +230,20 @@ Pane {
         }
     }
 
-    /// Open or close the level the rail's cursor stands on: a folder in the playlist tree.
+    /// Open or close the level the rail's cursor stands on: the whole tree when it stands on `Playlists`, a folder's
+    /// children when it stands on a folder.
     function railToggle() {
         const rows = browser.railRows;
         const row = rows[browser.railIndex];
-        if (!row || row.kind !== "folder") {
+        if (!row) {
+            return;
+        }
+        if (row.kind === "playlists") {
+            browser.foldPlaylists = !browser.foldPlaylists;
+            browser.lastAction = browser.foldPlaylists ? "playlists closed" : "playlists opened";
+            return;
+        }
+        if (row.kind !== "folder") {
             return;
         }
         const folded = {};
@@ -1882,9 +1894,11 @@ Pane {
                                                        && browser.playlistDropFolder.length === 0
                     // Walking the rail with Shift lights the row the cursor stands on, so the DJ sees the place change
                     // before the list beside it does.
+                    // The walked cursor is a frame, not a fill: the fill already says which section the list is showing, and
+                    // two fills read as two answers to the same question (owner's report, 24.11).
                     readonly property bool walked: browser.railSection === key && browser.railTreeRow <= 0
-                    color: current || dropTarget || walked ? UiSettings.themeAccentDim : "transparent"
-                    border.width: browser.railSection === key && browser.railTreeRow <= 0 ? 1 : 0
+                    color: current || dropTarget ? UiSettings.themeAccentDim : "transparent"
+                    border.width: walked ? 2 : 0
                     border.color: UiSettings.themeAccent
                     radius: 2
                     Label {

@@ -1311,6 +1311,12 @@ fn panel_command(
                 .ok()
                 .is_some_and(|state| state.shift.get(index).copied().unwrap_or(false));
             let delta = if pressed { 1 } else { -1 };
+            // Said out loud: a Shift that never arrives looks exactly like a Shift the panel ignores, and this line tells the
+            // two apart without another round of guessing (owner's report, 24.11).
+            println!(
+                "dj-controller: {} turn, shift on this side: {shift}",
+                if index == 0 { "left" } else { "right" }
+            );
             Some(if shift {
                 dj_domain::DjCommand::BrowserPlaceStep { delta }
             } else {
