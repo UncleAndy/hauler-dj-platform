@@ -1193,39 +1193,18 @@ QVariantList FileBrowser::playlistMenu() const
         row.insert(QStringLiteral("kind"), QStringLiteral("playlist"));
         return row;
     };
-    auto heading = [](const QString &name) {
-        QVariantMap row;
-        row.insert(QStringLiteral("kind"), QStringLiteral("heading"));
-        row.insert(QStringLiteral("name"), name);
-        row.insert(QStringLiteral("id"), static_cast<qlonglong>(0));
-        return row;
-    };
-    // The root first: a playlist that sits in no folder is the one a DJ makes first, and burying it under
-    // the folders would hide exactly that one.
-    bool rootHeading = false;
+    // One flat list, every playlist once, in the order the rail shows: the root first, then each folder's.
+    // The menu is the place to add tracks, not to browse the folder structure, so the folders' names stay
+    // out of it (owner's decision, 24.11). The tree repeats a playlist under `All` and under its folder;
+    // the menu never does.
     for (const QVariant &item : playlists) {
         const QVariantMap found = item.toMap();
-        if (!found.value(QStringLiteral("folder")).toString().isEmpty()) {
-            continue;
+        if (found.value(QStringLiteral("folder")).toString().isEmpty()) {
+            rows.append(playlist(found));
         }
-        if (!rootHeading) {
-            rows.append(heading(QStringLiteral("No folder")));
-            rootHeading = true;
-        }
-        rows.append(playlist(found));
     }
     for (const QVariant &folder : folders) {
         const QString path = folder.toString();
-        bool any = false;
-        for (const QVariant &item : playlists) {
-            if (item.toMap().value(QStringLiteral("folder")).toString() == path) {
-                any = true;
-            }
-        }
-        if (!any) {
-            continue;
-        }
-        rows.append(heading(path));
         for (const QVariant &item : playlists) {
             const QVariantMap found = item.toMap();
             if (found.value(QStringLiteral("folder")).toString() == path) {
@@ -1257,13 +1236,13 @@ QVariantList FileBrowser::trackRows(const QStringList &paths) const
     return rows;
 }
 
-void FileBrowser::playlistAddTracks(const QVariantList &tracks)
+void FileBrowser::playlistAddTracks(qint64 playlist, const QVariantList &tracks)
 {
-    if (m_bridge == nullptr || m_playlistId == 0) {
+    if (m_bridge == nullptr || playlist == 0) {
         return;
     }
     QVariantMap add;
-    add.insert(QStringLiteral("playlist"), static_cast<qlonglong>(m_playlistId));
+    add.insert(QStringLiteral("playlist"), static_cast<qlonglong>(playlist));
     add.insert(QStringLiteral("tracks"), tracks);
     QVariantMap op;
     op.insert(QStringLiteral("AddTracks"), add);

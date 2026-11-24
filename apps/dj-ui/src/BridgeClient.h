@@ -215,7 +215,7 @@ public:
     /// fingerprint is a track's identity and the path is only where it sits today.
     Q_INVOKABLE QVariantList trackRows(const QStringList &paths) const;
     /// Add these tracks to the open playlist: each row is `{fingerprint, path}`.
-    Q_INVOKABLE void playlistAddTracks(const QVariantList &tracks);
+    Q_INVOKABLE void playlistAddTracks(qint64 playlist, const QVariantList &tracks);
     /// Drop these rows of the open playlist, by their place in it.
     Q_INVOKABLE void playlistRemoveRows(const QVariantList &positions);
     /// Move a row of the open playlist: a drag, and only the order changes.

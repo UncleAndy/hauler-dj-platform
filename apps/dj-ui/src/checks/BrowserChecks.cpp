@@ -2509,7 +2509,7 @@ int runSelectionCheck(QQmlApplicationEngine& engine, FileBrowser& browser, Bridg
     for (const QVariant& entry : rows()) {
         listed.append(entry.toMap().value(QStringLiteral("path")).toString());
     }
-    browser.playlistAddTracks(browser.trackRows(listed));
+    browser.playlistAddTracks(playlistId, browser.trackRows(listed));
     if (!waitFor([&]() { return browser.playlistRows().size() >= 40; }, 30000)) {
         std::fprintf(stderr, "dj-ui: the playlist holds %d rows\n",
                      static_cast<int>(browser.playlistRows().size()));

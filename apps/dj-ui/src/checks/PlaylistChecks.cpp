@@ -266,14 +266,12 @@ int runPlaylistCheck(QQmlApplicationEngine& engine, FileBrowser& browser, Bridge
             copies += 1;
         }
     }
-    auto* heading = panel->findChild<QObject*>(QStringLiteral("addToPlaylistHeading_Sets"));
     QMetaObject::invokeMethod(addMenu, "close");
     require(listed, QStringLiteral("the Add to playlist menu does not offer the new playlist"));
     require(copies == 1,
             QStringLiteral("the menu offers the playlist %1 time(s) instead of once").arg(copies));
-    require(heading != nullptr, QStringLiteral("the menu does not name the playlist's folder"));
     std::printf(
-        "dj-ui: the collection's menu offers the playlist once, under the folder \"Sets\"\n");
+        "dj-ui: the collection's menu offers the playlist once, flat and without folder names\n");
 
     // The tree is drawn by the panel, not only held in the object: the rows stand where the
     // settings say (the list's row height), a playlist inside a node is indented by one step, and
@@ -326,7 +324,7 @@ int runPlaylistCheck(QQmlApplicationEngine& engine, FileBrowser& browser, Bridge
     // Tracks into the playlist: the panel adds them by fingerprint and path, and the list on the
     // right becomes the playlist's own order.
     browser.openPlaylist(id, QStringLiteral("Warm up"));
-    browser.playlistAddTracks(browser.trackRows({alpha, alpha, beta}));
+    browser.playlistAddTracks(id, browser.trackRows({alpha, alpha, beta}));
     const bool filled = waitFor([&]() { return fingerprints().size() == 3; }, 10000);
     if (!require(filled, QStringLiteral("the playlist did not take three rows"))) {
         return 1;
@@ -720,17 +718,13 @@ int runPlaylistCheck(QQmlApplicationEngine& engine, FileBrowser& browser, Bridge
         5000);
     require(rootRow, QStringLiteral("a playlist in no folder is not a row of the root"));
 
-    // A playlist that sits in no folder is offered under a heading of its own, not lost among the
-    // folders.
+    // A playlist that sits in no folder is still offered — flat, by its id, not under a folder name.
     QMetaObject::invokeMethod(addMenu, "popup");
-    const bool rootHeading = waitFor(
-        [&]() {
-            return panel->findChild<QObject*>(QStringLiteral("addToPlaylistHeading_No folder")) !=
-                   nullptr;
-        },
-        3000);
+    const QString rootOffer = QStringLiteral("addToPlaylist_%1").arg(id);
+    const bool rootOffered = waitFor(
+        [&]() { return panel->findChild<QObject*>(rootOffer) != nullptr; }, 3000);
     QMetaObject::invokeMethod(addMenu, "close");
-    require(rootHeading,
+    require(rootOffered,
             QStringLiteral("the menu does not offer a playlist that sits in no folder"));
 
     // And gone: the row leaves the tree and the file leaves the disk.

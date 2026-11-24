@@ -1281,22 +1281,18 @@ Pane {
             title: qsTr("Add to playlist")
             enabled: browser.selection.length > 0
                      && (browser.section === "collection" || browser.section === "files")
-            // Every playlist once, its folder named above it: the tree repeats a playlist under `All` and
-            // under its folder, and a menu is not the place for the same line twice (owner's report,
-            // 15.11.2026). A folder heading is a plain dim line, not a command.
+            // Every playlist once, flat: the tree repeats a playlist under `All` and under its folder, and
+            // a menu is not the place for the same line twice. The folder names stay out of the menu — the
+            // menu adds tracks, it does not browse the structure (owner's decision, 24.11).
             Instantiator {
                 model: Browser.playlistMenu
                 delegate: MenuItem {
                     required property var modelData
-                    objectName: modelData.kind === "playlist"
-                                ? "addToPlaylist_" + modelData.id
-                                : "addToPlaylistHeading_" + modelData.name
-                    enabled: modelData.kind === "playlist"
-                    text: modelData.kind === "playlist"
-                          ? modelData.name + (modelData.tracks > 0
-                                              ? "  (" + modelData.tracks + ")" : "")
-                          : modelData.name
+                    objectName: "addToPlaylist_" + modelData.id
+                    text: modelData.name + (modelData.tracks > 0
+                                            ? "  (" + modelData.tracks + ")" : "")
                     onTriggered: Browser.playlistAddTracks(
+                                     modelData.id,
                                      Browser.trackRows(browser.selection))
                 }
                 onObjectAdded: (index, object) => addToPlaylistMenu.insertItem(index, object)
