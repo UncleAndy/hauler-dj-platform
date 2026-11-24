@@ -16,14 +16,19 @@
 # that table stays where it is — this file carries only the controls this program can bind, and every line is confirmed
 # by pressing the button and seeing the deck obey.
 #
+#
+# The PLAY button is `play_pause`, not `play`: the same button starts the deck and stops it, which is what the button is
+# for and what a DJ's hand expects. The binding table answers it with the transport's own state, so the service has to
+# know what the deck is doing — it learns that from the snapshots it already receives for the lights.
+#
 # Report 3 is not here and will never be: it is the clock and the platters (counters at bytes 8 and 36, wheel positions
 # at 12 and 40), and it never carries a button.
 #
 # More controls are learned on the panel: `dj-controller --inputs-learn` asks for one button at a time and appends what
 # it saw to `~/.local/share/hauler-dj/inputs-map.txt`. A learned line never overrides a line from this file.
-deck_a.play 1 4 0 1
+deck_a.play_pause 1 4 0 1
 deck_a.cue 1 4 1 1
 deck_a.sync 1 5 7 1
-deck_b.play 1 12 0 1
+deck_b.play_pause 1 12 0 1
 deck_b.cue 1 14 5 1
 deck_b.sync 1 14 4 1

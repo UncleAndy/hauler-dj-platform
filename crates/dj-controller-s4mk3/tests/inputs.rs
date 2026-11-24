@@ -28,10 +28,10 @@ fn the_shipped_map_carries_the_six_bound_buttons() {
     }
     let names: Vec<&str> = map.fields().iter().map(|f| f.control.as_str()).collect();
     for wanted in [
-        "deck_a.play",
+        "deck_a.play_pause",
         "deck_a.cue",
         "deck_a.sync",
-        "deck_b.play",
+        "deck_b.play_pause",
         "deck_b.cue",
         "deck_b.sync",
     ] {
@@ -80,7 +80,8 @@ fn the_shipped_play_button_is_where_the_press_arrives() {
     payload[4] = 0b0000_0001;
     let events = map.decode(1, &payload, &mut previous);
     assert_eq!(events.len(), 1, "{events:?}");
-    assert_eq!(events[0].control, "deck_a.play");
+    assert_eq!(events[0].control, "deck_a.play_pause");
+    // A stopped deck starts.
     assert_eq!(
         Mapping::new().resolve(&events[0], false),
         Some((
@@ -88,6 +89,17 @@ fn the_shipped_play_button_is_where_the_press_arrives() {
             DjCommand::Play {
                 deck: DeckId::A,
                 enabled: true
+            }
+        ))
+    );
+    // The same button on a playing deck stops it: that is what the owner asked for, and what a hand expects.
+    assert_eq!(
+        Mapping::new().resolve(&events[0], true),
+        Some((
+            DeckId::A,
+            DjCommand::Play {
+                deck: DeckId::A,
+                enabled: false
             }
         ))
     );
@@ -142,13 +154,13 @@ fn a_second_deck_s_button_is_a_different_intent() {
 fn a_learned_line_that_contradicts_the_shipped_one_loses() {
     // A file left over from an earlier attempt must not put a command on the wrong button.
     let shipped = InputMap::built_in();
-    let learned = parse_inputs("deck_a.play 3 7 2 1\ndeck_a.pause 1 5 6 1\n")
+    let learned = parse_inputs("deck_a.play_pause 3 7 2 1\ndeck_a.pause 1 5 6 1\n")
         .expect("the learned map parses");
     let (merged, notes) = merge(&shipped, &learned);
     let play = merged
         .fields()
         .iter()
-        .find(|field| field.control == "deck_a.play")
+        .find(|field| field.control == "deck_a.play_pause")
         .expect("the shipped line");
     assert_eq!((play.report, play.byte, play.bit), (1, 4, 0));
     assert_eq!(notes.len(), 1, "{notes:?}");

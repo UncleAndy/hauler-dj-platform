@@ -426,6 +426,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
             sweep_body_only,
             night || config.controller.lights.night,
             &palette,
+            None,
         ),
         Mode::LightsFill(code) => lights_fill(&devices, code, sweep_send, sweep_body_only),
         Mode::LightsOff => lights_off(&devices),
@@ -890,11 +891,13 @@ fn serve(
              learn them with --inputs-learn"
         );
     }
+    let playing: Playing = std::sync::Arc::new(std::sync::Mutex::new([false; 4]));
     if !map.is_empty() {
         // Opening the nodes takes a moment, and the panel must light at once: the search happens on the same thread that
         // will then read the presses.
         let devices = devices.to_vec();
         let endpoint = endpoint.to_string();
+        let state = std::sync::Arc::clone(&playing);
         std::thread::spawn(move || match pick_talkative(&devices) {
             Ok((nodes, reports)) => {
                 println!(
@@ -905,12 +908,19 @@ fn serve(
                         .collect::<Vec<_>>()
                         .join(", ")
                 );
-                inputs_loop(reports, &endpoint, map);
+                inputs_loop(reports, &endpoint, map, state);
             }
             Err(reason) => println!("dj-controller: {reason}; presses ask for nothing"),
         });
     }
-    lights_show(devices, Some(endpoint), body_only, night, palette)
+    lights_show(
+        devices,
+        Some(endpoint),
+        body_only,
+        night,
+        palette,
+        Some(&playing),
+    )
 }
 
 /// The map the presses are read with: the file named on the command line, else the one learned on this machine, else
@@ -953,6 +963,7 @@ fn inputs_loop(
     reports: std::sync::mpsc::Receiver<Vec<u8>>,
     endpoint: &str,
     map: dj_controller_s4mk3::inputs::InputMap,
+    playing: Playing,
 ) {
     let mapping = Mapping::new();
     let mut previous = std::collections::HashMap::new();
@@ -967,7 +978,16 @@ fn inputs_loop(
         let report = report_bytes[0];
         let payload = &report_bytes[1..];
         for event in map.decode(report, payload, &mut previous) {
-            let Some((deck, command)) = mapping.resolve(&event, false) else {
+            // A PLAY button asks for the opposite of what the deck is doing, so the deck's own state is part of the
+            // question.
+            let running = dj_controller_core::BindableDeck::from_control(&event.control)
+                .map(|(deck, _)| deck.id())
+                .and_then(|deck| match playing.lock() {
+                    Ok(state) => state.get(deck_index(deck)).copied(),
+                    Err(_) => None,
+                })
+                .unwrap_or(false);
+            let Some((deck, command)) = mapping.resolve(&event, running) else {
                 continue;
             };
             let asked = vec![(event.control.clone(), deck, command)];
@@ -980,6 +1000,19 @@ fn inputs_loop(
         }
     }
 }
+
+/// Which deck a slot of the shared state means.
+fn deck_index(deck: dj_domain::DeckId) -> usize {
+    match deck {
+        dj_domain::DeckId::A => 0,
+        dj_domain::DeckId::B => 1,
+        dj_domain::DeckId::C => 2,
+        dj_domain::DeckId::D => 3,
+    }
+}
+
+/// What each transport is doing, filled from the snapshots the lights loop already receives.
+type Playing = std::sync::Arc<std::sync::Mutex<[bool; 4]>>;
 
 /// Reads the panel on a thread and hands the reports over a channel.
 ///
@@ -1546,6 +1579,7 @@ fn lights_show(
     body_only: bool,
     night: bool,
     palette: &dj_controller_s4mk3::lights::Palette,
+    playing: Option<&Playing>,
 ) -> Result<(), String> {
     let Some(endpoint) = engine else {
         return Err(format!("--lights-show wants --engine <endpoint>. {USAGE}"));
@@ -1622,7 +1656,17 @@ fn lights_show(
             let dj_bridge::ServerMessage::Snapshot(snapshot) = message else {
                 continue;
             };
-            let show = show_from_facts(&facts_from(&snapshot, palette));
+            let facts = facts_from(&snapshot, palette);
+            // What the transports are doing, for the buttons whose meaning depends on it: a PLAY that only ever starts a
+            // deck is a PLAY that cannot stop one.
+            if let Some(playing) = playing
+                && let Ok(mut state) = playing.lock()
+            {
+                for (index, deck) in facts.iter().enumerate() {
+                    state[index] = deck.playing;
+                }
+            }
+            let show = show_from_facts(&facts);
             // In a dark booth everything glows faintly and the active controls stand out; outside it the panel is dark
             // where nothing happens.
             let report = if night {
@@ -2047,6 +2091,7 @@ mod tests {
             false,
             false,
             &dj_controller_s4mk3::lights::Palette::default(),
+            None,
         ) {
             Ok(()) => panic!("a show without an endpoint lit something"),
             Err(refused) => assert!(refused.contains("--engine"), "{refused}"),
