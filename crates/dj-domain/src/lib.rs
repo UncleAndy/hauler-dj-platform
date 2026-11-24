@@ -1965,7 +1965,15 @@ fn is_resting_panel(decks: &PanelDecks) -> bool {
 
 /// Whether the browser is where a session starts: open, nothing selected, no nudge standing.
 fn is_resting_browser(state: &BrowserState) -> bool {
-    state.open && state.cursor.is_none() && state.step_seq == 0 && state.step == 0
+    // Every counter counts: while one of them has moved, the window has something to apply, and skipping the struct left
+    // the rail's cursor still — the panel asked for a move and the ask never left the engine (owner's report, 24.11).
+    state.open
+        && state.cursor.is_none()
+        && state.step_seq == 0
+        && state.step == 0
+        && state.place_seq == 0
+        && state.place_step == 0
+        && state.place_toggle_seq == 0
 }
 
 fn browser_open_by_default() -> bool {

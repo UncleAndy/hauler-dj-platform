@@ -1020,7 +1020,7 @@ fn inputs_loop(
             if first_positions < 24
                 && map
                     .field_of(&event.control)
-                    .is_some_and(|field| field.width > 1)
+                    .is_some_and(|field| field.width > 1 && !field.relative)
             {
                 if first_positions == 0 {
                     println!("dj-controller: the panel's starting positions:");
