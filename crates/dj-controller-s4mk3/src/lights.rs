@@ -13,6 +13,10 @@ use crate::Colour;
 
 /// The output report that carries the lights.
 pub const REPORT_LIGHTS: u8 = 128;
+/// The output report that carries the level meters: four channel columns of VU segments.
+pub const REPORT_METERS: u8 = 129;
+/// Its length: four columns of 15 bytes (thirteen segments, one partial, one clip), from the device's public script.
+pub const METERS_LENGTH: usize = 78;
 /// Its length, as the protocol notes have it. Whether this count includes the report identifier is exactly the kind of
 /// question the device answers and a document does not, so both readings can be sent (`--body-only`).
 pub const LIGHTS_LENGTH: usize = 94;
@@ -520,6 +524,44 @@ pub fn colour_rgb(colour: Colour) -> u32 {
         Colour::Azalea => 0xCC477E,
         Colour::Salmon => 0xCC4761,
         Colour::White => 0xCCCCCC,
+    }
+}
+
+/// The meters report: four channel columns, one per deck, of thirteen segments plus a partial and a clip light.
+///
+/// The layout is the device's own (read from its public controller script, output report 129): a column is fifteen
+/// bytes — thirteen full segments, one partial, one clip — a lit segment is 127 and a partial one 125. The level is the
+/// channel's held peak, which is what a meter shows; the clip light is the instantaneous peak at the top of the scale.
+#[must_use]
+pub fn meter_report(levels: &[(f32, bool); 4]) -> LightsReport {
+    let mut body = vec![0u8; METERS_LENGTH];
+    let segments = 13;
+    for (deck, (level, clipped)) in levels.iter().enumerate() {
+        let base = deck * (segments + 2);
+        let scaled = level.clamp(0.0, 1.0) * segments as f32;
+        let full = (scaled.floor() as usize).min(segments);
+        let partial = scaled - full as f32;
+        if full > 0 {
+            for i in 0..=full {
+                if let Some(slot) = body.get_mut(base + i) {
+                    *slot = 127;
+                }
+            }
+            if partial > 0.5 && full < segments
+                && let Some(slot) = body.get_mut(base + full + 1)
+            {
+                *slot = 125;
+            }
+        }
+        if *clipped
+            && let Some(slot) = body.get_mut(base + segments + 1)
+        {
+            *slot = 127;
+        }
+    }
+    LightsReport {
+        id: REPORT_METERS,
+        body,
     }
 }
 

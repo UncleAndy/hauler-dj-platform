@@ -2500,6 +2500,19 @@ fn lights_show(
             let mut report = report;
             paint_deck_select(&mut report, panel_left, panel_right, palette, night);
             let wire = report.wire(with_id);
+            // Level meters, report 129: the panel's VU column per channel. Sent every snapshot, not only when the lights
+            // change — a meter moves while the buttons do not (owner's request, 24.11).
+            let mut meter_levels = [(0.0f32, false); 4];
+            for (index, deck) in snapshot.decks.iter().enumerate().take(4) {
+                let held = deck.levels.held_left.max(deck.levels.held_right);
+                let peak = deck.levels.peak_left.max(deck.levels.peak_right);
+                meter_levels[index] = (held, peak >= 0.999);
+            }
+            if let Some(sink) = sink.as_mut() {
+                let meter = dj_controller_s4mk3::lights::meter_report(&meter_levels);
+                sink.send(&meter.wire(with_id))
+                    .map_err(|error| format!("the panel did not take the meter report: {error}"))?;
+            }
             if last.as_ref() == Some(&wire) {
                 continue;
             }

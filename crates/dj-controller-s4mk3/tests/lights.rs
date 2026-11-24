@@ -10,8 +10,8 @@ use dj_controller_s4mk3::Colour;
 use dj_controller_s4mk3::lights::{
     LIGHTS_LENGTH, LightsReport, Pad, Palette, REPORT_LIGHTS, Show, bright, brightness_probe,
     byte_of, bytes_for, colour_by_name, colour_name, colour_walk, colours, dim, fill_only,
-    hotcue_bytes, known_bytes, map, map_line, name_of, nearest_colour, parse_map, pick_line,
-    report_at_rest, report_for, report_with, sweep, walk,
+    hotcue_bytes, known_bytes, map, map_line, meter_report, name_of, nearest_colour, parse_map,
+    pick_line, report_at_rest, report_for, report_with, sweep, walk,
 };
 
 #[test]
@@ -538,4 +538,18 @@ fn an_empty_slot_glows_faintly_and_a_stored_one_brightly() {
         report.body[1] < report.body[0],
         "the empty pad is the fainter of the two"
     );
+}
+
+#[test]
+fn a_meter_lights_segments_for_a_level_and_a_clip_for_the_peak() {
+    // Four columns of fifteen bytes each: a held level lights the segments, the instantaneous peak lights the clip byte.
+    let report = meter_report(&[(0.5, false), (1.0, true), (0.0, false), (0.0, false)]);
+    assert_eq!(report.id, 129);
+    assert_eq!(report.body.len(), 78);
+    assert_eq!(report.body[0], 127, "a half level lights the bottom segments");
+    assert_eq!(report.body[6], 127, "a half level reaches the seventh segment");
+    assert_eq!(report.body[7], 0, "a half level does not reach the eighth");
+    assert_eq!(report.body[14], 0, "no clip below the top");
+    assert_eq!(report.body[15 + 14], 127, "the second deck's clip light is its own byte");
+    assert_eq!(report.body[30], 0, "a silent deck's column stays dark");
 }
