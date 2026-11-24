@@ -191,11 +191,13 @@ Pane {
             if (!row) {
                 continue;
             }
+            // The tree carries `id` as text and the window carries it as a number, so `===` between them is never true —
+            // that is why the cursor stayed on `Playlists` after a click on a playlist (owner's report, 24.11). Compare text.
             const sameAll = row.kind === "all" && Browser.playlistPlace === "all";
             const sameFolder = row.kind === "folder" && Browser.playlistPlace === "folder"
-                               && row.folder === Browser.playlistPlaceName;
-            const samePlaylist = row.kind === "playlist" && Browser.playlistId !== 0
-                                 && row.id === Browser.playlistId;
+                               && String(row.folder) === String(Browser.playlistPlaceName);
+            const samePlaylist = row.kind === "playlist" && Number(Browser.playlistId) !== 0
+                                 && String(row.id) === String(Browser.playlistId);
             if (sameAll || sameFolder || samePlaylist) {
                 return index - 2;
             }
