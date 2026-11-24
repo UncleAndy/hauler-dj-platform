@@ -1693,12 +1693,14 @@ fn pad_colours(
             .get(slot)
             .and_then(|colour| colour.as_deref())
             .and_then(dj_controller_s4mk3::lights::nearest_colour);
-        // A loop shows the colour the screen draws it with; a cue shows the colour the DJ painted it with; a slot with
-        // neither is still findable, faintly.
-        let colour = if has_cue {
-            painted.unwrap_or(palette.hotcue)
-        } else if has_loop {
+        // The window's own order, line for line (`DeckPanel.qml`: `pad.loop !== null ? loopColor : …`): a **loop wins
+        // over a cue** in the same slot. Both can be there at once — the domain says a pad holds a point or a loop, never
+        // both, but a track can carry the two — and putting the cue first made a loop pad go dark whenever the cue colour
+        // was set to `off` (owner's log, 24.11: `cues [0, 1, 2] loops [1]`, `hotcue Off`).
+        let colour = if has_loop {
             palette.loop_
+        } else if has_cue {
+            painted.unwrap_or(palette.hotcue)
         } else {
             palette.hotcue
         };
@@ -2284,6 +2286,27 @@ mod tests {
             pads[1],
             Some(pad(palette.hotcue, false)),
             "the next slot is still empty"
+        );
+    }
+
+    #[test]
+    fn a_loop_wins_over_a_cue_in_the_same_slot_as_on_the_screen() {
+        // The window colours a pad `pad.loop !== null ? loopColor : …`, so a slot holding both shows the loop. With the cue
+        // colour set to `off` the panel used to go dark exactly where the screen showed an amber loop.
+        let palette = dj_controller_s4mk3::lights::Palette {
+            hotcue: dj_controller_s4mk3::Colour::Off,
+            ..dj_controller_s4mk3::lights::Palette::default()
+        };
+        let cues = vec![cue_at(1)];
+        let loops = vec![Some(dj_domain::FrameRange {
+            start: dj_domain::SourceFrame(0),
+            end: dj_domain::SourceFrame(4800),
+        })];
+        let pads = super::pad_colours(true, &cues, &loops, &[], &palette);
+        assert_eq!(
+            pads[0],
+            Some(pad(dj_controller_s4mk3::Colour::Yellow, true)),
+            "the loop is what the pad is about"
         );
     }
 
