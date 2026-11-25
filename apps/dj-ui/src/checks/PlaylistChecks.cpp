@@ -234,6 +234,51 @@ int runPlaylistCheck(QQmlApplicationEngine& engine, FileBrowser& browser, Bridge
     std::printf("dj-ui: the tree opens one level: %d rows, nothing unfolded\n",
                 static_cast<int>(tree().size()));
 
+    // The rail's saved place has to unfold the folder that hides it: a playlist inside a closed folder has no row
+    // in the rail, so the restore must open the folder and land on the playlist itself (owner's report, 25.11).
+    {
+        qlonglong railId = 0;
+        for (const QVariant& entry : bridge.playlistTree().value(QStringLiteral("playlists")).toList()) {
+            const QVariantMap playlist = entry.toMap();
+            if (playlist.value(QStringLiteral("name")).toString() == QStringLiteral("Warm up")) {
+                railId = playlist.value(QStringLiteral("id")).toLongLong();
+            }
+        }
+        if (railId == 0) {
+            std::fprintf(stderr, "dj-ui: the new playlist is not in the engine's tree\n");
+            return 1;
+        }
+        const QString place = QStringLiteral("playlist:") + QString::number(railId);
+        QVariant ignored;
+        QMetaObject::invokeMethod(panel, "restoreRail", Q_RETURN_ARG(QVariant, ignored),
+                                  Q_ARG(QVariant, place));
+        const bool landed = waitFor(
+            [&]() {
+                QVariant at;
+                QMetaObject::invokeMethod(panel, "railPlace", Q_RETURN_ARG(QVariant, at));
+                return at.toString() == place;
+            },
+            10000);
+        if (!require(landed, QStringLiteral("the rail did not land on the saved playlist"))) {
+            return 1;
+        }
+        bool unfolded = false;
+        for (const QVariant& entry : tree()) {
+            const QVariantMap row = entry.toMap();
+            if (row.value(QStringLiteral("kind")).toString() == QStringLiteral("folder") &&
+                row.value(QStringLiteral("folder")).toString() == QStringLiteral("Sets")) {
+                unfolded = row.value(QStringLiteral("open")).toBool();
+            }
+        }
+        if (!require(unfolded,
+                     QStringLiteral("the rail restored the playlist without unfolding its folder"))) {
+            return 1;
+        }
+        std::printf("dj-ui: the rail reopens a playlist inside a closed folder, unfolding it\n");
+        // Back to the state the rest of the check works with: the folder closed, All still closed.
+        browser.togglePlaylistNode(QStringLiteral("folder"), QStringLiteral("Sets"));
+    }
+
     // `All` opens one level of its own: every playlist flat, and nothing deeper.
     browser.togglePlaylistNode(QStringLiteral("all"), QString());
     const bool allOpened =

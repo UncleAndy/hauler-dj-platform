@@ -181,6 +181,10 @@ Pane {
     /// itself and is not written back, or the first write would overwrite what is being restored.
     property bool railSettled: false
 
+    /// A place inside the tree that is still waiting for the engine's playlists: the window opens before the
+    /// library does, so the row it names cannot be found on the first pass.
+    property string railPending: ""
+
     /// The index a section key stands at in `railRows`: collection first, playlists after it, files last.
     function sectionIndex(key) {
         if (key === "collection") {
@@ -229,33 +233,51 @@ Pane {
         return -1;
     }
 
+    /// Put the cursor on a tree place, unfolding what hides it. False when the row is not on offer — the playlists
+    /// arrive from the engine after the window opens, and a place saved in the tree waits for them.
+    function settleRailPlace(place) {
+        if (place === "") {
+            return false;
+        }
+        // Cleared first: unfolding the folders emits the tree change that comes back here.
+        browser.railPending = "";
+        if (!Browser.revealRailPlace(place)) {
+            browser.railPending = place;
+            return false;
+        }
+        const index = browser.railIndex(place);
+        if (index < 0) {
+            browser.railPending = place;
+            return false;
+        }
+        browser.railCursor = index;
+        browser.openTreeRow(browser.railRows[index]);
+        const treeRow = index - 2;
+        if (treeRow >= 0) {
+            playlistTreeList.positionViewAtIndex(treeRow, ListView.Contain);
+        }
+        return true;
+    }
+
     /// Stand the rail where the last session left it. The place is opened first — a tree row can only be reached
     /// through an open tree — and the cursor lands on the row it names. A place this build no longer has, or no
     /// place at all, opens the collection: that is where a first session starts (owner's request, 25.11).
     function restoreRail(place) {
         if (place === "collection" || place === "files" || place === "playlists") {
+            browser.railPending = "";
             browser.railCursor = browser.sectionIndex(place);
             browser.showSection(place);
             return;
         }
         if (place === "all" || place.indexOf("folder:") === 0 || place.indexOf("playlist:") === 0) {
-            // The tree lives under Playlists, so the section opens first and the node is revealed in it.
+            // The tree lives under Playlists, so the section opens first and the node is revealed in it. A tree that
+            // is not here yet leaves the place waiting instead of losing it.
             browser.showSection("playlists");
             browser.railCursor = browser.sectionIndex("playlists");
-            if (Browser.revealRailPlace(place)) {
-                const index = browser.railIndex(place);
-                if (index >= 0) {
-                    browser.railCursor = index;
-                    browser.openTreeRow(browser.railRows[index]);
-                    const treeRow = index - 2;
-                    if (treeRow >= 0) {
-                        playlistTreeList.positionViewAtIndex(treeRow, ListView.Contain);
-                    }
-                    return;
-                }
-            }
+            browser.settleRailPlace(place);
             return;
         }
+        browser.railPending = "";
         browser.railCursor = 0;
         browser.showSection("collection");
     }
@@ -691,7 +713,21 @@ Pane {
         target: browser
         function onRailCursorChanged() {
             if (browser.railSettled) {
+                // A hand on the rail after the restore: a place still waiting for the tree is no longer where the
+                // DJ stands.
+                browser.railPending = "";
                 Session.rememberRail(browser.railPlace());
+            }
+        }
+    }
+
+    // A saved place inside the tree can be finished only when the engine's playlists arrive: the section opens at
+    // once, and the cursor lands on the row when the tree does (owner's report, 25.11).
+    Connections {
+        target: Browser
+        function onPlaylistsChanged() {
+            if (browser.railPending !== "") {
+                browser.settleRailPlace(browser.railPending);
             }
         }
     }

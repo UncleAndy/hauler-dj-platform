@@ -307,12 +307,15 @@ bool FileBrowser::revealRailPlace(const QString &place)
         // A root playlist stands in the open: no folder to unfold.
         return true;
     }
-    // Every ancestor has to be open for the node itself to be on show. The node's own children stay as the DJ
+    // Every ancestor has to be open for the node itself to be on show, and a playlist needs the folder it lives in
+    // open as well — the leaf is a child of that node, not of its parent. A folder's own children stay as the DJ
     // left them.
+    const bool leafInside = place.startsWith(QLatin1String("playlist:"));
     bool opened = false;
     const QStringList parts = folder.split(QLatin1Char('/'));
     QString path;
-    for (int index = 0; index + 1 < parts.size(); ++index) {
+    const int depth = leafInside ? parts.size() : parts.size() - 1;
+    for (int index = 0; index < depth; ++index) {
         path = path.isEmpty() ? parts.at(index) : path + QLatin1Char('/') + parts.at(index);
         const QString key = QStringLiteral("folder:") + path;
         if (!m_expanded.contains(key)) {

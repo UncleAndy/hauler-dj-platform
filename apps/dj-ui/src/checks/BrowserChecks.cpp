@@ -688,6 +688,22 @@ int runBrowserCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutS
             std::fprintf(stderr, "dj-ui: the rail did not restore the place it was left on\n");
             return 1;
         }
+        // A place inside the tree, in a run with no library: the playlists section opens and the place waits for
+        // the tree instead of being dropped — the window opens before the engine answers (owner's report, 25.11).
+        QMetaObject::invokeMethod(panel, "restoreRail", Q_RETURN_ARG(QVariant, restored),
+                                  Q_ARG(QVariant, QStringLiteral("playlist:1")));
+        QCoreApplication::processEvents();
+        const QString pending = panel->property("railPending").toString();
+        const bool waited = browser.mode() == QStringLiteral("playlists")
+                            && pending == QStringLiteral("playlist:1");
+        std::fprintf(stdout,
+                     "dj-ui: a place inside the tree waits for the playlists (%s, pending \"%s\")\n",
+                     qPrintable(browser.mode()), qPrintable(pending));
+        if (!waited) {
+            std::fprintf(stderr, "dj-ui: a tree place did not wait for the playlists\n");
+            return 1;
+        }
+        panel->setProperty("railPending", QString());
         pressSection(filesRow);
     }
 
