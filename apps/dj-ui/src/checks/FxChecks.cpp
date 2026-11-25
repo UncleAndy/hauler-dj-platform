@@ -126,8 +126,8 @@ int runFxCheck(QQmlApplicationEngine& engine, std::unique_ptr<BridgeClient>& bri
     }
     std::fprintf(stdout, "dj-ui: the effect block stands under the EQ, the meter keeps %.1f px\n", meter->height());
 
-    // The knob's travel, both halves: the bottom of the left half is nothing, the top is half, the bottom of the
-    // right half is the whole effect — the pointer's ends are the amount's ends (owner's report, 21.11).
+    // The knob's travel, both halves: the pointer straight up is no effect at all, and its two ends are the far ends of
+    // the two effects the unit does — one to the left, one to the right (owner's request, 25.11).
     const auto askAndRead = [&](double decibels, const char* what) {
         if (!QMetaObject::invokeMethod(knob, "ask", Q_ARG(QVariant, decibels))) {
             std::fprintf(stderr, "dj-ui: the effect knob takes no value (%s)\n", what);
@@ -158,8 +158,9 @@ int runFxCheck(QQmlApplicationEngine& engine, std::unique_ptr<BridgeClient>& bri
     std::fprintf(stdout, "dj-ui: the effect knob turns through both halves: %.0f … %.0f degrees\n", leftAngle,
                  rightAngle);
 
-    // And the amount: −3 dB of the travel is a quarter of the effect, and the engine has to say so.
-    if (!askAndRead(-3.0, "a quarter of the travel")) {
+    // And the amount: straight up is zero, and −3 dB of the travel is halfway into the left-hand effect — the engine
+    // has to say both.
+    if (!askAndRead(0.0, "the centre")) {
         return 1;
     }
     const auto patchOf = [&bridge]() {
@@ -169,12 +170,26 @@ int runFxCheck(QQmlApplicationEngine& engine, std::unique_ptr<BridgeClient>& bri
         }
         return decks.at(0).toMap().value(QStringLiteral("fx")).toMap();
     };
-    double amount = patchOf().value(QStringLiteral("amount")).toDouble();
-    if (std::abs(amount - 0.25) > 0.03) {
-        std::fprintf(stderr, "dj-ui: the effect knob asked for a quarter and the engine has %.3f\n", amount);
+    const double centre = patchOf().value(QStringLiteral("amount")).toDouble();
+    if (std::abs(centre) > 0.02) {
+        std::fprintf(stderr,
+                     "dj-ui: the effect knob straight up is not zero: the engine has %.3f\n",
+                     centre);
         return 1;
     }
-    std::fprintf(stdout, "dj-ui: the effect knob reached the engine: amount %.2f\n", amount);
+    if (!askAndRead(-3.0, "halfway into the left-hand effect")) {
+        return 1;
+    }
+    double amount = patchOf().value(QStringLiteral("amount")).toDouble();
+    if (std::abs(amount + 0.5) > 0.05) {
+        std::fprintf(stderr,
+                     "dj-ui: the effect knob turned halfway left and the engine has %.3f, not −0.5\n",
+                     amount);
+        return 1;
+    }
+    std::fprintf(stdout,
+                 "dj-ui: the effect knob reached the engine: straight up %.2f, halfway left %.2f\n",
+                 centre, amount);
 
     // The switch: pressed once, the engine has the deck's effect in the path.
     if (!QMetaObject::invokeMethod(switchItem, "toggle")) {

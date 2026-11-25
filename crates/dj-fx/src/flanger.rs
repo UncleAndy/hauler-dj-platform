@@ -25,10 +25,15 @@ const DEPTH_SECONDS: f32 = 0.007;
 /// that takes five seconds to come round reads as "nothing is happening" (owner's report, 21.11: turning the knob
 /// down changed nothing at all).
 const LFO_HZ: f32 = 0.45;
+/// The sweep's rate on the other side of the centre: slow enough to read as a movement and not as a wobble.
+const LFO_HZ_LEFT: f32 = 0.18;
 /// Feedback at the far end of the knob.
 const FEEDBACK: f32 = 0.45;
 /// How much of the effect is in the mix at the far end: a flanger is a half-and-half effect by nature.
 const MIX: f32 = 0.5;
+/// The mix on the other side. The comb there is inverted, which hollows the sound out; less of it goes in, or the deck
+/// loses its body instead of gaining a colour.
+const MIX_LEFT: f32 = 0.35;
 const BUFFER_SECONDS: f32 = 0.05;
 
 /// A swept short delay.
@@ -64,10 +69,38 @@ impl Flanger {
 
     pub fn set_amount(&mut self, amount: f32) {
         self.amount = if amount.is_finite() {
-            amount.clamp(0.0, 1.0)
+            amount.clamp(-1.0, 1.0)
         } else {
             0.0
         };
+        // The side of the centre decides the sweep's speed, so the oscillator's step is set here as well as in `prepare`.
+        self.phase_step = self.lfo_hz() / self.rate;
+    }
+
+    /// How much of the effect, 0 … 1: the distance from the centre, whichever way the knob is turned.
+    fn travel(&self) -> f32 {
+        self.amount.abs()
+    }
+
+    /// Whether the knob stands on the hollow side.
+    fn inverted(&self) -> bool {
+        self.amount < 0.0
+    }
+
+    fn lfo_hz(&self) -> f32 {
+        if self.inverted() { LFO_HZ_LEFT } else { LFO_HZ }
+    }
+
+    /// Feedback at the current position: positive one way, negative the other, so the notches sit on the harmonics one
+    /// way and between them the other.
+    fn feedback_at(&self, strength: f32) -> f32 {
+        let sign = if self.inverted() { -1.0 } else { 1.0 };
+        sign * FEEDBACK * strength
+    }
+
+    fn mix_at(&self, depth: f32) -> f32 {
+        let share = if self.inverted() { MIX_LEFT } else { MIX };
+        share * depth
     }
 }
 
@@ -79,19 +112,19 @@ impl FxUnit for Flanger {
             48_000.0
         };
         self.delay.prepare(self.rate, BUFFER_SECONDS);
-        self.phase_step = LFO_HZ / self.rate;
+        self.phase_step = self.lfo_hz() / self.rate;
         self.depth.set_time(self.rate, 0.020);
-        self.depth.reset(self.amount);
+        self.depth.reset(self.travel());
         self.feedback.set_time(self.rate, 0.020);
-        self.feedback.reset(FEEDBACK * self.amount);
+        self.feedback.reset(self.feedback_at(self.travel()));
         self.phase = 0.0;
     }
 
     fn reset(&mut self) {
         self.delay.clear();
         self.phase = 0.0;
-        self.depth.reset(self.amount);
-        self.feedback.reset(FEEDBACK * self.amount);
+        self.depth.reset(self.travel());
+        self.feedback.reset(self.feedback_at(self.travel()));
     }
 
     fn process(&mut self, input: &[f32], out: &mut [f32], frames: usize) {
@@ -101,9 +134,9 @@ impl FxUnit for Flanger {
         }
         // The strength curve: `sqrt` so that a quarter turn is already half the effect. A linear knob spends most of
         // its left half on changes nobody can hear (owner's report, 21.11).
-        let strength = self.amount.max(0.0).sqrt();
+        let strength = self.travel().sqrt();
         let depth_target = strength;
-        let feedback_target = FEEDBACK * strength;
+        let feedback_target = self.feedback_at(strength);
         self.depth.advance(depth_target, frames);
         self.feedback.advance(feedback_target, frames);
         let depth = self.depth.value();
@@ -117,7 +150,7 @@ impl FxUnit for Flanger {
             }
             return;
         }
-        let mix = MIX * depth;
+        let mix = self.mix_at(depth);
 
         let capacity = self.delay.capacity();
         for frame in 0..samples / 2 {

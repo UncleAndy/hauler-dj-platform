@@ -1371,13 +1371,14 @@ fn inputs_loop(
                     .and_then(|state| state.fx.get(index).copied())
                     .unwrap_or_default();
                 let patch = if event.control.ends_with(".fx_amount") {
-                    // The knob has a centre detent that does not land on exactly half the field: a value a hair either
-                    // side of the middle is the knob standing at its centre, not a hand asking for a sliver of effect
-                    // (owner's report, 25.11). Snap the small neighbourhood to the middle.
-                    let amount = if (event.value - 0.5).abs() < 0.015 {
-                        0.5
+                    // The knob has a centre detent that does not land on exactly half the field, and the field is read
+                    // as −1 … 1 around that centre: a value a hair either side of the middle is the knob standing at its
+                    // centre — no effect at all — not a hand asking for a sliver of one (owner's reports, 25.11).
+                    let signed = event.value * 2.0 - 1.0;
+                    let amount = if signed.abs() < 0.03 {
+                        0.0
                     } else {
-                        event.value.clamp(0.0, 1.0)
+                        signed.clamp(-1.0, 1.0)
                     };
                     dj_domain::FxPatch { amount, ..current }
                 } else {

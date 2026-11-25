@@ -11,6 +11,12 @@
 //! - denormal and NaN hygiene on the render path — the RT practice the mixer already follows
 //!   (DJP-NFR-001, `docs/architecture/rt-contract.md`).
 //!
+//! The knob is one field, −1.0 … 1.0, and the centre of it is the deck's own signal — no effect at all (owner's
+//! request, 25.11). The two ways from the centre are two different effects in the same unit, never one effect read
+//! twice: the filter cuts the highs to the left and the lows to the right, the echo is a slapback to the left and a
+//! long tail to the right, the crusher takes the level to the left and the time axis to the right. The distance from
+//! the centre is how much. `crates/dj-fx/tests/centre.rs` measures both halves of that promise for every unit.
+//!
 //! The contract is the same as the mixer's: everything is preallocated by [`FxUnit::prepare`], and
 //! [`FxUnit::process`] allocates nothing, takes no locks and cannot panic on the audio path.
 //!

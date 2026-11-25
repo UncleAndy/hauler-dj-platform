@@ -18,6 +18,9 @@ use crate::smooth::equal_power;
 /// nothing for most of its turn). Sixteenth to half a beat is the range a beat repeat is used in.
 const SHARE_MIN: f32 = 1.0 / 16.0;
 const SHARE_MAX: f32 = 0.5;
+/// The share the centre of the knob stands for: an eighth of a beat. Turning left shortens towards a sixteenth, turning
+/// right lengthens towards half, so the two ways are two different stutters and not one range read twice.
+const SHARE_SHORT: f32 = 1.0 / 8.0;
 /// The seam's crossfade: 8 ms is long enough to hide a jump and short enough not to smear the loop.
 const FADE_SECONDS: f32 = 0.008;
 /// The capture buffer: half a beat at the slowest tempo the shell allows, with room to spare.
@@ -66,7 +69,7 @@ impl Roll {
 
     pub fn set_amount(&mut self, amount: f32) {
         self.amount = if amount.is_finite() {
-            amount.clamp(0.0, 1.0)
+            amount.clamp(-1.0, 1.0)
         } else {
             0.0
         };
@@ -90,11 +93,12 @@ impl Roll {
         self.length
     }
 
-    /// The share of a beat this amount asks for: a sixteenth at the bottom, half at the top, geometric in between so
-    /// that equal turns of the knob are equal musical steps.
+    /// The share of a beat this position asks for: an eighth at the centre, a sixteenth at the far left, half at the
+    /// far right, geometric either way so that equal turns of the knob are equal musical steps.
     fn share_for(amount: f32) -> f32 {
-        let travel = amount.clamp(0.0, 1.0);
-        SHARE_MIN * (SHARE_MAX / SHARE_MIN).powf(travel)
+        let travel = amount.abs().clamp(0.0, 1.0);
+        let end = if amount < 0.0 { SHARE_MIN } else { SHARE_MAX };
+        SHARE_SHORT * (end / SHARE_SHORT).powf(travel)
     }
 
     fn length_for(&self, amount: f32) -> usize {

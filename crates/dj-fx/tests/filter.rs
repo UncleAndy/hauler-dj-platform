@@ -60,14 +60,14 @@ fn the_centre_is_flat_and_the_ends_cut() {
     let mut filter = DjFilter::new();
     filter.prepare(RATE, BLOCK);
 
-    let centre = level_db(&mut filter, 0.5, 1000.0);
+    let centre = level_db(&mut filter, 0.0, 1000.0);
     assert!(
         centre.abs() < 0.5,
         "the centre is not the signal itself: {centre:.2} dB"
     );
 
     // 1 kHz against a 150 Hz corner is about −33 dB of a second-order slope; 30 dB is the claim, not the theory.
-    let low_pass = level_db(&mut filter, 0.0, 1000.0);
+    let low_pass = level_db(&mut filter, -1.0, 1000.0);
     assert!(
         low_pass < -30.0,
         "the low-pass end does not cut 1 kHz: {low_pass:.2} dB"
@@ -94,11 +94,11 @@ fn crossing_the_centre_does_not_click() {
     for index in 0..blocks {
         // Centre, then hard left, then back: the two crossings that used to be a switch.
         let amount = if index < 20 {
-            0.5
-        } else if index < 80 {
             0.0
+        } else if index < 80 {
+            -1.0
         } else {
-            0.5
+            0.0
         };
         filter.set_amount(amount);
         let (from, to) = (index * BLOCK * 2, (index + 1) * BLOCK * 2);
@@ -121,8 +121,8 @@ fn the_sweep_closes_the_highs_one_way() {
     // 8 kHz sits well above the low-pass corner for most of the travel, so its level documents the sweep itself.
     let mut filter = DjFilter::new();
     filter.prepare(RATE, BLOCK);
-    let mut previous = level_db(&mut filter, 0.5, 8_000.0);
-    for amount in [0.35, 0.25, 0.15, 0.0] {
+    let mut previous = level_db(&mut filter, 0.0, 8_000.0);
+    for amount in [-0.3, -0.5, -0.7, -1.0] {
         let level = level_db(&mut filter, amount, 8_000.0);
         assert!(
             level < previous - 1.0,
@@ -139,7 +139,7 @@ fn the_steady_state_does_not_depend_on_the_block() {
     let measure = |block: usize| {
         let mut filter = DjFilter::new();
         filter.prepare(RATE, block);
-        filter.set_amount(0.2);
+        filter.set_amount(-0.6);
         let frames = 16_384;
         let tone = sine(500.0, 0.5, frames);
         let mut out = vec![0.0; tone.len()];

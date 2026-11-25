@@ -111,7 +111,8 @@ pub(crate) struct FxRack {
     patch: FxPatch,
     /// The kind the switch is moving towards, while the dry signal fades out.
     pending_kind: Option<FxKind>,
-    /// How much of the effect is in the signal, 0.0 … 1.0.
+    /// How much of the effect is in the signal, 0.0 … 1.0 — the distance of the knob from its centre, whichever way
+    /// it was turned; the knob itself is signed and its centre is no effect at all (`FxPatch::amount`).
     wet: f32,
     rate: f32,
     scratch: Vec<f32>,

@@ -50,10 +50,21 @@ impl Noise {
 
     pub fn set_amount(&mut self, amount: f32) {
         self.amount = if amount.is_finite() {
-            amount.clamp(0.0, 1.0)
+            amount.clamp(-1.0, 1.0)
         } else {
             0.0
         };
+    }
+
+    /// How much of the effect, 0 … 1: the distance from the centre, whichever way the knob is turned.
+    fn travel(&self) -> f32 {
+        self.amount.abs()
+    }
+
+    /// Whether the noise goes through the band: the right side sweeps a whistle, the left side is the noise itself — a
+    /// bed to raise the floor with, which is what a noise knob is used for at a quiet moment in a set.
+    fn banded(&self) -> bool {
+        self.amount >= 0.0
     }
 
     /// One white sample in −1 … 1 (xorshift32, the smallest generator that is not obviously wrong).
@@ -108,21 +119,26 @@ impl FxUnit for Noise {
         if samples == 0 {
             return;
         }
-        self.level.advance(self.amount, frames);
-        let amount = self.level.value();
-        let centre = LOW_HZ * (HIGH_HZ / LOW_HZ).powf(amount);
-        if !self.designed.is_finite() || (centre - self.designed).abs() > 5.0 {
+        self.level.advance(self.travel(), frames);
+        let travel = self.level.value();
+        let banded = self.banded();
+        let centre = LOW_HZ * (HIGH_HZ / LOW_HZ).powf(travel);
+        if banded && (!self.designed.is_finite() || (centre - self.designed).abs() > 5.0) {
             self.design(centre);
             self.designed = centre;
         }
-        let gain = LEVEL * amount * amount;
+        let gain = LEVEL * travel * travel;
         for frame in 0..samples / 2 {
             // The sweep is added to the dry signal: it is a layer, not a replacement, so a deck in silence sweeps
             // through silence the way a hardware unit does.
             let white = self.next_sample();
             for channel in 0..2 {
-                let banded = self.band[channel].process(white);
-                out[frame * 2 + channel] = input[frame * 2 + channel] + banded * gain;
+                let colour = if banded {
+                    self.band[channel].process(white)
+                } else {
+                    white
+                };
+                out[frame * 2 + channel] = input[frame * 2 + channel] + colour * gain;
             }
         }
     }

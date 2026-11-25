@@ -15,10 +15,16 @@ const STAGES: usize = 4;
 /// Where the sweep starts and how far it goes, in hertz.
 const LOW_HZ: f32 = 200.0;
 const HIGH_HZ: f32 = 3_000.0;
+/// The sweep on the other side of the centre: lower and wider, so the notches walk through the body of the sound rather
+/// than across its top.
+const LOW_HZ_LEFT: f32 = 120.0;
+const HIGH_HZ_LEFT: f32 = 2_000.0;
 /// The sweep's rate: a phaser is a slow movement, and a rate that grew with the knob turned it into a wobble —
 /// measured as a *smaller* level spread at the top of the travel than at three quarters of it (21.11). It is fast
 /// enough (0.45 Hz) that the lower half of the knob is visibly moving rather than standing still.
 const LFO_HZ: f32 = 0.45;
+/// The rate on that side: a phaser this wide has to be slow, or the notches smear into a wobble.
+const LFO_HZ_LEFT: f32 = 0.12;
 /// Half and half at the far end: a phaser that is 100 % wet is a low-pass wobble, not a phaser.
 const MIX: f32 = 0.5;
 
@@ -55,10 +61,34 @@ impl Phaser {
 
     pub fn set_amount(&mut self, amount: f32) {
         self.amount = if amount.is_finite() {
-            amount.clamp(0.0, 1.0)
+            amount.clamp(-1.0, 1.0)
         } else {
             0.0
         };
+        // The side of the centre decides both the sweep's speed and its span, so the step is set here as well.
+        self.phase_step = self.lfo_hz() / self.rate;
+    }
+
+    /// How much of the effect, 0 … 1: the distance from the centre, whichever way the knob is turned.
+    fn travel(&self) -> f32 {
+        self.amount.abs()
+    }
+
+    fn lfo_hz(&self) -> f32 {
+        if self.amount < 0.0 {
+            LFO_HZ_LEFT
+        } else {
+            LFO_HZ
+        }
+    }
+
+    /// The two ends of the sweep the knob's side asks for.
+    fn sweep_range(&self) -> (f32, f32) {
+        if self.amount < 0.0 {
+            (LOW_HZ_LEFT, HIGH_HZ_LEFT)
+        } else {
+            (LOW_HZ, HIGH_HZ)
+        }
     }
 
     /// The cookbook's all-pass coefficients for a corner frequency, written straight into the four stages of both
@@ -87,9 +117,9 @@ impl FxUnit for Phaser {
         } else {
             48_000.0
         };
-        self.phase_step = LFO_HZ / self.rate;
+        self.phase_step = self.lfo_hz() / self.rate;
         self.depth.set_time(self.rate, 0.020);
-        self.depth.reset(self.amount);
+        self.depth.reset(self.travel());
         self.phase = 0.0;
         self.designed = f32::NAN;
     }
@@ -111,7 +141,7 @@ impl FxUnit for Phaser {
         }
         // `sqrt`, as in the flanger: half a turn is seventy per cent of the effect, so the left half of the travel is
         // audible at all (owner's report, 21.11).
-        let strength = self.amount.max(0.0).sqrt();
+        let strength = self.travel().sqrt();
         self.depth.advance(strength, frames);
         let depth = self.depth.value();
         // Nothing of the effect at the bottom of the travel: the deck has to come back untouched.
@@ -122,7 +152,8 @@ impl FxUnit for Phaser {
         let mix = MIX * depth;
         // The corner is re-designed once a block: `sin`/`cos` on a block boundary, and never in the sample loop.
         let sweep = (self.phase * std::f32::consts::TAU).sin() * 0.5 + 0.5;
-        let corner = LOW_HZ * (HIGH_HZ / LOW_HZ).powf(sweep * depth);
+        let (low, high) = self.sweep_range();
+        let corner = low * (high / low).powf(sweep * depth);
         if !self.designed.is_finite() || (corner - self.designed).abs() > 1.0 {
             self.design(corner);
             self.designed = corner;

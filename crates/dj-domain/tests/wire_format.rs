@@ -319,7 +319,7 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
             r#""position_ratio":0.0384,"track":{"title":"Track","artist":"Artist","#,
             r#""duration_frames":124800,"bpm":128.0,"key":"8A"},"#,
             // The deck's effect sits right after the track: published whole, so the shell draws the engine's state.
-            r#""fx":{"kind":"filter","amount":0.5,"enabled":false},"loop_region":null,"#,
+            r#""fx":{"kind":"filter","amount":0.0,"enabled":false},"loop_region":null,"#,
             r#""hotcues":[1000,null,null,null,null,null,null,null],"#,
             r##""pad_loops":[null,{"start":4800,"end":9600},null,null,null,null,null,null],"##,
             r#""active_loops":[],"#,

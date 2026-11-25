@@ -13,11 +13,18 @@ use crate::FxUnit;
 use crate::delay::DelayLine;
 use crate::smooth::{OnePole, equal_power};
 
-/// How much of the beat one repeat spans.
+/// How much of the beat one repeat spans on the long side of the centre.
 const ECHO_BEAT_SHARE: f32 = 0.5;
+/// The tap on the other side: an eighth of the beat — a slapback, short enough to be heard as one repeat and not as a
+/// tail. Turning across the centre therefore moves the tap, which is a different effect, not more of the same one.
+const SLAP_BEAT_SHARE: f32 = 0.125;
 /// Feedback at the ends of the knob: a quarter, then two thirds — the point where a delay starts to run away.
 const FEEDBACK_FROM: f32 = 0.2;
 const FEEDBACK_TO: f32 = 0.7;
+/// Feedback at the ends of the slapback side: a lighter tail, because a slapback that rings like a long echo is a long
+/// echo played badly.
+const SLAP_FEEDBACK_FROM: f32 = 0.10;
+const SLAP_FEEDBACK_TO: f32 = 0.45;
 /// The tail's low-pass corner: each repeat loses the top of the spectrum, which is what keeps a long repeat
 /// musical instead of ringing.
 const DAMP_HZ: f32 = 4_000.0;
@@ -69,10 +76,35 @@ impl Echo {
 
     pub fn set_amount(&mut self, amount: f32) {
         self.amount = if amount.is_finite() {
-            amount.clamp(0.0, 1.0)
+            amount.clamp(-1.0, 1.0)
         } else {
             0.0
         };
+        // Crossing the centre changes the tap, and a tap that moves is a crossfade: the same 20 ms a tempo change takes.
+        self.retime();
+    }
+
+    /// How much of the effect, 0 … 1: the distance from the centre, whichever way the knob is turned.
+    fn travel(&self) -> f32 {
+        self.amount.abs()
+    }
+
+    /// The share of a beat one repeat spans: half on the long side, an eighth on the slapback side.
+    fn share(&self) -> f32 {
+        if self.amount < 0.0 {
+            SLAP_BEAT_SHARE
+        } else {
+            ECHO_BEAT_SHARE
+        }
+    }
+
+    /// Feedback at the bottom and the top of the side the knob stands on.
+    fn feedback_range(&self) -> (f32, f32) {
+        if self.amount < 0.0 {
+            (SLAP_FEEDBACK_FROM, SLAP_FEEDBACK_TO)
+        } else {
+            (FEEDBACK_FROM, FEEDBACK_TO)
+        }
     }
 
     /// The deck's beat, in seconds of output. The tap moves to half of it without a click.
@@ -86,9 +118,9 @@ impl Echo {
         self.beat = seconds_per_beat;
     }
 
-    /// Recompute the tap for the current beat and rate.
+    /// Recompute the tap for the current beat, rate and side.
     fn retime(&mut self) {
-        let wanted = (self.beat * ECHO_BEAT_SHARE * self.rate).round().max(1.0);
+        let wanted = (self.beat * self.share() * self.rate).round().max(1.0);
         let capacity = self.delay.capacity() as f32;
         let wanted = wanted.min(capacity - 2.0);
         if (wanted - self.tap).abs() > 1.0 {
@@ -113,10 +145,10 @@ impl FxUnit for Echo {
             pole.reset(0.0);
         }
         self.fade_step = 1.0 / (RETIME_SECONDS * rate).max(1.0);
-        self.tap = (self.beat * ECHO_BEAT_SHARE * rate).round().max(1.0);
+        self.tap = (self.beat * self.share() * rate).round().max(1.0);
         self.from = self.tap;
         self.fade = 1.0;
-        self.wet = self.amount;
+        self.wet = self.travel();
     }
 
     fn reset(&mut self) {
@@ -125,7 +157,7 @@ impl FxUnit for Echo {
             pole.reset(0.0);
         }
         self.fade = 1.0;
-        self.wet = self.amount;
+        self.wet = self.travel();
     }
 
     fn process(&mut self, input: &[f32], out: &mut [f32], frames: usize) {
@@ -134,8 +166,9 @@ impl FxUnit for Echo {
             return;
         }
         // The knob's values are smoothed across the block: a hand on the knob is a ramp, not a staircase.
-        let wet_target = self.amount;
-        let feedback_target = FEEDBACK_FROM + (FEEDBACK_TO - FEEDBACK_FROM) * self.amount;
+        let wet_target = self.travel();
+        let (feedback_from, feedback_to) = self.feedback_range();
+        let feedback_target = feedback_from + (feedback_to - feedback_from) * self.travel();
         let wet_step = (wet_target - self.wet) / frames as f32;
         let feedback_step = (feedback_target - self.feedback) / frames as f32;
         self.retime();

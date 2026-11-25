@@ -573,7 +573,7 @@ Pane {
             readonly property string fxKind: strip.fx !== null && strip.fx.kind !== undefined
                                             ? strip.fx.kind : "filter"
             readonly property real fxAmount: strip.fx !== null && strip.fx.amount !== undefined
-                                             ? strip.fx.amount : 0.5
+                                             ? strip.fx.amount : 0.0
             readonly property bool fxEnabled: strip.fx !== null && strip.fx.enabled !== undefined
                                               ? strip.fx.enabled : false
             /// The three letters the switch wears: the unit's own abbreviation, not a translated word.
@@ -693,12 +693,13 @@ Pane {
                     showNumber: false
                     capColor: UiSettings.themeSurface
                     diameter: mixer.fxKnobSide
-                    // Six decibels each side of the top: the pointer's two ends are the amount's two ends, and the top is
-                    // half the effect (owner's report, 21.11).
+                    // Six decibels each side of the top: the pointer's two ends are the amount's two ends, and the
+                    // pointer straight up is the centre — no effect at all (owner's request, 25.11).
                     negativeRangeDb: 6
-                    gain: Math.pow(10.0, ((strip.fxAmount * 12.0) - 6.0) / 20.0)
+                    gain: Math.pow(10.0, (strip.fxAmount * 6.0) / 20.0)
                     onFxAmountAsked: function (amount) {
-                        strip.setFx(strip.fxKind, amount, strip.fxEnabled);
+                        // The knob speaks its own 0 … 1 position; the engine speaks −1 … 1 with the centre at nothing.
+                        strip.setFx(strip.fxKind, amount * 2.0 - 1.0, strip.fxEnabled);
                     }
                 }
 

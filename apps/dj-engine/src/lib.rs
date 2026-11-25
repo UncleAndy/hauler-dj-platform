@@ -682,7 +682,7 @@ impl DeckCells {
     fn new() -> Self {
         Self {
             fx_kind: AtomicU8::new(0),
-            fx_amount: AtomicU32::new(0.5f32.to_bits()),
+            fx_amount: AtomicU32::new(0.0f32.to_bits()),
             fx_enabled: AtomicBool::new(false),
             playing: AtomicBool::new(false),
             metronome: AtomicBool::new(false),

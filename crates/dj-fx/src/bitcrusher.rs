@@ -15,6 +15,8 @@ use crate::smooth::OnePole;
 /// The quantiser at each end of the knob: sixteen bits is the signal, four is rubble.
 const BITS_FROM: f32 = 16.0;
 const BITS_TO: f32 = 4.0;
+/// The floor on the other side of the centre: eight bits with the frames left alone — a gritty signal, not rubble.
+const BITS_LOFI: f32 = 8.0;
 /// How long each sample is held at the far end of the knob.
 const HOLD_MAX: f32 = 32.0;
 
@@ -48,15 +50,31 @@ impl Bitcrusher {
 
     pub fn set_amount(&mut self, amount: f32) {
         self.amount = if amount.is_finite() {
-            amount.clamp(0.0, 1.0)
+            amount.clamp(-1.0, 1.0)
         } else {
             0.0
         };
     }
 
+    /// How much of the effect, 0 … 1: the distance from the centre, whichever way the knob is turned.
+    fn travel(&self) -> f32 {
+        self.amount.abs()
+    }
+
+    /// How long each sample is held: only the crush side touches the time axis, the lo-fi side leaves the frames alone.
+    fn hold_for(&self) -> f32 {
+        if self.amount < 0.0 {
+            1.0
+        } else {
+            1.0 + (HOLD_MAX - 1.0) * self.travel()
+        }
+    }
+
     /// The quantum a signal in −1 … 1 is rounded to, from the bits in force.
     fn quantum(amount: f32) -> f32 {
-        let bits = BITS_FROM + (BITS_TO - BITS_FROM) * amount;
+        let travel = amount.abs().clamp(0.0, 1.0);
+        let end = if amount < 0.0 { BITS_LOFI } else { BITS_TO };
+        let bits = BITS_FROM + (end - BITS_FROM) * travel;
         // Two units across the full scale, `bits` steps in each: the step is 2 / 2^bits.
         2.0f32.powf(1.0 - bits)
     }
@@ -70,9 +88,9 @@ impl FxUnit for Bitcrusher {
             48_000.0
         };
         self.level.set_time(rate, 0.010);
-        self.level.reset(self.amount);
+        self.level.reset(self.travel());
         self.hold.set_time(rate, 0.010);
-        self.hold.reset(1.0 + (HOLD_MAX - 1.0) * self.amount);
+        self.hold.reset(self.hold_for());
         self.counter = 0;
         self.held = [0.0; 2];
     }
@@ -80,8 +98,8 @@ impl FxUnit for Bitcrusher {
     fn reset(&mut self) {
         self.counter = 0;
         self.held = [0.0; 2];
-        self.level.reset(self.amount);
-        self.hold.reset(1.0 + (HOLD_MAX - 1.0) * self.amount);
+        self.level.reset(self.travel());
+        self.hold.reset(self.hold_for());
     }
 
     fn process(&mut self, input: &[f32], out: &mut [f32], frames: usize) {
@@ -89,9 +107,8 @@ impl FxUnit for Bitcrusher {
         if samples == 0 {
             return;
         }
-        self.level.advance(self.amount, frames);
-        self.hold
-            .advance(1.0 + (HOLD_MAX - 1.0) * self.amount, frames);
+        self.level.advance(self.travel(), frames);
+        self.hold.advance(self.hold_for(), frames);
         // A knob at zero is the effect switched out by the hand, not "the effect at its finest": sixteen bits still
         // round a signal that was never quantised, and the deck must come back untouched (owner's report, 21.11).
         if self.level.value() <= 0.0005 {

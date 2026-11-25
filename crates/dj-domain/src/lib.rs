@@ -1392,7 +1392,9 @@ impl FxKind {
 pub struct FxPatch {
     /// Which effect is in the slot.
     pub kind: FxKind,
-    /// How much of it, 0.0 … 1.0. What "more" means belongs to the effect: depth, feedback, cut.
+    /// Where the knob stands, −1.0 … 1.0. The centre is the deck's own signal — no effect at all — and the two
+    /// ways from it are two different effects in the same unit: the filter goes low-pass one way and high-pass the
+    /// other, the echo short one way and long the other. The distance from the centre is how much.
     pub amount: f32,
     /// Whether the deck's signal goes through the effect or around it.
     pub enabled: bool,
@@ -1404,20 +1406,20 @@ impl Default for FxPatch {
         // first thing a DJ sees cannot be a deck that already sounds changed.
         Self {
             kind: FxKind::Filter,
-            amount: 0.5,
+            amount: 0.0,
             enabled: false,
         }
     }
 }
 
 impl FxPatch {
-    /// The patch with its numbers made safe: the amount saturates into 0.0 … 1.0, and a non-finite one
-    /// becomes the centre rather than silence.
+    /// The patch with its numbers made safe: the amount saturates into −1.0 … 1.0, and a non-finite one
+    /// becomes the centre rather than one of the two effects.
     pub fn clamped(self) -> Self {
         let amount = if self.amount.is_finite() {
-            self.amount.clamp(0.0, 1.0)
+            self.amount.clamp(-1.0, 1.0)
         } else {
-            0.5
+            0.0
         };
         Self { amount, ..self }
     }

@@ -51,7 +51,7 @@ const MIX_SECONDS: f32 = 0.010;
 #[derive(Debug, Clone)]
 pub struct DjFilter {
     sample_rate: f32,
-    /// What the knob asked for, 0.0 … 1.0.
+    /// What the knob asked for, −1.0 … 1.0, where 0.0 is the centre.
     requested: f32,
     /// The bipolar position the filter is actually at, −1.0 … +1.0, smoothed.
     position: f32,
@@ -77,7 +77,7 @@ impl DjFilter {
     pub fn new() -> Self {
         Self {
             sample_rate: 48_000.0,
-            requested: 0.5,
+            requested: 0.0,
             position: 0.0,
             wet: 0.0,
             sweep_coeff: 1.0,
@@ -88,12 +88,12 @@ impl DjFilter {
         }
     }
 
-    /// The knob: 0.0 is the low-pass fully closed, 0.5 the centre, 1.0 the high-pass fully open.
+    /// The knob: −1.0 is the low-pass fully closed, 0.0 the centre (the signal itself), 1.0 the high-pass fully open.
     pub fn set_amount(&mut self, amount: f32) {
         self.requested = if amount.is_finite() {
-            amount.clamp(0.0, 1.0)
+            amount.clamp(-1.0, 1.0)
         } else {
-            0.5
+            0.0
         };
     }
 
@@ -160,7 +160,7 @@ impl DjFilter {
 
     /// Move the smoothed position one block forward and design the section it asks for.
     fn advance(&mut self, frames: usize) {
-        let target = self.requested * 2.0 - 1.0;
+        let target = self.requested;
         let steps = frames as f32;
         self.position += (target - self.position) * (1.0 - (1.0 - self.sweep_coeff).powf(steps));
         let travel = self.position.abs();
@@ -188,13 +188,13 @@ impl FxUnit for DjFilter {
         };
         self.sweep_coeff = 1.0 - (-1.0 / (SWEEP_SECONDS * self.sample_rate)).exp();
         self.mix_coeff = 1.0 - (-1.0 / (MIX_SECONDS * self.sample_rate)).exp();
-        self.position = self.requested * 2.0 - 1.0;
+        self.position = self.requested;
         self.wet = 0.0;
         self.designed = f32::NAN;
     }
 
     fn reset(&mut self) {
-        self.position = self.requested * 2.0 - 1.0;
+        self.position = self.requested;
         self.wet = 0.0;
         self.left.reset();
         self.right.reset();
