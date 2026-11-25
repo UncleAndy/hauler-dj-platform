@@ -2182,6 +2182,22 @@ fn wheel_init(devices: &[DeviceInfo], seconds: f32) -> Result<(), String> {
     node_rates(devices, seconds)
 }
 
+/// Report 50: which jog ring, its mode, the marker's position, and the colour.
+///
+/// Forty bytes after the id: `[0]` the platter (0 left, 1 right), `[1]` the mode (`0` off, `2` a spot), `[2..4]` the
+/// marker's position little-endian, `[4]` the colour in the panel's own code. Taken from the public mapping's wheel-LED
+/// writer, whose structure the owner's panel has just confirmed by lighting the rings.
+fn wheel_leds(side: u8, mode: u8, position: u16, colour: u8) -> Vec<u8> {
+    let mut report = vec![0_u8; 41];
+    report[0] = 50;
+    report[1] = side;
+    report[2] = mode;
+    report[3] = (position & 0xff) as u8;
+    report[4] = (position >> 8) as u8;
+    report[5] = colour;
+    report
+}
+
 /// Send the jog-light init (report 48, twice), best effort.
 ///
 /// The public mapping sends it at start-up and notes it is required for the jog wheel LEDs; the owner's measurement shows
@@ -2779,6 +2795,9 @@ fn lights_show(
     // One line a second at most: a fader that disagrees would otherwise flood the log the moment it is touched.
     let mut last_fader_note = std::time::Instant::now() - std::time::Duration::from_secs(5);
     let mut last_pads = String::new();
+    // The last ring state per platter: mode and marker position. Report 50 is sent only when one of them changes, because
+    // the position moves every snapshot while a deck plays and nothing needs saying while it does not.
+    let mut last_wheel_modes: [(u8, u16); 2] = [(255, 0); 2];
     loop {
         let (mut client, _welcome) = match dj_bridge::connect_with_timeout(
             std::path::Path::new(endpoint),
@@ -2916,6 +2935,31 @@ fn lights_show(
                 let meter = dj_controller_s4mk3::lights::meter_report(&meter_levels);
                 sink.send(&meter.wire(with_id))
                     .map_err(|error| format!("the panel did not take the meter report: {error}"))?;
+            }
+            // The jog rings: a marker at the playhead on a playing deck, dark on a stopped one. Report 50 carries the ring's
+            // mode and marker position; left alone the panel follows the hand by itself, so this is what makes the ring say
+            // "this deck is playing" rather than "this platter is turning" (owner's instruction, 25.11).
+            if let Some(sink) = sink.as_mut() {
+                for (side, deck_id) in [(0_u8, panel_left), (1_u8, panel_right)] {
+                    let deck = snapshot.decks.iter().find(|deck| deck.deck == deck_id);
+                    let (mode, position, colour) = match deck {
+                        Some(deck) if deck.playing => {
+                            let ratio = deck.position_ratio.unwrap_or(0.0).clamp(0.0, 1.0);
+                            (
+                                2_u8,
+                                (ratio * 2880.0).min(2879.0) as u16,
+                                dj_controller_s4mk3::lights::bright(palette.resting.code()),
+                            )
+                        }
+                        _ => (0_u8, 0_u16, 0_u8),
+                    };
+                    if last_wheel_modes[usize::from(side)] == (mode, position) {
+                        continue;
+                    }
+                    last_wheel_modes[usize::from(side)] = (mode, position);
+                    sink.send(&wheel_leds(side, mode, position, colour))
+                        .map_err(|error| format!("the panel did not take the jog ring: {error}"))?;
+                }
             }
             if last.as_ref() == Some(&wire) {
                 continue;
@@ -3694,6 +3738,17 @@ mod tests {
         // No endpoint: the commands are printed, not sent, and an event the table does not know is said out loud.
         assert!(replay(&file.to_string_lossy(), None).is_ok());
         let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
+    fn a_ring_report_names_the_platter_mode_and_position() {
+        let report = wheel_leds(1, 2, 0x0123, 40);
+        assert_eq!(report.len(), 41);
+        assert_eq!(report[0], 50, "report id");
+        assert_eq!(report[1], 1, "the right platter");
+        assert_eq!(report[2], 2, "a spot");
+        assert_eq!(&report[3..5], &[0x23, 0x01], "the position little-endian");
+        assert_eq!(report[5], 40, "the colour");
     }
 
     #[test]
