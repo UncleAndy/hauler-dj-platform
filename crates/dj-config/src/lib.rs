@@ -86,12 +86,13 @@ pub struct ControllerSettings {
     pub fx: ControllerFx,
     /// How far the material moves for one unit of the wheel's raw speed — ticks per timer unit, as the jog reports it.
     ///
-    /// A placeholder until a `--capture` of the jog on the panel fixes it: the report's timer unit is not written down in
-    /// the public description, so this is the one number a calibration must supply (plan 25.11).
+    /// From the public description's model: `speed = raw × 2879 × 10 × output_rate` (Mixxx's `wheelAbsoluteMax` and its
+    /// `×10`), with 48 kHz as the deck's rate. A `--capture` of the jog on the panel confirmed the raw range
+    /// (`≈1e-7 … 4e-6` for a slow turn); tune by ear if the scratch reads fast or slow.
     pub scratch_scale: f64,
     /// How much rate deflection one unit of the wheel's raw speed asks for, before the `-1 … 1` clamp.
     ///
-    /// Calibrated with the same capture as `scratch_scale`; the default is only a starting point.
+    /// The same model without the frame rate: `raw × 2879 × 10`.
     pub nudge_scale: f64,
 }
 
@@ -255,8 +256,8 @@ impl Default for ControllerSettings {
             lights: ControllerLights::default(),
             pfl: PflMode::default(),
             fx: ControllerFx::default(),
-            scratch_scale: 16_000.0,
-            nudge_scale: 0.05,
+            scratch_scale: 2879.0 * 10.0 * 48_000.0,
+            nudge_scale: 2879.0 * 10.0,
         }
     }
 }
@@ -999,8 +1000,8 @@ mod tests {
                 lights: ControllerLights::default(),
                 pfl: PflMode::default(),
                 fx: ControllerFx::default(),
-                scratch_scale: 16_000.0,
-                nudge_scale: 0.05,
+                scratch_scale: 2879.0 * 10.0 * 48_000.0,
+                nudge_scale: 2879.0 * 10.0,
             },
             ..Config::default()
         };

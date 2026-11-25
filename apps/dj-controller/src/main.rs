@@ -1005,10 +1005,8 @@ fn inputs_loop(
     let mut pending: Vec<(String, dj_domain::DjCommand)> = Vec::new();
     let mut last_flush = std::time::Instant::now();
     let mut queued: Option<Vec<u8>> = None;
-    // The platters: whether a hand is on each top, and the last number sent for it, so a clock-rate report does not flood
-    // the engine with repeats of a speed that has not changed.
+    // The platters: whether a hand is on each top.
     let mut touched_side = [false; 2];
-    let mut last_wheel_sent: [Option<(bool, f64)>; 2] = [None, None];
     // What the panel said first, once: the owner's complaint is that the window starts with the faders open while the panel
     // has them closed, and this line says which half is telling the truth.
     // The last position of every knob and fader the panel reported: what the engine is told again whenever the link is
@@ -1343,24 +1341,17 @@ fn inputs_loop(
                 let raw = f64::from(event.value);
                 let command =
                     wheel_command(touched, raw, deck, taste.scratch_scale, taste.nudge_scale);
-                // A still hand is speed zero, and zero has to be said or the record keeps the last speed; a still bend is
-                // silence. Sent only when the number changes, so a clock-rate report does not flood the engine.
-                let scalar = if touched {
-                    raw * taste.scratch_scale
-                } else {
-                    (raw * taste.nudge_scale).clamp(-1.0, 1.0)
-                };
-                let key = (touched, scalar);
-                if last_wheel_sent[side] != Some(key) {
-                    last_wheel_sent[side] = Some(key);
-                    if raw != 0.0 {
-                        println!(
-                            "dj-controller: at {now} ms {} = {raw:.3} (report {report}) → {command:?}",
-                            event.control
-                        );
-                    }
-                    push_pending(&mut pending, &event.control, command);
+                // Said on **every** report, including zero. A hand that stops speaking is a hand the engine takes the
+                // record back from (`HAND_SILENCE_SECONDS`), and taking it again sets the head to the heard frame — the
+                // record jumps back while the hand is still on it (owner's report, 25.11). Report 3 is the clock at
+                // ~15 Hz, so this is a light heartbeat, not a flood.
+                if raw != 0.0 {
+                    println!(
+                        "dj-controller: at {now} ms {} = {raw:.3} (report {report}) → {command:?}",
+                        event.control
+                    );
                 }
+                push_pending(&mut pending, &event.control, command);
                 continue;
             }
             if event.control == "deck_a.wheel_touch" || event.control == "deck_b.wheel_touch" {
@@ -1368,8 +1359,6 @@ fn inputs_loop(
                 let deck = side_deck(side, &playing);
                 let on = event.value > 0.5;
                 touched_side[side] = on;
-                // A fresh gesture: its first hold and first position must go out even if they repeat an old number.
-                last_wheel_sent[side] = None;
                 let command = touch_command(on, deck);
                 println!(
                     "dj-controller: at {now} ms {} = {:.0} (report {report}) → {command:?}",
