@@ -205,9 +205,12 @@ pub struct DeckPanel {
     pub jump_beats: Option<f64>,
     /// The loop size the LOOP knob carries, in beats.
     pub loop_beats: Option<u32>,
-    /// The whole track as low/high pairs, one per column, left to right: the envelope the window already caches, cut
-    /// down to what the strip can show. Empty when the track has no envelope.
-    pub waveform: Vec<(f32, f32)>,
+    /// The strip's window as bars, one per column, left to right: the amplitudes the window would draw
+    /// (`waveform::bars` — the window's own algorithm). Empty when the track has no envelope.
+    pub waveform: Vec<f32>,
+    /// Where the play head sits in that window, 0 to 1: the strip is a window around the play head, so the marker is
+    /// not where the track has got to but where the sound is inside what is drawn.
+    pub wave_position: f32,
 }
 
 /// A clock as a DJ reads it: `1:23`, `1:02:05`, and `-0:05` for the last five seconds.
@@ -334,41 +337,24 @@ pub fn render_deck(panel: &DeckPanel) -> Canvas {
         wave_height,
         GROOVE,
     );
-    let played = (panel.position.clamp(0.0, 1.0) * room as f64).round() as isize;
-    let played_x = margin as isize + played;
+    // The strip is a window around the play head (the window's own default of sixteen beats), so the marker sits where
+    // the sound is inside that window. A track with no envelope falls back to its place in the whole track, which is
+    // what the strip shows when there is nothing to draw inside it.
+    let marker = if panel.waveform.is_empty() {
+        panel.position.clamp(0.0, 1.0) as f32
+    } else {
+        panel.wave_position.clamp(0.0, 1.0)
+    };
+    let played_x = margin as isize + (f64::from(marker) * room as f64).round() as isize;
     if !panel.waveform.is_empty() {
-        // Half the strip for a full-scale bar: normalised to the loudest place of the track, every passage in that
-        // place touched the border, and a strip whose loud parts are drawn against the edge reads as a solid block
-        // rather than as a shape (owner's report, 25.11).
-        let amplitude = (wave_height as f32 / 2.0 - 3.0) * WAVE_FILL;
-        // Normalised to the loudest column, the way the window normalises its envelope: a quiet master drawn at its
-        // own level is a thin thread in the middle of the strip, and the strip is there to be read at a glance.
-        let loudest = panel
-            .waveform
-            .iter()
-            .map(|(low, high)| high.max(-low))
-            .fold(0.0f32, f32::max)
-            .max(0.001);
+        // The bars come from the window's own algorithm (`waveform::bars`): smoothed, normalised and contrasted the
+        // way the strip on the monitor is. This only paints them, mirrored around the middle — a bar that runs one way
+        // only reads as a spike rather than as a track.
+        let amplitude = wave_height as f32 / 2.0 - 3.0;
         let columns = panel.waveform.len();
         for column in 0..room {
-            // The average of the columns this bar owns, not the loudest of them. A bar that owns ten columns and takes
-            // the loudest is as tall as the single loudest transient in it, and a loud master then fills the strip
-            // solid. The window learnt the same thing — its moiré note: averaging is the honest downsample.
-            let from = column * columns / room;
-            let to = ((column + 1) * columns / room).max(from + 1).min(columns);
-            let mut sum = 0.0f32;
-            for (low, high) in &panel.waveform[from..to] {
-                sum += high.max(-low);
-            }
-            // One amplitude per column, mirrored around the middle — the way the window draws the same envelope. A
-            // bucket whose samples all sit on one side of zero would otherwise bar on that side only, and a strip of
-            // those reads as spikes sticking out of the track rather than as a track (owner's report, 25.11).
-            // The window's own contrast (1.4, `Waveform.h`): the average alone leaves every dip shallow, and a strip
-            // whose quiet parts are as tall as its loud ones is the same solid block from the other side.
-            let level = (sum / (to - from) as f32 / loudest)
-                .clamp(0.0, 1.0)
-                .powf(1.4);
-            let half = (level * amplitude).max(0.5);
+            let at = (column * columns / room).min(columns - 1);
+            let half = (panel.waveform[at] * amplitude).max(0.5);
             let x = margin as isize + column as isize;
             // What has played is drawn brighter than what is still coming: the same ink for both makes the play head
             // the only thing telling them apart, and a finger covers the play head.
@@ -425,10 +411,6 @@ fn beats_label(beats: f64) -> String {
     }
 }
 
-/// How much of the strip's half-height a full-scale bar takes: a half, so the loudest passage keeps its distance from
-/// both edges.
-const WAVE_FILL: f32 = 0.5;
-
 fn text_fit_width(text: &str, scale: usize) -> isize {
     text::width_of(text, scale.max(1)) as isize
 }
@@ -464,14 +446,14 @@ pub fn sample_panel() -> DeckPanel {
         key: Some("8A".to_string()),
         jump_beats: Some(4.0),
         loop_beats: Some(8),
-        // A made-up envelope: a bass-heavy track rising to a chorus, so the strip shows what a track looks like.
-        waveform: (0..320)
+        wave_position: 0.5,
+        // A made-up track: a swell, a chorus and one quiet break, so the strip shows what a track looks like.
+        waveform: (0..300)
             .map(|column| {
-                let x = column as f32 / 320.0;
-                let body = 0.25 + 0.55 * (x * std::f32::consts::PI).sin();
-                let chorus = if (0.45..0.75).contains(&x) { 0.2 } else { 0.0 };
-                let high = (body + chorus).min(0.95);
-                (-high * 0.9, high)
+                let x = column as f32 / 300.0;
+                let body = 0.42 + 0.4 * (x * std::f32::consts::PI).sin();
+                let break_in = if (0.62..0.72).contains(&x) { 0.35 } else { 0.0 };
+                (body - break_in).clamp(0.0, 0.92)
             })
             .collect(),
     }

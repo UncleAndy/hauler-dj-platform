@@ -279,7 +279,7 @@ fn the_corners_carry_the_jump_step_and_the_loop_size() {
 }
 
 #[test]
-fn the_bottom_of_the_screen_is_the_whole_track_with_a_play_head() {
+fn the_bottom_of_the_screen_is_the_strip_with_a_play_head() {
     // The whole track at the bottom, with the play head on it: a strip of one colour says how far along but not what is
     // coming, and the next drop is what the eye is looking for (owner's request, 25.11).
     let mut panel = DeckPanel {
@@ -287,9 +287,10 @@ fn the_bottom_of_the_screen_is_the_whole_track_with_a_play_head() {
         loaded: true,
         playing: true,
         position: 0.5,
+        wave_position: 0.5,
         ..DeckPanel::default()
     };
-    panel.waveform = vec![(-0.4, 0.4); 300];
+    panel.waveform = vec![0.6; 300];
     let canvas = render_deck(&panel);
 
     // Sound on both sides of the play head, and the play head itself a bright line in the middle of the strip.
@@ -333,10 +334,8 @@ fn a_track_without_an_envelope_keeps_its_strip_empty() {
 }
 
 #[test]
-fn a_column_that_sits_on_one_side_of_zero_is_drawn_around_the_middle() {
-    // The envelope keeps a bucket whose samples all sit above zero with a zero low, and one below zero with a zero
-    // high. Drawn as extremes, those are bars on one side only, and a strip of them reads as spikes sticking out of
-    // the track. The window mirrors one amplitude per column, and the screen does the same (owner's report, 25.11).
+fn a_bar_is_drawn_around_the_middle() {
+    // One amplitude per bar, mirrored: a bar that runs one way only reads as a spike rather than as a track.
     let mut panel = DeckPanel {
         deck: 'A',
         loaded: true,
@@ -344,7 +343,7 @@ fn a_column_that_sits_on_one_side_of_zero_is_drawn_around_the_middle() {
         position: 0.5,
         ..DeckPanel::default()
     };
-    panel.waveform = vec![(0.0, 0.8); 300];
+    panel.waveform = vec![0.6; 300];
     let canvas = render_deck(&panel);
     let middle = 118 + 94 / 2;
     assert!(
@@ -360,7 +359,7 @@ fn a_column_that_sits_on_one_side_of_zero_is_drawn_around_the_middle() {
         "the half below the middle is missing"
     );
     // And a silent column stays a thin line rather than a bar.
-    panel.waveform = vec![(0.0, 0.0); 300];
+    panel.waveform = vec![0.0; 300];
     let quiet = render_deck(&panel);
     assert_eq!(
         quiet.at(60, middle - 10),
