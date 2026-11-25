@@ -3036,18 +3036,27 @@ int runTransportCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, UiSet
             return ready();
         };
         const bool shown = row->isVisible();
+        auto* wave = findItem(window->contentItem(), QStringLiteral("wave_A"));
+        const qreal waveBefore = wave != nullptr ? wave->height() : 0.0;
         bridge->setPanelPresent(true);
         const bool folded = settle([&]() { return panelPresent() && !row->isVisible(); });
+        // The room the row took goes to the wave: a row that folds away and leaves a gap is a hole, not a trade. The layout
+        // runs a frame behind the visibility, so the height is read once it has stopped being the old one.
+        (void)settle([&]() { return wave != nullptr && wave->height() > waveBefore + 1.0; });
+        const qreal waveWhileFolded = wave != nullptr ? wave->height() : 0.0;
+        const bool grew = wave != nullptr && waveWhileFolded > waveBefore + 1.0;
         bridge->setPanelPresent(false);
         const bool back = settle([&]() { return !panelPresent() && row->isVisible(); });
         std::fprintf(stdout,
-                     "dj-ui: the deck's transport row %s while a controller is present and %s again after it\n",
-                     folded ? "folds away" : "STAYS", back ? "comes back" : "does NOT come back");
-        if (!shown || !folded || !back) {
+                     "dj-ui: the deck's transport row %s while a controller is present and %s again after it; the "
+                     "wave takes the room (%.0f -> %.0f px)\n",
+                     folded ? "folds away" : "STAYS", back ? "comes back" : "does NOT come back",
+                     waveBefore, waveWhileFolded);
+        if (!shown || !folded || !back || !grew) {
             std::fprintf(stderr,
                          "dj-ui: the transport row did not follow the controller (present %d, row visible "
-                         "%d)\n",
-                         panelPresent() ? 1 : 0, row->isVisible() ? 1 : 0);
+                         "%d, wave %.0f -> %.0f px)\n",
+                         panelPresent() ? 1 : 0, row->isVisible() ? 1 : 0, waveBefore, waveWhileFolded);
             return 1;
         }
     }

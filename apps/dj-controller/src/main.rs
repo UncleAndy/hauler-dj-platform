@@ -924,9 +924,6 @@ fn serve(
     // The panel streams the wheels at ~500 Hz only after the jog-light init: without it report 3 comes at 4 Hz and every
     // scratch is four samples a second (owner's measurement, 25.11). Sent once, before anything is read.
     send_wheel_init(devices);
-    // And the engine is told the panel is here: the window folds away the deck buttons a hand no longer needs (owner's
-    // request, 25.11). Said once per connection — the engine takes the word back when this connection ends.
-    announce_panel(endpoint);
     let map = load_inputs(inputs_file)?;
     if map.is_empty() {
         println!(
@@ -1102,6 +1099,11 @@ fn inputs_loop(
     let mut last_press: std::collections::HashMap<String, u128> = std::collections::HashMap::new();
     let started = std::time::Instant::now();
     let mut link: Option<EngineLink> = None;
+    // The engine is the one channel that tells the window a controller is here, and the word belongs on the connection
+    // that carries the presses: the engine takes it back when that connection closes, so the window's deck buttons come
+    // back with the service. Said over a throwaway connection it was undone a moment later — which is exactly why the
+    // buttons did not fold at first (owner's report, 25.11). Retried while the engine is away, at most once a second.
+    let mut said_present_at: Option<std::time::Instant> = None;
     // The newest position of every knob and fader, sent on a short timer rather than once per report: a fast hand
     // produces more positions than the engine needs, and what matters is where the hand stopped.
     let mut pending: Vec<(String, dj_domain::DjCommand)> = Vec::new();
@@ -1132,6 +1134,25 @@ fn inputs_loop(
     let counting_from = std::time::Instant::now();
     let mut waiting_said = false;
     loop {
+        // A word that says the panel is here, on the connection that carries its presses (see above).
+        if link.is_none()
+            && said_present_at.is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(1))
+        {
+            said_present_at = Some(std::time::Instant::now());
+            if let Ok(mut open) = EngineLink::connect(endpoint) {
+                match open.send(&dj_domain::DjCommand::PanelPresent { present: true }) {
+                    Ok(()) => {
+                        println!(
+                            "dj-controller: the panel is here; the window folds its deck buttons away"
+                        );
+                        link = Some(open);
+                    }
+                    Err(reason) => {
+                        println!("dj-controller: the panel could not say it is here: {reason}");
+                    }
+                }
+            }
+        }
         let report_bytes = match queued.take() {
             Some(report) => report,
             None => match reports.recv_timeout(std::time::Duration::from_millis(10)) {
@@ -2144,22 +2165,6 @@ fn panel_deck_command(control: &str) -> Option<(dj_domain::DeckId, dj_domain::Dj
 /// the bottom always arrived because zero is below the threshold (owner's report, 24.11).
 fn is_double_touch(analog: bool, value: f32, last: Option<u128>, now: u128) -> bool {
     !analog && value > 0.5 && last.is_some_and(|last| now.saturating_sub(last) < 150)
-}
-
-/// Tell the engine a controller is present: the window folds away the deck buttons its own hardware covers.
-///
-/// Best effort and once per connection: the engine keeps the word while this connection is alive and takes it back when
-/// the socket closes, so a service that dies leaves the window as it found it.
-fn announce_panel(endpoint: &str) {
-    let Ok(mut link) = EngineLink::connect(endpoint) else {
-        println!(
-            "dj-controller: the engine is not answering yet; the panel will say it is here on the next command"
-        );
-        return;
-    };
-    if let Err(reason) = link.send(&dj_domain::DjCommand::PanelPresent { present: true }) {
-        println!("dj-controller: the engine did not hear that the panel is here: {reason}");
-    }
 }
 
 /// Sends the newest position of every knob and fader that has one waiting.

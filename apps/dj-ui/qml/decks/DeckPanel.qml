@@ -996,9 +996,13 @@ Pane {
             // With a controller under the hands, its own PLAY, CUE, LOOP, jump, REV and FLX do this row's work: the row
             // folds away so the deck keeps the wave and the numbers (owner's request, 25.11). The switch in Settings
             // brings it back for a DJ who wants both.
-            visible: !(Bridge.snapshot.panel !== undefined
-                       && Bridge.snapshot.panel.present === true
-                       && LayoutState.hideDeckButtonsWithController)
+            visible: {
+                // Read once, in one place: the row folds when a controller is present and the switch says so, and the
+                // wave below takes the room (owner's request, 25.11).
+                const controllerHere = Bridge.snapshot.panel !== undefined
+                                       && Bridge.snapshot.panel.present === true
+                return !(controllerHere && LayoutState.hideDeckButtonsWithController)
+            }
             Layout.fillWidth: true
             spacing: 4
             // Play and Cue are one pair, and a pair of buttons of two widths reads as two sizes of one
