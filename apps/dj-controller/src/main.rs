@@ -1005,8 +1005,12 @@ fn inputs_loop(
     let mut pending: Vec<(String, dj_domain::DjCommand)> = Vec::new();
     let mut last_flush = std::time::Instant::now();
     let mut queued: Option<Vec<u8>> = None;
-    // The platters: whether a hand is on each top.
+    // The platters: whether a hand is on each top, and where it says it is. The hand is repeated on a timer, not only
+    // when report 3 arrives: the engine drops a silent hand, and taking it back rewinds the record.
     let mut touched_side = [false; 2];
+    let mut hand_speed = [0.0_f64; 2];
+    let mut hand_sent_at: [Option<std::time::Instant>; 2] = [None, None];
+    let mut last_wheel_report_at: Option<u128> = None;
     // What the panel said first, once: the owner's complaint is that the window starts with the faders open while the panel
     // has them closed, and this line says which half is telling the truth.
     // The last position of every knob and fader the panel reported: what the engine is told again whenever the link is
@@ -1025,9 +1029,24 @@ fn inputs_loop(
     loop {
         let report_bytes = match queued.take() {
             Some(report) => report,
-            None => match reports.recv() {
+            None => match reports.recv_timeout(std::time::Duration::from_millis(10)) {
                 Ok(report) => report,
-                Err(_) => {
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    // Nothing from the panel for a moment: a hand still has to say it is on the record, and anything
+                    // waiting must still go out. Sleeping on `recv` left the hand silent between sparse reports, and the
+                    // engine gave the record back to the motor — the jumps the owner kept hearing (25.11).
+                    keep_hands(
+                        &mut pending,
+                        &touched_side,
+                        &hand_speed,
+                        &mut hand_sent_at,
+                        &playing,
+                    );
+                    flush_pending(&mut pending, &mut link, endpoint, &mut waiting_said);
+                    last_flush = std::time::Instant::now();
+                    continue;
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                     println!("dj-controller: the panel stopped answering; no more presses");
                     flush_pending(&mut pending, &mut link, endpoint, &mut waiting_said);
                     return;
@@ -1339,8 +1358,23 @@ fn inputs_loop(
                 let deck = side_deck(side, &playing);
                 let touched = touched_side[side];
                 let raw = f64::from(event.value);
+                if side == 0 {
+                    if let Some(previous_at) = last_wheel_report_at {
+                        let gap = now.saturating_sub(previous_at);
+                        if gap > 150 {
+                            println!(
+                                "dj-controller: report 3 came {gap} ms after the last; a silent hand is dropped at 250 ms"
+                            );
+                        }
+                    }
+                    last_wheel_report_at = Some(now);
+                }
                 let command =
                     wheel_command(touched, raw, deck, taste.scratch_scale, taste.nudge_scale);
+                if touched {
+                    hand_speed[side] = raw * taste.scratch_scale;
+                }
+                hand_sent_at[side] = Some(std::time::Instant::now());
                 // Said on **every** report, including zero. A hand that stops speaking is a hand the engine takes the
                 // record back from (`HAND_SILENCE_SECONDS`), and taking it again sets the head to the heard frame — the
                 // record jumps back while the hand is still on it (owner's report, 25.11). Report 3 is the clock at
@@ -1359,6 +1393,12 @@ fn inputs_loop(
                 let deck = side_deck(side, &playing);
                 let on = event.value > 0.5;
                 touched_side[side] = on;
+                hand_speed[side] = 0.0;
+                hand_sent_at[side] = if on {
+                    Some(std::time::Instant::now())
+                } else {
+                    None
+                };
                 let command = touch_command(on, deck);
                 println!(
                     "dj-controller: at {now} ms {} = {:.0} (report {report}) → {command:?}",
@@ -1474,6 +1514,13 @@ fn inputs_loop(
                     }
                 }
             }
+            keep_hands(
+                &mut pending,
+                &touched_side,
+                &hand_speed,
+                &mut hand_sent_at,
+                &playing,
+            );
             flush_pending(&mut pending, &mut link, endpoint, &mut waiting_said);
             last_flush = std::time::Instant::now();
         }
@@ -1647,6 +1694,49 @@ fn wheel_command(
             deck,
             amount: (raw * nudge_scale).clamp(-1.0, 1.0) as f32,
         }
+    }
+}
+
+/// Repeat a held hand on a timer, so the engine never hears silence from it.
+///
+/// The engine gives the record back to the motor after `HAND_SILENCE_SECONDS` (0.25 s) without a `Hand` command, and a new
+/// grab sets the head to the heard frame — a hand taken and given back rewinds the record. Report 3 is not fast or regular
+/// enough to be the only heartbeat, so a held hand is re-sent every `HEARTBEAT` at its last said speed.
+fn keep_hands(
+    pending: &mut Vec<(String, dj_domain::DjCommand)>,
+    touched: &[bool; 2],
+    speed: &[f64; 2],
+    sent_at: &mut [Option<std::time::Instant>; 2],
+    playing: &Playing,
+) {
+    const HEARTBEAT: std::time::Duration = std::time::Duration::from_millis(50);
+    for side in 0..2 {
+        if !touched[side] {
+            continue;
+        }
+        let due = match sent_at[side] {
+            None => true,
+            Some(at) => at.elapsed() >= HEARTBEAT,
+        };
+        if !due {
+            continue;
+        }
+        let deck = side_deck(side, playing);
+        let control = if side == 0 {
+            "wheel_left"
+        } else {
+            "wheel_right"
+        };
+        push_pending(
+            pending,
+            control,
+            dj_domain::DjCommand::Hand {
+                deck,
+                speed: speed[side],
+                held: true,
+            },
+        );
+        sent_at[side] = Some(std::time::Instant::now());
     }
 }
 
