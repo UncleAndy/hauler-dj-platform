@@ -10,17 +10,14 @@
 use std::f64::consts::PI;
 
 /// One wheel's counter.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct WheelCounter {
     last_position: Option<u32>,
     last_timer: Option<u32>,
-    // The same movement by the host's clock: the device's timer unit is not written down anywhere, and a speed scaled by
-    // an unknown constant is a speed nobody can calibrate.
-    last_clock_position: Option<u32>,
-    last_clock_at: Option<std::time::Instant>,
-    // A short window (2 ms at 500 Hz) holds only a few integer ticks, so the raw rate jumps by tens of percent. Mixxx
-    // averages successive samples of the same sign for exactly this reason; without it a scratch is a series of jumps.
-    smoothed: Option<f64>,
+    // The recent movement by the host's clock. A speed is taken over a window, not between two reports: at 500 Hz a
+    // two-millisecond window holds one or two integer ticks for a slow hand, so the rate swings by half and the record
+    // stutters. Averaging over a longer window is what makes the mouse scratch smooth, and the wheel can have the same.
+    window: Vec<(u32, std::time::Instant)>,
 }
 
 impl WheelCounter {
@@ -34,9 +31,7 @@ impl WheelCounter {
     pub fn reset(&mut self) {
         self.last_position = None;
         self.last_timer = None;
-        self.last_clock_position = None;
-        self.last_clock_at = None;
-        self.smoothed = None;
+        self.window.clear();
     }
 
     /// The movement since the last report: signed ticks and elapsed timer units.
@@ -70,43 +65,36 @@ impl WheelCounter {
         Some(f64::from(moved) / f64::from(elapsed))
     }
 
-    /// Ticks per **real** second since the last report, or `None` for the first one.
+    /// Ticks per **real** second over the last `SPEED_WINDOW`, or `None` for the first report.
     ///
-    /// The device's timer is not used for a rate: its unit is not written down in any public description, so a speed the
-    /// shell scales by an unknown constant cannot be calibrated. Wall time is known on the host, so this is real ticks per
-    /// real second — the number a physical model of the platter needs.
+    /// The rate is not taken between two reports: a two-millisecond window at 500 Hz holds only a couple of integer ticks
+    /// for a slow hand, so the raw rate swings by half and the record stutters (the owner's own mouse scratch is smooth
+    /// because it never sees a two-tick window). Averaging over roughly twenty milliseconds trades a little latency for a
+    /// smooth hand. The device's timer is not used: its unit is not written down anywhere.
     pub fn ticks_per_second(&mut self, position: u32, now: std::time::Instant) -> Option<f64> {
-        // The new report is remembered before the comparison, for the same reason as `update`.
-        let previous = match (self.last_clock_position, self.last_clock_at) {
-            (Some(position), Some(at)) => Some((position, at)),
-            _ => None,
-        };
-        self.last_clock_position = Some(position);
-        self.last_clock_at = Some(now);
-        let (previous_position, previous_at) = previous?;
-        let moved = position.wrapping_sub(previous_position) as i32;
-        let elapsed = now.saturating_duration_since(previous_at).as_secs_f64();
+        if self.window.is_empty() {
+            self.window.push((position, now));
+            return None;
+        }
+        self.window.push((position, now));
+        while self.window.len() > 2
+            && now.saturating_duration_since(self.window[0].1) > SPEED_WINDOW
+        {
+            self.window.remove(0);
+        }
+        let (oldest_position, oldest_at) = self.window[0];
+        let elapsed = now.saturating_duration_since(oldest_at).as_secs_f64();
         if elapsed <= f64::EPSILON {
             return Some(0.0);
         }
-        let current = f64::from(moved) / elapsed;
-        // Average successive samples of the same sign, as the public mapping does: a fast hand's two-millisecond window
-        // holds only a few ticks, and without smoothing the rate swings far enough to sound like a stutter, not a scratch.
-        // Only average two real turns of the same direction: zero is a still hand, and a plain `<= 0` counts it as
-        // "negative", so one direction averaged over an extra sample and a scratch walked backwards (owner's report,
-        // 25.11).
-        let smoothed = match self.smoothed {
-            Some(previous)
-                if previous != 0.0 && current != 0.0 && (previous < 0.0) == (current < 0.0) =>
-            {
-                (previous + current) * 0.5
-            }
-            _ => current,
-        };
-        self.smoothed = Some(smoothed);
-        Some(smoothed)
+        let moved = position.wrapping_sub(oldest_position) as i32;
+        Some(f64::from(moved) / elapsed)
     }
 }
+
+/// How far back a wheel's speed is averaged. Long enough that an integer tick is a small part of the movement, short
+/// enough that the hand still feels immediate.
+pub const SPEED_WINDOW: std::time::Duration = std::time::Duration::from_millis(20);
 
 /// Wraps around the counter's period: one full turn of a 32-bit counter.
 pub const WRAP: f64 = 4_294_967_296.0;
@@ -167,23 +155,34 @@ mod tests {
     }
 
     #[test]
-    fn a_still_hand_between_turns_does_not_bias_the_average() {
+    fn a_back_and_forth_leaves_the_record_where_it_was() {
+        // The speed is a rate, so what matters is its integral: a hand that goes and comes back must net zero, or the
+        // playhead walks through the track on every scratch (owner's report, 25.11). The window only shifts the phase, so
+        // a full cycle in steady state — not the first, which needs history — nets nothing.
         let mut wheel = WheelCounter::new();
         let start = std::time::Instant::now();
-        let step = std::time::Duration::from_millis(10);
-        let _ = wheel.ticks_per_second(0, start);
-        let forward = wheel.ticks_per_second(100, start + step);
-        let still = wheel.ticks_per_second(100, start + step * 2);
-        let backward = wheel.ticks_per_second(0, start + step * 3);
-        let (Some(forward), Some(still), Some(backward)) = (forward, still, backward) else {
-            panic!("every report after the first must answer");
-        };
-        assert!(forward > 0.0 && backward < 0.0);
-        assert_eq!(still, 0.0, "a still hand is zero, not a turn");
-        // The zero in between must not pull one direction further than the other: that made a scratch walk backwards.
+        let mut positions: Vec<u32> = Vec::new();
+        let cycle = 41usize;
+        for _ in 0..3 {
+            positions.extend((0..=20).map(|step| step * 10));
+            positions.extend((0..20).rev().map(|step| step * 10));
+        }
+        let mut net = 0.0_f64;
+        let mut last_ms = 0_u64;
+        for (index, position) in positions.iter().enumerate() {
+            let at = start + std::time::Duration::from_millis(5 * index as u64);
+            if let Some(speed) = wheel.ticks_per_second(*position, at)
+                && index >= cycle
+                && index < cycle * 3
+            {
+                let dt = (5 * index as u64 - last_ms) as f64 / 1000.0;
+                net += speed * dt;
+            }
+            last_ms = 5 * index as u64;
+        }
         assert!(
-            (forward + backward).abs() < 1e-9,
-            "forward {forward}, backward {backward}"
+            net.abs() < 10.0,
+            "two full cycles moved the record by {net} ticks"
         );
     }
 
