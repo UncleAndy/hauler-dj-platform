@@ -348,21 +348,24 @@ pub fn render_deck(panel: &DeckPanel) -> Canvas {
             .max(0.001);
         let columns = panel.waveform.len();
         for column in 0..room {
-            let at = (column * columns / room).min(columns - 1);
-            // One column of a three-wide window: a hit that lands in a single bucket is a needle on a screen this
-            // wide, and a strip of needles is not a picture of a track (owner's report, 25.11).
-            let from = at.saturating_sub(1);
-            let to = (at + 1).min(columns - 1);
-            let (low, high) = panel.waveform[from..=to]
-                .iter()
-                .fold((0.0f32, 0.0f32), |(low, high), (a, b)| {
-                    (low.min(*a), high.max(*b))
-                });
+            // The average of the columns this bar owns, not the loudest of them. A bar that owns ten columns and takes
+            // the loudest is as tall as the single loudest transient in it, and a loud master then fills the strip
+            // solid. The window learnt the same thing — its moiré note: averaging is the honest downsample.
+            let from = column * columns / room;
+            let to = ((column + 1) * columns / room).max(from + 1).min(columns);
+            let mut sum = 0.0f32;
+            for (low, high) in &panel.waveform[from..to] {
+                sum += high.max(-low);
+            }
             // One amplitude per column, mirrored around the middle — the way the window draws the same envelope. A
             // bucket whose samples all sit on one side of zero would otherwise bar on that side only, and a strip of
             // those reads as spikes sticking out of the track rather than as a track (owner's report, 25.11).
-            let peak = (high.max(-low) / loudest).clamp(0.0, 1.0);
-            let half = (peak * amplitude).max(0.5);
+            // The window's own contrast (1.4, `Waveform.h`): the average alone leaves every dip shallow, and a strip
+            // whose quiet parts are as tall as its loud ones is the same solid block from the other side.
+            let level = (sum / (to - from) as f32 / loudest)
+                .clamp(0.0, 1.0)
+                .powf(1.4);
+            let half = (level * amplitude).max(0.5);
             let x = margin as isize + column as isize;
             // What has played is drawn brighter than what is still coming: the same ink for both makes the play head
             // the only thing telling them apart, and a finger covers the play head.
