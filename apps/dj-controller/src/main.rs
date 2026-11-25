@@ -1164,10 +1164,15 @@ fn inputs_loop(
                     .and_then(|state| state.fx.get(index).copied())
                     .unwrap_or_default();
                 let patch = if event.control.ends_with(".fx_amount") {
-                    dj_domain::FxPatch {
-                        amount: event.value.clamp(0.0, 1.0),
-                        ..current
-                    }
+                    // The knob has a centre detent that does not land on exactly half the field: a value a hair either
+                    // side of the middle is the knob standing at its centre, not a hand asking for a sliver of effect
+                    // (owner's report, 25.11). Snap the small neighbourhood to the middle.
+                    let amount = if (event.value - 0.5).abs() < 0.015 {
+                        0.5
+                    } else {
+                        event.value.clamp(0.0, 1.0)
+                    };
+                    dj_domain::FxPatch { amount, ..current }
                 } else {
                     if event.value <= 0.5 {
                         continue;
@@ -1249,6 +1254,11 @@ fn inputs_loop(
                         .ok()
                         .and_then(|state| state.fx.get(index).copied())
                         .unwrap_or_default();
+                    // A deck whose effect is switched in keeps it: the select keys only re-tune channels where the effect
+                    // is off, so a running effect is never yanked away from under a live mix (owner's report, 25.11).
+                    if current.enabled {
+                        continue;
+                    }
                     let patch = dj_domain::FxPatch { kind, ..current };
                     pending.push((
                         event.control.clone(),
@@ -2236,6 +2246,8 @@ struct DeckFacts {
     monitoring: bool,
     sync: bool,
     fx: bool,
+    /// The effect the deck runs, as `FxKind::index()`: the "FX on" button wears this effect's colour.
+    fx_kind: u8,
     /// What each hotcue pad shows: the marker's colour, and whether the slot holds a cue.
     hotcues: [Option<dj_controller_s4mk3::lights::Pad>; 8],
 }
@@ -2261,6 +2273,12 @@ fn show_from_facts(decks: &[DeckFacts; 4], sides: [usize; 2]) -> dj_controller_s
         ],
         sync: [left.sync, right.sync],
         fx: [decks[0].fx, decks[1].fx, decks[2].fx, decks[3].fx],
+        fx_kind: [
+            decks[0].fx_kind,
+            decks[1].fx_kind,
+            decks[2].fx_kind,
+            decks[3].fx_kind,
+        ],
     }
 }
 
@@ -2332,6 +2350,7 @@ fn facts_from(
             monitoring: deck.cue,
             sync: !deck.sync.is_off(),
             fx: deck.fx.enabled,
+            fx_kind: deck.fx.kind.index(),
             hotcues,
         };
     }
@@ -2982,6 +3001,7 @@ mod tests {
                 monitoring: true,
                 sync: false,
                 fx: false,
+                fx_kind: 0,
                 hotcues: [Some(dj_controller_s4mk3::lights::Pad {
                     colour: dj_controller_s4mk3::Colour::Green,
                     occupied: true,

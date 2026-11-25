@@ -240,6 +240,9 @@ pub struct Show {
     pub sync: [bool; 2],
     /// FX on, for decks A, B, C and D: the mixer section has a button for each.
     pub fx: [bool; 4],
+    /// The effect each deck runs, by `FxKind::index()`: its "FX on" button wears the effect's own colour, not a single
+    /// one for every effect.
+    pub fx_kind: [u8; 4],
 }
 
 /// The byte that lights a hotcue slot, found by the name the owner wrote down.
@@ -371,6 +374,9 @@ pub fn report_with(show: &Show, palette: &Palette) -> LightsReport {
             set(control(name), bright(palette.cue.code()));
         }
     }
+    // A deck's "FX on" button shows the colour of the effect that deck is running, so each effect reads as its own
+    // lamp rather than one lamp copied four times (owner's request, 25.11). The select keys themselves are labels: they
+    // glow in their effect's colour from `report_at_rest`, not from the active layer.
     for (deck, lit) in show.fx.iter().enumerate() {
         if *lit {
             let name = match deck {
@@ -379,7 +385,7 @@ pub fn report_with(show: &Show, palette: &Palette) -> LightsReport {
                 2 => "Deck C FX on button",
                 _ => "Deck D FX on button",
             };
-            set(control(name), bright(palette.fx.code()));
+            set(control(name), bright(fx_colour(show.fx_kind[deck]).code()));
         }
     }
     report
@@ -404,6 +410,13 @@ pub fn report_at_rest(show: &Show, palette: &Palette) -> LightsReport {
     for byte in hotcue_bytes() {
         if let Some(slot) = report.body.get_mut(usize::from(byte)) {
             *slot = 0;
+        }
+    }
+    // The five FX select keys glow in the colour of the effect they load, so in the dark a hand tells 1 from 2 from
+    // Filter at a glance (owner's request, 25.11). They sit at the faint step, like the rest of the resting layer.
+    for (byte, kind) in [(50_u8, 1_u8), (51, 2), (52, 3), (53, 4), (54, 0)] {
+        if let Some(slot) = report.body.get_mut(usize::from(byte)) {
+            *slot = dim(fx_colour(kind).code());
         }
     }
     // The active controls are painted over the resting layer: their own colour, one brightness step up.
@@ -597,6 +610,23 @@ pub fn nearest_colour(rgb: &str) -> Option<Colour> {
         }
     }
     best.map(|(_, colour)| colour)
+}
+
+/// The colour each effect kind wears on the panel, by `FxKind::index()` (0…6).
+///
+/// Seven kinds, one colour each, so the select keys and the decks' "FX on" buttons read as different effects rather than
+/// as one lamp copied four times.
+#[must_use]
+pub fn fx_colour(index: u8) -> Colour {
+    match index {
+        0 => Colour::Yellow, // Filter
+        1 => Colour::Blue,   // Echo
+        2 => Colour::Green,  // Roll
+        3 => Colour::Purple, // Flanger
+        4 => Colour::Aqua,   // Phaser
+        5 => Colour::Red,    // Bitcrusher
+        _ => Colour::Salmon, // Noise
+    }
 }
 
 /// A colour's name for a person watching the panel.

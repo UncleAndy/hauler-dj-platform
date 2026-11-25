@@ -10,8 +10,8 @@ use dj_controller_s4mk3::Colour;
 use dj_controller_s4mk3::lights::{
     LIGHTS_LENGTH, LightsReport, Pad, Palette, REPORT_LIGHTS, Show, bright, brightness_probe,
     byte_of, bytes_for, colour_by_name, colour_name, colour_walk, colours, dim, fill_only,
-    hotcue_bytes, known_bytes, map, map_line, meter_report, name_of, nearest_colour, parse_map,
-    pick_line, report_at_rest, report_for, report_with, sweep, walk,
+    fx_colour, hotcue_bytes, known_bytes, map, map_line, meter_report, name_of, nearest_colour,
+    parse_map, pick_line, report_at_rest, report_for, report_with, sweep, walk,
 };
 
 #[test]
@@ -224,13 +224,31 @@ fn playing_monitoring_and_sync_use_their_own_bytes() {
 fn the_fx_buttons_of_four_decks_have_their_own_bytes() {
     let show = Show {
         fx: [false, false, true, false],
+        fx_kind: [0, 1, 2, 3],
         ..Show::default()
     };
     let report = report_for(&show);
     let deck_c = byte_of("Deck C FX").expect("the map has deck C's fx button");
     assert_eq!(
         report.body[usize::from(deck_c)],
-        bright(Colour::Magenta.code())
+        bright(fx_colour(2).code()),
+        "deck C's button wears the colour of its effect, not one colour for all"
+    );
+}
+
+#[test]
+fn the_fx_select_keys_show_their_own_effects_colours() {
+    // The five select keys glow in the colour of the effect they load, so a hand tells them apart at a glance. They are
+    // labels, so they sit at the faint step of the resting layer, one colour each.
+    let report = report_at_rest(&Show::default(), &Palette::default());
+    let key1 = byte_of("FX select 1").expect("the map has it");
+    let filter = byte_of("FX select filter").expect("the map has it");
+    assert_eq!(report.body[usize::from(key1)], dim(fx_colour(1).code()));
+    assert_eq!(report.body[usize::from(filter)], dim(fx_colour(0).code()));
+    assert_ne!(
+        fx_colour(1).code(),
+        fx_colour(0).code(),
+        "different effects"
     );
 }
 
@@ -264,12 +282,19 @@ fn a_dark_booth_lights_every_control_faintly_except_the_pads() {
     let report = report_at_rest(&Show::default(), &Palette::default());
     let pads = hotcue_bytes();
     assert_eq!(pads.len(), 16, "eight pads a side: {pads:?}");
+    let select: [(u8, u8); 5] = [(50, 1), (51, 2), (52, 3), (53, 4), (54, 0)];
     for (byte, name) in map() {
         if pads.contains(byte) {
             assert_eq!(
                 report.body[usize::from(*byte)],
                 0,
                 "the pad {name} (byte {byte}) is dark until a record is loaded"
+            );
+        } else if let Some((_, kind)) = select.iter().find(|(b, _)| b == byte) {
+            assert_eq!(
+                report.body[usize::from(*byte)],
+                dim(fx_colour(*kind).code()),
+                "the select key {name} (byte {byte}) wears its effect's colour, faint"
             );
         } else {
             assert_eq!(
@@ -452,6 +477,7 @@ fn the_settings_choose_the_colours() {
         monitoring: [false, true, false, false],
         sync: [true, false],
         fx: [false, false, true, false],
+        fx_kind: [0, 1, 4, 3],
     };
     let report = report_with(&show, &palette);
     assert_eq!(report.body[0], bright(Colour::Purple.code()), "the hotcue");
@@ -460,7 +486,7 @@ fn the_settings_choose_the_colours() {
     let cue = byte_of("Deck B CUE").expect("the map has it");
     assert_eq!(report.body[usize::from(cue)], bright(Colour::Salmon.code()));
     let fx = byte_of("Deck C FX").expect("the map has it");
-    assert_eq!(report.body[usize::from(fx)], bright(Colour::Sky.code()));
+    assert_eq!(report.body[usize::from(fx)], bright(fx_colour(4).code()));
 }
 
 #[test]
