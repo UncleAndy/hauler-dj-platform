@@ -205,7 +205,7 @@ fn run(options: &Options) -> Result<u8, String> {
         let _ = service.kill();
         let _ = service.wait();
     }
-    lights_out(&folder);
+    panel_out(&folder);
     // The engine leaves by its own idle exit once the shell's connection is gone; nothing to kill here.
     drop(engine_process.take());
     Ok(status.code().unwrap_or(0).clamp(0, 255) as u8)
@@ -334,15 +334,23 @@ fn start_controller(folder: &Path, options: &Options) -> Option<Child> {
     }
 }
 
-/// Puts the panel out on the way out, and does not wait for it long: a program that cannot close is worse than a panel
-/// left lit.
-fn lights_out(folder: &Path) {
+/// Puts the panel out on the way out — the buttons and the screens, one after the other — and does not wait for it
+/// long: a program that cannot close is worse than a panel left lit.
+fn panel_out(folder: &Path) {
+    lights_out(folder, "--lights-off");
+    // The screens latch their last picture the way the buttons latch their colour: a closed application leaves the
+    // tracks on the desk glowing (owner's report, 25.11).
+    lights_out(folder, "--screen-off");
+}
+
+/// One command that puts part of the panel out, and a short wait for it.
+fn lights_out(folder: &Path, what: &str) {
     let binary = folder.join(program("dj-controller"));
     if !binary.is_file() {
         return;
     }
     let mut command = Command::new(&binary);
-    command.arg("--lights-off").stdin(Stdio::null());
+    command.arg(what).stdin(Stdio::null());
     // The words go to the service's own log: "the panel is dark" or "no panel to darken" is the last thing a person
     // reads after closing the window, and it answers whether the lights went out.
     match controller_log() {

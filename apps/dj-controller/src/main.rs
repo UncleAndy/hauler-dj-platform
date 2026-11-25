@@ -31,7 +31,7 @@ use dj_controller_s4mk3::{NAME, PRODUCT, S4Mk3, VENDOR};
 use dj_hid::write::ReportSink;
 use dj_hid::{DeviceInfo, HidrawTransport, Transport};
 
-const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send] | --lights-demo [--interval MS] [--send] | --lights-show --engine <endpoint> | --lights-fill <code> [--send] | --lights-night [--rest <code>] [--send] | --lights-bright <byte> [--colour N] [--rounds N] [--send] | --lights-colour-walk [<byte>|left|right|all] [--shift] [--interval MS] [--send] | --lights-pick [<byte>|left|right|all] [--out <file>] [--interval MS] [--send] | --screen-from --engine <endpoint> --out <file.ppm> [--panel left|right] | --screen-send [--engine <endpoint>] [--panel left|right] | --lights-off | --serve --engine <endpoint> | --inputs-watch [--seconds N] | --node-rates [--seconds N] | --wheel-init [--seconds N] | --inputs-learn [--out <file>] [--inputs <file>]";
+const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send] | --lights-demo [--interval MS] [--send] | --lights-show --engine <endpoint> | --lights-fill <code> [--send] | --lights-night [--rest <code>] [--send] | --lights-bright <byte> [--colour N] [--rounds N] [--send] | --lights-colour-walk [<byte>|left|right|all] [--shift] [--interval MS] [--send] | --lights-pick [<byte>|left|right|all] [--out <file>] [--interval MS] [--send] | --screen-from --engine <endpoint> --out <file.ppm> [--panel left|right] | --screen-send [--engine <endpoint>] [--panel left|right] | --screen-off | --lights-off | --serve --engine <endpoint> | --inputs-watch [--seconds N] | --node-rates [--seconds N] | --wheel-init [--seconds N] | --inputs-learn [--out <file>] [--inputs <file>]";
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -147,6 +147,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
             }
             "--screen-from" => mode = Mode::ScreenFrom,
             "--screen-send" => mode = Mode::ScreenSend,
+            "--screen-off" => mode = Mode::ScreenOff,
             "--panel" => {
                 let Some(side) = arguments.get(index + 1) else {
                     return Err(format!("--panel wants left or right. {USAGE}"));
@@ -461,6 +462,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         Mode::InputsLearn => inputs_learn(&devices, pick_out.as_deref()),
         Mode::ScreenFrom => screen_from(engine.as_deref(), pick_out.as_deref(), screen_panel),
         Mode::ScreenSend => screen_send(engine.as_deref(), screen_panel),
+        Mode::ScreenOff => screen_off(),
         Mode::LightsPick(what) => lights_pick(
             &devices,
             &what,
@@ -508,6 +510,7 @@ enum Mode {
     LightsPick(String),
     ScreenFrom,
     ScreenSend,
+    ScreenOff,
     LightsOff,
     Serve,
     InputsWatch,
@@ -2795,6 +2798,27 @@ fn screen_from(
             .map_or_else(|| String::from("--"), |beats| format!("{beats}")),
         panel.waveform.len()
     );
+    Ok(())
+}
+
+/// Put the panel's screens out: both of them filled with the screen's own background.
+///
+/// The panel latches what it is shown, so an application that closes leaves its last picture glowing on the desk — the
+/// same reason `--lights-off` exists for the buttons (owner's report, 25.11).
+fn screen_off() -> Result<(), String> {
+    let mut panels = dj_controller_s4mk3::panels::Panels::open()?;
+    for side in [
+        dj_controller_s4mk3::Screen::Left,
+        dj_controller_s4mk3::Screen::Right,
+    ] {
+        let canvas =
+            dj_controller_s4mk3::screen::Canvas::screen(dj_controller_s4mk3::screen::BACKGROUND);
+        let frame = canvas
+            .frame(side)
+            .map_err(|error| format!("the frame cannot be built: {error}"))?;
+        panels.send(&frame)?;
+    }
+    println!("dj-controller: the screens are dark");
     Ok(())
 }
 

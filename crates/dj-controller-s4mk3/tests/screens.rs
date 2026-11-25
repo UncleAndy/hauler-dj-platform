@@ -331,3 +331,40 @@ fn a_track_without_an_envelope_keeps_its_strip_empty() {
         "the play head is missing without a wave"
     );
 }
+
+#[test]
+fn a_column_that_sits_on_one_side_of_zero_is_drawn_around_the_middle() {
+    // The envelope keeps a bucket whose samples all sit above zero with a zero low, and one below zero with a zero
+    // high. Drawn as extremes, those are bars on one side only, and a strip of them reads as spikes sticking out of
+    // the track. The window mirrors one amplitude per column, and the screen does the same (owner's report, 25.11).
+    let mut panel = DeckPanel {
+        deck: 'A',
+        loaded: true,
+        playing: true,
+        position: 0.5,
+        ..DeckPanel::default()
+    };
+    panel.waveform = vec![(0.0, 0.8); 300];
+    let canvas = render_deck(&panel);
+    let middle = 118 + 94 / 2;
+    assert!(
+        canvas
+            .at(60, middle - 20)
+            .is_some_and(|pixel| pixel != GROOVE),
+        "the half above the middle is missing"
+    );
+    assert!(
+        canvas
+            .at(60, middle + 20)
+            .is_some_and(|pixel| pixel != GROOVE),
+        "the half below the middle is missing"
+    );
+    // And a silent column stays a thin line rather than a bar.
+    panel.waveform = vec![(0.0, 0.0); 300];
+    let quiet = render_deck(&panel);
+    assert_eq!(
+        quiet.at(60, middle - 10),
+        Some(GROOVE),
+        "a silent track drew a bar"
+    );
+}

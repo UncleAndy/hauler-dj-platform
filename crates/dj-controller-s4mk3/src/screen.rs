@@ -338,20 +338,40 @@ pub fn render_deck(panel: &DeckPanel) -> Canvas {
     let played_x = margin as isize + played;
     if !panel.waveform.is_empty() {
         let amplitude = wave_height as f32 / 2.0 - 3.0;
+        // Normalised to the loudest column, the way the window normalises its envelope: a quiet master drawn at its
+        // own level is a thin thread in the middle of the strip, and the strip is there to be read at a glance.
+        let loudest = panel
+            .waveform
+            .iter()
+            .map(|(low, high)| high.max(-low))
+            .fold(0.0f32, f32::max)
+            .max(0.001);
+        let columns = panel.waveform.len();
         for column in 0..room {
-            let at = (column * panel.waveform.len() / room).min(panel.waveform.len() - 1);
-            let (low, high) = panel.waveform[at];
-            let top = middle as f32 - high.clamp(-1.0, 1.0) * amplitude;
-            let bottom = middle as f32 - low.clamp(-1.0, 1.0) * amplitude;
+            let at = (column * columns / room).min(columns - 1);
+            // One column of a three-wide window: a hit that lands in a single bucket is a needle on a screen this
+            // wide, and a strip of needles is not a picture of a track (owner's report, 25.11).
+            let from = at.saturating_sub(1);
+            let to = (at + 1).min(columns - 1);
+            let (low, high) = panel.waveform[from..=to]
+                .iter()
+                .fold((0.0f32, 0.0f32), |(low, high), (a, b)| {
+                    (low.min(*a), high.max(*b))
+                });
+            // One amplitude per column, mirrored around the middle — the way the window draws the same envelope. A
+            // bucket whose samples all sit on one side of zero would otherwise bar on that side only, and a strip of
+            // those reads as spikes sticking out of the track rather than as a track (owner's report, 25.11).
+            let peak = (high.max(-low) / loudest).clamp(0.0, 1.0);
+            let half = (peak * amplitude).max(0.5);
             let x = margin as isize + column as isize;
             // What has played is drawn brighter than what is still coming: the same ink for both makes the play head
             // the only thing telling them apart, and a finger covers the play head.
             let ink = if x < played_x { ACCENT } else { DIM };
             canvas.fill_rect(
                 x,
-                top.round() as isize,
+                (middle as f32 - half).round() as isize,
                 1,
-                (bottom.round() - top.round()).max(1.0) as usize,
+                (half * 2.0).max(1.0) as usize,
                 ink,
             );
         }
