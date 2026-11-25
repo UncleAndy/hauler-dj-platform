@@ -2051,6 +2051,10 @@ fn command_for_deck(
         // The lead is a deck too: the MASTER button of a half takes the deck that half drives, the same way its PLAY and
         // its SYNC do (owner's report, 25.11).
         DjCommand::Master { .. } => DjCommand::Master { deck },
+        // And the pitch fader sits on the half: after a side switch the fader under the hand sets the tempo of the deck
+        // the DJ is looking at, not the one the control was named after (owner's decision, 25.11 — the finer rules of
+        // pitch matching come later, this is only "the fader belongs to the deck under the hand").
+        DjCommand::SetTempoRatio { ratio, .. } => DjCommand::SetTempoRatio { deck, ratio },
         DjCommand::Metronome { enabled, .. } => DjCommand::Metronome { deck, enabled },
         DjCommand::SetCueMeta {
             slot, label, color, ..
@@ -4269,6 +4273,21 @@ mod tests {
                 deck: dj_domain::DeckId::D,
                 mode: dj_domain::SyncMode::Beat
             }
+        );
+        assert_eq!(
+            follow_side(
+                dj_domain::DjCommand::SetTempoRatio {
+                    deck: dj_domain::DeckId::A,
+                    ratio: 1.03
+                },
+                "deck_a.tempo",
+                &playing
+            ),
+            dj_domain::DjCommand::SetTempoRatio {
+                deck: dj_domain::DeckId::C,
+                ratio: 1.03
+            },
+            "the pitch fader belongs to the half too"
         );
         // A mixer command is not re-addressed: the channel's own strip answers for the channel.
         assert_eq!(
