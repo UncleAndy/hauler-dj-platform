@@ -63,9 +63,6 @@ pub fn read(path: &str) -> Option<Envelope> {
     })
 }
 
-/// How many beats of the track one strip shows: the window's default (`waveformBeats`, 16).
-pub const STRIP_BEATS: f64 = 16.0;
-
 /// The radii the window smooths its outline with — the same fixed set: the chosen radius depends on the zoom and never
 /// on where the view sits, or the strip pumps as it scrolls.
 const RADII: [usize; 6] = [1, 4, 8, 16, 32, 64];

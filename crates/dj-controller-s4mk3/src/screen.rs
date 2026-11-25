@@ -205,11 +205,10 @@ pub struct DeckPanel {
     pub jump_beats: Option<f64>,
     /// The loop size the LOOP knob carries, in beats.
     pub loop_beats: Option<u32>,
-    /// The strip's window as bars, one per column, left to right: the amplitudes the window would draw
+    /// The whole track as bars, one per column, left to right: the amplitudes the window would draw
     /// (`waveform::bars` — the window's own algorithm). Empty when the track has no envelope.
     pub waveform: Vec<f32>,
-    /// Where the play head sits in that window, 0 to 1: the strip is a window around the play head, so the marker is
-    /// not where the track has got to but where the sound is inside what is drawn.
+    /// Where the play head sits on the strip, 0 to 1: the track's own progress.
     pub wave_position: f32,
 }
 
@@ -337,9 +336,8 @@ pub fn render_deck(panel: &DeckPanel) -> Canvas {
         wave_height,
         GROOVE,
     );
-    // The strip is a window around the play head (the window's own default of sixteen beats), so the marker sits where
-    // the sound is inside that window. A track with no envelope falls back to its place in the whole track, which is
-    // what the strip shows when there is nothing to draw inside it.
+    // The strip is the whole track, so the marker is the track's progress. A track with no envelope falls back to the
+    // same place, which is what the strip would show if it had anything to draw.
     let marker = if panel.waveform.is_empty() {
         panel.position.clamp(0.0, 1.0) as f32
     } else {

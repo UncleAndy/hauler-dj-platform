@@ -2687,26 +2687,13 @@ fn panel_from(
         .remaining_frames
         .map(|frames| deck.source_frame.0 + frames)
         .filter(|frames| *frames > 0);
-    // The strip's window: sixteen beats around the play head, centred on it and stopping at the ends of the track.
-    let (strip_start, strip_span, wave_position) = match (
-        total_frames,
-        deck.local_bpm
-            .or_else(|| deck.track.as_ref().and_then(|track| track.bpm)),
-    ) {
-        (Some(total), Some(bpm)) if bpm > 0.0 && total > 0 => {
-            let per_beat = 60.0 / bpm * rate;
-            let span_frames =
-                (dj_controller_s4mk3::waveform::STRIP_BEATS * per_beat).min(total as f64);
-            let from = (deck.source_frame.0 as f64 - span_frames / 2.0)
-                .clamp(0.0, (total as f64 - span_frames).max(0.0));
-            (
-                (from / total as f64) as f32,
-                (span_frames / total as f64) as f32,
-                (((deck.source_frame.0 as f64 - from) / span_frames).clamp(0.0, 1.0)) as f32,
-            )
-        }
-        _ => (0.0, 1.0, deck.position_ratio.unwrap_or(0.0)),
-    };
+    // The marker's place on the strip: the track's own progress, since the strip is the whole track. The engine's ratio
+    // is preferred; the frame against the track's length is the fallback while the ratio is not published yet.
+    let wave_position = deck.position_ratio.unwrap_or_else(|| {
+        total_frames.map_or(0.0, |total| {
+            (deck.source_frame.0 as f64 / total as f64).clamp(0.0, 1.0) as f32
+        })
+    });
     let loop_fraction = match (deck.loop_region, duration) {
         (Some(region), Some(total)) => Some((
             region.start.0 as f64 / rate / total,
@@ -2758,20 +2745,16 @@ fn panel_from(
         loop_beats: Some(loop_beats),
         // The whole track at the bottom of the screen: the envelope the window already caches, cut to what the strip
         // can show. A track with no envelope gets no strip, which is honest — it is not a track with no sound.
-        // The strip is a window around the play head, sixteen beats wide — the window's own default — because that is
-        // the picture the monitor shows and the algorithm is copied from there (`waveform::bars`). A track with no
-        // envelope gets no strip, which is honest: it is not a track with no sound.
+        // The strip is the whole track, with the marker where the track has got to: on a screen this small the question
+        // is where in the track we are, not what the next few seconds look like (owner's request, 25.11). The drawing
+        // rule is still the window's own (`waveform::bars`). A track with no envelope gets no strip, which is honest:
+        // it is not a track with no sound.
         waveform: deck
             .waveform
             .as_ref()
             .and_then(|wave| dj_controller_s4mk3::waveform::read(&wave.path))
             .map(|envelope| {
-                dj_controller_s4mk3::waveform::bars(
-                    &envelope.columns,
-                    STRIP_COLUMNS,
-                    strip_start,
-                    strip_span,
-                )
+                dj_controller_s4mk3::waveform::bars(&envelope.columns, STRIP_COLUMNS, 0.0, 1.0)
             })
             .unwrap_or_default(),
         wave_position,
