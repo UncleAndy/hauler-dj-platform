@@ -8,6 +8,7 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+dj-domain = { path = "../dj-domain" }
 dj-paths = { path = "../dj-paths" }
 serde.workspace = true
 toml.workspace = true

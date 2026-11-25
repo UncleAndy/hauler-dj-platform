@@ -253,6 +253,33 @@ fn the_fx_select_keys_show_their_own_effects_colours() {
 }
 
 #[test]
+fn a_configured_key_wears_its_own_colour_and_drives_the_deck_button() {
+    // The four keys are settings: each loads its own effect and glows its own colour, and a deck running that effect
+    // shows the key's colour on its "FX on" button too (owner's request, 25.11).
+    let palette = Palette {
+        fx_keys: [
+            (5, Colour::Red),
+            (2, Colour::Celeste),
+            (3, Colour::Honey),
+            (4, Colour::Green),
+        ],
+        ..Palette::default()
+    };
+    let show = Show {
+        fx: [false, false, false, true],
+        fx_kind: [5, 5, 5, 5],
+        ..Show::default()
+    };
+    let report = report_with(&show, &palette);
+    let deck_d = byte_of("Deck D FX").expect("the map has it");
+    // Key 1 loads bitcrusher in red, so deck D's button (which runs bitcrusher) is red, not the built-in salmon.
+    assert_eq!(report.body[usize::from(deck_d)], bright(Colour::Red.code()));
+    let rest = report_at_rest(&show, &palette);
+    let key1 = byte_of("FX select 1").expect("the map has it");
+    assert_eq!(rest.body[usize::from(key1)], dim(Colour::Red.code()));
+}
+
+#[test]
 fn a_walk_visits_every_control_the_map_knows() {
     let walk = walk();
     assert_eq!(walk.len(), map().len());
@@ -465,6 +492,12 @@ fn the_settings_choose_the_colours() {
         sync: Colour::Lime,
         resting: Colour::Off,
         loop_: Colour::Aqua,
+        fx_keys: [
+            (1, Colour::Blue),
+            (2, Colour::Green),
+            (3, Colour::Purple),
+            (4, Colour::Aqua),
+        ],
     };
     let mut hotcues = [[None; 8]; 2];
     hotcues[0][0] = Some(Pad {

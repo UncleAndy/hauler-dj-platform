@@ -394,7 +394,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
 
     // The colours the panel shows are settings: the file decides, and `--rest` overrides one of them for a night of
     // trying colours out.
-    let mut palette = palette_from(&config.controller.lights);
+    let mut palette = palette_from(&config.controller.lights, &config.controller.fx);
     println!(
         "dj-controller: palette hotcue {:?}, loop {:?}, resting {:?}, night {}",
         palette.hotcue, palette.loop_, palette.resting, config.controller.lights.night
@@ -898,6 +898,11 @@ fn serve(
         );
     }
     let playing: Playing = std::sync::Arc::new(std::sync::Mutex::new(DeckFactsShared::default()));
+    // The effect each select key loads, distilled from the palette's (index, colour) pairs: the press handler needs the
+    // effect, the lights need the colour.
+    let fx_effects = palette
+        .fx_keys
+        .map(|(kind, _)| dj_domain::FxKind::from_index(kind).unwrap_or(dj_domain::FxKind::Filter));
     if !map.is_empty() {
         // Opening the nodes takes a moment, and the panel must light at once: the search happens on the same thread that
         // will then read the presses.
@@ -914,7 +919,7 @@ fn serve(
                         .collect::<Vec<_>>()
                         .join(", ")
                 );
-                inputs_loop(reports, &endpoint, map, state, pfl_mode);
+                inputs_loop(reports, &endpoint, map, state, pfl_mode, fx_effects);
             }
             Err(reason) => println!("dj-controller: {reason}; presses ask for nothing"),
         });
@@ -971,6 +976,7 @@ fn inputs_loop(
     map: dj_controller_s4mk3::inputs::InputMap,
     playing: Playing,
     pfl_mode: dj_config::PflMode,
+    fx: [dj_domain::FxKind; 4],
 ) {
     let mapping = Mapping::new();
     let mut previous = std::collections::HashMap::new();
@@ -1228,10 +1234,10 @@ fn inputs_loop(
                 }
                 let kind = match event.control.as_str() {
                     "panel.fx_filter" => dj_domain::FxKind::Filter,
-                    "panel.fx_1" => dj_domain::FxKind::Echo,
-                    "panel.fx_2" => dj_domain::FxKind::Roll,
-                    "panel.fx_3" => dj_domain::FxKind::Flanger,
-                    "panel.fx_4" => dj_domain::FxKind::Phaser,
+                    "panel.fx_1" => fx[0],
+                    "panel.fx_2" => fx[1],
+                    "panel.fx_3" => fx[2],
+                    "panel.fx_4" => fx[3],
                     _ => continue,
                 };
                 println!(
@@ -2227,7 +2233,10 @@ fn colour_of(colour: dj_config::LightColour) -> dj_controller_s4mk3::Colour {
 }
 
 /// The palette the settings file asks for.
-fn palette_from(lights: &dj_config::ControllerLights) -> dj_controller_s4mk3::lights::Palette {
+fn palette_from(
+    lights: &dj_config::ControllerLights,
+    fx: &dj_config::ControllerFx,
+) -> dj_controller_s4mk3::lights::Palette {
     dj_controller_s4mk3::lights::Palette {
         resting: colour_of(lights.resting),
         play: colour_of(lights.play),
@@ -2236,7 +2245,19 @@ fn palette_from(lights: &dj_config::ControllerLights) -> dj_controller_s4mk3::li
         hotcue: colour_of(lights.hotcue),
         loop_: colour_of(lights.loop_),
         fx: colour_of(lights.fx),
+        fx_keys: fx_keys_from(fx),
     }
+}
+
+/// The four FX select keys as (effect index, colour): what each key glows, and where a deck's effect gets its colour on
+/// the "FX on" button.
+fn fx_keys_from(fx: &dj_config::ControllerFx) -> [(u8, dj_controller_s4mk3::Colour); 4] {
+    [
+        (fx.key1.effect.index(), colour_of(fx.key1.colour)),
+        (fx.key2.effect.index(), colour_of(fx.key2.colour)),
+        (fx.key3.effect.index(), colour_of(fx.key3.colour)),
+        (fx.key4.effect.index(), colour_of(fx.key4.colour)),
+    ]
 }
 
 /// What one deck says about itself, as far as the panel cares.

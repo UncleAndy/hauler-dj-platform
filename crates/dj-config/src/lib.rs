@@ -81,6 +81,9 @@ pub struct ControllerSettings {
     /// How the headphone (PFL) button behaves: monitoring while held, or switched on and off by each press.
     #[serde(default)]
     pub pfl: PflMode,
+    /// Which effect each of the four FX select keys loads, and the colour that key wears for it.
+    #[serde(default)]
+    pub fx: ControllerFx,
 }
 
 /// How a headphone (PFL) button drives monitoring.
@@ -146,6 +149,70 @@ impl Default for ControllerLights {
     }
 }
 
+/// Which effect each of the four FX select keys loads, and which colour that key wears for it.
+///
+/// The keys are numbered 1-4 as the panel prints them; the dedicated Filter key beside them is not in this table - it
+/// always loads the filter. Each key carries its own choice, so "key 1 is echo in blue" is a sentence the file says,
+/// not a number the code invents. The colours are the device's own names and the effects the domain's `snake_case`
+/// names (`echo`, `roll`, `flanger`, `phaser`, `bitcrusher`, `noise`, `filter`); an unknown name is an error, not a
+/// quiet ignore.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ControllerFx {
+    /// The first FX select key.
+    pub key1: FxKey,
+    /// The second FX select key.
+    pub key2: FxKey,
+    /// The third FX select key.
+    pub key3: FxKey,
+    /// The fourth FX select key.
+    pub key4: FxKey,
+}
+
+/// One FX select key: the effect it loads and the colour it glows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct FxKey {
+    /// The effect the key loads when pressed.
+    pub effect: dj_domain::FxKind,
+    /// The colour the key glows, in the device's own colour names.
+    pub colour: LightColour,
+}
+
+impl Default for ControllerFx {
+    fn default() -> Self {
+        // The keys the first build shipped: echo, roll, flanger and phaser, one per key, in the colours those
+        // effects always wore. A config that does not name the keys changes nothing.
+        Self {
+            key1: FxKey {
+                effect: dj_domain::FxKind::Echo,
+                colour: LightColour::Blue,
+            },
+            key2: FxKey {
+                effect: dj_domain::FxKind::Roll,
+                colour: LightColour::Green,
+            },
+            key3: FxKey {
+                effect: dj_domain::FxKind::Flanger,
+                colour: LightColour::Purple,
+            },
+            key4: FxKey {
+                effect: dj_domain::FxKind::Phaser,
+                colour: LightColour::Aqua,
+            },
+        }
+    }
+}
+
+impl Default for FxKey {
+    fn default() -> Self {
+        Self {
+            effect: dj_domain::FxKind::Filter,
+            colour: LightColour::Yellow,
+        }
+    }
+}
+
 /// The eighteen colours the panel's LEDs can show, by the names the panel's own protocol uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -196,6 +263,7 @@ impl Default for ControllerSettings {
             device: None,
             lights: ControllerLights::default(),
             pfl: PflMode::default(),
+            fx: ControllerFx::default(),
         }
     }
 }
@@ -937,6 +1005,7 @@ mod tests {
                 device: None,
                 lights: ControllerLights::default(),
                 pfl: PflMode::default(),
+                fx: ControllerFx::default(),
             },
             ..Config::default()
         };
@@ -1076,6 +1145,39 @@ mod tests {
         assert!(
             matches!(typo, Err(ConfigError::Parse(_))),
             "a misspelled key must fail, not be ignored"
+        );
+    }
+
+    #[test]
+    fn the_fx_keys_take_their_effects_and_colours_from_the_file() {
+        let named = Config::from_toml(
+            "[controller.fx]\nkey1 = { effect = \"bitcrusher\", colour = \"red\" }\nkey4 = { effect = \"noise\", colour = \"white\" }\n",
+        )
+        .unwrap_or_else(|err| panic!("{err}"));
+        assert_eq!(
+            named.controller.fx.key1.effect,
+            dj_domain::FxKind::Bitcrusher
+        );
+        assert_eq!(named.controller.fx.key1.colour, LightColour::Red);
+        assert_eq!(named.controller.fx.key4.effect, dj_domain::FxKind::Noise);
+        assert_eq!(named.controller.fx.key4.colour, LightColour::White);
+        // The keys the file did not name keep the shipped defaults.
+        assert_eq!(named.controller.fx.key2.effect, dj_domain::FxKind::Roll);
+        assert_eq!(named.controller.fx.key3.colour, LightColour::Purple);
+
+        let bad_colour = Config::from_toml(
+            "[controller.fx]\nkey1 = { effect = \"echo\", colour = \"mauve\" }\n",
+        );
+        assert!(
+            matches!(bad_colour, Err(ConfigError::Parse(_))),
+            "an unknown colour name must fail, not be ignored"
+        );
+        let bad_kind = Config::from_toml(
+            "[controller.fx]\nkey2 = { effect = \"reverb\", colour = \"blue\" }\n",
+        );
+        assert!(
+            matches!(bad_kind, Err(ConfigError::Parse(_))),
+            "an unknown effect name must fail, not be ignored"
         );
     }
 

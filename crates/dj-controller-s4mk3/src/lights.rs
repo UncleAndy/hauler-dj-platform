@@ -296,6 +296,9 @@ pub struct Palette {
     pub loop_: Colour,
     /// A deck whose effect is switched in.
     pub fx: Colour,
+    /// The four FX select keys in order: what each loads (`FxKind::index()`) and the colour that key wears. Key 1 is
+    /// first, key 4 last; the dedicated Filter key beside them is not part of this table.
+    pub fx_keys: [(u8, Colour); 4],
 }
 
 impl Default for Palette {
@@ -309,6 +312,12 @@ impl Default for Palette {
             hotcue: Colour::Green,
             loop_: Colour::Yellow,
             fx: Colour::Magenta,
+            fx_keys: [
+                (1, Colour::Blue),
+                (2, Colour::Green),
+                (3, Colour::Purple),
+                (4, Colour::Aqua),
+            ],
         }
     }
 }
@@ -385,7 +394,10 @@ pub fn report_with(show: &Show, palette: &Palette) -> LightsReport {
                 2 => "Deck C FX on button",
                 _ => "Deck D FX on button",
             };
-            set(control(name), bright(fx_colour(show.fx_kind[deck]).code()));
+            set(
+                control(name),
+                bright(effect_colour(show.fx_kind[deck], &palette.fx_keys).code()),
+            );
         }
     }
     report
@@ -412,12 +424,16 @@ pub fn report_at_rest(show: &Show, palette: &Palette) -> LightsReport {
             *slot = 0;
         }
     }
-    // The five FX select keys glow in the colour of the effect they load, so in the dark a hand tells 1 from 2 from
-    // Filter at a glance (owner's request, 25.11). They sit at the faint step, like the rest of the resting layer.
-    for (byte, kind) in [(50_u8, 1_u8), (51, 2), (52, 3), (53, 4), (54, 0)] {
+    // The four numbered FX select keys glow in the colour the settings gave each key, so in the dark a hand tells 1
+    // from 2 from 3 from 4 at a glance (owner's request, 25.11). They sit at the faint step of the resting layer.
+    for (index, byte) in [50_u8, 51, 52, 53].into_iter().enumerate() {
         if let Some(slot) = report.body.get_mut(usize::from(byte)) {
-            *slot = dim(fx_colour(kind).code());
+            *slot = dim(palette.fx_keys[index].1.code());
         }
+    }
+    // The Filter key beside the four numbered ones is its own: it always loads the filter and keeps the filter's colour.
+    if let Some(slot) = report.body.get_mut(54) {
+        *slot = dim(fx_colour(0).code());
     }
     // The active controls are painted over the resting layer: their own colour, one brightness step up.
     let active = report_with(show, palette);
@@ -627,6 +643,20 @@ pub fn fx_colour(index: u8) -> Colour {
         5 => Colour::Red,    // Bitcrusher
         _ => Colour::Salmon, // Noise
     }
+}
+
+/// The colour an effect wears, driven by the select keys.
+///
+/// The earliest key (1..4) that loads the effect owns its colour; an effect not on any key keeps the built-in colour in
+/// [`fx_colour`] (Filter, Bitcrusher and Noise are off the keys by default, but the window can still put them on a deck).
+#[must_use]
+pub fn effect_colour(kind: u8, fx_keys: &[(u8, Colour); 4]) -> Colour {
+    for (key_kind, colour) in fx_keys {
+        if *key_kind == kind {
+            return *colour;
+        }
+    }
+    fx_colour(kind)
 }
 
 /// A colour's name for a person watching the panel.
