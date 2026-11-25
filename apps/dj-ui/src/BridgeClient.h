@@ -253,6 +253,13 @@ signals:
     void sortChanged();
 
 private:
+    /// Show another place's list, and tell the shell when the row under the cursor changed with the place.
+    ///
+    /// Each of the three places remembers its own row, so coming back to the collection brings a cursor into view that
+    /// the files list did not have. The shell publishes the cursor it is on — that is what a press of the panel's encoder
+    /// loads — and without this signal the engine kept an empty cursor while the DJ saw a highlighted row, so the press
+    /// did nothing at all (owner's report, 25.11).
+    void switchMode(const QString &mode);
     /// Read the tree and the open playlist's page out of the snapshot the engine published.
     void takePlaylists();
     /// Rebuild the flat rows from the tree and the nodes the DJ closed.
@@ -675,6 +682,12 @@ private:
     /// What the browser's own cell said last, so a signal is only sent when it moved.
     bool m_browserOpen = true;
     QString m_browserCursor;
+    /// The row the window stands on, kept until the link can carry it.
+    ///
+    /// A cursor published before the socket came up was written into nothing — the panel then found no row to load while
+    /// the DJ saw a highlighted one (owner's report, 25.11). Other commands are repeated by their own watchdogs; this one
+    /// has none, so it is kept here and sent when the engine answers.
+    QString m_browserCursorWanted;
     int m_browserStepSeq = 0;
     int m_browserStep = 0;
     int m_browserPlaceSeq = 0;

@@ -110,7 +110,7 @@ void FileBrowser::load(const QString &path)
     m_error.clear();
     // A folder list is not a collection: the section's name, its filter and its count belong to the
     // other view and must not survive a step into a folder.
-    m_mode = QStringLiteral("files");
+    switchMode(QStringLiteral("files"));
     m_filter.clear();
     m_all.clear();
     m_total = 0;
@@ -261,6 +261,15 @@ void FileBrowser::setCursor(const QString &path)
     }
     remembered = path;
     emit cursorChanged();
+}
+
+void FileBrowser::switchMode(const QString &mode)
+{
+    const QString before = cursor();
+    m_mode = mode;
+    if (cursor() != before) {
+        emit cursorChanged();
+    }
 }
 
 void FileBrowser::seedCursors(const QString &files, const QString &collection)
@@ -414,7 +423,7 @@ void FileBrowser::openCollection(const QStringList &roots)
     m_replacingInPlace = sameRoots;
     m_roots = listed;
     m_folder = listed.join(QStringLiteral(" | "));
-    m_mode = QStringLiteral("collection");
+    switchMode(QStringLiteral("collection"));
     m_pageOffset = 0;
     m_pageTotal = 0;
     // An answer that was already on its way belongs to the list that is being replaced. Holding it to the
@@ -1142,7 +1151,7 @@ void FileBrowser::askPlaylistPage()
 
 void FileBrowser::showPlaylists()
 {
-    m_mode = QStringLiteral("playlists");
+    switchMode(QStringLiteral("playlists"));
     emit changed();
     if (m_playlistName.isEmpty()) {
         m_playlistName = QStringLiteral("All");
@@ -2237,6 +2246,12 @@ void BridgeClient::handleMessage(const QJsonObject &message)
         }
         setConnected(true);
         setStatus(QStringLiteral("%1 · %2").arg(protocol, stateProtocol));
+        // The row the window placed before the link was up: the engine hears it now, once.
+        if (!m_browserCursorWanted.isEmpty() && m_browserCursorWanted != m_browserCursor) {
+            const QString wanted = m_browserCursorWanted;
+            m_browserCursorWanted.clear();
+            browserCursorTo(wanted);
+        }
         return;
     }
 
@@ -2612,6 +2627,12 @@ void BridgeClient::browserCursorTo(const QString &path)
     // The row the window is on, told once: the engine echoes it back in every snapshot, and sending it again on every
     // echo would be a command per snapshot.
     if (path == m_browserCursor) {
+        return;
+    }
+    // Kept until the engine answers: the window places its cursor before the socket is up, and a command written into a
+    // closed socket is a command that never happened. The panel's press then had no row to load (owner's report, 25.11).
+    m_browserCursorWanted = path;
+    if (!m_connected) {
         return;
     }
     QJsonObject options;

@@ -4,7 +4,9 @@
 
 #include "Checks.h"
 
+#include <QElapsedTimer>
 #include <QHash>
+#include <QThread>
 
 namespace checks {
 
@@ -2522,6 +2524,27 @@ int runSelectionCheck(QQmlApplicationEngine& engine, FileBrowser& browser, Bridg
         return 1;
     }
     std::fprintf(stdout, "dj-ui: home and end jump the cursor to the ends and leave the run alone\n");
+
+    // The row the DJ sees is the row a press of the panel's encoder loads: the engine holds the cursor the window is on.
+    // A move tells it, and so must coming back to the place — each place remembers its own row, so the collection's cursor
+    // comes into view again without the DJ moving anything (owner's report, 25.11: the app opened on the collection, its
+    // row was highlighted, and the panel's press did nothing because the engine had never been told).
+    browser.setCursor(pathAt(0));
+    const bool engineHeard = waitFor([&]() { return bridge.browserCursor() == pathAt(0); }, 4000);
+    browser.showPlaylists();
+    (void)waitFor([&]() { return browser.mode() == QStringLiteral("playlists"); }, 4000);
+    browser.openCollection({collectionRoot});
+    const bool engineHeardAgain = waitFor([&]() { return bridge.browserCursor() == pathAt(0); }, 4000);
+    std::fprintf(stdout,
+                 "dj-ui: the cursor the DJ sees is the one the engine would load (a move: %s, coming back to the "
+                 "place: %s)\n",
+                 engineHeard ? "told" : "NOT told", engineHeardAgain ? "told" : "NOT told");
+    if (!engineHeard || !engineHeardAgain) {
+        std::fprintf(stderr,
+                     "dj-ui: the panel's encoder would load nothing: the engine's cursor is \"%s\"\n",
+                     qPrintable(bridge.browserCursor()));
+        return 1;
+    }
 
     // The playlist is the same list with another set of rows: one run and one page are enough to know
     // the keys follow the list the DJ is looking at, not the collection specifically.
