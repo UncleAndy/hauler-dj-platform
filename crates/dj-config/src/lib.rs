@@ -256,7 +256,7 @@ impl Default for ControllerSettings {
             pfl: PflMode::default(),
             fx: ControllerFx::default(),
             scratch_scale: 8.0,
-            nudge_scale: 6.0e-5,
+            nudge_scale: 3.0e-4,
         }
     }
 }
@@ -1000,7 +1000,7 @@ mod tests {
                 pfl: PflMode::default(),
                 fx: ControllerFx::default(),
                 scratch_scale: 8.0,
-                nudge_scale: 6.0e-5,
+                nudge_scale: 3.0e-4,
             },
             ..Config::default()
         };
