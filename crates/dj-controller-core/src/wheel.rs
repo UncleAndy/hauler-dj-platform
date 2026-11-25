@@ -14,6 +14,10 @@ use std::f64::consts::PI;
 pub struct WheelCounter {
     last_position: Option<u32>,
     last_timer: Option<u32>,
+    // The same movement by the host's clock: the device's timer unit is not written down anywhere, and a speed scaled by
+    // an unknown constant is a speed nobody can calibrate.
+    last_clock_position: Option<u32>,
+    last_clock_at: Option<std::time::Instant>,
 }
 
 impl WheelCounter {
@@ -27,6 +31,8 @@ impl WheelCounter {
     pub fn reset(&mut self) {
         self.last_position = None;
         self.last_timer = None;
+        self.last_clock_position = None;
+        self.last_clock_at = None;
     }
 
     /// The movement since the last report: signed ticks and elapsed timer units.
@@ -58,6 +64,28 @@ impl WheelCounter {
             return Some(0.0);
         }
         Some(f64::from(moved) / f64::from(elapsed))
+    }
+
+    /// Ticks per **real** second since the last report, or `None` for the first one.
+    ///
+    /// The device's timer is not used for a rate: its unit is not written down in any public description, so a speed the
+    /// shell scales by an unknown constant cannot be calibrated. Wall time is known on the host, so this is real ticks per
+    /// real second — the number a physical model of the platter needs.
+    pub fn ticks_per_second(&mut self, position: u32, now: std::time::Instant) -> Option<f64> {
+        // The new report is remembered before the comparison, for the same reason as `update`.
+        let previous = match (self.last_clock_position, self.last_clock_at) {
+            (Some(position), Some(at)) => Some((position, at)),
+            _ => None,
+        };
+        self.last_clock_position = Some(position);
+        self.last_clock_at = Some(now);
+        let (previous_position, previous_at) = previous?;
+        let moved = position.wrapping_sub(previous_position) as i32;
+        let elapsed = now.saturating_duration_since(previous_at).as_secs_f64();
+        if elapsed <= f64::EPSILON {
+            return Some(0.0);
+        }
+        Some(f64::from(moved) / elapsed)
     }
 }
 
@@ -117,6 +145,17 @@ mod tests {
         let mut wheel = WheelCounter::new();
         let _ = wheel.speed(100, 10);
         assert_eq!(wheel.speed(160, 10), Some(0.0));
+    }
+
+    #[test]
+    fn a_wall_clock_speed_is_ticks_per_real_second() {
+        let mut wheel = WheelCounter::new();
+        let start = std::time::Instant::now();
+        assert_eq!(wheel.ticks_per_second(100, start), None);
+        assert_eq!(
+            wheel.ticks_per_second(220, start + std::time::Duration::from_millis(100)),
+            Some(1200.0)
+        );
     }
 
     #[test]

@@ -310,15 +310,18 @@ impl Driver for S4Mk3 {
         let timer = dj_controller_core::report::u32_le(report, WHEEL_TIMER);
         let left = dj_controller_core::report::u32_le(report, WHEEL_LEFT);
         let right = dj_controller_core::report::u32_le(report, WHEEL_RIGHT);
-        let (Some(timer), Some(left), Some(right)) = (timer, left, right) else {
+        // The timer is read only to know the report is long enough; the rate comes from the host's clock, because the
+        // timer's unit is not written down anywhere and a speed scaled by an unknown constant cannot be calibrated.
+        let (Some(_timer), Some(left), Some(right)) = (timer, left, right) else {
             return Vec::new();
         };
+        let now = std::time::Instant::now();
         let mut events = Vec::with_capacity(2);
-        if let Some(speed) = self.wheels[0].speed(left, timer) {
-            events.push(ControlEvent::level("wheel_left", speed as f32));
+        if let Some(ticks) = self.wheels[0].ticks_per_second(left, now) {
+            events.push(ControlEvent::level("wheel_left", ticks as f32));
         }
-        if let Some(speed) = self.wheels[1].speed(right, timer) {
-            events.push(ControlEvent::level("wheel_right", speed as f32));
+        if let Some(ticks) = self.wheels[1].ticks_per_second(right, now) {
+            events.push(ControlEvent::level("wheel_right", ticks as f32));
         }
         events
     }
@@ -400,12 +403,23 @@ mod tests {
     fn a_moving_wheel_reports_its_speed() {
         let mut driver = S4Mk3::new();
         let _ = driver.feed(&wheel_report(1000, 500, 500));
+        // A real gap, because the rate is now by the wall clock: two reports in the same instant would be no time at all.
+        std::thread::sleep(std::time::Duration::from_millis(2));
         let events = driver.feed(&wheel_report(1100, 620, 400));
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].control, "wheel_left");
-        assert!((events[0].value - 1.2).abs() < 1e-4);
+        // Forward is positive, backward negative: the sign is what the shell turns into a scratch or a bend.
+        assert!(
+            events[0].value > 0.0,
+            "left went forward: {}",
+            events[0].value
+        );
         assert_eq!(events[1].control, "wheel_right");
-        assert!((events[1].value + 1.0).abs() < 1e-4);
+        assert!(
+            events[1].value < 0.0,
+            "right went back: {}",
+            events[1].value
+        );
     }
 
     #[test]

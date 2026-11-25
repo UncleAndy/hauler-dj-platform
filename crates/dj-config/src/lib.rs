@@ -84,15 +84,14 @@ pub struct ControllerSettings {
     /// Which effect each of the four FX select keys loads, and the colour that key wears for it.
     #[serde(default)]
     pub fx: ControllerFx,
-    /// How far the material moves for one unit of the wheel's raw speed — ticks per timer unit, as the jog reports it.
+    /// How far the material moves for one unit of the wheel's speed — **real ticks per second**, as the driver reports it.
     ///
-    /// From the public description's model: `speed = raw × 2879 × 10 × output_rate` (Mixxx's `wheelAbsoluteMax` and its
-    /// `×10`), with 48 kHz as the deck's rate. A `--capture` of the jog on the panel confirmed the raw range
-    /// (`≈1e-7 … 4e-6` for a slow turn); tune by ear if the scratch reads fast or slow.
+    /// A platter at 33⅓ rpm (0.556 turns a second) is normal speed: 48 000 frames a second over about 2 879 ticks a turn
+    /// gives `48 000 / (2 879 / 1.8) ≈ 30` frames per tick per second. That is the physical 1:1 scratch; tune by ear.
     pub scratch_scale: f64,
-    /// How much rate deflection one unit of the wheel's raw speed asks for, before the `-1 … 1` clamp.
+    /// How much rate deflection one real tick per second asks for, before the `-1 … 1` clamp.
     ///
-    /// The same model without the frame rate: `raw × 2879 × 10`.
+    /// A slow turn (about 800 ticks a second) asks for a gentle bend; a hard turn is clamped at full.
     pub nudge_scale: f64,
 }
 
@@ -256,8 +255,8 @@ impl Default for ControllerSettings {
             lights: ControllerLights::default(),
             pfl: PflMode::default(),
             fx: ControllerFx::default(),
-            scratch_scale: 2879.0 * 10.0 * 48_000.0,
-            nudge_scale: 2879.0 * 10.0,
+            scratch_scale: 30.0,
+            nudge_scale: 2.5e-4,
         }
     }
 }
@@ -1000,8 +999,8 @@ mod tests {
                 lights: ControllerLights::default(),
                 pfl: PflMode::default(),
                 fx: ControllerFx::default(),
-                scratch_scale: 2879.0 * 10.0 * 48_000.0,
-                nudge_scale: 2879.0 * 10.0,
+                scratch_scale: 30.0,
+                nudge_scale: 2.5e-4,
             },
             ..Config::default()
         };
