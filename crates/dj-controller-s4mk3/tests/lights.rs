@@ -490,6 +490,7 @@ fn the_settings_choose_the_colours() {
         fx: Colour::Sky,
         cue: Colour::Salmon,
         sync: Colour::Lime,
+        master: Colour::White,
         resting: Colour::Off,
         jog: Colour::White,
         loop_: Colour::Aqua,
@@ -510,6 +511,7 @@ fn the_settings_choose_the_colours() {
         playing: [true, false],
         monitoring: [false, true, false, false],
         sync: [true, false],
+        master: [false, true],
         fx: [false, false, true, false],
         fx_kind: [0, 1, 4, 3],
     };
@@ -521,6 +523,25 @@ fn the_settings_choose_the_colours() {
     assert_eq!(report.body[usize::from(cue)], bright(Colour::Salmon.code()));
     let fx = byte_of("Deck C FX").expect("the map has it");
     assert_eq!(report.body[usize::from(fx)], bright(fx_colour(4).code()));
+    // The leader is lit for the deck that leads and dark for the one that follows, and it wears its own lamp: with sync
+    // yellow and the master white, a glance tells the follower from the leader (owner's request, 25.11). The two lamps
+    // are two bytes — a lookup that names only the word found the left lamp for both sides and lit the wrong deck.
+    let left_master = byte_of("Left Master/Reset").expect("the map has it");
+    let right_master = byte_of("Right MASTER/RESET").expect("the map has it");
+    assert_ne!(
+        left_master, right_master,
+        "the two sides have their own lamps"
+    );
+    assert_eq!(
+        report.body[usize::from(left_master)],
+        0,
+        "the left deck follows"
+    );
+    assert_eq!(
+        report.body[usize::from(right_master)],
+        bright(Colour::White.code()),
+        "the right deck leads"
+    );
 }
 
 #[test]

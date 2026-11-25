@@ -1186,7 +1186,7 @@ fn inputs_loop(
             }
             // A PLAY button asks for the opposite of what the deck is doing, so the deck's own state is part of the
             // question.
-            let (running, pad) = match playing.lock() {
+            let (standing, pad) = match playing.lock() {
                 Ok(state) => match driving_deck(&event.control, &state) {
                     Some(deck) => {
                         let index = deck_index(deck);
@@ -1195,7 +1195,11 @@ fn inputs_loop(
                             _ => 0,
                         };
                         (
-                            state.playing.get(index).copied().unwrap_or(false),
+                            dj_controller_core::DeckStanding {
+                                running: state.playing.get(index).copied().unwrap_or(false),
+                                synced: state.synced.get(index).copied().unwrap_or(false),
+                                master: state.master.get(index).copied().unwrap_or(false),
+                            },
                             dj_controller_core::PadState {
                                 cue: state
                                     .cues
@@ -1213,9 +1217,15 @@ fn inputs_loop(
                             },
                         )
                     }
-                    None => (false, dj_controller_core::PadState::default()),
+                    None => (
+                        dj_controller_core::DeckStanding::default(),
+                        dj_controller_core::PadState::default(),
+                    ),
                 },
-                Err(_) => (false, dj_controller_core::PadState::default()),
+                Err(_) => (
+                    dj_controller_core::DeckStanding::default(),
+                    dj_controller_core::PadState::default(),
+                ),
             };
             // Every event is written down with its time: "the deck started by itself" is answered by reading what came
             // in and when, not by guessing (owner's report, 24.11).
@@ -1543,10 +1553,10 @@ fn inputs_loop(
                 }
                 continue;
             }
-            let Some((deck, command)) = mapping.resolve_control(&event, running, pad) else {
+            let Some((deck, command)) = mapping.resolve_control(&event, standing, pad) else {
                 println!(
-                    "dj-controller: at {now} ms {} = {:.3} (report {report}) asks for nothing; deck running {running}",
-                    event.control, event.value
+                    "dj-controller: at {now} ms {} = {:.3} (report {report}) asks for nothing; deck running {}",
+                    event.control, event.value, standing.running
                 );
                 continue;
             };
@@ -2181,6 +2191,10 @@ fn deck_index(deck: dj_domain::DeckId) -> usize {
 #[derive(Clone, Debug)]
 struct DeckFactsShared {
     playing: [bool; 4],
+    /// Whether each deck follows a master, and whether it is the master: SYNC and MASTER are switches, so a press has to
+    /// know the state it switches away from.
+    synced: [bool; 4],
+    master: [bool; 4],
     cues: [[bool; 8]; 4],
     /// Pads that hold a loop rather than a cue: the two are jumped to the same way and must not be taken for empty.
     loops: [[bool; 8]; 4],
@@ -2216,6 +2230,8 @@ impl Default for DeckFactsShared {
     fn default() -> Self {
         Self {
             playing: [false; 4],
+            synced: [false; 4],
+            master: [false; 4],
             cues: [[false; 8]; 4],
             loops: [[false; 8]; 4],
             active_loop: [false; 4],
@@ -2905,6 +2921,7 @@ fn palette_from(
         play: colour_of(lights.play),
         cue: colour_of(lights.cue),
         sync: colour_of(lights.sync),
+        master: colour_of(lights.master),
         hotcue: colour_of(lights.hotcue),
         loop_: colour_of(lights.loop_),
         fx: colour_of(lights.fx),
@@ -2929,6 +2946,8 @@ struct DeckFacts {
     playing: bool,
     monitoring: bool,
     sync: bool,
+    /// The deck is the master the others follow.
+    master: bool,
     fx: bool,
     /// The effect the deck runs, as `FxKind::index()`: the "FX on" button wears this effect's colour.
     fx_kind: u8,
@@ -2956,6 +2975,7 @@ fn show_from_facts(decks: &[DeckFacts; 4], sides: [usize; 2]) -> dj_controller_s
             decks[3].monitoring,
         ],
         sync: [left.sync, right.sync],
+        master: [left.master, right.master],
         fx: [decks[0].fx, decks[1].fx, decks[2].fx, decks[3].fx],
         fx_kind: [
             decks[0].fx_kind,
@@ -3033,6 +3053,7 @@ fn facts_from(
             playing: deck.playing,
             monitoring: deck.cue,
             sync: !deck.sync.is_off(),
+            master: deck.master,
             fx: deck.fx.enabled,
             fx_kind: deck.fx.kind.index(),
             hotcues,
@@ -3144,6 +3165,8 @@ fn lights_show(
             {
                 for (index, deck) in facts.iter().enumerate() {
                     state.playing[index] = deck.playing;
+                    state.synced[index] = deck.sync;
+                    state.master[index] = deck.master;
                     state.monitoring[index] = deck.monitoring;
                 }
                 for (index, deck) in snapshot.decks.iter().enumerate().take(4) {
@@ -3739,6 +3762,7 @@ mod tests {
                 playing: true,
                 monitoring: true,
                 sync: false,
+                master: false,
                 fx: false,
                 fx_kind: 0,
                 hotcues: [Some(dj_controller_s4mk3::lights::Pad {

@@ -86,6 +86,10 @@ deck_a.sync 1 5 7 1
 deck_b.play_pause 1 12 0 1
 deck_b.cue 1 14 5 1
 deck_b.sync 1 14 4 1
+# --- master: the deck the others follow. A button of its own beside SYNC, not a Shift of it
+# (`syncMasterButton`: inByte 0 bit 0 on the left, inByte 10 bit 0 on the right).
+deck_a.master 1 0 0 1
+deck_b.master 1 10 0 1
 
 # --- jog touch, report 1: the capacitive top of each platter (owner's request, 25.11)
 # Press: the record stops under the hand. Move while touching: a scratch. Turn without touching: a bend of the rate.

@@ -26,6 +26,8 @@ pub enum Intent {
     PlayPause,
     /// Sync this deck to its master.
     Sync,
+    /// Take the lead the others follow, or give it up (DJP-SYNC-001).
+    Master,
     /// Go back to the cue point and carry on from there.
     CueJump,
     /// Store the cue point where the deck stands.
@@ -46,6 +48,22 @@ pub enum Intent {
     Eq(EqBand),
     /// A hotcue pad: jump to its slot, or store the cue there when the slot is empty.
     Hotcue(u8),
+}
+
+/// What the deck is doing as the button goes down.
+///
+/// Three switches on the panel read the deck rather than the button: `PLAY` starts and stops, `SYNC` follows and lets go,
+/// `MASTER` leads and lets go. Reading the deck's own state is what makes them switches instead of buttons that lie — a
+/// SYNC that asked the transport whether the deck was playing turned sync *off* on every playing deck, so it could not be
+/// turned on during a mix at all (owner's report, 25.11).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DeckStanding {
+    /// The deck is playing.
+    pub running: bool,
+    /// The deck follows a master: its sync mode is not off.
+    pub synced: bool,
+    /// The deck is the master the others follow.
+    pub master: bool,
 }
 
 /// Which band of the equaliser a knob turns.
@@ -163,7 +181,7 @@ impl Intent {
     /// `pressed` is the control's state: a button that reports its release is not a second command, so everything but
     /// the toggle answers nothing on release.
     #[must_use]
-    pub fn command(self, deck: DeckId, pressed: bool, running: bool) -> Option<DjCommand> {
+    pub fn command(self, deck: DeckId, pressed: bool, standing: DeckStanding) -> Option<DjCommand> {
         match self {
             Self::Play if pressed => Some(DjCommand::Play {
                 deck,
@@ -177,7 +195,7 @@ impl Intent {
             Self::Pause => None,
             Self::PlayPause if pressed => Some(DjCommand::Play {
                 deck,
-                enabled: !running,
+                enabled: !standing.running,
             }),
             // Knobs, faders and pads carry a value or a slot, not a press: `Mapping::resolve_control` turns those into
             // commands, and this door stays about buttons.
@@ -190,16 +208,27 @@ impl Intent {
             | Self::Eq(_)
             | Self::Hotcue(_) => None,
             Self::PlayPause => None,
-            // A sync button is a switch: pressing it again lets the deck go back to standing on its own.
+            // A sync button is a switch, and it reads whether the deck *follows*, not whether it plays: a deck that is
+            // playing is the normal case, so asking the transport made every press a "let go" (owner's report, 25.11).
+            // What it asks for is the beat — the same tempo and the same beat — which is what one SYNC button means on
+            // the hardware this panel copies.
             Self::Sync if pressed => Some(DjCommand::Sync {
                 deck,
-                mode: if running {
+                mode: if standing.synced {
                     SyncMode::Off
                 } else {
-                    SyncMode::Tempo
+                    SyncMode::Beat
                 },
             }),
             Self::Sync => None,
+            // The lead is a deck, not a number: the others need its beat, not only its tempo (DJP-SYNC-001). The same
+            // button gives it up, which is what the window's MASTER does (`isMaster ? clearMaster : setMaster`).
+            Self::Master if pressed => Some(if standing.master {
+                DjCommand::MasterOff
+            } else {
+                DjCommand::Master { deck }
+            }),
+            Self::Master => None,
             Self::CueJump if pressed => Some(DjCommand::Cue {
                 deck,
                 action: CueAction::Jump(CUE_SLOT),
@@ -272,6 +301,7 @@ pub fn intent_for(control: &str) -> Option<Intent> {
         "pause" => Some(Intent::Pause),
         "play_pause" => Some(Intent::PlayPause),
         "sync" => Some(Intent::Sync),
+        "master" => Some(Intent::Master),
         "cue" => Some(Intent::CueJump),
         "cue_set" => Some(Intent::CueSet),
         "tempo" => Some(Intent::Tempo),
@@ -319,7 +349,14 @@ impl Mapping {
         let intent = intent_for(&event.control)?;
         let pressed = event.value > 0.5;
         intent
-            .command(deck.id(), pressed, running)
+            .command(
+                deck.id(),
+                pressed,
+                DeckStanding {
+                    running,
+                    ..DeckStanding::default()
+                },
+            )
             .map(|command| (deck.id(), command))
     }
 }
@@ -327,13 +364,13 @@ impl Mapping {
 impl Mapping {
     /// Turns one event into the command it asks for, for controls that carry a value or a slot.
     ///
-    /// `running` is what the transport is doing, `cue_present` whether the pad's slot already holds a cue: a pad with a
-    /// cue jumps to it, an empty pad stores the cue where the deck stands.
+    /// `standing` is what the deck is doing — playing, following, leading —, `pad` whether the pad's slot already holds a
+    /// cue: a pad with a cue jumps to it, an empty pad stores the cue where the deck stands.
     #[must_use]
     pub fn resolve_control(
         &self,
         event: &crate::ControlEvent,
-        running: bool,
+        standing: DeckStanding,
         pad: PadState,
     ) -> Option<(Option<DeckId>, DjCommand)> {
         let deck = BindableDeck::from_control(&event.control).map(|(deck, _)| deck.id());
@@ -393,7 +430,7 @@ impl Mapping {
                 }
             }
             _ => {
-                let command = intent.command(deck?, pressed, running)?;
+                let command = intent.command(deck?, pressed, standing)?;
                 return Some((Some(deck?), command));
             }
         };
@@ -424,14 +461,14 @@ mod tests {
     fn a_tempo_fader_asks_for_the_rate_it_stands_at() {
         let mapping = Mapping::new();
         let middle = ControlEvent::level("deck_a.tempo", 0.5);
-        match mapping.resolve_control(&middle, false, PadState::default()) {
+        match mapping.resolve_control(&middle, DeckStanding::default(), PadState::default()) {
             Some((Some(DeckId::A), DjCommand::SetTempoRatio { ratio, .. })) => {
                 assert!((ratio - 1.0).abs() < 1e-9, "{ratio}");
             }
             other => panic!("{other:?}"),
         }
         let top = ControlEvent::level("deck_a.tempo", 1.0);
-        match mapping.resolve_control(&top, false, PadState::default()) {
+        match mapping.resolve_control(&top, DeckStanding::default(), PadState::default()) {
             Some((Some(DeckId::A), DjCommand::SetTempoRatio { ratio, .. })) => {
                 assert!(
                     (ratio - f64::from(1.0 + PITCH_RANGE)).abs() < 1e-6,
@@ -441,7 +478,7 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let bottom = ControlEvent::level("deck_a.tempo", 0.0);
-        match mapping.resolve_control(&bottom, false, PadState::default()) {
+        match mapping.resolve_control(&bottom, DeckStanding::default(), PadState::default()) {
             Some((Some(DeckId::A), DjCommand::SetTempoRatio { ratio, .. })) => {
                 assert!(
                     (ratio - f64::from(1.0 - PITCH_RANGE)).abs() < 1e-6,
@@ -456,7 +493,7 @@ mod tests {
     fn faders_and_the_crossfader_carry_their_position() {
         let mapping = Mapping::new();
         let fader = ControlEvent::level("deck_b.fader", 0.7);
-        match mapping.resolve_control(&fader, false, PadState::default()) {
+        match mapping.resolve_control(&fader, DeckStanding::default(), PadState::default()) {
             Some((Some(DeckId::B), DjCommand::SetChannelFader { position, .. })) => {
                 assert!((position - fader_value(0.7)).abs() < 1e-6, "{position}");
                 assert!(
@@ -468,7 +505,7 @@ mod tests {
         }
         let crossfader = ControlEvent::level("mixer.crossfader", 0.25);
         assert_eq!(
-            mapping.resolve_control(&crossfader, false, PadState::default()),
+            mapping.resolve_control(&crossfader, DeckStanding::default(), PadState::default()),
             Some((None, DjCommand::SetCrossfader { position: 0.25 })),
             "the crossfader belongs to the mixer, not to a deck"
         );
@@ -493,7 +530,7 @@ mod tests {
         }
         let mapping = Mapping::new();
         let event = ControlEvent::level("deck_a.fader", 0.5);
-        match mapping.resolve_control(&event, false, PadState::default()) {
+        match mapping.resolve_control(&event, DeckStanding::default(), PadState::default()) {
             Some((Some(DeckId::A), DjCommand::SetChannelFader { position, .. })) => {
                 assert!((position - 0.125).abs() < 1e-3, "{position}");
             }
@@ -519,7 +556,7 @@ mod tests {
         );
         let mapping = Mapping::new();
         let knob = ControlEvent::level("deck_a.eq_low", 0.75);
-        match mapping.resolve_control(&knob, false, PadState::default()) {
+        match mapping.resolve_control(&knob, DeckStanding::default(), PadState::default()) {
             Some((Some(DeckId::A), DjCommand::SetChannelEq { band, gain_db, .. })) => {
                 assert_eq!(band, dj_domain::EqBand::Low);
                 assert!((gain_db - 3.0).abs() < 1e-6, "{gain_db}");
@@ -552,7 +589,7 @@ mod tests {
         assert!(master_gain(0.0) < 0.01 && master_gain(0.0) > 0.0);
         let mapping = Mapping::new();
         let gain = ControlEvent::level("deck_a.gain", 0.5);
-        match mapping.resolve_control(&gain, false, PadState::default()) {
+        match mapping.resolve_control(&gain, DeckStanding::default(), PadState::default()) {
             Some((Some(DeckId::A), DjCommand::SetChannelGain { linear_gain, .. })) => {
                 assert!((linear_gain - 1.0).abs() < 1e-6, "{linear_gain}");
             }
@@ -560,7 +597,7 @@ mod tests {
         }
         let master = ControlEvent::level("mixer.master", 1.0);
         assert_eq!(
-            mapping.resolve_control(&master, false, PadState::default()),
+            mapping.resolve_control(&master, DeckStanding::default(), PadState::default()),
             Some((None, DjCommand::SetMasterGain { linear_gain: 1.0 })),
         );
     }
@@ -570,7 +607,7 @@ mod tests {
         let mapping = Mapping::new();
         let press = ControlEvent::button("deck_a.pfl", true);
         assert_eq!(
-            mapping.resolve_control(&press, false, PadState::default()),
+            mapping.resolve_control(&press, DeckStanding::default(), PadState::default()),
             Some((
                 Some(DeckId::A),
                 DjCommand::SetChannelCue {
@@ -581,7 +618,7 @@ mod tests {
         );
         let release = ControlEvent::button("deck_a.pfl", false);
         assert_eq!(
-            mapping.resolve_control(&release, false, PadState::default()),
+            mapping.resolve_control(&release, DeckStanding::default(), PadState::default()),
             Some((
                 Some(DeckId::A),
                 DjCommand::SetChannelCue {
@@ -613,7 +650,7 @@ mod tests {
         };
         // A slot with a cue jumps to it.
         assert_eq!(
-            mapping.resolve_control(&press, false, with_cue),
+            mapping.resolve_control(&press, DeckStanding::default(), with_cue),
             Some((
                 Some(DeckId::A),
                 DjCommand::Cue {
@@ -625,7 +662,7 @@ mod tests {
         // A slot with a loop jumps to it the same way. Calling it empty wrote a cue into the slot and the loop vanished
         // from the panel (owner's report, 24.11).
         assert_eq!(
-            mapping.resolve_control(&press, false, with_loop),
+            mapping.resolve_control(&press, DeckStanding::default(), with_loop),
             Some((
                 Some(DeckId::A),
                 DjCommand::Cue {
@@ -637,7 +674,7 @@ mod tests {
         );
         // An empty pad takes the deck's own loop when one is active.
         assert_eq!(
-            mapping.resolve_control(&press, false, with_active_loop),
+            mapping.resolve_control(&press, DeckStanding::default(), with_active_loop),
             Some((
                 Some(DeckId::A),
                 DjCommand::SetPadLoop {
@@ -648,7 +685,7 @@ mod tests {
         );
         // A pad with nothing at all and no active loop stores a cue.
         assert_eq!(
-            mapping.resolve_control(&press, false, PadState::default()),
+            mapping.resolve_control(&press, DeckStanding::default(), PadState::default()),
             Some((
                 Some(DeckId::A),
                 DjCommand::Cue {
@@ -659,7 +696,10 @@ mod tests {
         );
         // Releasing asks for nothing, whatever the pad holds.
         let release = ControlEvent::button("deck_a.hotcue3", false);
-        assert_eq!(mapping.resolve_control(&release, false, with_cue), None);
+        assert_eq!(
+            mapping.resolve_control(&release, DeckStanding::default(), with_cue),
+            None
+        );
     }
 
     #[test]
@@ -675,7 +715,7 @@ mod tests {
 
     #[test]
     fn a_press_plays_and_a_release_says_nothing() {
-        let pressed = Intent::Play.command(DeckId::A, true, false);
+        let pressed = Intent::Play.command(DeckId::A, true, DeckStanding::default());
         assert_eq!(
             pressed,
             Some(DjCommand::Play {
@@ -683,20 +723,37 @@ mod tests {
                 enabled: true
             })
         );
-        assert_eq!(Intent::Play.command(DeckId::A, false, true), None);
+        assert_eq!(
+            Intent::Play.command(
+                DeckId::A,
+                false,
+                DeckStanding {
+                    running: true,
+                    ..DeckStanding::default()
+                }
+            ),
+            None
+        );
     }
 
     #[test]
     fn the_toggle_reads_the_transport_not_the_button() {
         assert_eq!(
-            Intent::PlayPause.command(DeckId::B, true, false),
+            Intent::PlayPause.command(DeckId::B, true, DeckStanding::default()),
             Some(DjCommand::Play {
                 deck: DeckId::B,
                 enabled: true
             })
         );
         assert_eq!(
-            Intent::PlayPause.command(DeckId::B, true, true),
+            Intent::PlayPause.command(
+                DeckId::B,
+                true,
+                DeckStanding {
+                    running: true,
+                    ..DeckStanding::default()
+                }
+            ),
             Some(DjCommand::Play {
                 deck: DeckId::B,
                 enabled: false
@@ -705,42 +762,102 @@ mod tests {
     }
 
     #[test]
-    fn sync_is_a_switch() {
+    fn sync_is_a_switch_that_reads_whether_the_deck_follows() {
+        // A deck that plays but follows nothing is the case a SYNC is pressed in during a mix: it must turn sync on, and
+        // asking the transport instead turned it off on every playing deck (owner's report, 25.11).
+        let playing_alone = DeckStanding {
+            running: true,
+            ..DeckStanding::default()
+        };
         assert_eq!(
-            Intent::Sync.command(DeckId::C, true, false),
+            Intent::Sync.command(DeckId::C, true, playing_alone),
             Some(DjCommand::Sync {
                 deck: DeckId::C,
-                mode: SyncMode::Tempo
+                mode: SyncMode::Beat
             })
         );
+        let following = DeckStanding {
+            running: true,
+            synced: true,
+            ..DeckStanding::default()
+        };
         assert_eq!(
-            Intent::Sync.command(DeckId::C, true, true),
+            Intent::Sync.command(DeckId::C, true, following),
             Some(DjCommand::Sync {
                 deck: DeckId::C,
                 mode: SyncMode::Off
             })
         );
+        // Standing still does not change what the button means: the deck's own sync state does.
+        assert_eq!(
+            Intent::Sync.command(
+                DeckId::C,
+                true,
+                DeckStanding {
+                    synced: true,
+                    ..DeckStanding::default()
+                }
+            ),
+            Some(DjCommand::Sync {
+                deck: DeckId::C,
+                mode: SyncMode::Off
+            })
+        );
+        // A release says nothing: one press, one decision.
+        assert_eq!(Intent::Sync.command(DeckId::C, false, following), None);
+    }
+
+    #[test]
+    fn the_master_button_takes_the_lead_and_gives_it_up() {
+        assert_eq!(
+            Intent::Master.command(DeckId::B, true, DeckStanding::default()),
+            Some(DjCommand::Master { deck: DeckId::B })
+        );
+        let leading = DeckStanding {
+            master: true,
+            ..DeckStanding::default()
+        };
+        assert_eq!(
+            Intent::Master.command(DeckId::B, true, leading),
+            Some(DjCommand::MasterOff)
+        );
+        assert_eq!(Intent::Master.command(DeckId::B, false, leading), None);
+        assert_eq!(intent_for("deck_a.master"), Some(Intent::Master));
+        assert_eq!(intent_for("deck_b.master"), Some(Intent::Master));
     }
 
     #[test]
     fn the_cue_button_is_the_deck_s_own_cue_point() {
         assert_eq!(
-            Intent::CueJump.command(DeckId::A, true, false),
+            Intent::CueJump.command(DeckId::A, true, DeckStanding::default()),
             Some(DjCommand::Cue {
                 deck: DeckId::A,
                 action: CueAction::Jump(CUE_SLOT)
             })
         );
         assert_eq!(
-            Intent::CueSet.command(DeckId::B, true, true),
+            Intent::CueSet.command(
+                DeckId::B,
+                true,
+                DeckStanding {
+                    running: true,
+                    ..DeckStanding::default()
+                }
+            ),
             Some(DjCommand::Cue {
                 deck: DeckId::B,
                 action: CueAction::Set(CUE_SLOT)
             })
         );
         // The release of either says nothing: the store and the jump are one gesture each.
-        assert_eq!(Intent::CueJump.command(DeckId::A, false, false), None);
-        assert_eq!(Intent::CueSet.command(DeckId::A, false, false), None);
+        assert_eq!(
+            Intent::CueJump.command(DeckId::A, false, DeckStanding::default()),
+            None
+        );
+        assert_eq!(
+            Intent::CueSet.command(DeckId::A, false, DeckStanding::default()),
+            None
+        );
     }
 
     #[test]

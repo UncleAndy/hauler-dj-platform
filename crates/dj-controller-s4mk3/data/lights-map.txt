@@ -49,7 +49,7 @@
 34	Right pitch zero light
 35	Deck select B
 36	Deck select D
-37	Rick SYNC/LOCK
+37	Right SYNC/LOCK
 38	Right MASTER/RESET
 39	Right JOG
 40	Right TT

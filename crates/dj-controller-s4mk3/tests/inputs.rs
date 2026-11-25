@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use dj_controller_core::Mapping;
+use dj_controller_core::{DeckStanding, Mapping, PadState};
 use dj_controller_s4mk3::inputs::{InputMap, merge, parse_inputs};
 use dj_domain::{DeckId, DjCommand};
 
@@ -104,6 +104,100 @@ fn a_pressed_button_asks_the_engine_to_play() {
             }
         )),
         "the press asks deck A to play"
+    );
+}
+
+#[test]
+fn the_shipped_master_and_sync_buttons_ask_the_deck_itself() {
+    // The two switches whose meaning is the deck's own state: SYNC follows or lets go, MASTER leads or gives up. Read
+    // through the same door the service uses (`resolve_control`), because a press that only reached the binding table
+    // would prove the table and not the panel (owner's request, 25.11).
+    let mut previous = HashMap::new();
+    let mut payload = vec![0_u8; 48];
+
+    // Deck A's MASTER button: byte 0, bit 0 of report 1 (`syncMasterButton` in the device's public description).
+    let map = InputMap::built_in();
+    assert!(map.decode(1, &payload, &mut previous).is_empty());
+    payload[0] = 0b0000_0001;
+    let events = map.decode(1, &payload, &mut previous);
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0].control, "deck_a.master");
+    assert_eq!(
+        Mapping::new().resolve_control(&events[0], DeckStanding::default(), PadState::default()),
+        Some((Some(DeckId::A), DjCommand::Master { deck: DeckId::A })),
+        "the left MASTER takes the lead"
+    );
+    let leading = DeckStanding {
+        master: true,
+        ..DeckStanding::default()
+    };
+    assert_eq!(
+        Mapping::new().resolve_control(&events[0], leading, PadState::default()),
+        Some((Some(DeckId::A), DjCommand::MasterOff)),
+        "the same button gives the lead up"
+    );
+    payload[0] = 0;
+    let released = map.decode(1, &payload, &mut previous);
+    assert_eq!(released.len(), 1, "the release is an event: {released:?}");
+    assert_eq!(
+        Mapping::new().resolve_control(&released[0], leading, PadState::default()),
+        None,
+        "letting the button up asks for nothing"
+    );
+
+    // Deck B's: byte 10, bit 0. The right half is a different byte, and a line that named the left one twice would leave
+    // this button dead with no error anywhere.
+    payload[10] = 0b0000_0001;
+    let events = map.decode(1, &payload, &mut previous);
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0].control, "deck_b.master");
+    assert_eq!(
+        Mapping::new().resolve_control(&events[0], DeckStanding::default(), PadState::default()),
+        Some((Some(DeckId::B), DjCommand::Master { deck: DeckId::B }))
+    );
+    payload[10] = 0;
+    let released = map.decode(1, &payload, &mut previous);
+    assert!(
+        released.iter().all(|event| event.value <= 0.5),
+        "the release asks for nothing: {released:?}"
+    );
+
+    // SYNC: byte 5, bit 7 on the left. What it asks for is the beat, and the deck's own sync state decides whether this
+    // press takes it or lets it go — the transport's state says nothing about following.
+    payload[5] = 0b1000_0000;
+    let events = map.decode(1, &payload, &mut previous);
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0].control, "deck_a.sync");
+    let playing_alone = DeckStanding {
+        running: true,
+        ..DeckStanding::default()
+    };
+    assert_eq!(
+        Mapping::new().resolve_control(&events[0], playing_alone, PadState::default()),
+        Some((
+            Some(DeckId::A),
+            DjCommand::Sync {
+                deck: DeckId::A,
+                mode: dj_domain::SyncMode::Beat
+            }
+        )),
+        "a playing deck that follows nothing takes the beat"
+    );
+    let following = DeckStanding {
+        running: true,
+        synced: true,
+        ..DeckStanding::default()
+    };
+    assert_eq!(
+        Mapping::new().resolve_control(&events[0], following, PadState::default()),
+        Some((
+            Some(DeckId::A),
+            DjCommand::Sync {
+                deck: DeckId::A,
+                mode: dj_domain::SyncMode::Off
+            }
+        )),
+        "the same button lets the deck go"
     );
 }
 

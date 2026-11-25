@@ -238,6 +238,9 @@ pub struct Show {
     pub monitoring: [bool; 4],
     /// Sync engaged, for the left and the right deck.
     pub sync: [bool; 2],
+    /// The deck is the master the others follow, for the left and the right deck. A lamp of its own, not the sync lamp
+    /// again: with both lit the DJ has to be able to tell the leader from the follower at a glance.
+    pub master: [bool; 2],
     /// FX on, for decks A, B, C and D: the mixer section has a button for each.
     pub fx: [bool; 4],
     /// The effect each deck runs, by `FxKind::index()`: its "FX on" button wears the effect's own colour, not a single
@@ -292,6 +295,8 @@ pub struct Palette {
     pub cue: Colour,
     /// A deck that follows another.
     pub sync: Colour,
+    /// The deck the others follow: the MASTER lamp.
+    pub master: Colour,
     /// A stored hotcue slot.
     pub hotcue: Colour,
     /// A pad that holds a loop: the colour the screen draws a loop with.
@@ -312,6 +317,7 @@ impl Default for Palette {
             play: Colour::Green,
             cue: Colour::Blue,
             sync: Colour::Yellow,
+            master: Colour::White,
             hotcue: Colour::Green,
             loop_: Colour::Yellow,
             fx: Colour::Magenta,
@@ -361,16 +367,22 @@ pub fn report_with(show: &Show, palette: &Palette) -> LightsReport {
         }
     }
     for side in 0..2 {
+        // Both names carry their side: a lookup is a substring, and "Master/Reset" alone is in the map twice — the left
+        // lamp answered for the right one, so the leader's lamp appeared on the wrong deck and the right one stayed dark.
+        // The right pair was named "Rick SYNC/LOCK" in the map (a typo of the owner's), which no lookup could find.
         let names = if side == 0 {
-            ("Left PLAY button", "Sync/Lock")
+            ("Left PLAY button", "Left Sync/Lock", "Left Master/Reset")
         } else {
-            ("Right PLAY button", "Right Sync")
+            ("Right PLAY button", "Right SYNC/LOCK", "Right MASTER/RESET")
         };
         if show.playing[side] {
             set(control(names.0), bright(palette.play.code()));
         }
         if show.sync[side] {
             set(control(names.1), bright(palette.sync.code()));
+        }
+        if show.master[side] {
+            set(control(names.2), bright(palette.master.code()));
         }
     }
     // Monitoring is per channel, not per platter: the button lives on the strip and carries the channel's own CUE byte.

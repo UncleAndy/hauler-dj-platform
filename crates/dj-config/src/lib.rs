@@ -129,6 +129,12 @@ pub struct ControllerLights {
     pub cue: LightColour,
     /// A deck that follows another.
     pub sync: LightColour,
+    /// The deck the others follow.
+    ///
+    /// A colour of its own rather than the sync lamp's: with both lit the DJ has to tell the leader from the follower at
+    /// a glance, and the resting colour is not an answer — a DJ who sets `resting = "off"` would switch the leader's
+    /// lamp off with it.
+    pub master: LightColour,
     /// A stored hotcue slot.
     pub hotcue: LightColour,
     /// A pad that holds a loop rather than a cue.
@@ -154,6 +160,7 @@ impl Default for ControllerLights {
             play: LightColour::Green,
             cue: LightColour::Blue,
             sync: LightColour::Yellow,
+            master: LightColour::White,
             hotcue: LightColour::Green,
             loop_: LightColour::Yellow,
             fx: LightColour::Magenta,
