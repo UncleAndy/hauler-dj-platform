@@ -2798,6 +2798,7 @@ fn lights_show(
     // The last ring state per platter: mode and marker position. Report 50 is sent only when one of them changes, because
     // the position moves every snapshot while a deck plays and nothing needs saying while it does not.
     let mut last_wheel_modes: [(u8, u16); 2] = [(255, 0); 2];
+    let mut last_ring_log: [Option<std::time::Instant>; 2] = [None, None];
     loop {
         let (mut client, _welcome) = match dj_bridge::connect_with_timeout(
             std::path::Path::new(endpoint),
@@ -2942,21 +2943,47 @@ fn lights_show(
             if let Some(sink) = sink.as_mut() {
                 for (side, deck_id) in [(0_u8, panel_left), (1_u8, panel_right)] {
                     let deck = snapshot.decks.iter().find(|deck| deck.deck == deck_id);
-                    let (mode, position, colour) = match deck {
+                    let (mode, position, colour, ratio) = match deck {
                         Some(deck) if deck.playing => {
-                            let ratio = deck.position_ratio.unwrap_or(0.0).clamp(0.0, 1.0);
+                            // `position_ratio` is only filled when the deck knows the track's length; a track without one
+                            // would leave the marker at zero and standing still (owner's report, 25.11). Fall back to the
+                            // frame counter over the metadata's length, so the marker still moves.
+                            let ratio = deck
+                                .position_ratio
+                                .or_else(|| {
+                                    let total = deck
+                                        .track
+                                        .as_ref()
+                                        .and_then(|track| track.duration_frames)?;
+                                    (total > 0).then(|| {
+                                        (deck.source_frame.0 as f32 / total as f32).clamp(0.0, 1.0)
+                                    })
+                                })
+                                .unwrap_or(0.0)
+                                .clamp(0.0, 1.0);
                             (
                                 2_u8,
                                 (ratio * 2880.0).min(2879.0) as u16,
                                 dj_controller_s4mk3::lights::bright(palette.resting.code()),
+                                ratio,
                             )
                         }
-                        _ => (0_u8, 0_u16, 0_u8),
+                        _ => (0_u8, 0_u16, 0_u8, 0.0),
                     };
                     if last_wheel_modes[usize::from(side)] == (mode, position) {
                         continue;
                     }
                     last_wheel_modes[usize::from(side)] = (mode, position);
+                    let speak = match last_ring_log[usize::from(side)] {
+                        None => true,
+                        Some(at) => at.elapsed() >= std::time::Duration::from_millis(500),
+                    };
+                    if speak {
+                        last_ring_log[usize::from(side)] = Some(std::time::Instant::now());
+                        println!(
+                            "dj-controller: jog ring {side}: mode {mode}, marker {position} (ratio {ratio:.3})"
+                        );
+                    }
                     sink.send(&wheel_leds(side, mode, position, colour))
                         .map_err(|error| format!("the panel did not take the jog ring: {error}"))?;
                 }

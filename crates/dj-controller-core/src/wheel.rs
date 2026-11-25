@@ -10,7 +10,7 @@
 use std::f64::consts::PI;
 
 /// One wheel's counter.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct WheelCounter {
     last_position: Option<u32>,
     last_timer: Option<u32>,
@@ -18,6 +18,9 @@ pub struct WheelCounter {
     // an unknown constant is a speed nobody can calibrate.
     last_clock_position: Option<u32>,
     last_clock_at: Option<std::time::Instant>,
+    // A short window (2 ms at 500 Hz) holds only a few integer ticks, so the raw rate jumps by tens of percent. Mixxx
+    // averages successive samples of the same sign for exactly this reason; without it a scratch is a series of jumps.
+    smoothed: Option<f64>,
 }
 
 impl WheelCounter {
@@ -33,6 +36,7 @@ impl WheelCounter {
         self.last_timer = None;
         self.last_clock_position = None;
         self.last_clock_at = None;
+        self.smoothed = None;
     }
 
     /// The movement since the last report: signed ticks and elapsed timer units.
@@ -85,7 +89,15 @@ impl WheelCounter {
         if elapsed <= f64::EPSILON {
             return Some(0.0);
         }
-        Some(f64::from(moved) / elapsed)
+        let current = f64::from(moved) / elapsed;
+        // Average successive samples of the same sign, as the public mapping does: a fast hand's two-millisecond window
+        // holds only a few ticks, and without smoothing the rate swings far enough to sound like a stutter, not a scratch.
+        let smoothed = match self.smoothed {
+            Some(previous) if (previous <= 0.0) == (current <= 0.0) => (previous + current) * 0.5,
+            _ => current,
+        };
+        self.smoothed = Some(smoothed);
+        Some(smoothed)
     }
 }
 
