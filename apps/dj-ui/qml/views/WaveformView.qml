@@ -473,6 +473,8 @@ Item {
                 property real lastX: 0.0
                 property real lastMs: 0.0
                 property bool wasPlaying: false
+                // Where the hand has carried the record, for the silent scrub: the seek target, in source frames.
+                property real scrubFrame: 0
                 /// The hand takes the record only when it moves: a click is a click, and stopping the
                 /// transport for one would be a sound nobody asked for.
                 property bool holding: false
@@ -489,6 +491,7 @@ Item {
                     hand.lastX = mouse.x;
                     hand.lastMs = Date.now();
                     hand.wasPlaying = view.playing;
+                    hand.scrubFrame = view.sourceFrame;
                     view.scrubHeld = true;
                     view.scrubWasPlaying = view.playing;
                     scrubIdle.restart();
@@ -502,23 +505,32 @@ Item {
                     const deltaPixels = mouse.x - hand.lastX;
                     hand.lastX = mouse.x;
                     hand.lastMs = now;
-                    // A hand moving right takes the material back; frames per pixel comes from the zoom, so
-                    // the picture and the sound agree. What goes to the deck is a speed — source frames per
-                    // second — because that is what a hand has, and the deck turns it into its own rate.
-                    if (!hand.holding) {
-                        if (deltaPixels === 0) {
-                            hand.lastMs = now;
-                            return;
-                        }
-                        // The first move is the touch: the deck stops its motor by its own rule and follows
-                        // the hand from here.
-                        hand.holding = true;
-                        Bridge.putHandOn(view.deckId, true);
-                    }
                     const deltaFrames = -deltaPixels * view.columnsPerPixel * view.framesPerBucket;
-                    const speed = deltaFrames * 1000.0 / elapsed;
-                    const limit = 4.0 * view.sourceRate;
-                    Bridge.setHandSpeed(view.deckId, Math.max(-limit, Math.min(limit, speed)));
+                    if (view.scrubAudio) {
+                        // Audible: the hand takes the record, and what goes to the deck is a speed — source frames per
+                        // second — because that is what a hand has, and the deck turns it into its own rate.
+                        if (!hand.holding) {
+                            if (deltaPixels === 0) {
+                                hand.lastMs = now;
+                                return;
+                            }
+                            // The first move is the touch: the deck stops its motor by its own rule and follows
+                            // the hand from here.
+                            hand.holding = true;
+                            Bridge.putHandOn(view.deckId, true);
+                        }
+                        const speed = deltaFrames * 1000.0 / elapsed;
+                        const limit = 4.0 * view.sourceRate;
+                        Bridge.setHandSpeed(view.deckId, Math.max(-limit, Math.min(limit, speed)));
+                    } else {
+                        // Silent scrub: the playhead follows the hand but the transport is left alone (owner's report,
+                        // 25.11). The seek moves the head without starting the deck.
+                        hand.scrubFrame += deltaFrames;
+                        const total = view.columns * view.framesPerBucket;
+                        Bridge.seek(view.deckId,
+                                    Math.max(0, Math.min(Math.max(0.0, total - 1),
+                                                         Math.round(hand.scrubFrame))));
+                    }
                     // The picture follows the hand; the sound is the deck's business now.
                     const total = view.columns * view.framesPerBucket;
                     view.shownFrame = Math.max(0.0, Math.min(Math.max(0.0, total - 1),

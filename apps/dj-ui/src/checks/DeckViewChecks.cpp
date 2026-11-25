@@ -5901,8 +5901,13 @@ int runMetronomeCheck(QQmlApplicationEngine& engine, BridgeClient* bridge,
     return 0;
 }
 
-int runScratchCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, QCommandLineParser& parser,
-                    const QCommandLineOption& loadOption, const QCommandLineOption& connectOption) {
+int runScratchCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, UiSettings& settings,
+                    QCommandLineParser& parser, const QCommandLineOption& loadOption,
+                    const QCommandLineOption& connectOption) {
+    // The scratch is the audible hand: it takes the record, stops the motor and drives the deck while
+    // the hand moves. The deck's default is the silent scrub, so the check switches the mode the same
+    // way the DJ does — through the setting — before putting a hand down (25.11).
+    settings.setScrubAudible(true);
     auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
     if (window == nullptr) {
         std::fprintf(stderr, "dj-ui: the root object is not a window\n");

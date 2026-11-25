@@ -167,8 +167,9 @@ int runMetronomeCheck(QQmlApplicationEngine& engine, BridgeClient* bridge,
                       const QCommandLineOption& connectOption);
 ;
 
-int runScratchCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, QCommandLineParser& parser,
-                    const QCommandLineOption& loadOption, const QCommandLineOption& connectOption);
+int runScratchCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, UiSettings& settings,
+                    QCommandLineParser& parser, const QCommandLineOption& loadOption,
+                    const QCommandLineOption& connectOption);
 ;
 
 int runTempoRecheckCheck(QQmlApplicationEngine& engine, BridgeClient* bridge,

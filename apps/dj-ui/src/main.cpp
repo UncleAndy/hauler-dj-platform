@@ -2191,7 +2191,7 @@ int main(int argc, char *argv[])
     }
 
     if (parser.isSet(scratchOption)) {
-        return runScratchCheck(engine, bridge.get(), parser, loadOption, connectOption);
+        return runScratchCheck(engine, bridge.get(), settings, parser, loadOption, connectOption);
     }
 
     if (parser.isSet(gridLinesOption)) {
