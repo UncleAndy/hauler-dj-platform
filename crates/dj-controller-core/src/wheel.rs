@@ -92,8 +92,15 @@ impl WheelCounter {
         let current = f64::from(moved) / elapsed;
         // Average successive samples of the same sign, as the public mapping does: a fast hand's two-millisecond window
         // holds only a few ticks, and without smoothing the rate swings far enough to sound like a stutter, not a scratch.
+        // Only average two real turns of the same direction: zero is a still hand, and a plain `<= 0` counts it as
+        // "negative", so one direction averaged over an extra sample and a scratch walked backwards (owner's report,
+        // 25.11).
         let smoothed = match self.smoothed {
-            Some(previous) if (previous <= 0.0) == (current <= 0.0) => (previous + current) * 0.5,
+            Some(previous)
+                if previous != 0.0 && current != 0.0 && (previous < 0.0) == (current < 0.0) =>
+            {
+                (previous + current) * 0.5
+            }
             _ => current,
         };
         self.smoothed = Some(smoothed);
@@ -157,6 +164,27 @@ mod tests {
         let mut wheel = WheelCounter::new();
         let _ = wheel.speed(100, 10);
         assert_eq!(wheel.speed(160, 10), Some(0.0));
+    }
+
+    #[test]
+    fn a_still_hand_between_turns_does_not_bias_the_average() {
+        let mut wheel = WheelCounter::new();
+        let start = std::time::Instant::now();
+        let step = std::time::Duration::from_millis(10);
+        let _ = wheel.ticks_per_second(0, start);
+        let forward = wheel.ticks_per_second(100, start + step);
+        let still = wheel.ticks_per_second(100, start + step * 2);
+        let backward = wheel.ticks_per_second(0, start + step * 3);
+        let (Some(forward), Some(still), Some(backward)) = (forward, still, backward) else {
+            panic!("every report after the first must answer");
+        };
+        assert!(forward > 0.0 && backward < 0.0);
+        assert_eq!(still, 0.0, "a still hand is zero, not a turn");
+        // The zero in between must not pull one direction further than the other: that made a scratch walk backwards.
+        assert!(
+            (forward + backward).abs() < 1e-9,
+            "forward {forward}, backward {backward}"
+        );
     }
 
     #[test]
