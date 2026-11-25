@@ -327,7 +327,13 @@ pub fn render_deck(panel: &DeckPanel) -> Canvas {
     let wave_top = 118;
     let wave_height = 94;
     let middle = wave_top + wave_height / 2;
-    canvas.fill_rect(margin as isize, wave_top as isize, room, wave_height, GROOVE);
+    canvas.fill_rect(
+        margin as isize,
+        wave_top as isize,
+        room,
+        wave_height,
+        GROOVE,
+    );
     let played = (panel.position.clamp(0.0, 1.0) * room as f64).round() as isize;
     let played_x = margin as isize + played;
     if !panel.waveform.is_empty() {

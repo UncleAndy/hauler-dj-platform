@@ -7,8 +7,8 @@
 #![allow(clippy::expect_used)]
 
 use dj_controller_s4mk3::screen::{
-    ACCENT, BACKGROUND, Canvas, DeckPanel, GROOVE, INK, clock, from_rgb565, render_deck, render_idle,
-    sample_panel,
+    ACCENT, BACKGROUND, Canvas, DeckPanel, GROOVE, INK, clock, from_rgb565, render_deck,
+    render_idle, sample_panel,
 };
 use dj_controller_s4mk3::text;
 use dj_controller_s4mk3::{SCREEN_HEIGHT, SCREEN_WIDTH, Screen, full_screen_frame};
@@ -233,7 +233,10 @@ fn inked(canvas: &Canvas, x: usize, y: usize, width: usize, height: usize) -> us
     let mut count = 0;
     for column in x..x + width {
         for row in y..y + height {
-            if canvas.at(column, row).is_some_and(|pixel| pixel != BACKGROUND) {
+            if canvas
+                .at(column, row)
+                .is_some_and(|pixel| pixel != BACKGROUND)
+            {
                 count += 1;
             }
         }
@@ -261,8 +264,14 @@ fn the_corners_carry_the_jump_step_and_the_loop_size() {
 
     // Both corners are written on, and both change when the numbers do.
     let (top, height) = (2usize, 16usize);
-    assert!(inked(&small, 10, top, 110, height) > 0, "the jump step is not in the left corner");
-    assert!(inked(&small, 210, top, 100, height) > 0, "the loop size is not in the right corner");
+    assert!(
+        inked(&small, 10, top, 110, height) > 0,
+        "the jump step is not in the left corner"
+    );
+    assert!(
+        inked(&small, 210, top, 100, height) > 0,
+        "the loop size is not in the right corner"
+    );
     let changed_left = (10..120).any(|x| small.at(x, 8) != large.at(x, 8));
     let changed_right = (210..310).any(|x| small.at(x, 8) != large.at(x, 8));
     assert!(changed_left, "the jump step did not follow its knob");
@@ -293,7 +302,11 @@ fn the_bottom_of_the_screen_is_the_whole_track_with_a_play_head() {
         "the track after the play head is not drawn"
     );
     let head = 10 + 150;
-    assert_eq!(canvas.at(head, 160), Some(INK), "the play head is not where the sound is");
+    assert_eq!(
+        canvas.at(head, 160),
+        Some(INK),
+        "the play head is not where the sound is"
+    );
 }
 
 #[test]
@@ -307,7 +320,11 @@ fn a_track_without_an_envelope_keeps_its_strip_empty() {
         ..DeckPanel::default()
     };
     let canvas = render_deck(&panel);
-    assert_eq!(canvas.at(60, 160), Some(GROOVE), "an empty track drew a wave");
+    assert_eq!(
+        canvas.at(60, 160),
+        Some(GROOVE),
+        "an empty track drew a wave"
+    );
     assert_eq!(
         canvas.at(10 + 75, 160),
         Some(INK),

@@ -54,10 +54,7 @@ impl Panels {
             .endpoint::<nusb::transfer::Bulk, nusb::transfer::Out>(ENDPOINT)
             .map_err(|error| format!("endpoint {ENDPOINT:#04x} is not a bulk out: {error}"))?;
         let writer = endpoint.writer(CHUNK);
-        Ok(Self {
-            interface,
-            writer,
-        })
+        Ok(Self { interface, writer })
     }
 
     /// Write one frame — the header, the pixels and the footer `screen_frame` built.
