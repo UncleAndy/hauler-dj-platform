@@ -5,8 +5,13 @@
 //! read positions `length - fade` apart. The pass then restarts at `fade`, so the join is continuous and the loop
 //! costs `length - fade` frames instead of `length` — which is why the fade is short and the length is not.
 //!
-//! The loop is captured the moment the switch goes down and stays frozen while it is held: that is the difference
-//! between a roll and a plain delay, and it is what makes the effect useful in a transition.
+//! The loop is captured **forward**: what repeats is the beat that *follows* the press, recorded as it plays, so the
+//! first pass is the deck itself, sample for sample. Capturing the beat before the press instead (which this did until
+//! 25.11) jumps backwards in the material on the press — a click, and a phrase the hand did not ask for.
+//!
+//! The ring stops taking material once the pass has been recorded. A roll held while the deck plays on is exactly the
+//! case a moving ring ruins: after the ring's two seconds it comes round and overwrites the captured slice, and the
+//! "loop" quietly turns back into a window of live audio (measured: at 1.94 s, `crates/dj-fx/tests/roll_hold.rs`).
 
 use crate::FxUnit;
 use crate::delay::DelayLine;
@@ -36,11 +41,14 @@ pub struct Roll {
     /// The loop's length in frames, and where inside it the read head stands.
     length: usize,
     play: usize,
-    /// The ring index just past the captured segment: the loop is anchored here, so live material arriving later
+    /// The ring index where the captured segment begins: the loop is anchored here, so live material arriving later
     /// cannot drift into what is playing.
     origin: usize,
     fade: usize,
     captured: bool,
+    /// Whether the first pass is still being recorded. Only the recording pass writes to the ring — after it the slice
+    /// must survive however long the switch is held.
+    recording: bool,
     engaged: bool,
     rate: f32,
 }
@@ -62,6 +70,7 @@ impl Roll {
             origin: 0,
             fade: 1,
             captured: false,
+            recording: false,
             engaged: false,
             rate: 48_000.0,
         }
@@ -73,11 +82,19 @@ impl Roll {
         } else {
             0.0
         };
-        // A new length is a new loop. While the switch is held the loop restarts at once; when it is up, the next
-        // press captures with the new length — either way the knob is the law.
-        self.length = self.length_for(self.amount);
-        if self.engaged {
-            self.play = 0;
+        // A new length is a new capture, and only a *new* one: the rack sends the whole patch on every change (the
+        // switch itself sends one), so a message that repeats the length the loop already has must leave the read head
+        // where it is — otherwise a held roll stutters on every message (measured: 0.89 of a jump, 25.11).
+        let wanted = self.length_for(self.amount);
+        if wanted != self.length {
+            self.length = wanted;
+            if self.engaged && self.captured {
+                // The capture runs forward, so re-anchoring on the material arriving now is inaudible: the first pass
+                // of the new loop is the deck itself.
+                self.origin = (self.origin + self.play) % self.buffer.capacity().max(1);
+                self.play = 0;
+                self.recording = true;
+            }
         }
     }
 
@@ -119,12 +136,14 @@ impl FxUnit for Roll {
         self.play = 0;
         self.origin = 0;
         self.captured = false;
+        self.recording = false;
     }
 
     fn reset(&mut self) {
         self.buffer.clear();
         self.play = 0;
         self.captured = false;
+        self.recording = false;
     }
 
     fn engage(&mut self, on: bool) {
@@ -132,9 +151,10 @@ impl FxUnit for Roll {
         if on && !self.engaged {
             self.length = self.length_for(self.amount);
             self.play = 0;
-            // The segment is what has just played: it ends where the write head stands now.
+            // The segment starts here and runs forward: the first pass records what the press began.
             self.origin = self.buffer.write_position();
             self.captured = true;
+            self.recording = true;
         }
         self.engaged = on;
     }
@@ -144,27 +164,28 @@ impl FxUnit for Roll {
         if samples == 0 {
             return;
         }
-        let capacity = self.buffer.capacity();
+        let capacity = self.buffer.capacity().max(1);
         let length = self.length.min(capacity.saturating_sub(2)).max(2);
         let fade = self.fade.min(length / 2).max(1);
-        let live = !self.engaged || !self.captured;
+        // Nothing to play until the hand has said so: the deck passes through untouched.
+        let held = self.engaged && self.captured;
 
         for frame in 0..samples / 2 {
             let left = input[frame * 2];
             let right = input[frame * 2 + 1];
-            // The buffer keeps taking material while the loop is held: releasing must return to what is playing now.
-            self.buffer.push(left, right);
-
-            if live {
+            if !held {
                 out[frame * 2] = left;
                 out[frame * 2 + 1] = right;
                 continue;
             }
 
-            // The segment starts `length` frames before the anchor and does not move while the loop is held.
-            let base = (self.origin + capacity - length) % capacity;
+            // The recording pass writes the frame and gives it straight back, so the switch going down is inaudible.
+            // After it the ring is left alone: the captured slice must outlive any hold.
+            if self.recording {
+                self.buffer.push(left, right);
+            }
             let play = self.play.min(length - 1);
-            let at = (base + play) % capacity;
+            let at = (self.origin + play) % capacity;
             // The last `fade` frames of a pass are crossfaded into the head of the same pass: the partner stands
             // `length - fade` frames earlier in the segment, so at the join the two are neighbouring frames.
             let fading = play + fade >= length;
@@ -173,8 +194,8 @@ impl FxUnit for Roll {
             } else {
                 0.0
             };
-            let partner = (base as isize + play as isize - (length - fade) as isize)
-                .rem_euclid(capacity as isize) as usize;
+            let partner =
+                (at as isize - (length - fade) as isize).rem_euclid(capacity as isize) as usize;
 
             for channel in 0..2 {
                 let current = self.buffer.read_index(at, channel);
@@ -191,6 +212,7 @@ impl FxUnit for Roll {
             if self.play >= length {
                 // Restart inside the head of the pass, which is where the crossfade left the signal.
                 self.play = fade.min(length - 1);
+                self.recording = false;
             }
         }
     }
