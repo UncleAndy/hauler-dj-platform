@@ -1746,12 +1746,17 @@ fn deck_knob_command(
     event: &dj_controller_core::ControlEvent,
     playing: &Playing,
 ) -> Option<dj_domain::DjCommand> {
-    let deck = match event.control.as_str() {
-        "deck_a.move" | "deck_a.loop" | "deck_a.loop_press" => dj_domain::DeckId::A,
-        "deck_b.move" | "deck_b.loop" | "deck_b.loop_press" => dj_domain::DeckId::B,
+    // The knobs sit on the halves of the panel, and a half drives whichever deck its select button names: the names in
+    // the map are `deck_a`/`deck_b` because that is what the halves were when a session began, not because the left knob
+    // always belongs to A. A MOVE that jumps deck A while the DJ is looking at C is worse than a knob that does nothing
+    // (owner's report, 25.11). The amount each knob carries is a property of the half, so it stays with the side.
+    let side = match event.control.as_str() {
+        "deck_a.move" | "deck_a.loop" | "deck_a.loop_press" => 0,
+        "deck_b.move" | "deck_b.loop" | "deck_b.loop_press" => 1,
         _ => return None,
     };
-    let index = usize::from(deck != dj_domain::DeckId::A);
+    let deck = side_deck(side, playing);
+    let index = side;
     let shift = playing
         .lock()
         .ok()
@@ -2043,6 +2048,9 @@ fn command_for_deck(
         DjCommand::Play { enabled, .. } => DjCommand::Play { deck, enabled },
         DjCommand::Cue { action, .. } => DjCommand::Cue { deck, action },
         DjCommand::Sync { mode, .. } => DjCommand::Sync { deck, mode },
+        // The lead is a deck too: the MASTER button of a half takes the deck that half drives, the same way its PLAY and
+        // its SYNC do (owner's report, 25.11).
+        DjCommand::Master { .. } => DjCommand::Master { deck },
         DjCommand::Metronome { enabled, .. } => DjCommand::Metronome { deck, enabled },
         DjCommand::SetCueMeta {
             slot, label, color, ..
@@ -4170,6 +4178,113 @@ mod tests {
             None
         );
         assert_eq!(playing.lock().expect("the state").move_beats[0], 4.0);
+    }
+
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn the_knobs_and_the_master_button_belong_to_the_deck_their_half_drives() {
+        // A side switched to C drives C with everything on it: the transport, the pads, the MASTER button and the two
+        // knobs beside the screen. The map's names (`deck_a.*`) are the halves, not the decks, and reading them as decks
+        // left a hand jumping A while looking at C (owner's report, 25.11).
+        let playing: Playing =
+            std::sync::Arc::new(std::sync::Mutex::new(DeckFactsShared::default()));
+        playing.lock().expect("the state").panel_left = dj_domain::DeckId::C;
+        playing.lock().expect("the state").panel_right = dj_domain::DeckId::D;
+
+        assert_eq!(
+            deck_knob_command(
+                &dj_controller_core::ControlEvent::level("deck_a.move", 1.0),
+                &playing
+            ),
+            Some(dj_domain::DjCommand::BeatJump {
+                deck: dj_domain::DeckId::C,
+                beats: 4.0,
+                quantize: true,
+            }),
+            "the left MOVE jumps the deck the left half drives"
+        );
+        assert_eq!(
+            deck_knob_command(
+                &dj_controller_core::ControlEvent::level("deck_a.loop_press", 1.0),
+                &playing
+            ),
+            Some(dj_domain::DjCommand::LoopBeats {
+                deck: dj_domain::DeckId::C,
+                beats: 4,
+            }),
+            "the left LOOP press lays its loop on that deck"
+        );
+        // Shift and LOOP is the window's own Loop button — on the same deck.
+        playing.lock().expect("the state").shift[0] = true;
+        assert_eq!(
+            deck_knob_command(
+                &dj_controller_core::ControlEvent::level("deck_a.loop_press", 1.0),
+                &playing
+            ),
+            Some(dj_domain::DjCommand::LoopPress {
+                deck: dj_domain::DeckId::C
+            })
+        );
+        assert_eq!(
+            deck_knob_command(
+                &dj_controller_core::ControlEvent::level("deck_b.move", 1.0),
+                &playing
+            ),
+            Some(dj_domain::DjCommand::BeatJump {
+                deck: dj_domain::DeckId::D,
+                beats: 4.0,
+                quantize: true,
+            }),
+            "and the right half drives its own deck"
+        );
+        // The amount a knob carries stays with the half: Shift on the left changed the left's step, not the right's.
+        playing.lock().expect("the state").shift[0] = false;
+        assert_eq!(playing.lock().expect("the state").move_beats[0], 4.0);
+        assert_eq!(playing.lock().expect("the state").move_beats[1], 4.0);
+
+        // The MASTER button goes through the same re-addressing every other transport command does.
+        assert_eq!(
+            follow_side(
+                dj_domain::DjCommand::Master {
+                    deck: dj_domain::DeckId::A
+                },
+                "deck_a.master",
+                &playing
+            ),
+            dj_domain::DjCommand::Master {
+                deck: dj_domain::DeckId::C
+            },
+            "MASTER takes the lead on the deck the half drives"
+        );
+        assert_eq!(
+            follow_side(
+                dj_domain::DjCommand::Sync {
+                    deck: dj_domain::DeckId::B,
+                    mode: dj_domain::SyncMode::Beat
+                },
+                "deck_b.sync",
+                &playing
+            ),
+            dj_domain::DjCommand::Sync {
+                deck: dj_domain::DeckId::D,
+                mode: dj_domain::SyncMode::Beat
+            }
+        );
+        // A mixer command is not re-addressed: the channel's own strip answers for the channel.
+        assert_eq!(
+            follow_side(
+                dj_domain::DjCommand::SetChannelFader {
+                    deck: dj_domain::DeckId::A,
+                    position: 0.5
+                },
+                "deck_a.fader",
+                &playing
+            ),
+            dj_domain::DjCommand::SetChannelFader {
+                deck: dj_domain::DeckId::A,
+                position: 0.5
+            }
+        );
     }
 
     #[test]
