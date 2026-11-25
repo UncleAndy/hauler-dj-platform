@@ -306,7 +306,7 @@ private:
     QString m_folder;
     QVariantList m_entries;
     QString m_error;
-    QString m_mode = QStringLiteral("files");
+    QString m_mode = QStringLiteral("collection");
     QString m_filter;
     /// The engine's client, when there is one: the collection is its index, not this process's walk.
     BridgeClient *m_bridge = nullptr;

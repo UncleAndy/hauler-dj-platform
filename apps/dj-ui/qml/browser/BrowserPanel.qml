@@ -1048,6 +1048,9 @@ Pane {
     Component.onCompleted: {
         Browser.genreFilter = LayoutState.collectionGenres;
         genresSeeded = true;
+        // A session opens on the collection: the DJ's tracks are what the window is for, and a start on a file folder
+        // asks for a click before anything is visible (owner's request, 25.11).
+        browser.showSection("collection");
     }
     Connections {
         target: Browser
