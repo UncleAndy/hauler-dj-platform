@@ -910,6 +910,9 @@ fn serve(
     let Some(endpoint) = engine else {
         return Err(format!("--serve wants --engine <endpoint>. {USAGE}"));
     };
+    // The panel streams the wheels at ~500 Hz only after the jog-light init: without it report 3 comes at 4 Hz and every
+    // scratch is four samples a second (owner's measurement, 25.11). Sent once, before anything is read.
+    send_wheel_init(devices);
     let map = load_inputs(inputs_file)?;
     if map.is_empty() {
         println!(
@@ -2171,24 +2174,34 @@ fn node_rates(devices: &[DeviceInfo], seconds: f32) -> Result<(), String> {
 /// work". The suspicion is that the panel streams the wheels faster only after it — a wheel report at 4 Hz makes every
 /// scratch a guess. Only the light init (report 48) is sent: the motor reset (49) is forbidden until its own decision.
 fn wheel_init(devices: &[DeviceInfo], seconds: f32) -> Result<(), String> {
-    let mut sink = open_lights(devices)?;
-    // 26 bytes: byte 1 = 1, byte 2 = 3, then byte 0 = 1, sent twice — as the mapping does.
-    let mut payload = vec![0_u8; 26];
-    payload[1] = 1;
-    payload[2] = 3;
-    let mut wire = vec![48_u8];
-    wire.extend_from_slice(&payload);
-    sink.send(&wire)?;
-    payload[0] = 1;
-    let mut wire = vec![48_u8];
-    wire.extend_from_slice(&payload);
-    sink.send(&wire)?;
-    drop(sink);
+    send_wheel_init(devices);
     println!(
         "dj-controller: sent the wheel-light init (report 48) twice; counting the reports for {seconds:.0} s"
     );
     std::thread::sleep(std::time::Duration::from_millis(200));
     node_rates(devices, seconds)
+}
+
+/// Send the jog-light init (report 48, twice), best effort.
+///
+/// The public mapping sends it at start-up and notes it is required for the jog wheel LEDs; the owner's measurement shows
+/// it is also what makes the panel stream the wheels at ~500 Hz instead of 4 Hz. Without a writable node it is skipped and
+/// the wheels stay slow, which is better than refusing to run at all.
+fn send_wheel_init(devices: &[DeviceInfo]) {
+    let Ok(mut sink) = open_lights(devices) else {
+        return;
+    };
+    // 26 bytes: byte 1 = 1, byte 2 = 3, then byte 0 = 1, sent twice.
+    let mut payload = vec![0_u8; 26];
+    payload[1] = 1;
+    payload[2] = 3;
+    let mut wire = vec![48_u8];
+    wire.extend_from_slice(&payload);
+    let _ = sink.send(&wire);
+    payload[0] = 1;
+    let mut wire = vec![48_u8];
+    wire.extend_from_slice(&payload);
+    let _ = sink.send(&wire);
 }
 
 /// Prints what the panel says, one line a change: the tool that turns a hand into a map line.
