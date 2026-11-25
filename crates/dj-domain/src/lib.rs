@@ -476,6 +476,13 @@ pub enum DjCommand {
         open: bool,
     },
     /// Say which deck a side of the panel is driving, so the window can show it and a press knows where to load.
+    /// Say whether a controller is present: the service that owns the panel says yes while it is connected, and the
+    /// engine says no when that connection ends — a service that is killed leaves no hidden buttons behind.
+    PanelPresent {
+        /// Whether the panel's service is connected and driving.
+        present: bool,
+    },
+    /// The deck a side of the panel drives: the window shows it, and a load lands there.
     PanelDeck {
         /// Which side of the panel.
         side: PanelSide,
@@ -924,6 +931,7 @@ impl DjCommand {
             | DjCommand::BrowserPlaceToggle
             // Which deck a side drives: losing it puts a press into a deck nobody is looking at.
             | DjCommand::PanelDeck { .. }
+            | DjCommand::PanelPresent { .. }
             | DjCommand::BrowserShow { .. }
             | DjCommand::BrowserCursor { .. }
             | DjCommand::AnalyzeTempo { .. }
@@ -2025,6 +2033,14 @@ pub struct PanelDecks {
     pub left: DeckId,
     /// The deck the right side drives: B or D.
     pub right: DeckId,
+    /// Whether a controller is present: a service of the panel is connected and driving the decks.
+    ///
+    /// A fact, not a choice, and it lives here because the engine is the one channel every client shares: the window
+    /// folds away the buttons the controller already has under a hand, and a window that guessed would either hide
+    /// them under a controller that is not there or leave them on a desk where they are dead (owner's request, 25.11).
+    /// Left off the wire when false: a session without a panel is the ordinary case.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub present: bool,
 }
 
 impl Default for PanelDecks {
@@ -2033,6 +2049,7 @@ impl Default for PanelDecks {
         Self {
             left: DeckId::A,
             right: DeckId::B,
+            present: false,
         }
     }
 }

@@ -57,6 +57,13 @@ class LayoutSettings : public QObject
     Q_PROPERTY(bool snapGrid READ snapGrid WRITE setSnapGrid NOTIFY changed)
     Q_PROPERTY(bool quantizeGrid READ quantizeGrid WRITE setQuantizeGrid NOTIFY changed)
     Q_PROPERTY(bool scrubAudible READ scrubAudible WRITE setScrubAudible NOTIFY changed)
+    /// Fold the deck's transport buttons away while a controller is present.
+    ///
+    /// The S4's own PLAY, CUE, LOOP, jump, REV and FLX sit under the same hand, and a second set on the screen is a second
+    /// place to look for the same button. A switch rather than a silent rule: a DJ who wants them back on the desk with
+    /// the controller plugged in keeps them (owner's request, 25.11).
+    Q_PROPERTY(bool hideDeckButtonsWithController READ hideDeckButtonsWithController WRITE
+                   setHideDeckButtonsWithController NOTIFY changed)
     Q_PROPERTY(QString file READ file NOTIFY changed)
     // The collection's columns, in the DJ's order: a table he arranges once and finds again.
     Q_PROPERTY(QVariantList collectionColumns READ collectionColumns NOTIFY changed)
@@ -111,6 +118,8 @@ public:
     void setQuantizeGrid(bool on);
     bool scrubAudible() const { return m_scrubAudible; }
     void setScrubAudible(bool on);
+    bool hideDeckButtonsWithController() const { return m_hideDeckButtonsWithController; }
+    void setHideDeckButtonsWithController(bool on);
     void setWaveformSpan(double span);
 
     // The order of channel strips in the mixer, left to right, e.g. "CABD".
@@ -193,6 +202,8 @@ private:
     bool m_snapGrid = true;
     bool m_quantizeGrid = true;
     bool m_scrubAudible = false;
+    // On by default: a controller under the hands is the case this switch was asked for.
+    bool m_hideDeckButtonsWithController = true;
     QTimer *m_saveTimer = nullptr;
     UiSettings *m_ui = nullptr;
     QString m_file;

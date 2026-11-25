@@ -3006,6 +3006,51 @@ int runTransportCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, UiSet
     }
     window->resize(1366, 768);
     window->show();
+
+    // A controller that is present folds the deck's transport row away — its own PLAY, CUE, LOOP, jump, REV and FLX are
+    // under the hand — and the row comes back when the panel is gone. The switch in Settings keeps both for a desk that
+    // wants them (owner's request, 25.11).
+    {
+        auto* row = findItem(window->contentItem(), QStringLiteral("transport_A"));
+        if (row == nullptr) {
+            std::fprintf(stderr, "dj-ui: deck A has no transport row\n");
+            return 1;
+        }
+        const auto panelPresent = [&]() {
+            return bridge->snapshot()
+                .value(QStringLiteral("panel"))
+                .toMap()
+                .value(QStringLiteral("present"))
+                .toBool();
+        };
+        const auto settle = [&](const std::function<bool()>& ready) {
+            QElapsedTimer clock;
+            clock.start();
+            while (clock.elapsed() < 4000) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                if (ready()) {
+                    return true;
+                }
+                QThread::msleep(10);
+            }
+            return ready();
+        };
+        const bool shown = row->isVisible();
+        bridge->setPanelPresent(true);
+        const bool folded = settle([&]() { return panelPresent() && !row->isVisible(); });
+        bridge->setPanelPresent(false);
+        const bool back = settle([&]() { return !panelPresent() && row->isVisible(); });
+        std::fprintf(stdout,
+                     "dj-ui: the deck's transport row %s while a controller is present and %s again after it\n",
+                     folded ? "folds away" : "STAYS", back ? "comes back" : "does NOT come back");
+        if (!shown || !folded || !back) {
+            std::fprintf(stderr,
+                         "dj-ui: the transport row did not follow the controller (present %d, row visible "
+                         "%d)\n",
+                         panelPresent() ? 1 : 0, row->isVisible() ? 1 : 0);
+            return 1;
+        }
+    }
     const auto pump = [&](int rounds) {
         for (int step = 0; step < rounds; ++step) {
             QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
@@ -7605,6 +7650,13 @@ int runBrowserRestoreCheck(QQmlApplicationEngine& engine, LayoutSettings& layout
         quantLit) {
         std::fprintf(stderr,
                      "dj-ui: the deck's modes did not come back as the last run left them\n");
+        return 1;
+    }
+    // The window's own switch: a desk that asked for both sets of buttons keeps them, and the next start remembers it.
+    std::fprintf(stdout, "dj-ui: the deck buttons stay with a controller %s, as the last run left them\n",
+                 layout.hideDeckButtonsWithController() ? "shown" : "folded here");
+    if (layout.hideDeckButtonsWithController()) {
+        std::fprintf(stderr, "dj-ui: the deck buttons switch did not come back as it was left\n");
         return 1;
     }
     return 0;

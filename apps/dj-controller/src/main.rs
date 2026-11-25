@@ -924,6 +924,9 @@ fn serve(
     // The panel streams the wheels at ~500 Hz only after the jog-light init: without it report 3 comes at 4 Hz and every
     // scratch is four samples a second (owner's measurement, 25.11). Sent once, before anything is read.
     send_wheel_init(devices);
+    // And the engine is told the panel is here: the window folds away the deck buttons a hand no longer needs (owner's
+    // request, 25.11). Said once per connection — the engine takes the word back when this connection ends.
+    announce_panel(endpoint);
     let map = load_inputs(inputs_file)?;
     if map.is_empty() {
         println!(
@@ -2141,6 +2144,22 @@ fn panel_deck_command(control: &str) -> Option<(dj_domain::DeckId, dj_domain::Dj
 /// the bottom always arrived because zero is below the threshold (owner's report, 24.11).
 fn is_double_touch(analog: bool, value: f32, last: Option<u128>, now: u128) -> bool {
     !analog && value > 0.5 && last.is_some_and(|last| now.saturating_sub(last) < 150)
+}
+
+/// Tell the engine a controller is present: the window folds away the deck buttons its own hardware covers.
+///
+/// Best effort and once per connection: the engine keeps the word while this connection is alive and takes it back when
+/// the socket closes, so a service that dies leaves the window as it found it.
+fn announce_panel(endpoint: &str) {
+    let Ok(mut link) = EngineLink::connect(endpoint) else {
+        println!(
+            "dj-controller: the engine is not answering yet; the panel will say it is here on the next command"
+        );
+        return;
+    };
+    if let Err(reason) = link.send(&dj_domain::DjCommand::PanelPresent { present: true }) {
+        println!("dj-controller: the engine did not hear that the panel is here: {reason}");
+    }
 }
 
 /// Sends the newest position of every knob and fader that has one waiting.

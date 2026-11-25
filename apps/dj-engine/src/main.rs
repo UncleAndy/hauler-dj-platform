@@ -2226,6 +2226,24 @@ struct AnalysisRequest {
     path: String,
 }
 
+/// The panel's word, kept only as long as the connection that gave it.
+///
+/// The service says "a controller is here" and the engine believes it until the socket closes; then the window's deck
+/// buttons come back. This is why the fact is not a command-only flag: a command that is never contradicted would hide
+/// the buttons of a desk with no controller on it, for the rest of the engine's life.
+struct PanelPresence {
+    cells: Arc<dj_engine::StateCells>,
+    declared: bool,
+}
+
+impl Drop for PanelPresence {
+    fn drop(&mut self) {
+        if self.declared {
+            self.cells.set_panel_present(false);
+        }
+    }
+}
+
 fn serve_client(
     connection: dj_bridge::Connection,
     outgoing: Receiver<ServerMessage>,
@@ -2236,6 +2254,13 @@ fn serve_client(
     flags: DeckFlags,
 ) {
     let cells = Arc::clone(&work.cells);
+    // Whether this client declared itself the panel, and taking the word back on every way out of the loop below: a
+    // service that is stopped — the launcher's own stop, a crash, `kill -9` — closes its socket, and the window's deck
+    // buttons come back on their own. A flag nobody clears is worse than no flag: it hides the buttons for ever.
+    let mut presence = PanelPresence {
+        cells: Arc::clone(&cells),
+        declared: false,
+    };
     let (mut reader, mut writer) = connection.split();
 
     // The writer only writes: it blocks on the channel, never polls with a deadline.
@@ -2281,6 +2306,17 @@ fn serve_client(
                 // A load is answered here, not by the audio callback: it is `Accepted`, and the
                 // deck becomes playable only when the state says `Ready`.
                 match dj_engine::route(&command) {
+                    dj_engine::Routed::PanelPresent { present } => {
+                        // Said while this client's connection lives, and taken back when it ends: the guard below clears
+                        // it on every way out of this loop, so a killed service leaves no hidden buttons behind.
+                        presence.declared = present;
+                        cells.set_panel_present(present);
+                        let ack = dj_domain::Ack::applied(command.id, 0);
+                        if alerts.send(ServerMessage::Ack(ack)).is_err() {
+                            return;
+                        }
+                        continue;
+                    }
                     dj_engine::Routed::PanelDeck { side, deck } => {
                         cells.set_panel_deck(side, deck);
                         let ack = dj_domain::Ack::applied(command.id, 0);

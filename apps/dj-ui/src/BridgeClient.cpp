@@ -2979,6 +2979,15 @@ int BridgeClient::setMaster(const QString &deck)
     return sendCommand(deck, command);
 }
 
+int BridgeClient::setPanelPresent(bool present)
+{
+    QJsonObject options;
+    options.insert(QStringLiteral("present"), present);
+    QJsonObject command;
+    command.insert(QStringLiteral("PanelPresent"), options);
+    return sendCommand(QString(), command);
+}
+
 int BridgeClient::clearMaster()
 {
     // Nobody leads. The decks that followed stop following and keep playing: a tempo a hand set is a

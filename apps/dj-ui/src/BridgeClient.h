@@ -573,6 +573,9 @@ public:
     Q_INVOKABLE int setSync(const QString &deck, const QString &mode);
     /// Make this deck the one the others follow (DJP-SYNC-001).
     Q_INVOKABLE int setMaster(const QString &deck);
+    /// Tell the engine whether a controller is present: the deck's transport row folds away while one is, and comes back
+    /// when the panel is gone (owner's request, 25.11). The panel's own service sends the same command.
+    Q_INVOKABLE int setPanelPresent(bool present);
     Q_INVOKABLE int clearMaster();
     Q_INVOKABLE int setCrossfader(double position);
     Q_INVOKABLE int setChannelGain(const QString &deck, double gain);

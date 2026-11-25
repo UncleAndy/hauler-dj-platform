@@ -767,6 +767,8 @@ int runBrowserCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutS
     }
     settings.setScrubAudible(true);
     layout.setScrubAudible(true);
+    // A switch of the window's own, left off for the next start: the restore check reads it back with the other modes.
+    layout.setHideDeckButtonsWithController(false);
     // The file is written once the hand stops (a debounced save): leave it time to land.
     QElapsedTimer flushed;
     flushed.start();

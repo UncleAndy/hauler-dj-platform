@@ -1189,6 +1189,15 @@ impl StateCells {
     }
 
     /// Put the deck a side of the panel drives where the publisher will find it.
+    /// Say whether a controller is present, where the publisher will find it.
+    ///
+    /// The service of the panel sets it while its connection lives, and the connection's own end clears it: the window
+    /// folds its deck buttons away while a controller is there, and a service that was killed must not leave them folded.
+    pub fn set_panel_present(&self, present: bool) {
+        let mut guard = self.panel.lock().unwrap_or_else(|error| error.into_inner());
+        guard.present = present;
+    }
+
     pub fn set_panel_deck(&self, side: dj_domain::PanelSide, deck: dj_domain::DeckId) {
         let mut guard = self.panel.lock().unwrap_or_else(|error| error.into_inner());
         match side {
@@ -2140,6 +2149,11 @@ pub enum Routed {
         /// The deck it drives.
         deck: dj_domain::DeckId,
     },
+    /// Applied here, on the command thread: whether a controller is there is a fact about the desk, not a sound.
+    PanelPresent {
+        /// Whether the panel's service is connected and driving.
+        present: bool,
+    },
     /// Applied here, on the command thread: the browser is a place in a list, not a sound.
     Browser(BrowserChange),
     /// Handed to the loader, which asks the graph to clear the deck.
@@ -2324,6 +2338,7 @@ pub fn route(command: &ScheduledCommand) -> Routed {
             deck: *deck,
             path: path.clone(),
         }),
+        DjCommand::PanelPresent { present } => Routed::PanelPresent { present: *present },
         DjCommand::PanelDeck { side, deck } => Routed::PanelDeck {
             side: *side,
             deck: *deck,

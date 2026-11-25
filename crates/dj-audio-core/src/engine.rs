@@ -182,7 +182,7 @@ impl Engine {
             }
             // The playlists are the index's business too, not the audio path's.
             // The browser's place in a list is the window's, carried by the engine: not the audio path's business.
-            DjCommand::PanelDeck { .. } => {
+            DjCommand::PanelDeck { .. } | DjCommand::PanelPresent { .. } => {
                 Some(Ack::rejected(command_id, RejectReason::NotSupported))
             }
             DjCommand::BrowserShow { .. }

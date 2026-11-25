@@ -993,6 +993,12 @@ Pane {
         RowLayout {
             id: transportRow
             objectName: "transport_" + panel.deckId
+            // With a controller under the hands, its own PLAY, CUE, LOOP, jump, REV and FLX do this row's work: the row
+            // folds away so the deck keeps the wave and the numbers (owner's request, 25.11). The switch in Settings
+            // brings it back for a DJ who wants both.
+            visible: !(Bridge.snapshot.panel !== undefined
+                       && Bridge.snapshot.panel.present === true
+                       && LayoutState.hideDeckButtonsWithController)
             Layout.fillWidth: true
             spacing: 4
             // Play and Cue are one pair, and a pair of buttons of two widths reads as two sizes of one

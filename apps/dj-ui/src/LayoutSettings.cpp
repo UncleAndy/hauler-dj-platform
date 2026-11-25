@@ -338,6 +338,16 @@ void LayoutSettings::setScrubAudible(bool on)
     scheduleSave();
 }
 
+void LayoutSettings::setHideDeckButtonsWithController(bool on)
+{
+    if (m_hideDeckButtonsWithController == on) {
+        return;
+    }
+    m_hideDeckButtonsWithController = on;
+    emit changed();
+    scheduleSave();
+}
+
 QString LayoutSettings::roomiestRoot() const
 {
     // No roots at all is not "nowhere": the engine has a collection folder of its own, and an import with an empty
@@ -587,6 +597,9 @@ bool LayoutSettings::load()
     m_snapGrid = root.value(QStringLiteral("snap_grid")).toBool(m_snapGrid);
     m_quantizeGrid = root.value(QStringLiteral("quantize_grid")).toBool(m_quantizeGrid);
     m_scrubAudible = root.value(QStringLiteral("scrub_audible")).toBool(m_scrubAudible);
+    m_hideDeckButtonsWithController =
+        root.value(QStringLiteral("hide_deck_buttons_with_controller"))
+            .toBool(m_hideDeckButtonsWithController);
     m_waveformSpan = span <= 0.0 ? 0.0 : std::clamp(span, 0.0025, 1.0);
     setChannelOrder(root.value(QStringLiteral("channel_order")).toString(m_channelOrder));
     // Several roots are the normal case: one collection may live on several disks. A file written by
@@ -694,6 +707,7 @@ bool LayoutSettings::save() const
     root.insert(QStringLiteral("snap_grid"), m_snapGrid);
     root.insert(QStringLiteral("quantize_grid"), m_quantizeGrid);
     root.insert(QStringLiteral("scrub_audible"), m_scrubAudible);
+    root.insert(QStringLiteral("hide_deck_buttons_with_controller"), m_hideDeckButtonsWithController);
     QFile file(m_file);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         return false;
