@@ -7,7 +7,7 @@
 #![allow(clippy::expect_used)]
 
 use dj_controller_s4mk3::screen::{
-    ACCENT, BACKGROUND, Canvas, DeckPanel, clock, from_rgb565, render_deck, render_idle,
+    ACCENT, BACKGROUND, Canvas, DeckPanel, GROOVE, INK, clock, from_rgb565, render_deck, render_idle,
     sample_panel,
 };
 use dj_controller_s4mk3::text;
@@ -186,7 +186,9 @@ fn a_playing_deck_shows_its_state_and_a_paused_one_shows_another() {
     // colour-blind eye reads it. Those two bands and nothing else.
     let height = playing.height();
     for (x, y) in &differing {
-        let in_header = (8..=30).contains(y);
+        // The header band holds the two knob numbers and, under them, the deck and its state: the state word moved
+        // down when the corners took the top row (owner's request, 25.11).
+        let in_header = (8..=42).contains(y);
         let in_floor = *y >= height - 16;
         assert!(
             in_header || in_floor,
@@ -224,4 +226,91 @@ fn rgb565_is_turned_back_into_channels() {
     assert_eq!(from_rgb565(0xF800), (255, 0, 0));
     assert_eq!(from_rgb565(0x07E0), (0, 255, 0));
     assert_eq!(from_rgb565(0x001F), (0, 0, 255));
+}
+
+/// Pixels of a band that are not the screen's background: ink, paper, or the strip's own groove.
+fn inked(canvas: &Canvas, x: usize, y: usize, width: usize, height: usize) -> usize {
+    let mut count = 0;
+    for column in x..x + width {
+        for row in y..y + height {
+            if canvas.at(column, row).is_some_and(|pixel| pixel != BACKGROUND) {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+#[test]
+fn the_corners_carry_the_jump_step_and_the_loop_size() {
+    // The two numbers the knobs beside the screen carry sit in the corners, where the eye finds them while the hand is
+    // still on the knob — and they follow the knob, so what the screen says and what a click does cannot disagree
+    // (owner's request, 25.11).
+    let mut panel = DeckPanel {
+        deck: 'A',
+        loaded: true,
+        playing: true,
+        ..DeckPanel::default()
+    };
+    panel.jump_beats = Some(4.0);
+    panel.loop_beats = Some(8);
+    let small = render_deck(&panel);
+    panel.jump_beats = Some(16.0);
+    panel.loop_beats = Some(32);
+    let large = render_deck(&panel);
+
+    // Both corners are written on, and both change when the numbers do.
+    let (top, height) = (2usize, 16usize);
+    assert!(inked(&small, 10, top, 110, height) > 0, "the jump step is not in the left corner");
+    assert!(inked(&small, 210, top, 100, height) > 0, "the loop size is not in the right corner");
+    let changed_left = (10..120).any(|x| small.at(x, 8) != large.at(x, 8));
+    let changed_right = (210..310).any(|x| small.at(x, 8) != large.at(x, 8));
+    assert!(changed_left, "the jump step did not follow its knob");
+    assert!(changed_right, "the loop size did not follow its knob");
+}
+
+#[test]
+fn the_bottom_of_the_screen_is_the_whole_track_with_a_play_head() {
+    // The whole track at the bottom, with the play head on it: a strip of one colour says how far along but not what is
+    // coming, and the next drop is what the eye is looking for (owner's request, 25.11).
+    let mut panel = DeckPanel {
+        deck: 'A',
+        loaded: true,
+        playing: true,
+        position: 0.5,
+        ..DeckPanel::default()
+    };
+    panel.waveform = vec![(-0.4, 0.4); 300];
+    let canvas = render_deck(&panel);
+
+    // Sound on both sides of the play head, and the play head itself a bright line in the middle of the strip.
+    assert!(
+        canvas.at(60, 160).is_some_and(|pixel| pixel != GROOVE),
+        "the track before the play head is not drawn"
+    );
+    assert!(
+        canvas.at(240, 160).is_some_and(|pixel| pixel != GROOVE),
+        "the track after the play head is not drawn"
+    );
+    let head = 10 + 150;
+    assert_eq!(canvas.at(head, 160), Some(INK), "the play head is not where the sound is");
+}
+
+#[test]
+fn a_track_without_an_envelope_keeps_its_strip_empty() {
+    // No envelope, no wave: an invented picture would be a strip that describes a track nobody loaded.
+    let panel = DeckPanel {
+        deck: 'A',
+        loaded: true,
+        playing: true,
+        position: 0.25,
+        ..DeckPanel::default()
+    };
+    let canvas = render_deck(&panel);
+    assert_eq!(canvas.at(60, 160), Some(GROOVE), "an empty track drew a wave");
+    assert_eq!(
+        canvas.at(10 + 75, 160),
+        Some(INK),
+        "the play head is missing without a wave"
+    );
 }

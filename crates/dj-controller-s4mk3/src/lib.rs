@@ -27,6 +27,7 @@ pub mod inputs;
 pub mod lights;
 pub mod screen;
 pub mod text;
+pub mod waveform;
 
 pub const VENDOR: u16 = 0x17cc;
 /// USB product id.

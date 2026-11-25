@@ -201,6 +201,13 @@ pub struct DeckPanel {
     pub beats_per_bar: u8,
     /// Musical key, when the file says it.
     pub key: Option<String>,
+    /// The amount one click of the MOVE knob jumps, in beats: the step the knob beside the screen applies.
+    pub jump_beats: Option<f64>,
+    /// The loop size the LOOP knob carries, in beats.
+    pub loop_beats: Option<u32>,
+    /// The whole track as low/high pairs, one per column, left to right: the envelope the window already caches, cut
+    /// down to what the strip can show. Empty when the track has no envelope.
+    pub waveform: Vec<(f32, f32)>,
 }
 
 /// A clock as a DJ reads it: `1:23`, `1:02:05`, and `-0:05` for the last five seconds.
@@ -229,13 +236,33 @@ pub fn render_deck(panel: &DeckPanel) -> Canvas {
     let margin = 10;
     let room = width - margin * 2;
 
-    // Band 1 — the deck and its state. The letter is the largest thing on the screen, because at a glance the only
-    // question is "which deck am I looking at".
+    // Band 1 — the two numbers the knobs beside the screen carry, in the corners, because that is where the eye finds
+    // them while the hand is still on the knob. Nothing else shares this row: a number that has to be looked for is a
+    // number the DJ reads after the miss, not before it (owner's request, 25.11).
+    let jump = match panel.jump_beats {
+        Some(beats) => format!("MOVE {}", beats_label(beats)),
+        None => String::from("MOVE --"),
+    };
+    canvas.text(margin as isize, 2, 2, INK, &jump);
+    let looped = match panel.loop_beats {
+        Some(beats) => format!("LOOP {beats}"),
+        None => String::from("LOOP --"),
+    };
+    let looped_width = text_fit_width(&looped, 2);
+    canvas.text(
+        width as isize - looped_width - margin as isize,
+        2,
+        2,
+        WARM,
+        &looped,
+    );
+
+    // Band 2 — which deck, what it is doing, and the tempo it is doing it at.
     let letter = if panel.deck == '\0' { '?' } else { panel.deck };
     canvas.text(
         margin as isize,
-        4,
-        3,
+        22,
+        2,
         INK,
         &letter.to_string().to_ascii_uppercase(),
     );
@@ -245,82 +272,84 @@ pub fn render_deck(panel: &DeckPanel) -> Canvas {
         (true, false) => ("PAUSE", WARM),
     };
     canvas.text(
-        4 * text::GLYPH_WIDTH as isize * 3 + margin as isize,
-        12,
-        2,
+        margin as isize + 3 * text::GLYPH_WIDTH as isize * 2,
+        27,
+        1,
         state_colour,
         state_word,
     );
-
-    // Tempo on the right, where a hand on the fader looks; pitch under it, in the same corner.
     if let Some(bpm) = panel.bpm {
         let tempo = format!("{bpm:.1}");
-        let advance = text_fit_width(&tempo, 3);
+        let advance = text_fit_width(&tempo, 2);
         canvas.text(
             width as isize - advance - margin as isize,
-            4,
-            3,
+            22,
+            2,
             INK,
             &tempo,
         );
-        let pitch = format!("{:+.1}%", panel.pitch_percent);
-        let pitch_width = text_fit_width(&pitch, 1);
-        canvas.text(
-            width as isize - pitch_width - margin as isize,
-            30,
-            1,
-            DIM,
-            &pitch,
-        );
     }
+    let pitch = format!("{:+.1}%", panel.pitch_percent);
+    let pitch_width = text_fit_width(&pitch, 1);
+    canvas.text(
+        width as isize - pitch_width - margin as isize,
+        37,
+        1,
+        DIM,
+        &pitch,
+    );
 
-    // Band 2 — the track. A title too long is cut with two dots rather than wrapped: a second line of a title reads as
+    // Band 3 — the track. A title too long is cut with two dots rather than wrapped: a second line of a title reads as
     // a second track.
     let title = text::fit(&panel.title, room, 2);
-    canvas.text(margin as isize, 40, 2, INK, &title);
+    canvas.text(margin as isize, 46, 2, INK, &title);
     let artist = text::fit(&panel.artist, room, 1);
-    canvas.text(margin as isize, 62, 1, DIM, &artist);
+    canvas.text(margin as isize, 64, 1, DIM, &artist);
 
-    // Band 3 — the clocks. Elapsed is what a DJ counts bars against; remaining is what decides the next move.
-    canvas.text(margin as isize, 76, 5, INK, &clock(panel.elapsed_seconds));
+    // Band 4 — the clocks. Elapsed is what a hand counts bars against, so it is the largest number on the screen;
+    // remaining is what decides the next move and sits under it.
+    canvas.text(margin as isize, 76, 4, INK, &clock(panel.elapsed_seconds));
     let left = clock(panel.remaining_seconds);
-    let left_width = text_fit_width(&left, 3);
+    let left_width = text_fit_width(&left, 2);
     canvas.text(
         width as isize - left_width - margin as isize,
-        96,
-        3,
+        94,
+        2,
         DIM,
         &left,
     );
-
-    // Band 4 — the key, and the loop when there is one.
     if let Some(key) = panel.key.as_deref() {
-        canvas.text(margin as isize, 126, 2, DIM, &text::fit(key, room / 2, 2));
-    }
-    if panel.loop_fraction.is_some() {
-        let label = text::fit("LOOP", room / 2, 2);
-        let label_width = text_fit_width(&label, 2);
-        canvas.text(
-            width as isize - label_width - margin as isize,
-            126,
-            2,
-            WARM,
-            &label,
-        );
+        canvas.text(margin as isize, 106, 1, DIM, &text::fit(key, room / 2, 1));
     }
 
-    // Band 5 — the bar: the whole track, the part played, the loop, and a tick on the beat.
-    let bar_y = height - 56;
-    let bar_height = 20;
-    canvas.fill_rect(margin as isize, bar_y as isize, room, bar_height, GROOVE);
-    let played = (panel.position.clamp(0.0, 1.0) * room as f64).round() as usize;
-    canvas.fill_rect(
-        margin as isize,
-        bar_y as isize,
-        played.min(room),
-        bar_height,
-        ACCENT,
-    );
+    // Band 5 — the whole track as a waveform, with the play head on it. The bottom of the screen is where the eye goes
+    // for "where am I and what is coming"; a bar of one colour answers only the first half (owner's request, 25.11).
+    let wave_top = 118;
+    let wave_height = 94;
+    let middle = wave_top + wave_height / 2;
+    canvas.fill_rect(margin as isize, wave_top as isize, room, wave_height, GROOVE);
+    let played = (panel.position.clamp(0.0, 1.0) * room as f64).round() as isize;
+    let played_x = margin as isize + played;
+    if !panel.waveform.is_empty() {
+        let amplitude = wave_height as f32 / 2.0 - 3.0;
+        for column in 0..room {
+            let at = (column * panel.waveform.len() / room).min(panel.waveform.len() - 1);
+            let (low, high) = panel.waveform[at];
+            let top = middle as f32 - high.clamp(-1.0, 1.0) * amplitude;
+            let bottom = middle as f32 - low.clamp(-1.0, 1.0) * amplitude;
+            let x = margin as isize + column as isize;
+            // What has played is drawn brighter than what is still coming: the same ink for both makes the play head
+            // the only thing telling them apart, and a finger covers the play head.
+            let ink = if x < played_x { ACCENT } else { DIM };
+            canvas.fill_rect(
+                x,
+                top.round() as isize,
+                1,
+                (bottom.round() - top.round()).max(1.0) as usize,
+                ink,
+            );
+        }
+    }
     if let Some((from, to)) = panel.loop_fraction {
         let from = from.clamp(0.0, 1.0);
         let to = to.clamp(from, 1.0);
@@ -328,32 +357,20 @@ pub fn render_deck(panel: &DeckPanel) -> Canvas {
         let right = margin as isize + (to * room as f64).round() as isize;
         canvas.fill_rect(
             left,
-            bar_y as isize - 10,
+            wave_top as isize - 6,
             (right - left).max(2) as usize,
-            6,
+            5,
             WARM,
         );
     }
-    if let Some(phase) = panel.beat_phase {
-        let beats = if panel.beats_per_bar == 0 {
-            4
-        } else {
-            panel.beats_per_bar
-        };
-        let beat_span = room as f64 / f64::from(beats);
-        let offset = margin as f64 + phase.clamp(0.0, 1.0) * beat_span;
-        canvas.fill_rect(offset.round() as isize, bar_y as isize, 3, bar_height, INK);
-    }
+    // The play head last, so nothing drawn over it can hide where the sound is.
+    canvas.fill_rect(played_x, wave_top as isize - 6, 2, wave_height + 12, INK);
 
     // The floor: a rule that closes the picture, and the state repeated in words a colour-blind eye can read.
     canvas.fill_rect(0, height as isize - 16, width, 1, GROOVE);
     canvas.text(margin as isize, height as isize - 13, 1, DIM, state_word);
-    let hint = if panel.loop_fraction.is_some() {
-        "LOOP ON"
-    } else {
-        ""
-    };
-    if !hint.is_empty() {
+    if panel.loop_fraction.is_some() {
+        let hint = "LOOP ON";
         let hint_width = text_fit_width(hint, 1);
         canvas.text(
             width as isize - hint_width - margin as isize,
@@ -365,6 +382,15 @@ pub fn render_deck(panel: &DeckPanel) -> Canvas {
     }
 
     canvas
+}
+
+/// A beat count as a hand says it: whole beats without a tail, and a fraction with two digits.
+fn beats_label(beats: f64) -> String {
+    if (beats - beats.round()).abs() < 1e-9 {
+        format!("{}", beats.round() as i64)
+    } else {
+        format!("{beats:.2}")
+    }
 }
 
 fn text_fit_width(text: &str, scale: usize) -> isize {
@@ -400,6 +426,18 @@ pub fn sample_panel() -> DeckPanel {
         beat_phase: Some(0.35),
         beats_per_bar: 4,
         key: Some("8A".to_string()),
+        jump_beats: Some(4.0),
+        loop_beats: Some(8),
+        // A made-up envelope: a bass-heavy track rising to a chorus, so the strip shows what a track looks like.
+        waveform: (0..320)
+            .map(|column| {
+                let x = column as f32 / 320.0;
+                let body = 0.25 + 0.55 * (x * std::f32::consts::PI).sin();
+                let chorus = if (0.45..0.75).contains(&x) { 0.2 } else { 0.0 };
+                let high = (body + chorus).min(0.95);
+                (-high * 0.9, high)
+            })
+            .collect(),
     }
 }
 

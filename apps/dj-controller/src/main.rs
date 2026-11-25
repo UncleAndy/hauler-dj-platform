@@ -306,6 +306,11 @@ fn run(arguments: &[String]) -> Result<(), String> {
     if let Mode::ScreenPreview(path, panel) = &mode {
         return screen_preview(path, *panel);
     }
+    // A frame taken from a live engine is the same picture from real numbers: it is written to a file and nothing is
+    // sent, so it answers while controller support is off, like the preview above.
+    if matches!(mode, Mode::ScreenFrom) {
+        return screen_from(engine.as_deref(), pick_out.as_deref(), screen_panel);
+    }
     // A dry sweep prints the frames it would send: that needs neither the switch nor a node, and it is how the sweep is
     // tested. Sending is a write to a device, so that half waits for the switch like everything else.
     let dry_sweep = Sweep {
@@ -2563,6 +2568,8 @@ fn lights_off(devices: &[DeviceInfo]) -> Result<(), String> {
 fn panel_from(
     snapshot: &dj_domain::Snapshot,
     side: dj_controller_s4mk3::Screen,
+    jump_beats: f64,
+    loop_beats: u32,
 ) -> dj_controller_s4mk3::screen::DeckPanel {
     let first = match side {
         dj_controller_s4mk3::Screen::Left => dj_domain::DeckId::A,
@@ -2575,6 +2582,8 @@ fn panel_from(
             } else {
                 'B'
             },
+            jump_beats: Some(jump_beats),
+            loop_beats: Some(loop_beats),
             ..dj_controller_s4mk3::screen::DeckPanel::default()
         };
     };
@@ -2633,8 +2642,23 @@ fn panel_from(
             .map(|beats| f64::from(beats).rem_euclid(1.0)),
         beats_per_bar: 4,
         key: deck.track.as_ref().and_then(|track| track.key.clone()),
+        // The two numbers the knobs beside the screen carry: the same ones the knobs act on, so what the screen says and
+        // what a click does can never disagree.
+        jump_beats: Some(jump_beats),
+        loop_beats: Some(loop_beats),
+        // The whole track at the bottom of the screen: the envelope the window already caches, cut to what the strip
+        // can show. A track with no envelope gets no strip, which is honest — it is not a track with no sound.
+        waveform: deck
+            .waveform
+            .as_ref()
+            .and_then(|wave| dj_controller_s4mk3::waveform::read(&wave.path))
+            .map(|envelope| dj_controller_s4mk3::waveform::spread(&envelope.columns, STRIP_COLUMNS))
+            .unwrap_or_default(),
     }
 }
+
+/// How many columns the strip at the bottom of a screen is drawn with: the width of the picture inside its margins.
+const STRIP_COLUMNS: usize = 300;
 
 /// Draw one screen from a live snapshot and write it where a person can look at it.
 fn screen_from(
@@ -2658,16 +2682,24 @@ fn screen_from(
             .map_err(|error| format!("the engine stopped answering: {error}"))?
         {
             dj_bridge::ServerMessage::Snapshot(snapshot) => {
-                let panel = panel_from(&snapshot, side);
+                // The knobs' own values: this one-shot tool has no live controller, so it draws what a fresh service
+                // carries. The service itself passes the numbers its hand set.
+                let panel = panel_from(&snapshot, side, 4.0, 4);
                 let canvas = dj_controller_s4mk3::screen::render_deck(&panel);
                 std::fs::write(path, canvas.to_ppm())
                     .map_err(|error| format!("{path}: {error}"))?;
                 println!(
-                    "dj-controller: {path}: {} — {} by {}, {} left",
+                    "dj-controller: {path}: {} — {} by {}, {} left, MOVE {} / LOOP {}, {} columns of waveform",
                     panel.deck,
                     panel.title,
                     panel.artist,
-                    dj_controller_s4mk3::screen::clock(panel.remaining_seconds)
+                    dj_controller_s4mk3::screen::clock(panel.remaining_seconds),
+                    panel.jump_beats.map_or_else(|| String::from("--"), |beats| {
+                        format!("{beats}")
+                    }),
+                    panel.loop_beats
+                        .map_or_else(|| String::from("--"), |beats| format!("{beats}")),
+                    panel.waveform.len()
                 );
                 return Ok(());
             }
