@@ -210,6 +210,7 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
             }),
             loop_region: None,
             loop_mode: false,
+            loop_press_seq: 0,
             active_loops: Vec::new(),
             hotcues: vec![
                 Some(SourceFrame(1_000)),

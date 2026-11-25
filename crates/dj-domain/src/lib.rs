@@ -857,6 +857,15 @@ pub enum DjCommand {
         /// Beats to move: positive is later in the track, negative is earlier.
         beats: i32,
     },
+    /// The panel's Loop button was pressed: the same press the window's own button makes (DJP-DECK-005).
+    ///
+    /// What the press means — the first that marks a loop's start, the second that closes it, or a switch of the mode
+    /// inside a saved loop — is decided where the button is drawn. The deck only counts the press, so the hand on the
+    /// panel and the hand on the screen run one function and not two that drift apart.
+    LoopPress {
+        /// Target deck.
+        deck: DeckId,
+    },
     /// Ask for a page of the collection (DJP-MEDIA-007).
     ///
     /// Not a deck command: it never reaches the audio path. The answer arrives in the snapshot's
@@ -898,6 +907,7 @@ impl DjCommand {
             | DjCommand::SetLoop { .. }
             | DjCommand::LoopBeats { .. }
             | DjCommand::LoopMove { .. }
+            | DjCommand::LoopPress { .. }
             | DjCommand::BeatJump { .. }
             | DjCommand::SetSlip { .. }
             | DjCommand::SetReverse { .. }
@@ -1435,6 +1445,11 @@ pub struct DeckSnapshot {
     pub fx: FxPatch,
     /// Active loop region, if any.
     pub loop_region: Option<FrameRange>,
+    /// Presses of the panel's Loop button, counted. The window's own button and the hardware one are the same press, so
+    /// the deck counts it and the shell answers it with the function its button runs (owner's request, 25.11).
+    /// Defaulted, so a snapshot from a build without the counter still parses.
+    #[serde(default, skip_serializing_if = "is_zero_count")]
+    pub loop_press_seq: u64,
     /// Stored hotcues; slot order is stable across snapshots.
     pub hotcues: Vec<Option<SourceFrame>>,
     /// Loops stored on pads; a pad holds a point or a loop, never both.

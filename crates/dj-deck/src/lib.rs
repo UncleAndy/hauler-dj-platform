@@ -2996,6 +2996,8 @@ impl Deck {
             // through by whoever publishes the deck snapshot with a mixer behind it.
             fx: dj_domain::FxPatch::default(),
             waveform: None,
+            // The press count is the panel's, kept in the engine's cells: a deck on its own never counts one.
+            loop_press_seq: 0,
             deck: self.id,
             // The deck does not know the mixer: whether this channel is in the headphones is the strip's business,
             // and the engine fills it in when it publishes.

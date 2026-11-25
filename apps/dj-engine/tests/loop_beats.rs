@@ -393,3 +393,38 @@ fn a_deck_without_a_grid_refuses_a_loop_of_beats() {
     render_one(&mut graph);
     assert!(deck_state(&cells).loop_region.is_none());
 }
+
+#[test]
+fn the_panel_loop_button_is_counted_where_the_window_reads_it() {
+    // The window's own Loop button and the panel's are one press: the deck counts it, and the count travels in the
+    // snapshot so the shell answers with the function its button runs (owner's request, 25.11).
+    let (mut graph, cells, submissions) = graph_for(deck_on_grid(true));
+    render_one(&mut graph);
+    assert_eq!(
+        deck_state(&cells).loop_press_seq,
+        0,
+        "a fresh deck has no press counted"
+    );
+    let ack = apply(
+        &mut graph,
+        &submissions,
+        1,
+        DjCommand::LoopPress { deck: DeckId::A },
+    );
+    assert!(
+        matches!(ack.status, AckStatus::Applied { .. }),
+        "a press is accepted like any other command"
+    );
+    apply(
+        &mut graph,
+        &submissions,
+        2,
+        DjCommand::LoopPress { deck: DeckId::A },
+    );
+    render_one(&mut graph);
+    assert_eq!(
+        deck_state(&cells).loop_press_seq,
+        2,
+        "each press is one count"
+    );
+}

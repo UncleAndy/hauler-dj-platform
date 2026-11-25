@@ -1147,6 +1147,27 @@ fn inputs_loop(
                 continue;
             }
             // Shift is a state, not a command: it decides what the next turn of the encoder means.
+            // The knobs beside the screen: a deck's own, and answered before the binding table, which speaks only about
+            // buttons and pads. MOVE jumps the play head, LOOP sizes a loop and lays it (owner's request, 25.11).
+            if matches!(
+                event.control.as_str(),
+                "deck_a.move"
+                    | "deck_b.move"
+                    | "deck_a.loop"
+                    | "deck_b.loop"
+                    | "deck_a.loop_press"
+                    | "deck_b.loop_press"
+            ) {
+                if let Some(command) = deck_knob_command(&event, &playing) {
+                    println!(
+                        "dj-controller: at {now} ms {} = {:.0} (report {report}) → {command:?}",
+                        event.control, event.value
+                    );
+                    pending.push((event.control.clone(), command));
+                    flush_pending(&mut pending, &mut link, endpoint, &mut waiting_said);
+                }
+                continue;
+            }
             if event.control.ends_with(".shift") {
                 let index = usize::from(!event.control.starts_with("deck_a"));
                 if let Ok(mut state) = playing.lock() {
@@ -1593,6 +1614,88 @@ fn claim_panel() -> Result<std::path::PathBuf, String> {
     Err(format!("{} cannot be taken", path.display()))
 }
 
+/// The MOVE amounts a turn of the knob walks: the sizes the strip's jump buttons offer, and no fractions — a jump of a
+/// quarter of a beat is a slip, not a move.
+const MOVE_BEATS: [f64; 7] = [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0];
+/// The loop sizes the LOOP knob walks: the ones the strip's buttons lay down.
+const LOOP_BEATS: [u32; 7] = [1, 2, 4, 8, 16, 32, 64];
+
+/// The next value of a list, round and round: a hand that keeps turning keeps getting a new value.
+fn cycle<T: Copy + PartialEq>(values: &[T], current: T, step: i32) -> T {
+    let at = values.iter().position(|value| *value == current).unwrap_or(0);
+    let next = (at as i32 + step).rem_euclid(values.len() as i32) as usize;
+    values[next]
+}
+
+/// What a knob beside the screen asks of the engine, if anything.
+///
+/// - **MOVE, turned** jumps the play head by the amount the knob carries: one click is one jump, on the deck's grid,
+///   the way the strip's jump buttons land (DJP-DECK-005).
+/// - **MOVE, turned with Shift** sets that amount and jumps nothing.
+/// - **LOOP, turned with Shift** picks the loop size and lays nothing.
+/// - **LOOP, pressed** lays a loop of that size under the play head, the same as a click on the size in the strip.
+/// - **LOOP, pressed with Shift** is the window's own Loop button: the press is counted and the window answers it with
+///   the function its button runs, so a loop made by hand and a loop made on the screen are the same loop.
+///
+/// A plain turn of the LOOP knob is silent: halving, doubling and walking the loop are three different things, and
+/// which one the DJ wants is his choice, not this panel's to guess.
+fn deck_knob_command(
+    event: &dj_controller_core::ControlEvent,
+    playing: &Playing,
+) -> Option<dj_domain::DjCommand> {
+    let deck = match event.control.as_str() {
+        "deck_a.move" | "deck_a.loop" | "deck_a.loop_press" => dj_domain::DeckId::A,
+        "deck_b.move" | "deck_b.loop" | "deck_b.loop_press" => dj_domain::DeckId::B,
+        _ => return None,
+    };
+    let index = usize::from(deck != dj_domain::DeckId::A);
+    let shift = playing
+        .lock()
+        .ok()
+        .is_some_and(|state| state.shift.get(index).copied().unwrap_or(false));
+    // A relative field says which way it went: 1.0 is a turn to the right, 0.0 to the left.
+    let right = event.value > 0.5;
+    let step = if right { 1 } else { -1 };
+    match event.control.as_str() {
+        "deck_a.move" | "deck_b.move" => {
+            if shift {
+                let mut state = playing.lock().ok()?;
+                state.move_beats[index] = cycle(&MOVE_BEATS, state.move_beats[index], step);
+                println!(
+                    "dj-controller: {deck:?} MOVE set to {} beat(s)",
+                    state.move_beats[index]
+                );
+                return None;
+            }
+            let beats = playing.lock().ok()?.move_beats[index] * f64::from(step);
+            Some(dj_domain::DjCommand::BeatJump {
+                deck,
+                beats,
+                quantize: true,
+            })
+        }
+        "deck_a.loop" | "deck_b.loop" => {
+            if !shift {
+                return None;
+            }
+            let mut state = playing.lock().ok()?;
+            state.loop_beats[index] = cycle(&LOOP_BEATS, state.loop_beats[index], step);
+            println!(
+                "dj-controller: {deck:?} loop size set to {} beat(s)",
+                state.loop_beats[index]
+            );
+            None
+        }
+        // A press: the field is a level, so only the press edge is an answer.
+        _ if !right => None,
+        _ if shift => Some(dj_domain::DjCommand::LoopPress { deck }),
+        _ => Some(dj_domain::DjCommand::LoopBeats {
+            deck,
+            beats: playing.lock().ok()?.loop_beats[index],
+        }),
+    }
+}
+
 /// What the browser's own controls ask of the engine, if anything.
 ///
 /// - **VIEW** folds the browser away or brings it back: the one thing both the panel and the window can do to it.
@@ -2002,8 +2105,13 @@ struct DeckFactsShared {
     browser_open: bool,
     /// The path the window's browser cursor stands on: what a press of the encoder loads.
     browser_cursor: Option<String>,
-    /// Shift of each deck side: with it held, the encoder walks the left block instead of the rows.
+    /// Shift of each deck side: with it held, the encoder walks the left block instead of the rows, and the knobs
+    /// beside the screen set what a plain turn of them applies.
     shift: [bool; 2],
+    /// The amount one click of the MOVE knob jumps, per deck: Shift and the same knob set it.
+    move_beats: [f64; 2],
+    /// The loop size the LOOP knob lays down, per deck: Shift and the same knob set it.
+    loop_beats: [u32; 2],
     /// The deck each side of the panel drives: the deck switch moves it, and a load lands there. Left is A and right is B
     /// until the switch says otherwise.
     panel_left: dj_domain::DeckId,
@@ -2024,6 +2132,8 @@ impl Default for DeckFactsShared {
             browser_open: true,
             browser_cursor: None,
             shift: [false; 2],
+            move_beats: [4.0; 2],
+            loop_beats: [4; 2],
             panel_left: dj_domain::DeckId::A,
             panel_right: dj_domain::DeckId::B,
         }
@@ -3803,6 +3913,99 @@ mod tests {
         assert!(
             (fastest - 1.0).abs() < 1e-6,
             "the fastest turn is the full range"
+        );
+    }
+
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn the_move_knob_jumps_by_the_amount_it_carries() {
+        let playing: Playing =
+            std::sync::Arc::new(std::sync::Mutex::new(DeckFactsShared::default()));
+        // A plain turn jumps the amount the knob carries, on the deck's grid.
+        assert_eq!(
+            deck_knob_command(
+                &dj_controller_core::ControlEvent::level("deck_a.move", 1.0),
+                &playing
+            ),
+            Some(dj_domain::DjCommand::BeatJump {
+                deck: dj_domain::DeckId::A,
+                beats: 4.0,
+                quantize: true,
+            })
+        );
+        // Shift turns the same knob into its setter: the amount grows and nothing jumps.
+        playing.lock().expect("the state").shift[0] = true;
+        assert_eq!(
+            deck_knob_command(
+                &dj_controller_core::ControlEvent::level("deck_a.move", 1.0),
+                &playing
+            ),
+            None
+        );
+        assert_eq!(playing.lock().expect("the state").move_beats[0], 8.0);
+        // And a turn back steps the amount back.
+        assert_eq!(
+            deck_knob_command(
+                &dj_controller_core::ControlEvent::level("deck_a.move", 0.0),
+                &playing
+            ),
+            None
+        );
+        assert_eq!(playing.lock().expect("the state").move_beats[0], 4.0);
+    }
+
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn the_loop_knob_lays_its_size_and_shifted_press_is_the_window_button() {
+        let playing: Playing =
+            std::sync::Arc::new(std::sync::Mutex::new(DeckFactsShared::default()));
+        // A press lays a loop of the size the knob holds, the same as a click on that size in the strip.
+        assert_eq!(
+            deck_knob_command(
+                &dj_controller_core::ControlEvent::level("deck_b.loop_press", 1.0),
+                &playing
+            ),
+            Some(dj_domain::DjCommand::LoopBeats {
+                deck: dj_domain::DeckId::B,
+                beats: 4,
+            })
+        );
+        // The release is not a press.
+        assert_eq!(
+            deck_knob_command(
+                &dj_controller_core::ControlEvent::level("deck_b.loop_press", 0.0),
+                &playing
+            ),
+            None
+        );
+        // Shift and a turn pick the size; the turn lays nothing.
+        playing.lock().expect("the state").shift[1] = true;
+        assert_eq!(
+            deck_knob_command(
+                &dj_controller_core::ControlEvent::level("deck_b.loop", 1.0),
+                &playing
+            ),
+            None
+        );
+        assert_eq!(playing.lock().expect("the state").loop_beats[1], 8);
+        // Shift and a press is the window's Loop button: the count travels and the window answers it.
+        assert_eq!(
+            deck_knob_command(
+                &dj_controller_core::ControlEvent::level("deck_b.loop_press", 1.0),
+                &playing
+            ),
+            Some(dj_domain::DjCommand::LoopPress {
+                deck: dj_domain::DeckId::B,
+            })
+        );
+        // Without Shift a turn of the LOOP knob is silent: halving and doubling are not guessed here.
+        playing.lock().expect("the state").shift[1] = false;
+        assert_eq!(
+            deck_knob_command(
+                &dj_controller_core::ControlEvent::level("deck_b.loop", 1.0),
+                &playing
+            ),
+            None
         );
     }
 

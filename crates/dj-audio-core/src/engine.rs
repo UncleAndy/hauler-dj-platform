@@ -270,6 +270,7 @@ impl Engine {
             | DjCommand::SetLoop { .. }
             | DjCommand::LoopBeats { .. }
             | DjCommand::LoopMove { .. }
+            | DjCommand::LoopPress { .. }
             | DjCommand::BeatJump { .. }
             | DjCommand::Nudge { .. }
             | DjCommand::SetSlip { .. }
@@ -364,6 +365,7 @@ impl Engine {
                 track: None,
                 loop_region: None,
                 loop_mode: false,
+                loop_press_seq: 0,
                 active_loops: Vec::new(),
                 hotcues: vec![None; dj_domain::HOTCUE_SLOTS],
                 pad_loops: Vec::new(),

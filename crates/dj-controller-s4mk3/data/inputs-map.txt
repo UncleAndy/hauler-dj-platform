@@ -68,6 +68,17 @@ panel.deck_d 1 14 3 1
 deck_a.shift 1 5 1 1
 deck_b.shift 1 14 1 1
 
+# --- the knobs beside the screen, report 1, one pair per deck: MOVE moves the play head, LOOP sizes and lays a loop
+# (owner's request, 25.11). Read from Mixxx's own table (`leftEncoder`, `leftEncoderPress`, `rightEncoder`,
+# `rightEncoderPress`) and waiting to be confirmed by hand: turn the left knob, press the right one in.
+# `relative`: four bits count the steps, so a turn says which way it went and never where it is.
+deck_a.move 1 19 0 4 relative
+deck_a.loop 1 19 4 4 relative
+deck_a.loop_press 1 6 5 1
+deck_b.move 1 20 4 4 relative
+deck_b.loop 1 21 0 4 relative
+deck_b.loop_press 1 15 2 1
+
 # --- transport, report 1
 deck_a.play_pause 1 4 0 1
 deck_a.cue 1 4 1 1

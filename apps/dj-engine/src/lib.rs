@@ -57,6 +57,7 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
         | DjCommand::SetLoop { deck, .. }
         | DjCommand::LoopBeats { deck, .. }
         | DjCommand::LoopMove { deck, .. }
+        | DjCommand::LoopPress { deck, .. }
         | DjCommand::SetTempoRatio { deck, .. }
         | DjCommand::Nudge { deck, .. }
         | DjCommand::Hand { deck, .. }
@@ -103,6 +104,9 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
                 target.set_loop_mode(*enabled);
                 Ack::applied(id, at)
             }
+            // The press is counted on the command path below, where the cells are; here it is only accepted, so the
+            // client gets an ack like every other command.
+            DjCommand::LoopPress { .. } => Ack::applied(id, at),
             // A click is a reference beside the music, so the decision lives on the deck and the
             // generator lives beside the mix: the deck knows its grid, the graph knows the sample.
             DjCommand::Metronome { enabled, .. } => {
@@ -643,6 +647,8 @@ struct DeckCells {
     held_right: AtomicU32,
     loop_start: AtomicU64,
     loop_end: AtomicU64,
+    /// Presses of the panel's Loop button: counted here so the publisher can carry the count to the shell.
+    loop_press_seq: AtomicU64,
     hotcues: [AtomicU64; HOTCUE_SLOTS],
     // The three band gains as applied, so the publisher can say what the strip should draw without
     // borrowing the deck.
@@ -693,6 +699,7 @@ impl DeckCells {
             held_right: AtomicU32::new(0),
             loop_start: AtomicU64::new(EMPTY),
             loop_end: AtomicU64::new(EMPTY),
+            loop_press_seq: AtomicU64::new(0),
             hotcues: std::array::from_fn(|_| AtomicU64::new(EMPTY)),
             eq_low: AtomicU32::new(0),
             eq_mid: AtomicU32::new(0),
@@ -1667,6 +1674,7 @@ impl StateCells {
                     end: SourceFrame(loop_end),
                 }),
                 loop_mode: self.loop_mode_of(index),
+                loop_press_seq: cells.loop_press_seq.load(Ordering::Relaxed),
                 active_loops: self
                     .active_loops_of(index)
                     .into_iter()
@@ -3046,6 +3054,15 @@ impl EngineGraph {
             // A cue or a loop is a decision the user made about this file, so it outlives the
             // session. The callback only hands the edit over; the writing thread does the disk work.
             self.note_edit(&submission.command);
+            // The panel's Loop button: the count is what travels, and the window answers it with the function its own
+            // button runs — one meaning for one press (owner's request, 25.11).
+            if let DjCommand::LoopPress { deck } = &submission.command.command
+                && let Some(index) = self.decks.iter().position(|candidate| candidate.id() == *deck)
+            {
+                self.cells.decks[index]
+                    .loop_press_seq
+                    .fetch_add(1, Ordering::Relaxed);
+            }
             // A pad's name and colour are strings, so they cannot ride in a cell: the publisher gets
             // them from the cells' own map, written here on the command path.
             // A delete clears the pad's loop as well, so the published copy has to follow that too.

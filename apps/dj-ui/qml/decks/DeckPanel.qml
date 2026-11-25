@@ -58,6 +58,9 @@ Pane {
     }
 
     readonly property bool live: Bridge.connected
+
+    /// The Loop press count last answered: -1 until the first snapshot has taught where it stands.
+    property int loopPressSeen: -1
     // Whether a hand on the waveform is heard is a setting, not a button on every deck: the mode is
     // global and it lives in `UiSettings` (owner's decision, 14.11).
     readonly property var deck: {
@@ -693,6 +696,20 @@ Pane {
     // The property is `deck`; `onStateChanged` would listen to every Item's built-in state and
     // fire never, which is how the strip lost its picture.
     onDeckChanged: {
+        // The panel's Loop button is the window's own button: the deck counts the press, and this window answers it with
+        // the same function the button runs, so the two can never mean different things (owner's request, 25.11). The
+        // first snapshot only teaches where the count stands.
+        if (panel.deck !== null) {
+            // A count that is not on the wire yet is a count of nothing: the field is left out while it is zero, so the
+            // first press is the first time it appears — and the baseline has to be read from its absence.
+            const counted = panel.deck.loop_press_seq === undefined ? 0 : panel.deck.loop_press_seq;
+            if (panel.loopPressSeen < 0) {
+                panel.loopPressSeen = counted;
+            } else if (counted !== panel.loopPressSeen) {
+                panel.loopPressSeen = counted;
+                panel.pressLoop(false);
+            }
+        }
         // A new deck means a new track: a tempo asked for on the old one means nothing here.
         panel.pendingBpm = 0;
         panel.snapshotMs = Date.now();
