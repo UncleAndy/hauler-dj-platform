@@ -1011,6 +1011,9 @@ fn inputs_loop(
     let mut hand_speed = [0.0_f64; 2];
     let mut hand_sent_at: [Option<std::time::Instant>; 2] = [None, None];
     let mut last_wheel_report_at: Option<u128> = None;
+    // The wheel speaks at the panel's rate; a line per report is a line per scratch. Throttled so the log cannot slow the
+    // loop by blocking on a stdout nobody drains fast.
+    let mut last_wheel_log: Option<std::time::Instant> = None;
     // What the panel said first, once: the owner's complaint is that the window starts with the faders open while the panel
     // has them closed, and this line says which half is telling the truth.
     // The last position of every knob and fader the panel reported: what the engine is told again whenever the link is
@@ -1380,10 +1383,17 @@ fn inputs_loop(
                 // record jumps back while the hand is still on it (owner's report, 25.11). Report 3 is the clock at
                 // ~15 Hz, so this is a light heartbeat, not a flood.
                 if raw != 0.0 {
-                    println!(
-                        "dj-controller: at {now} ms {} = {raw:.3} (report {report}) → {command:?}",
-                        event.control
-                    );
+                    let speak = match last_wheel_log {
+                        None => true,
+                        Some(at) => at.elapsed() >= std::time::Duration::from_millis(200),
+                    };
+                    if speak {
+                        last_wheel_log = Some(std::time::Instant::now());
+                        println!(
+                            "dj-controller: at {now} ms {} = {raw:.0} (report {report}) → {command:?}",
+                            event.control
+                        );
+                    }
                 }
                 push_pending(&mut pending, &event.control, command);
                 continue;
@@ -2946,6 +2956,9 @@ fn capture(
     let mut driver = S4Mk3::new();
     let mut buffer = [0_u8; 128];
     let mut taken = 0_usize;
+    // Every line carries the moment it was read: the wheel's rate is best judged against real time, and a capture without
+    // a clock cannot say how far apart two reports were or how fast the hand really turned.
+    let started = std::time::Instant::now();
     writeln!(
         out,
         "# reports from {} ({}), read only",
@@ -2963,8 +2976,13 @@ fn capture(
         let report = &buffer[..read];
         let events = driver.feed(report);
         let bytes: Vec<String> = report.iter().map(|byte| format!("{byte:02x}")).collect();
-        write!(out, "{}", bytes.join(" "))
-            .map_err(|error| format!("{path} cannot be written: {error}"))?;
+        write!(
+            out,
+            "{:>8} {}",
+            started.elapsed().as_millis(),
+            bytes.join(" ")
+        )
+        .map_err(|error| format!("{path} cannot be written: {error}"))?;
         if !events.is_empty() {
             let described: Vec<String> = events
                 .iter()
