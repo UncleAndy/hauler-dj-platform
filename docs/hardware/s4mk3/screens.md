@@ -316,6 +316,8 @@ dj-controller --lights-show --engine <endpoint>
 | канал в мониторинге (`cue`) | `CUE` этой деки | синий |
 | дека следует (`sync` не «выкл») | `Sync/Lock` | жёлтый |
 | дека ведёт (`DeckSnapshot.master`) | `Master/Reset` | белый (`controller.lights.master`) |
+| дека играет назад (`DeckSnapshot.reverse`) | `REV button` | красный (`controller.lights.reverse`) |
+| дека скользит (`DeckSnapshot.slip`) | `FLX button` | небесный (`controller.lights.slip`) |
 | хоткью сохранён в слоте | `CUE1…CUE8` этого слота | **цвет метки** из приложения, иначе `hotcue` из настроек |
 | эффект включён | `FX on` этой деки (A…D) | пурпурный |
 

@@ -135,6 +135,10 @@ pub struct ControllerLights {
     /// a glance, and the resting colour is not an answer — a DJ who sets `resting = "off"` would switch the leader's
     /// lamp off with it.
     pub master: LightColour,
+    /// A deck playing its material backwards (the REV lamp).
+    pub reverse: LightColour,
+    /// A deck whose sound is slipped away from its head (the FLX lamp).
+    pub slip: LightColour,
     /// A stored hotcue slot.
     pub hotcue: LightColour,
     /// A pad that holds a loop rather than a cue.
@@ -161,6 +165,8 @@ impl Default for ControllerLights {
             cue: LightColour::Blue,
             sync: LightColour::Yellow,
             master: LightColour::White,
+            reverse: LightColour::Red,
+            slip: LightColour::Sky,
             hotcue: LightColour::Green,
             loop_: LightColour::Yellow,
             fx: LightColour::Magenta,

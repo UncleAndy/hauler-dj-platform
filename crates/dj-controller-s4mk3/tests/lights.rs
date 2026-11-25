@@ -491,6 +491,8 @@ fn the_settings_choose_the_colours() {
         cue: Colour::Salmon,
         sync: Colour::Lime,
         master: Colour::White,
+        reverse: Colour::Red,
+        slip: Colour::Sky,
         resting: Colour::Off,
         jog: Colour::White,
         loop_: Colour::Aqua,
@@ -512,6 +514,8 @@ fn the_settings_choose_the_colours() {
         monitoring: [false, true, false, false],
         sync: [true, false],
         master: [false, true],
+        reversed: [true, false],
+        slipped: [false, true],
         fx: [false, false, true, false],
         fx_kind: [0, 1, 4, 3],
     };
@@ -541,6 +545,20 @@ fn the_settings_choose_the_colours() {
         report.body[usize::from(right_master)],
         bright(Colour::White.code()),
         "the right deck leads"
+    );
+    // Reverse and slip are lamps of their own, one on each half: a deck playing backwards and a deck slipping both say so
+    // where the DJ presses (owner's request, 25.11).
+    let left_rev = byte_of("Left REV button").expect("the map has it");
+    let right_flx = byte_of("Right FLX button").expect("the map has it");
+    assert_eq!(
+        report.body[usize::from(left_rev)],
+        bright(Colour::Red.code()),
+        "the left deck plays backwards"
+    );
+    assert_eq!(
+        report.body[usize::from(right_flx)],
+        bright(Colour::Sky.code()),
+        "the right deck slips"
     );
 }
 

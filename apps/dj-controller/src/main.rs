@@ -1199,6 +1199,8 @@ fn inputs_loop(
                                 running: state.playing.get(index).copied().unwrap_or(false),
                                 synced: state.synced.get(index).copied().unwrap_or(false),
                                 master: state.master.get(index).copied().unwrap_or(false),
+                                reversed: state.reversed.get(index).copied().unwrap_or(false),
+                                slipped: state.slipped.get(index).copied().unwrap_or(false),
                             },
                             dj_controller_core::PadState {
                                 cue: state
@@ -2055,6 +2057,9 @@ fn command_for_deck(
         // the DJ is looking at, not the one the control was named after (owner's decision, 25.11 — the finer rules of
         // pitch matching come later, this is only "the fader belongs to the deck under the hand").
         DjCommand::SetTempoRatio { ratio, .. } => DjCommand::SetTempoRatio { deck, ratio },
+        // Reverse and slip sit on the half as well: the REV under the left hand turns the deck the left side drives.
+        DjCommand::SetReverse { enabled, .. } => DjCommand::SetReverse { deck, enabled },
+        DjCommand::SetSlip { enabled, .. } => DjCommand::SetSlip { deck, enabled },
         DjCommand::Metronome { enabled, .. } => DjCommand::Metronome { deck, enabled },
         DjCommand::SetCueMeta {
             slot, label, color, ..
@@ -2207,6 +2212,9 @@ struct DeckFactsShared {
     /// know the state it switches away from.
     synced: [bool; 4],
     master: [bool; 4],
+    /// Whether each deck plays backwards and whether it slips: the REV and FLX buttons are switches of the same kind.
+    reversed: [bool; 4],
+    slipped: [bool; 4],
     cues: [[bool; 8]; 4],
     /// Pads that hold a loop rather than a cue: the two are jumped to the same way and must not be taken for empty.
     loops: [[bool; 8]; 4],
@@ -2244,6 +2252,8 @@ impl Default for DeckFactsShared {
             playing: [false; 4],
             synced: [false; 4],
             master: [false; 4],
+            reversed: [false; 4],
+            slipped: [false; 4],
             cues: [[false; 8]; 4],
             loops: [[false; 8]; 4],
             active_loop: [false; 4],
@@ -2934,6 +2944,8 @@ fn palette_from(
         cue: colour_of(lights.cue),
         sync: colour_of(lights.sync),
         master: colour_of(lights.master),
+        reverse: colour_of(lights.reverse),
+        slip: colour_of(lights.slip),
         hotcue: colour_of(lights.hotcue),
         loop_: colour_of(lights.loop_),
         fx: colour_of(lights.fx),
@@ -2960,6 +2972,9 @@ struct DeckFacts {
     sync: bool,
     /// The deck is the master the others follow.
     master: bool,
+    /// The deck plays backwards, and whether its sound is slipped: the REV and FLX lamps.
+    reversed: bool,
+    slipped: bool,
     fx: bool,
     /// The effect the deck runs, as `FxKind::index()`: the "FX on" button wears this effect's colour.
     fx_kind: u8,
@@ -2988,6 +3003,8 @@ fn show_from_facts(decks: &[DeckFacts; 4], sides: [usize; 2]) -> dj_controller_s
         ],
         sync: [left.sync, right.sync],
         master: [left.master, right.master],
+        reversed: [left.reversed, right.reversed],
+        slipped: [left.slipped, right.slipped],
         fx: [decks[0].fx, decks[1].fx, decks[2].fx, decks[3].fx],
         fx_kind: [
             decks[0].fx_kind,
@@ -3066,6 +3083,8 @@ fn facts_from(
             monitoring: deck.cue,
             sync: !deck.sync.is_off(),
             master: deck.master,
+            reversed: deck.reverse,
+            slipped: deck.slip,
             fx: deck.fx.enabled,
             fx_kind: deck.fx.kind.index(),
             hotcues,
@@ -3179,6 +3198,8 @@ fn lights_show(
                     state.playing[index] = deck.playing;
                     state.synced[index] = deck.sync;
                     state.master[index] = deck.master;
+                    state.reversed[index] = deck.reversed;
+                    state.slipped[index] = deck.slipped;
                     state.monitoring[index] = deck.monitoring;
                 }
                 for (index, deck) in snapshot.decks.iter().enumerate().take(4) {
@@ -3775,6 +3796,8 @@ mod tests {
                 monitoring: true,
                 sync: false,
                 master: false,
+                reversed: false,
+                slipped: false,
                 fx: false,
                 fx_kind: 0,
                 hotcues: [Some(dj_controller_s4mk3::lights::Pad {
@@ -4288,6 +4311,35 @@ mod tests {
                 ratio: 1.03
             },
             "the pitch fader belongs to the half too"
+        );
+        // REV and FLX sit on the half as well: the left REV turns the deck the left side drives, backwards.
+        assert_eq!(
+            follow_side(
+                dj_domain::DjCommand::SetReverse {
+                    deck: dj_domain::DeckId::A,
+                    enabled: true
+                },
+                "deck_a.reverse",
+                &playing
+            ),
+            dj_domain::DjCommand::SetReverse {
+                deck: dj_domain::DeckId::C,
+                enabled: true
+            }
+        );
+        assert_eq!(
+            follow_side(
+                dj_domain::DjCommand::SetSlip {
+                    deck: dj_domain::DeckId::B,
+                    enabled: true
+                },
+                "deck_b.slip",
+                &playing
+            ),
+            dj_domain::DjCommand::SetSlip {
+                deck: dj_domain::DeckId::D,
+                enabled: true
+            }
         );
         // A mixer command is not re-addressed: the channel's own strip answers for the channel.
         assert_eq!(

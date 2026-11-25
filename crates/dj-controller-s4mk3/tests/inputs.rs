@@ -350,3 +350,93 @@ fn a_learned_line_cannot_steal_a_byte_from_another_control() {
     );
     assert!(notes[0].contains("уже занят"), "{notes:?}");
 }
+
+#[test]
+fn the_shipped_reverse_and_slip_buttons_toggle_the_deck_they_sit_on() {
+    // REV and FLX sit on the halves beside PLAY, and each is a switch: the press reads whether the deck plays backwards
+    // or slips, and asks for the opposite. Both bytes come from the device's public description (`reverseButton`,
+    // `fluxButton`), and the right half is a different byte — a line that named the left one twice would leave the right
+    // button dead with no error anywhere (owner's request, 25.11).
+    let mut previous = HashMap::new();
+    let mut payload = vec![0_u8; 48];
+    let map = InputMap::built_in();
+    assert!(map.decode(1, &payload, &mut previous).is_empty());
+
+    // Deck A: reverse is bit 4 of byte 1, slip is bit 5.
+    payload[1] = 0b0001_0000;
+    let events = map.decode(1, &payload, &mut previous);
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0].control, "deck_a.reverse");
+    assert_eq!(
+        Mapping::new().resolve_control(&events[0], DeckStanding::default(), PadState::default()),
+        Some((
+            Some(DeckId::A),
+            DjCommand::SetReverse {
+                deck: DeckId::A,
+                enabled: true
+            }
+        ))
+    );
+    let backwards = DeckStanding {
+        reversed: true,
+        ..DeckStanding::default()
+    };
+    assert_eq!(
+        Mapping::new().resolve_control(&events[0], backwards, PadState::default()),
+        Some((
+            Some(DeckId::A),
+            DjCommand::SetReverse {
+                deck: DeckId::A,
+                enabled: false
+            }
+        ))
+    );
+    payload[1] = 0;
+    let released = map.decode(1, &payload, &mut previous);
+    assert!(
+        released.iter().all(|event| event.value <= 0.5),
+        "the release asks for nothing: {released:?}"
+    );
+
+    payload[1] = 0b0010_0000;
+    let events = map.decode(1, &payload, &mut previous);
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0].control, "deck_a.slip");
+    assert_eq!(
+        Mapping::new().resolve_control(&events[0], DeckStanding::default(), PadState::default()),
+        Some((
+            Some(DeckId::A),
+            DjCommand::SetSlip {
+                deck: DeckId::A,
+                enabled: true
+            }
+        ))
+    );
+    payload[1] = 0;
+    let released = map.decode(1, &payload, &mut previous);
+    assert!(
+        released.iter().all(|event| event.value <= 0.5),
+        "the release asks for nothing: {released:?}"
+    );
+
+    // Deck B: the same two bits of byte 10.
+    payload[10] = 0b0001_0000;
+    let events = map.decode(1, &payload, &mut previous);
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0].control, "deck_b.reverse");
+    // Moving straight from one bit to the other is two things at once: the first button comes up and the second goes down.
+    payload[10] = 0b0010_0000;
+    let events = map.decode(1, &payload, &mut previous);
+    let pressed = events
+        .iter()
+        .find(|event| event.control == "deck_b.slip")
+        .expect("the right FLX went down");
+    assert_eq!(pressed.value, 1.0, "{events:?}");
+    assert!(
+        events
+            .iter()
+            .filter(|event| event.control == "deck_b.reverse")
+            .all(|event| event.value <= 0.5),
+        "the right REV came up: {events:?}"
+    );
+}

@@ -241,6 +241,10 @@ pub struct Show {
     /// The deck is the master the others follow, for the left and the right deck. A lamp of its own, not the sync lamp
     /// again: with both lit the DJ has to be able to tell the leader from the follower at a glance.
     pub master: [bool; 2],
+    /// The deck plays its material backwards (the REV lamp).
+    pub reversed: [bool; 2],
+    /// The deck is slipping (the FLX lamp).
+    pub slipped: [bool; 2],
     /// FX on, for decks A, B, C and D: the mixer section has a button for each.
     pub fx: [bool; 4],
     /// The effect each deck runs, by `FxKind::index()`: its "FX on" button wears the effect's own colour, not a single
@@ -297,6 +301,10 @@ pub struct Palette {
     pub sync: Colour,
     /// The deck the others follow: the MASTER lamp.
     pub master: Colour,
+    /// A deck playing backwards: the REV lamp.
+    pub reverse: Colour,
+    /// A deck whose sound is slipped away from its head: the FLX lamp.
+    pub slip: Colour,
     /// A stored hotcue slot.
     pub hotcue: Colour,
     /// A pad that holds a loop: the colour the screen draws a loop with.
@@ -318,6 +326,8 @@ impl Default for Palette {
             cue: Colour::Blue,
             sync: Colour::Yellow,
             master: Colour::White,
+            reverse: Colour::Red,
+            slip: Colour::Sky,
             hotcue: Colour::Green,
             loop_: Colour::Yellow,
             fx: Colour::Magenta,
@@ -371,9 +381,21 @@ pub fn report_with(show: &Show, palette: &Palette) -> LightsReport {
         // lamp answered for the right one, so the leader's lamp appeared on the wrong deck and the right one stayed dark.
         // The right pair was named "Rick SYNC/LOCK" in the map (a typo of the owner's), which no lookup could find.
         let names = if side == 0 {
-            ("Left PLAY button", "Left Sync/Lock", "Left Master/Reset")
+            (
+                "Left PLAY button",
+                "Left Sync/Lock",
+                "Left Master/Reset",
+                "Left REV button",
+                "Left FLX button",
+            )
         } else {
-            ("Right PLAY button", "Right SYNC/LOCK", "Right MASTER/RESET")
+            (
+                "Right PLAY button",
+                "Right SYNC/LOCK",
+                "Right MASTER/RESET",
+                "Right REV button",
+                "Right FLX button",
+            )
         };
         if show.playing[side] {
             set(control(names.0), bright(palette.play.code()));
@@ -383,6 +405,12 @@ pub fn report_with(show: &Show, palette: &Palette) -> LightsReport {
         }
         if show.master[side] {
             set(control(names.2), bright(palette.master.code()));
+        }
+        if show.reversed[side] {
+            set(control(names.3), bright(palette.reverse.code()));
+        }
+        if show.slipped[side] {
+            set(control(names.4), bright(palette.slip.code()));
         }
     }
     // Monitoring is per channel, not per platter: the button lives on the strip and carries the channel's own CUE byte.

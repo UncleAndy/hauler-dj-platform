@@ -91,6 +91,13 @@ deck_b.sync 1 14 4 1
 deck_a.master 1 0 0 1
 deck_b.master 1 10 0 1
 
+# --- reverse and slip (the button the panel prints FLX), report 1: one of each on every deck half
+# (`reverseButton` inByte 1 bit 4, `fluxButton` inByte 1 bit 5 on the left; inByte 10 on the right).
+deck_a.reverse 1 1 4 1
+deck_a.slip 1 1 5 1
+deck_b.reverse 1 10 4 1
+deck_b.slip 1 10 5 1
+
 # --- jog touch, report 1: the capacitive top of each platter (owner's request, 25.11)
 # Press: the record stops under the hand. Move while touching: a scratch. Turn without touching: a bend of the rate.
 # Public-source (`wheelTouch`), waiting to be confirmed by a hand on the platter.

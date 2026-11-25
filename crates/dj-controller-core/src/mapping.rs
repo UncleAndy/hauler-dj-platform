@@ -28,6 +28,10 @@ pub enum Intent {
     Sync,
     /// Take the lead the others follow, or give it up (DJP-SYNC-001).
     Master,
+    /// Play the material backwards, or forwards again (DJP-DECK-007).
+    Reverse,
+    /// Keep the sound where it is while the track's own head runs on (DJP-DECK-007).
+    Slip,
     /// Go back to the cue point and carry on from there.
     CueJump,
     /// Store the cue point where the deck stands.
@@ -64,6 +68,10 @@ pub struct DeckStanding {
     pub synced: bool,
     /// The deck is the master the others follow.
     pub master: bool,
+    /// The deck plays its material backwards.
+    pub reversed: bool,
+    /// The deck is slipping: the sound stays where it was put while the track's own head runs on.
+    pub slipped: bool,
 }
 
 /// Which band of the equaliser a knob turns.
@@ -221,6 +229,18 @@ impl Intent {
                 },
             }),
             Self::Sync => None,
+            // Reverse and slip are switches of the same kind: the lamp and the press are one decision, and a press that
+            // guessed the state would leave the deck in the one the DJ is not looking at.
+            Self::Reverse if pressed => Some(DjCommand::SetReverse {
+                deck,
+                enabled: !standing.reversed,
+            }),
+            Self::Reverse => None,
+            Self::Slip if pressed => Some(DjCommand::SetSlip {
+                deck,
+                enabled: !standing.slipped,
+            }),
+            Self::Slip => None,
             // The lead is a deck, not a number: the others need its beat, not only its tempo (DJP-SYNC-001). The same
             // button gives it up, which is what the window's MASTER does (`isMaster ? clearMaster : setMaster`).
             Self::Master if pressed => Some(if standing.master {
@@ -302,6 +322,8 @@ pub fn intent_for(control: &str) -> Option<Intent> {
         "play_pause" => Some(Intent::PlayPause),
         "sync" => Some(Intent::Sync),
         "master" => Some(Intent::Master),
+        "reverse" => Some(Intent::Reverse),
+        "slip" => Some(Intent::Slip),
         "cue" => Some(Intent::CueJump),
         "cue_set" => Some(Intent::CueSet),
         "tempo" => Some(Intent::Tempo),
@@ -824,6 +846,53 @@ mod tests {
         assert_eq!(Intent::Master.command(DeckId::B, false, leading), None);
         assert_eq!(intent_for("deck_a.master"), Some(Intent::Master));
         assert_eq!(intent_for("deck_b.master"), Some(Intent::Master));
+    }
+
+    #[test]
+    fn reverse_and_slip_are_switches_that_read_the_deck() {
+        // Both are toggles on one button, and the lamp beside the button is the deck's own state: a press that read the
+        // transport or guessed would set the state the DJ is not looking at (owner's request, 25.11).
+        assert_eq!(
+            Intent::Reverse.command(DeckId::A, true, DeckStanding::default()),
+            Some(DjCommand::SetReverse {
+                deck: DeckId::A,
+                enabled: true
+            })
+        );
+        let backwards = DeckStanding {
+            reversed: true,
+            ..DeckStanding::default()
+        };
+        assert_eq!(
+            Intent::Reverse.command(DeckId::A, true, backwards),
+            Some(DjCommand::SetReverse {
+                deck: DeckId::A,
+                enabled: false
+            })
+        );
+        assert_eq!(Intent::Reverse.command(DeckId::A, false, backwards), None);
+        assert_eq!(
+            Intent::Slip.command(DeckId::B, true, DeckStanding::default()),
+            Some(DjCommand::SetSlip {
+                deck: DeckId::B,
+                enabled: true
+            })
+        );
+        let slipping = DeckStanding {
+            slipped: true,
+            ..DeckStanding::default()
+        };
+        assert_eq!(
+            Intent::Slip.command(DeckId::B, true, slipping),
+            Some(DjCommand::SetSlip {
+                deck: DeckId::B,
+                enabled: false
+            })
+        );
+        // One press, one decision.
+        assert_eq!(Intent::Slip.command(DeckId::B, false, slipping), None);
+        assert_eq!(intent_for("deck_a.reverse"), Some(Intent::Reverse));
+        assert_eq!(intent_for("deck_b.slip"), Some(Intent::Slip));
     }
 
     #[test]
