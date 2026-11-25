@@ -52,9 +52,11 @@ pub const MIN_TEMPO_RATIO: f64 = 0.25;
 /// Fastest playback rate a deck accepts.
 pub const MAX_TEMPO_RATIO: f64 = 4.0;
 
-/// How far a nudge bends the rate at full deflection: four per cent, about the width of a hand on a
-/// platter (DJP-DECK-006).
-pub const NUDGE_RANGE: f64 = 0.04;
+/// How far a nudge bends the rate at full deflection: twelve per cent (DJP-DECK-006).
+///
+/// A wheel turned faster bends harder — the controller maps turn speed onto the deflection — so the full range has to be
+/// a bend a DJ can hear, not the four per cent a finger on a platter gives (owner's request, 25.11).
+pub const NUDGE_RANGE: f64 = 0.12;
 
 /// How many seconds of material the engine reads for one reversed window.
 ///

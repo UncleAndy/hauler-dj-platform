@@ -3787,6 +3787,25 @@ mod tests {
     }
 
     #[test]
+    fn a_faster_turn_bends_harder() {
+        // The bend follows the speed of the turn, not just its direction: a slow turn of the rim nudges, a fast one
+        // bends hard, and only the fastest reaches the full range (owner's request, 25.11).
+        let deck = dj_domain::DeckId::A;
+        let amount = |raw: f64| match wheel_command(false, raw, deck, 8.0, 4e-4) {
+            dj_domain::DjCommand::Nudge { amount, .. } => amount,
+            other => panic!("a turn without a hand must bend, got {other:?}"),
+        };
+        let slow = amount(400.0);
+        let fast = amount(1600.0);
+        let fastest = amount(4000.0);
+        assert!(slow > 0.0 && fast > slow * 3.0, "slow {slow}, fast {fast}");
+        assert!(
+            (fastest - 1.0).abs() < 1e-6,
+            "the fastest turn is the full range"
+        );
+    }
+
+    #[test]
     fn touching_a_platter_holds_it_and_letting_go_releases_it() {
         let deck = dj_domain::DeckId::B;
         match touch_command(true, deck) {

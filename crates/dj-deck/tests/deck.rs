@@ -2454,9 +2454,9 @@ fn a_nudge_bends_the_rate_and_leaves_the_fader_alone() {
         deck.render(&mut block);
     }
     let bent = deck.position() - before;
-    // Four per cent faster: 1 331 frames instead of 1 280.
+    // Twelve per cent faster: 1 434 frames instead of 1 280.
     assert!(
-        (1_327..=1_335).contains(&bent),
+        (1_430..=1_438).contains(&bent),
         "the nudge must bend the rate, got {bent} frames"
     );
     assert!(
@@ -2464,7 +2464,7 @@ fn a_nudge_bends_the_rate_and_leaves_the_fader_alone() {
         "the fader keeps its value while the platter is bent"
     );
     assert!(
-        (deck.tempo_ratio() - 1.04).abs() < 1e-9,
+        (deck.tempo_ratio() - 1.12).abs() < 1e-9,
         "the applied rate is the fader with the bend on top"
     );
 
