@@ -337,7 +337,10 @@ pub fn render_deck(panel: &DeckPanel) -> Canvas {
     let played = (panel.position.clamp(0.0, 1.0) * room as f64).round() as isize;
     let played_x = margin as isize + played;
     if !panel.waveform.is_empty() {
-        let amplitude = wave_height as f32 / 2.0 - 3.0;
+        // Half the strip for a full-scale bar: normalised to the loudest place of the track, every passage in that
+        // place touched the border, and a strip whose loud parts are drawn against the edge reads as a solid block
+        // rather than as a shape (owner's report, 25.11).
+        let amplitude = (wave_height as f32 / 2.0 - 3.0) * WAVE_FILL;
         // Normalised to the loudest column, the way the window normalises its envelope: a quiet master drawn at its
         // own level is a thin thread in the middle of the strip, and the strip is there to be read at a glance.
         let loudest = panel
@@ -421,6 +424,10 @@ fn beats_label(beats: f64) -> String {
         format!("{beats:.2}")
     }
 }
+
+/// How much of the strip's half-height a full-scale bar takes: a half, so the loudest passage keeps its distance from
+/// both edges.
+const WAVE_FILL: f32 = 0.5;
 
 fn text_fit_width(text: &str, scale: usize) -> isize {
     text::width_of(text, scale.max(1)) as isize
