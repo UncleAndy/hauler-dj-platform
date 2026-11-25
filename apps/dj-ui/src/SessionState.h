@@ -25,6 +25,9 @@ class SessionState : public QObject
     // The effect each deck had in its slot: the kind, not the amount. The unit is a habit, the amount is a track's
     // business (owner's decision, 21.11).
     Q_PROPERTY(QVariantMap deckFx READ deckFx NOTIFY changed)
+    // The place the browser's rail stood on: a section, a folder by its path or a playlist by its id. A
+    // string, not an index — the tree's rows come and go between runs (owner's request, 25.11).
+    Q_PROPERTY(QString rail READ rail NOTIFY changed)
 
 public:
     explicit SessionState(QObject *parent = nullptr);
@@ -39,6 +42,7 @@ public:
     QString restoreTo() const { return m_restoreTo; }
     QString crossfaderCurve() const { return m_crossfaderCurve; }
     QVariantMap deckFx() const { return m_deckFx; }
+    QString rail() const { return m_rail; }
     void setFile(const QString &path);
 
     // Remember a folder; empty paths and folders that no longer exist are ignored.
@@ -60,6 +64,10 @@ public:
     // Remember the effect of one deck. An empty kind is refused for the same reason.
     Q_INVOKABLE bool rememberDeckFx(const QString &deck, const QString &kind);
 
+    // Remember the place the rail's cursor stood on. An empty place is the first session, which opens the
+    // collection.
+    Q_INVOKABLE bool rememberRail(const QString &place);
+
     // Read the file; a missing or broken one simply leaves the state empty.
     bool load();
     bool save() const;
@@ -73,6 +81,7 @@ private:
     QString m_folder;
     QString m_cursor;
     QString m_collectionCursor;
+    QString m_rail;
     QString m_file;
     QString m_window = QStringLiteral("window");
     QString m_restoreTo = QStringLiteral("window");

@@ -85,6 +85,9 @@ public:
     Q_INVOKABLE void setCursor(const QString &path);
     /// Seed both places at startup, before either list has been built.
     Q_INVOKABLE void seedCursors(const QString &files, const QString &collection);
+    /// Open the folders that hide a saved rail place, so its row can be found again: the ancestors of a
+    /// folder, or the folder a playlist sits in. Rebuilds the tree; false when the library no longer has it.
+    Q_INVOKABLE bool revealRailPlace(const QString &place);
     /// Where `path` sits in the list that is showing; -1 when it is not there any more.
     Q_INVOKABLE int rowOf(const QString &path) const;
     /// The genres the collection carries, each with how many tracks have it: `{name, count}`.

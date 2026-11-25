@@ -2413,6 +2413,7 @@ int main(int argc, char *argv[])
         }
         QJsonObject remembered;
         remembered.insert(QStringLiteral("folder"), first.path());
+        remembered.insert(QStringLiteral("rail"), QStringLiteral("files"));
         QFile state(sessionFile);
         if (!state.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
             std::fprintf(stderr, "dj-ui: cannot write %s\n", qPrintable(sessionFile));
@@ -2426,6 +2427,10 @@ int main(int argc, char *argv[])
         reloaded.setFile(sessionFile);
         if (!reloaded.load()) {
             std::fprintf(stderr, "dj-ui: the session file was not readable\n");
+            return 1;
+        }
+        if (reloaded.rail() != QStringLiteral("files")) {
+            std::fprintf(stderr, "dj-ui: the session lost the rail's place\n");
             return 1;
         }
         browser.open(reloaded.folder());
@@ -2454,7 +2459,31 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "dj-ui: the session file still says %s\n", qPrintable(stored));
             return 1;
         }
-        std::fprintf(stdout, "dj-ui: the folder survives a restart and follows the last load\n");
+        // The rail's place travels with the folder: written as a place, read back the same. A tree row can only be
+        // reached through an open tree, so an index would be wrong the moment the library changes.
+        reloaded.rememberRail(QStringLiteral("playlist:7"));
+        if (!reloaded.save()) {
+            std::fprintf(stderr, "dj-ui: cannot write the session file\n");
+            return 1;
+        }
+        {
+            QFile back(sessionFile);
+            if (!back.open(QIODevice::ReadOnly)) {
+                std::fprintf(stderr, "dj-ui: the session file vanished\n");
+                return 1;
+            }
+            const QString rail = QJsonDocument::fromJson(back.readAll())
+                                     .object()
+                                     .value(QStringLiteral("rail"))
+                                     .toString();
+            if (rail != QStringLiteral("playlist:7")) {
+                std::fprintf(stderr, "dj-ui: the session still says the rail is %s\n", qPrintable(rail));
+                return 1;
+            }
+        }
+        std::fprintf(stdout,
+                     "dj-ui: the folder survives a restart and follows the last load, and the rail's place "
+                     "survives it too\n");
         return 0;
     }
 

@@ -269,6 +269,63 @@ void FileBrowser::seedCursors(const QString &files, const QString &collection)
     m_collectionCursor = collection;
 }
 
+bool FileBrowser::revealRailPlace(const QString &place)
+{
+    if (place.isEmpty()) {
+        return false;
+    }
+    if (place == QLatin1String("all")) {
+        if (!m_expanded.contains(QStringLiteral("all"))) {
+            m_expanded.append(QStringLiteral("all"));
+            rebuildPlaylistTree();
+        }
+        return true;
+    }
+    QString folder;
+    if (place.startsWith(QLatin1String("folder:"))) {
+        folder = place.mid(7);
+    } else if (place.startsWith(QLatin1String("playlist:"))) {
+        // A playlist shows under its folder: the engine's last tree says which one holds it.
+        const qlonglong id = place.mid(9).toLongLong();
+        bool known = false;
+        const QVariantList playlists = m_engineTree.value(QStringLiteral("playlists")).toList();
+        for (const QVariant &item : playlists) {
+            const QVariantMap found = item.toMap();
+            if (found.value(QStringLiteral("id")).toLongLong() == id) {
+                folder = found.value(QStringLiteral("folder")).toString();
+                known = true;
+                break;
+            }
+        }
+        if (!known) {
+            return false;
+        }
+    } else {
+        return false;
+    }
+    if (folder.isEmpty()) {
+        // A root playlist stands in the open: no folder to unfold.
+        return true;
+    }
+    // Every ancestor has to be open for the node itself to be on show. The node's own children stay as the DJ
+    // left them.
+    bool opened = false;
+    const QStringList parts = folder.split(QLatin1Char('/'));
+    QString path;
+    for (int index = 0; index + 1 < parts.size(); ++index) {
+        path = path.isEmpty() ? parts.at(index) : path + QLatin1Char('/') + parts.at(index);
+        const QString key = QStringLiteral("folder:") + path;
+        if (!m_expanded.contains(key)) {
+            m_expanded.append(key);
+            opened = true;
+        }
+    }
+    if (opened) {
+        rebuildPlaylistTree();
+    }
+    return true;
+}
+
 int FileBrowser::rowOf(const QString &path) const
 {
     // The row is counted in the list the DJ is looking at: a playlist's rows are its own, and a path

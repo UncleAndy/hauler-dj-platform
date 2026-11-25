@@ -94,6 +94,16 @@ bool SessionState::rememberCollectionCursor(const QString &path)
     return true;
 }
 
+bool SessionState::rememberRail(const QString &place)
+{
+    if (place == m_rail) {
+        return false;
+    }
+    m_rail = place;
+    emit changed();
+    return true;
+}
+
 bool SessionState::rememberCrossfaderCurve(const QString &curve)
 {
     if (curve.isEmpty() || curve == m_crossfaderCurve) {
@@ -133,6 +143,7 @@ bool SessionState::load()
     const QString folder = root.value(QStringLiteral("folder")).toString();
     m_cursor = root.value(QStringLiteral("cursor")).toString();
     m_collectionCursor = root.value(QStringLiteral("collection_cursor")).toString();
+    m_rail = root.value(QStringLiteral("rail")).toString();
     if (!folder.isEmpty()) {
         any = rememberFolder(folder) || any;
     }
@@ -168,6 +179,7 @@ bool SessionState::save() const
     root.insert(QStringLiteral("folder"), m_folder);
     root.insert(QStringLiteral("cursor"), m_cursor);
     root.insert(QStringLiteral("collection_cursor"), m_collectionCursor);
+    root.insert(QStringLiteral("rail"), m_rail);
     root.insert(QStringLiteral("window"), m_window);
     root.insert(QStringLiteral("crossfader_curve"), m_crossfaderCurve);
     QJsonObject deckFx;

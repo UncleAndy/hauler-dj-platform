@@ -177,6 +177,10 @@ Pane {
     /// window's mode — the cursor is its own state and the window follows it (owner's report, 24.11).
     property int railCursor: 0
 
+    /// True once the rail has been put back where the last session left it. Until then a move is the restore
+    /// itself and is not written back, or the first write would overwrite what is being restored.
+    property bool railSettled: false
+
     /// The index a section key stands at in `railRows`: collection first, playlists after it, files last.
     function sectionIndex(key) {
         if (key === "collection") {
@@ -186,6 +190,74 @@ Pane {
             return Math.max(0, browser.railRows.length - 1);
         }
         return 1;
+    }
+
+    /// The place a rail row names, spelled so it survives a restart: a section, a playlist by its id, a folder by
+    /// its path. An index would not do — the tree's rows come and go between runs.
+    function placeOf(row) {
+        if (!row) {
+            return "";
+        }
+        if (row.kind === "collection" || row.kind === "playlists" || row.kind === "files") {
+            return row.kind;
+        }
+        if (row.kind === "all") {
+            return "all";
+        }
+        if (row.kind === "folder") {
+            return "folder:" + row.folder;
+        }
+        if (row.kind === "playlist") {
+            return "playlist:" + row.id;
+        }
+        return "";
+    }
+
+    /// Where the rail's cursor stands, as a place.
+    function railPlace() {
+        return browser.placeOf(browser.railRows[browser.railCursor]);
+    }
+
+    /// The index `railRows` gives a saved place, or -1 when it is not on offer.
+    function railIndex(place) {
+        const rows = browser.railRows;
+        for (let index = 0; index < rows.length; ++index) {
+            if (browser.placeOf(rows[index]) === place) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    /// Stand the rail where the last session left it. The place is opened first — a tree row can only be reached
+    /// through an open tree — and the cursor lands on the row it names. A place this build no longer has, or no
+    /// place at all, opens the collection: that is where a first session starts (owner's request, 25.11).
+    function restoreRail(place) {
+        if (place === "collection" || place === "files" || place === "playlists") {
+            browser.railCursor = browser.sectionIndex(place);
+            browser.showSection(place);
+            return;
+        }
+        if (place === "all" || place.indexOf("folder:") === 0 || place.indexOf("playlist:") === 0) {
+            // The tree lives under Playlists, so the section opens first and the node is revealed in it.
+            browser.showSection("playlists");
+            browser.railCursor = browser.sectionIndex("playlists");
+            if (Browser.revealRailPlace(place)) {
+                const index = browser.railIndex(place);
+                if (index >= 0) {
+                    browser.railCursor = index;
+                    browser.openTreeRow(browser.railRows[index]);
+                    const treeRow = index - 2;
+                    if (treeRow >= 0) {
+                        playlistTreeList.positionViewAtIndex(treeRow, ListView.Contain);
+                    }
+                    return;
+                }
+            }
+            return;
+        }
+        browser.railCursor = 0;
+        browser.showSection("collection");
     }
 
     /// Clamp the cursor to the rows on offer: the tree appears and disappears under it.
@@ -609,6 +681,18 @@ Pane {
         target: Browser
         function onCursorChanged() {
             Bridge.browserCursorTo(Browser.cursor);
+        }
+    }
+
+    // The place the rail stands on is part of the session, like the folder: the next start opens where the DJ was.
+    // Not while the restore is still running — its own moves are not the DJ's choice. The file is written when the
+    // shell exits (owner's request, 25.11).
+    Connections {
+        target: browser
+        function onRailCursorChanged() {
+            if (browser.railSettled) {
+                Session.rememberRail(browser.railPlace());
+            }
         }
     }
 
@@ -1048,9 +1132,12 @@ Pane {
     Component.onCompleted: {
         Browser.genreFilter = LayoutState.collectionGenres;
         genresSeeded = true;
-        // A session opens on the collection: the DJ's tracks are what the window is for, and a start on a file folder
-        // asks for a click before anything is visible (owner's request, 25.11).
-        browser.showSection("collection");
+        // The rail opens where the last session left it, and a first session opens the collection: the DJ's tracks
+        // are what the window is for, and a start on a file folder asks for a click before anything is visible
+        // (owner's requests, 25.11).
+        browser.restoreRail(Session.rail);
+        // From here on the rail is the DJ's hand: every move is remembered for the next start.
+        browser.railSettled = true;
     }
     Connections {
         target: Browser

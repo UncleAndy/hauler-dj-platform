@@ -662,6 +662,35 @@ int runBrowserCheck(QQmlApplicationEngine& engine, FileBrowser& browser, LayoutS
         std::fprintf(stderr, "dj-ui: pressing a section did not move the list\n");
         return 1;
     }
+    // The rail remembers the place it stood on: a place written by one session is opened by the next, and a
+    // place the library no longer has falls back to the collection (owner's request, 25.11).
+    {
+        QVariant restored;
+        QMetaObject::invokeMethod(panel, "restoreRail", Q_RETURN_ARG(QVariant, restored),
+                                  Q_ARG(QVariant, QStringLiteral("files")));
+        QCoreApplication::processEvents();
+        QVariant stayed;
+        QMetaObject::invokeMethod(panel, "railPlace", Q_RETURN_ARG(QVariant, stayed));
+        const bool openedFiles =
+            browser.mode() == QStringLiteral("files") && stayed.toString() == QStringLiteral("files");
+        QMetaObject::invokeMethod(panel, "restoreRail", Q_RETURN_ARG(QVariant, restored),
+                                  Q_ARG(QVariant, QStringLiteral("")));
+        QCoreApplication::processEvents();
+        QVariant fell;
+        QMetaObject::invokeMethod(panel, "railPlace", Q_RETURN_ARG(QVariant, fell));
+        const bool fellBack = browser.mode() == QStringLiteral("collection")
+                              && fell.toString() == QStringLiteral("collection");
+        std::fprintf(stdout,
+                     "dj-ui: the rail opens on the place it was left on (%s), and a place that is gone falls "
+                     "back to %s\n",
+                     qPrintable(stayed.toString()), qPrintable(fell.toString()));
+        if (!openedFiles || !fellBack) {
+            std::fprintf(stderr, "dj-ui: the rail did not restore the place it was left on\n");
+            return 1;
+        }
+        pressSection(filesRow);
+    }
+
     // Real material, when the run names it: how long a root takes to list and how much of it
     // carries a tempo. A measurement, not a gate — the tree above is what the check asserts.
     const QString realRoot = qEnvironmentVariable("DJ_COLLECTION_CHECK_ROOT");
