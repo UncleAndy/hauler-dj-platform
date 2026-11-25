@@ -84,6 +84,15 @@ pub struct ControllerSettings {
     /// Which effect each of the four FX select keys loads, and the colour that key wears for it.
     #[serde(default)]
     pub fx: ControllerFx,
+    /// How far the material moves for one unit of the wheel's raw speed — ticks per timer unit, as the jog reports it.
+    ///
+    /// A placeholder until a `--capture` of the jog on the panel fixes it: the report's timer unit is not written down in
+    /// the public description, so this is the one number a calibration must supply (plan 25.11).
+    pub scratch_scale: f64,
+    /// How much rate deflection one unit of the wheel's raw speed asks for, before the `-1 … 1` clamp.
+    ///
+    /// Calibrated with the same capture as `scratch_scale`; the default is only a starting point.
+    pub nudge_scale: f64,
 }
 
 /// How a headphone (PFL) button drives monitoring.
@@ -246,6 +255,8 @@ impl Default for ControllerSettings {
             lights: ControllerLights::default(),
             pfl: PflMode::default(),
             fx: ControllerFx::default(),
+            scratch_scale: 16_000.0,
+            nudge_scale: 0.05,
         }
     }
 }
@@ -988,6 +999,8 @@ mod tests {
                 lights: ControllerLights::default(),
                 pfl: PflMode::default(),
                 fx: ControllerFx::default(),
+                scratch_scale: 16_000.0,
+                nudge_scale: 0.05,
             },
             ..Config::default()
         };

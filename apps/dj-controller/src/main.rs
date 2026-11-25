@@ -441,7 +441,11 @@ fn run(arguments: &[String]) -> Result<(), String> {
             night,
             &palette,
             inputs_map.as_deref(),
-            config.controller.pfl,
+            PanelTaste {
+                pfl: config.controller.pfl,
+                scratch_scale: config.controller.scratch_scale,
+                nudge_scale: config.controller.nudge_scale,
+            },
         ),
         Mode::InputsWatch => inputs_watch(&devices, watch_seconds),
         Mode::InputsLearn => inputs_learn(&devices, pick_out.as_deref()),
@@ -873,6 +877,16 @@ fn lights_fill(
     Ok(())
 }
 
+/// The panel's own taste, in one place: how the headphone button behaves, and the two numbers only a capture supplies.
+///
+/// Bundled so `serve` and `inputs_loop` keep a readable argument list rather than growing one argument per knob the panel
+/// gains.
+struct PanelTaste {
+    pfl: dj_config::PflMode,
+    scratch_scale: f64,
+    nudge_scale: f64,
+}
+
 /// The service the application runs: the panel's lights and the panel's buttons, in one process.
 ///
 /// Two jobs and one device: the lights come from the engine's snapshots, the presses go back to the engine as commands.
@@ -885,7 +899,7 @@ fn serve(
     night: bool,
     palette: &dj_controller_s4mk3::lights::Palette,
     inputs_file: Option<&str>,
-    pfl_mode: dj_config::PflMode,
+    taste: PanelTaste,
 ) -> Result<(), String> {
     let Some(endpoint) = engine else {
         return Err(format!("--serve wants --engine <endpoint>. {USAGE}"));
@@ -919,7 +933,7 @@ fn serve(
                         .collect::<Vec<_>>()
                         .join(", ")
                 );
-                inputs_loop(reports, &endpoint, map, state, pfl_mode, fx_effects);
+                inputs_loop(reports, &endpoint, map, state, fx_effects, taste);
             }
             Err(reason) => println!("dj-controller: {reason}; presses ask for nothing"),
         });
@@ -975,11 +989,14 @@ fn inputs_loop(
     endpoint: &str,
     map: dj_controller_s4mk3::inputs::InputMap,
     playing: Playing,
-    pfl_mode: dj_config::PflMode,
     fx: [dj_domain::FxKind; 4],
+    taste: PanelTaste,
 ) {
     let mapping = Mapping::new();
     let mut previous = std::collections::HashMap::new();
+    // The wheels come through report 3, which the map refuses to hold (it is the clock): the driver's own decoder turns
+    // its two positions and timer into a speed, and this is where that speed reaches the engine.
+    let mut wheels = S4Mk3::new();
     let mut last_press: std::collections::HashMap<String, u128> = std::collections::HashMap::new();
     let started = std::time::Instant::now();
     let mut link: Option<EngineLink> = None;
@@ -988,6 +1005,10 @@ fn inputs_loop(
     let mut pending: Vec<(String, dj_domain::DjCommand)> = Vec::new();
     let mut last_flush = std::time::Instant::now();
     let mut queued: Option<Vec<u8>> = None;
+    // The platters: whether a hand is on each top, and the last number sent for it, so a clock-rate report does not flood
+    // the engine with repeats of a speed that has not changed.
+    let mut touched_side = [false; 2];
+    let mut last_wheel_sent: [Option<(bool, f64)>; 2] = [None, None];
     // What the panel said first, once: the owner's complaint is that the window starts with the faders open while the panel
     // has them closed, and this line says which half is telling the truth.
     // The last position of every knob and fader the panel reported: what the engine is told again whenever the link is
@@ -1025,7 +1046,11 @@ fn inputs_loop(
         let report = report_bytes[0];
         let payload = &report_bytes[1..];
         let _ = &pending;
-        for event in map.decode(report, payload, &mut previous) {
+        let wheel_events = wheels.feed(&report_bytes);
+        for event in wheel_events
+            .into_iter()
+            .chain(map.decode(report, payload, &mut previous))
+        {
             if first_positions < 24
                 && map
                     .field_of(&event.control)
@@ -1125,7 +1150,7 @@ fn inputs_loop(
                 if pressed {
                     last_press.insert(event.control.clone(), now);
                 }
-                let on = match pfl_mode {
+                let on = match taste.pfl {
                     dj_config::PflMode::Hold => pressed,
                     dj_config::PflMode::Toggle => {
                         if !pressed {
@@ -1305,6 +1330,57 @@ fn inputs_loop(
                             );
                         }
                     }
+                }
+                continue;
+            }
+            // The platters: a wheel is not in the map (report 3 is the clock), and its two gestures are the panel's own
+            // split (DJP-DECK-002/006) — a hand on the top scratches, a turn of the rim bends. Answered before the
+            // binding table, which speaks only about buttons.
+            if event.control == "wheel_left" || event.control == "wheel_right" {
+                let side = usize::from(event.control == "wheel_right");
+                let deck = side_deck(side, &playing);
+                let touched = touched_side[side];
+                let raw = f64::from(event.value);
+                let command =
+                    wheel_command(touched, raw, deck, taste.scratch_scale, taste.nudge_scale);
+                // A still hand is speed zero, and zero has to be said or the record keeps the last speed; a still bend is
+                // silence. Sent only when the number changes, so a clock-rate report does not flood the engine.
+                let scalar = if touched {
+                    raw * taste.scratch_scale
+                } else {
+                    (raw * taste.nudge_scale).clamp(-1.0, 1.0)
+                };
+                let key = (touched, scalar);
+                if last_wheel_sent[side] != Some(key) {
+                    last_wheel_sent[side] = Some(key);
+                    if raw != 0.0 {
+                        println!(
+                            "dj-controller: at {now} ms {} = {raw:.3} (report {report}) → {command:?}",
+                            event.control
+                        );
+                    }
+                    push_pending(&mut pending, &event.control, command);
+                }
+                continue;
+            }
+            if event.control == "deck_a.wheel_touch" || event.control == "deck_b.wheel_touch" {
+                let side = usize::from(event.control.starts_with("deck_b."));
+                let deck = side_deck(side, &playing);
+                let on = event.value > 0.5;
+                touched_side[side] = on;
+                // A fresh gesture: its first hold and first position must go out even if they repeat an old number.
+                last_wheel_sent[side] = None;
+                let command = touch_command(on, deck);
+                println!(
+                    "dj-controller: at {now} ms {} = {:.0} (report {report}) → {command:?}",
+                    event.control, event.value
+                );
+                let asked = vec![(event.control.clone(), Some(deck), command)];
+                if let Err(reason) = send_commands(endpoint, &asked) {
+                    println!(
+                        "dj-controller: {} did not reach the engine: {reason}",
+                        event.control
+                    );
                 }
                 continue;
             }
@@ -1557,6 +1633,76 @@ fn driving_deck(control: &str, state: &DeckFactsShared) -> Option<dj_domain::Dec
         return Some(state.panel_right);
     }
     dj_controller_core::BindableDeck::from_control(control).map(|(deck, _)| deck.id())
+}
+
+/// What a turn of a platter asks for: a hand on the record scratches it, a turn with no hand bends the rate.
+///
+/// The two halves of one control, exactly as the panel itself splits them (DJP-DECK-002/006). Both are continuous, and
+/// both are scaled by a number a capture on the panel supplies (`controller.scratch_scale`, `controller.nudge_scale`),
+/// because the report's timer unit is not written down in the public description.
+fn wheel_command(
+    touched: bool,
+    raw: f64,
+    deck: dj_domain::DeckId,
+    scratch_scale: f64,
+    nudge_scale: f64,
+) -> dj_domain::DjCommand {
+    if touched {
+        dj_domain::DjCommand::Hand {
+            deck,
+            speed: raw * scratch_scale,
+            held: true,
+        }
+    } else {
+        dj_domain::DjCommand::Nudge {
+            deck,
+            amount: (raw * nudge_scale).clamp(-1.0, 1.0) as f32,
+        }
+    }
+}
+
+/// What touching or letting go of a platter asks for: the record stops under the hand and resumes when it lifts.
+fn touch_command(touched: bool, deck: dj_domain::DeckId) -> dj_domain::DjCommand {
+    dj_domain::DjCommand::Hand {
+        deck,
+        speed: 0.0,
+        held: touched,
+    }
+}
+
+/// The deck the side of the panel drives.
+///
+/// The wheel is physically A on the left and B on the right, but a side can be switched to C or D, and the wheel must
+/// follow the side like every other control on it — otherwise the left platter would scratch A while the DJ watches C.
+fn side_deck(side: usize, playing: &Playing) -> dj_domain::DeckId {
+    playing
+        .lock()
+        .ok()
+        .map(|state| {
+            if side == 0 {
+                state.panel_left
+            } else {
+                state.panel_right
+            }
+        })
+        .unwrap_or(if side == 0 {
+            dj_domain::DeckId::A
+        } else {
+            dj_domain::DeckId::B
+        })
+}
+
+/// Queue a continuous command, the newest of its control winning.
+fn push_pending(
+    pending: &mut Vec<(String, dj_domain::DjCommand)>,
+    control: &str,
+    command: dj_domain::DjCommand,
+) {
+    if let Some(slot) = pending.iter_mut().find(|(name, _)| name == control) {
+        slot.1 = command;
+    } else {
+        pending.push((control.to_string(), command));
+    }
 }
 
 /// Send a command to the deck the side of the panel is switched to.
@@ -3344,5 +3490,37 @@ mod tests {
         // No endpoint: the commands are printed, not sent, and an event the table does not know is said out loud.
         assert!(replay(&file.to_string_lossy(), None).is_ok());
         let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
+    fn a_hand_on_the_platter_scratches_a_turn_without_it_bends() {
+        let deck = dj_domain::DeckId::A;
+        match wheel_command(true, 2.0, deck, 100.0, 0.5) {
+            dj_domain::DjCommand::Hand { speed, held, .. } => {
+                assert!(held);
+                assert_eq!(speed, 200.0);
+            }
+            other => panic!("a touched wheel must scratch, got {other:?}"),
+        }
+        match wheel_command(false, 2.0, deck, 100.0, 0.5) {
+            dj_domain::DjCommand::Nudge { amount, .. } => assert_eq!(amount, 1.0),
+            other => panic!("an untouched wheel must bend, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn touching_a_platter_holds_it_and_letting_go_releases_it() {
+        let deck = dj_domain::DeckId::B;
+        match touch_command(true, deck) {
+            dj_domain::DjCommand::Hand { speed, held, .. } => {
+                assert!(held);
+                assert_eq!(speed, 0.0);
+            }
+            other => panic!("a touch must hold at zero, got {other:?}"),
+        }
+        match touch_command(false, deck) {
+            dj_domain::DjCommand::Hand { held, .. } => assert!(!held),
+            other => panic!("letting go must release, got {other:?}"),
+        }
     }
 }
