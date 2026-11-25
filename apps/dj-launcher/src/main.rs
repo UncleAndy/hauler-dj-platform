@@ -380,7 +380,9 @@ fn lights_out(folder: &Path, what: &str) {
     let Ok(mut child) = command.spawn() else {
         return;
     };
-    let deadline = Instant::now() + Duration::from_secs(2);
+    // One second each: the way out now asks two commands — the lights and the screens — and the panel must be dark in
+    // about the time one command used to take, or a check that measures the exit starts measuring the wait.
+    let deadline = Instant::now() + Duration::from_secs(1);
     while Instant::now() < deadline {
         match child.try_wait() {
             Ok(Some(_)) => return,
