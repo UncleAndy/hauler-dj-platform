@@ -31,7 +31,7 @@ use dj_controller_s4mk3::{NAME, PRODUCT, S4Mk3, VENDOR};
 use dj_hid::write::ReportSink;
 use dj_hid::{DeviceInfo, HidrawTransport, Transport};
 
-const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send] | --lights-demo [--interval MS] [--send] | --lights-show --engine <endpoint> | --lights-fill <code> [--send] | --lights-night [--rest <code>] [--send] | --lights-bright <byte> [--colour N] [--rounds N] [--send] | --lights-colour-walk [<byte>|left|right|all] [--shift] [--interval MS] [--send] | --lights-pick [<byte>|left|right|all] [--out <file>] [--interval MS] [--send] | --screen-from --engine <endpoint> --out <file.ppm> [--panel left|right] | --lights-off | --serve --engine <endpoint> | --inputs-watch [--seconds N] | --inputs-learn [--out <file>] [--inputs <file>]";
+const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send] | --lights-demo [--interval MS] [--send] | --lights-show --engine <endpoint> | --lights-fill <code> [--send] | --lights-night [--rest <code>] [--send] | --lights-bright <byte> [--colour N] [--rounds N] [--send] | --lights-colour-walk [<byte>|left|right|all] [--shift] [--interval MS] [--send] | --lights-pick [<byte>|left|right|all] [--out <file>] [--interval MS] [--send] | --screen-from --engine <endpoint> --out <file.ppm> [--panel left|right] | --lights-off | --serve --engine <endpoint> | --inputs-watch [--seconds N] | --node-rates [--seconds N] | --inputs-learn [--out <file>] [--inputs <file>]";
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -126,6 +126,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
             "--lights-off" => mode = Mode::LightsOff,
             "--serve" => mode = Mode::Serve,
             "--inputs-watch" => mode = Mode::InputsWatch,
+            "--node-rates" => mode = Mode::NodeRates,
             "--inputs-learn" => mode = Mode::InputsLearn,
             "--inputs" => {
                 let Some(path) = arguments.get(index + 1) else {
@@ -448,6 +449,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
             },
         ),
         Mode::InputsWatch => inputs_watch(&devices, watch_seconds),
+        Mode::NodeRates => node_rates(&devices, watch_seconds),
         Mode::InputsLearn => inputs_learn(&devices, pick_out.as_deref()),
         Mode::ScreenFrom => screen_from(engine.as_deref(), pick_out.as_deref(), screen_panel),
         Mode::LightsPick(what) => lights_pick(
@@ -499,6 +501,7 @@ enum Mode {
     LightsOff,
     Serve,
     InputsWatch,
+    NodeRates,
     InputsLearn,
 }
 
@@ -2095,6 +2098,68 @@ fn pick_talkative(
         ));
     }
     Ok((opened, receiver))
+}
+
+/// How often each HID node of the panel speaks, by report id.
+///
+/// One device shows up as several nodes, and reading only the first (as `--capture` does) can miss a fast one: on one
+/// node the wheel report ran at 4 Hz while the service reads every node. This counts them all, so "the panel is slow"
+/// becomes a measurement rather than a guess.
+fn node_rates(devices: &[DeviceInfo], seconds: f32) -> Result<(), String> {
+    let matching: Vec<&DeviceInfo> = devices
+        .iter()
+        .filter(|device| device.is(VENDOR, PRODUCT))
+        .collect();
+    if matching.is_empty() {
+        return Err(format!(
+            "no {NAME} is plugged in, so there is nothing to count"
+        ));
+    }
+    let seconds = seconds.max(1.0);
+    let mut readers = Vec::new();
+    for device in &matching {
+        match spawn_reader(&device.path) {
+            Ok(reports) => readers.push((device.path.clone(), reports)),
+            Err(reason) => println!("dj-controller: {} — {reason}", device.path.display()),
+        }
+    }
+    let until = std::time::Instant::now() + std::time::Duration::from_secs_f32(seconds);
+    let mut counts: Vec<std::collections::BTreeMap<u8, usize>> = readers
+        .iter()
+        .map(|_| std::collections::BTreeMap::new())
+        .collect();
+    while std::time::Instant::now() < until {
+        let mut any = false;
+        for (index, (_, reports)) in readers.iter().enumerate() {
+            while let Ok(report) = reports.try_recv() {
+                any = true;
+                if let Some(&id) = report.first() {
+                    *counts[index].entry(id).or_insert(0) += 1;
+                }
+            }
+        }
+        if !any {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+    for (index, (path, _)) in readers.iter().enumerate() {
+        let ids = &counts[index];
+        let total: usize = ids.values().sum();
+        let wheel = ids.get(&3).copied().unwrap_or(0) as f32 / seconds;
+        let detail = if ids.is_empty() {
+            "none".to_string()
+        } else {
+            ids.iter()
+                .map(|(id, count)| format!("{id}:{count}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        println!(
+            "dj-controller: {} — {total} reports in {seconds:.0} s, by id {detail}; report 3: {wheel:.1} Hz",
+            path.display()
+        );
+    }
+    Ok(())
 }
 
 /// Prints what the panel says, one line a change: the tool that turns a hand into a map line.
