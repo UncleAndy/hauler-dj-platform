@@ -491,6 +491,7 @@ fn the_settings_choose_the_colours() {
         cue: Colour::Salmon,
         sync: Colour::Lime,
         resting: Colour::Off,
+        jog: Colour::White,
         loop_: Colour::Aqua,
         fx_keys: [
             (1, Colour::Blue),

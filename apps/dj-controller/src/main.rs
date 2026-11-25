@@ -2597,6 +2597,7 @@ fn palette_from(
 ) -> dj_controller_s4mk3::lights::Palette {
     dj_controller_s4mk3::lights::Palette {
         resting: colour_of(lights.resting),
+        jog: colour_of(lights.jog),
         play: colour_of(lights.play),
         cue: colour_of(lights.cue),
         sync: colour_of(lights.sync),
@@ -2959,7 +2960,7 @@ fn lights_show(
                             (
                                 2_u8,
                                 (fractional * 2879.0) as u16,
-                                dj_controller_s4mk3::lights::bright(palette.resting.code()),
+                                dj_controller_s4mk3::lights::bright(palette.jog.code()),
                             )
                         }
                         _ => (0_u8, 0_u16, 0_u8),

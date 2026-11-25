@@ -284,6 +284,8 @@ fn control(name: &str) -> Option<u8> {
 pub struct Palette {
     /// The colour of everything inactive, when the panel rests instead of going dark.
     pub resting: Colour,
+    /// The marker on a playing deck's platter.
+    pub jog: Colour,
     /// A deck that is playing.
     pub play: Colour,
     /// A channel in the headphones.
@@ -306,6 +308,7 @@ impl Default for Palette {
         // The colours the first build drew, so a panel without a settings section looks the way it did.
         Self {
             resting: Colour::White,
+            jog: Colour::White,
             play: Colour::Green,
             cue: Colour::Blue,
             sync: Colour::Yellow,

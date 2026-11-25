@@ -121,6 +121,8 @@ pub struct ControllerLights {
     pub night: bool,
     /// The colour of everything that is inactive in night mode.
     pub resting: LightColour,
+    /// The marker on a playing deck's platter: a spot that goes round once per record revolution.
+    pub jog: LightColour,
     /// A deck that is playing.
     pub play: LightColour,
     /// A channel in the headphones.
@@ -148,6 +150,7 @@ impl Default for ControllerLights {
         Self {
             night: true,
             resting: LightColour::White,
+            jog: LightColour::White,
             play: LightColour::Green,
             cue: LightColour::Blue,
             sync: LightColour::Yellow,
