@@ -3057,7 +3057,10 @@ impl EngineGraph {
             // The panel's Loop button: the count is what travels, and the window answers it with the function its own
             // button runs — one meaning for one press (owner's request, 25.11).
             if let DjCommand::LoopPress { deck } = &submission.command.command
-                && let Some(index) = self.decks.iter().position(|candidate| candidate.id() == *deck)
+                && let Some(index) = self
+                    .decks
+                    .iter()
+                    .position(|candidate| candidate.id() == *deck)
             {
                 self.cells.decks[index]
                     .loop_press_seq

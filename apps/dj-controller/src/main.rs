@@ -1622,7 +1622,10 @@ const LOOP_BEATS: [u32; 7] = [1, 2, 4, 8, 16, 32, 64];
 
 /// The next value of a list, round and round: a hand that keeps turning keeps getting a new value.
 fn cycle<T: Copy + PartialEq>(values: &[T], current: T, step: i32) -> T {
-    let at = values.iter().position(|value| *value == current).unwrap_or(0);
+    let at = values
+        .iter()
+        .position(|value| *value == current)
+        .unwrap_or(0);
     let next = (at as i32 + step).rem_euclid(values.len() as i32) as usize;
     values[next]
 }
