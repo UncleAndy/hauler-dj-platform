@@ -543,6 +543,32 @@ int runSettingsWindowCheck(QQmlApplicationEngine &engine, std::unique_ptr<Bridge
     }
     std::fprintf(stderr,
                  "dj-ui: the controller is off until asked for, and the switch writes it: on, then off again\n");
+    // A boolean row is a switch, not a "Check" button: the kind is what the row shows, and a boolean wearing the device
+    // probe's kind offers a button that answers `no output device matching "true"` (owner's report, 25.11). The row is
+    // also written both ways, so the switch is not a picture of one.
+    QQuickItem *deckButtons = findInWindow(QStringLiteral("settingRow_layout_hideDeckButtonsWithController"));
+    if (deckButtons == nullptr) {
+        std::fprintf(stderr,
+                     "dj-ui: the window has no row for hiding the deck buttons with a controller\n");
+        return 1;
+    }
+    if (deckButtons->property("kind").toString() != QStringLiteral("switch")) {
+        std::fprintf(stderr, "dj-ui: the deck buttons row is a %s, not a switch\n",
+                     qPrintable(deckButtons->property("kind").toString()));
+        return 1;
+    }
+    const QVariant deckButtonsBefore = deckButtons->property("current");
+    if (!QMetaObject::invokeMethod(deckButtons, "write",
+                                   Q_ARG(QVariant, QVariant(!deckButtonsBefore.toBool()))) ||
+        !QMetaObject::invokeMethod(deckButtons, "write",
+                                   Q_ARG(QVariant, QVariant(deckButtonsBefore)))) {
+        std::fprintf(stderr, "dj-ui: the deck buttons switch did not answer\n");
+        return 1;
+    }
+    settle(60);
+    std::fprintf(stderr,
+                 "dj-ui: the deck buttons row is a switch and both ways of it answer: %s, then back\n",
+                 deckButtonsBefore.toBool() ? "on" : "off");
 
     if (seenRows.size() < 30) {
         std::fprintf(stderr, "dj-ui: only %lld lines were seen while the pages turned — the hint check proves little\n",
