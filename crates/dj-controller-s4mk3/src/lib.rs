@@ -25,6 +25,7 @@ use dj_controller_core::{ControlEvent, Driver, WheelCounter};
 /// USB vendor id.
 pub mod inputs;
 pub mod lights;
+pub mod panels;
 pub mod screen;
 pub mod text;
 pub mod waveform;

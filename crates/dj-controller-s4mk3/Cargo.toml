@@ -9,6 +9,9 @@ authors.workspace = true
 
 [dependencies]
 dj-controller-core = { path = "../dj-controller-core" }
+# The screens are a USB bulk interface of their own, not HID: a pure-Rust USB stack keeps the controller free of a
+# system libusb and works on the platforms the project ships for.
+nusb = "0.2"
 
 [dev-dependencies]
 dj-domain = { path = "../dj-domain" }

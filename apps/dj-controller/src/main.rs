@@ -31,7 +31,7 @@ use dj_controller_s4mk3::{NAME, PRODUCT, S4Mk3, VENDOR};
 use dj_hid::write::ReportSink;
 use dj_hid::{DeviceInfo, HidrawTransport, Transport};
 
-const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send] | --lights-demo [--interval MS] [--send] | --lights-show --engine <endpoint> | --lights-fill <code> [--send] | --lights-night [--rest <code>] [--send] | --lights-bright <byte> [--colour N] [--rounds N] [--send] | --lights-colour-walk [<byte>|left|right|all] [--shift] [--interval MS] [--send] | --lights-pick [<byte>|left|right|all] [--out <file>] [--interval MS] [--send] | --screen-from --engine <endpoint> --out <file.ppm> [--panel left|right] | --lights-off | --serve --engine <endpoint> | --inputs-watch [--seconds N] | --node-rates [--seconds N] | --wheel-init [--seconds N] | --inputs-learn [--out <file>] [--inputs <file>]";
+const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send] | --lights-demo [--interval MS] [--send] | --lights-show --engine <endpoint> | --lights-fill <code> [--send] | --lights-night [--rest <code>] [--send] | --lights-bright <byte> [--colour N] [--rounds N] [--send] | --lights-colour-walk [<byte>|left|right|all] [--shift] [--interval MS] [--send] | --lights-pick [<byte>|left|right|all] [--out <file>] [--interval MS] [--send] | --screen-from --engine <endpoint> --out <file.ppm> [--panel left|right] | --screen-send [--engine <endpoint>] [--panel left|right] | --lights-off | --serve --engine <endpoint> | --inputs-watch [--seconds N] | --node-rates [--seconds N] | --wheel-init [--seconds N] | --inputs-learn [--out <file>] [--inputs <file>]";
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -146,6 +146,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
                 index += 1;
             }
             "--screen-from" => mode = Mode::ScreenFrom,
+            "--screen-send" => mode = Mode::ScreenSend,
             "--panel" => {
                 let Some(side) = arguments.get(index + 1) else {
                     return Err(format!("--panel wants left or right. {USAGE}"));
@@ -459,6 +460,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         Mode::WheelInit => wheel_init(&devices, watch_seconds),
         Mode::InputsLearn => inputs_learn(&devices, pick_out.as_deref()),
         Mode::ScreenFrom => screen_from(engine.as_deref(), pick_out.as_deref(), screen_panel),
+        Mode::ScreenSend => screen_send(engine.as_deref(), screen_panel),
         Mode::LightsPick(what) => lights_pick(
             &devices,
             &what,
@@ -505,6 +507,7 @@ enum Mode {
     LightsColourWalk(String),
     LightsPick(String),
     ScreenFrom,
+    ScreenSend,
     LightsOff,
     Serve,
     InputsWatch,
@@ -952,6 +955,13 @@ fn serve(
             Err(reason) => println!("dj-controller: {reason}; presses ask for nothing"),
         });
     }
+    // The screens are a thread of their own: a frame is a hundred and fifty kilobytes and a HID read is a few bytes,
+    // and a slow write must never hold a press back (owner's request, 25.11).
+    {
+        let endpoint = endpoint.to_string();
+        let state = std::sync::Arc::clone(&playing);
+        std::thread::spawn(move || screens_show(&endpoint, &state));
+    }
     lights_show(
         devices,
         Some(endpoint),
@@ -960,6 +970,78 @@ fn serve(
         palette,
         Some(&playing),
     )
+}
+
+/// Keep the two screens showing the decks while the engine publishes.
+///
+/// Five frames a second: a full screen is 153 620 bytes, so two of them at five a second is about 1,5 MB/s — a sixth of
+/// what thirty frames a second would ask of the same cable. A frame is only sent when the picture has changed, so a
+/// paused deck costs nothing (DJP-NFR-001: the audio path never waits on this).
+fn screens_show(endpoint: &str, playing: &Playing) {
+    let mut panels = match dj_controller_s4mk3::panels::Panels::open() {
+        Ok(panels) => panels,
+        Err(reason) => {
+            println!("dj-controller: no screens: {reason}");
+            return;
+        }
+    };
+    println!(
+        "dj-controller: the screens are drawn on interface {}",
+        panels.interface_number()
+    );
+    let (mut client, _welcome) = match dj_bridge::connect_with_timeout(
+        std::path::Path::new(endpoint),
+        Some(std::time::Duration::from_secs(2)),
+    ) {
+        Ok(connected) => connected,
+        Err(reason) => {
+            println!("dj-controller: the screens cannot reach the engine: {reason}");
+            return;
+        }
+    };
+    let interval = std::time::Duration::from_millis(200);
+    let mut last_drawn = std::time::Instant::now()
+        .checked_sub(interval)
+        .unwrap_or_else(std::time::Instant::now);
+    // What each panel showed last: a picture that has not changed is not sent again.
+    let mut drawn: [Option<Vec<u16>>; 2] = [None, None];
+    loop {
+        match client.recv_server() {
+            Ok(dj_bridge::ServerMessage::Snapshot(snapshot)) => {
+                if last_drawn.elapsed() < interval {
+                    continue;
+                }
+                last_drawn = std::time::Instant::now();
+                let (jump, looped) = playing
+                    .lock()
+                    .map(|state| (state.move_beats, state.loop_beats))
+                    .unwrap_or(([4.0; 2], [4; 2]));
+                for (index, side) in [
+                    (0usize, dj_controller_s4mk3::Screen::Left),
+                    (1usize, dj_controller_s4mk3::Screen::Right),
+                ] {
+                    let panel = panel_from(&snapshot, side, jump[index], looped[index]);
+                    let canvas = dj_controller_s4mk3::screen::render_deck(&panel);
+                    if drawn[index].as_deref() == Some(canvas.pixels()) {
+                        continue;
+                    }
+                    let Ok(frame) = canvas.frame(side) else {
+                        continue;
+                    };
+                    if let Err(reason) = panels.send(&frame) {
+                        println!("dj-controller: the screens stopped: {reason}");
+                        return;
+                    }
+                    drawn[index] = Some(canvas.pixels().to_vec());
+                }
+            }
+            Ok(_) => continue,
+            Err(reason) => {
+                println!("dj-controller: the screens lost the engine: {reason}");
+                return;
+            }
+        }
+    }
 }
 
 /// The map the presses are read with: the file named on the command line, else the one learned on this machine, else
@@ -2660,17 +2742,11 @@ fn panel_from(
 /// How many columns the strip at the bottom of a screen is drawn with: the width of the picture inside its margins.
 const STRIP_COLUMNS: usize = 300;
 
-/// Draw one screen from a live snapshot and write it where a person can look at it.
-fn screen_from(
-    engine: Option<&str>,
-    out: Option<&str>,
+/// The panel of one screen, taken from the engine's first snapshot.
+fn live_panel(
+    endpoint: &str,
     side: dj_controller_s4mk3::Screen,
-) -> Result<(), String> {
-    let (Some(endpoint), Some(path)) = (engine, out) else {
-        return Err(format!(
-            "--screen-from wants --engine <endpoint> and --out <file>. {USAGE}"
-        ));
-    };
+) -> Result<dj_controller_s4mk3::screen::DeckPanel, String> {
     let (mut client, _welcome) = dj_bridge::connect_with_timeout(
         std::path::Path::new(endpoint),
         Some(std::time::Duration::from_secs(2)),
@@ -2684,28 +2760,68 @@ fn screen_from(
             dj_bridge::ServerMessage::Snapshot(snapshot) => {
                 // The knobs' own values: this one-shot tool has no live controller, so it draws what a fresh service
                 // carries. The service itself passes the numbers its hand set.
-                let panel = panel_from(&snapshot, side, 4.0, 4);
-                let canvas = dj_controller_s4mk3::screen::render_deck(&panel);
-                std::fs::write(path, canvas.to_ppm())
-                    .map_err(|error| format!("{path}: {error}"))?;
-                println!(
-                    "dj-controller: {path}: {} — {} by {}, {} left, MOVE {} / LOOP {}, {} columns of waveform",
-                    panel.deck,
-                    panel.title,
-                    panel.artist,
-                    dj_controller_s4mk3::screen::clock(panel.remaining_seconds),
-                    panel.jump_beats.map_or_else(|| String::from("--"), |beats| {
-                        format!("{beats}")
-                    }),
-                    panel.loop_beats
-                        .map_or_else(|| String::from("--"), |beats| format!("{beats}")),
-                    panel.waveform.len()
-                );
-                return Ok(());
+                return Ok(panel_from(&snapshot, side, 4.0, 4));
             }
             _ => continue,
         }
     }
+}
+
+/// Draw one screen from a live snapshot and write it where a person can look at it.
+fn screen_from(
+    engine: Option<&str>,
+    out: Option<&str>,
+    side: dj_controller_s4mk3::Screen,
+) -> Result<(), String> {
+    let (Some(endpoint), Some(path)) = (engine, out) else {
+        return Err(format!(
+            "--screen-from wants --engine <endpoint> and --out <file>. {USAGE}"
+        ));
+    };
+    let panel = live_panel(endpoint, side)?;
+    let canvas = dj_controller_s4mk3::screen::render_deck(&panel);
+    std::fs::write(path, canvas.to_ppm()).map_err(|error| format!("{path}: {error}"))?;
+    println!(
+        "dj-controller: {path}: {} — {} by {}, {} left, MOVE {} / LOOP {}, {} columns of waveform",
+        panel.deck,
+        panel.title,
+        panel.artist,
+        dj_controller_s4mk3::screen::clock(panel.remaining_seconds),
+        panel
+            .jump_beats
+            .map_or_else(|| String::from("--"), |beats| format!("{beats}")),
+        panel
+            .loop_beats
+            .map_or_else(|| String::from("--"), |beats| format!("{beats}")),
+        panel.waveform.len()
+    );
+    Ok(())
+}
+
+/// Put one frame on the panel: the numbers an engine has when one is named, the sample otherwise.
+///
+/// This is the transport's own check — a person looks at the controller and says whether the picture arrived. The
+/// service sends frames built by the same function, so a frame that lands here is a frame that lands there.
+fn screen_send(engine: Option<&str>, side: dj_controller_s4mk3::Screen) -> Result<(), String> {
+    let panel = match engine {
+        Some(endpoint) => live_panel(endpoint, side)?,
+        None => dj_controller_s4mk3::screen::sample_panel(),
+    };
+    let canvas = dj_controller_s4mk3::screen::render_deck(&panel);
+    let frame = canvas
+        .frame(side)
+        .map_err(|error| format!("the frame cannot be built: {error}"))?;
+    let mut panels = dj_controller_s4mk3::panels::Panels::open()?;
+    let sent = panels.send(&frame)?;
+    println!(
+        "dj-controller: {sent} bytes to the {} panel, on interface {}",
+        match side {
+            dj_controller_s4mk3::Screen::Left => "left",
+            dj_controller_s4mk3::Screen::Right => "right",
+        },
+        panels.interface_number()
+    );
+    Ok(())
 }
 
 /// The colour of a settings value in the driver's own vocabulary.
