@@ -31,7 +31,7 @@ use dj_controller_s4mk3::{NAME, PRODUCT, S4Mk3, VENDOR};
 use dj_hid::write::ReportSink;
 use dj_hid::{DeviceInfo, HidrawTransport, Transport};
 
-const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send] | --lights-demo [--interval MS] [--send] | --lights-show --engine <endpoint> | --lights-fill <code> [--send] | --lights-night [--rest <code>] [--send] | --lights-bright <byte> [--colour N] [--rounds N] [--send] | --lights-colour-walk [<byte>|left|right|all] [--shift] [--interval MS] [--send] | --lights-pick [<byte>|left|right|all] [--out <file>] [--interval MS] [--send] | --screen-from --engine <endpoint> --out <file.ppm> [--panel left|right] | --lights-off | --serve --engine <endpoint> | --inputs-watch [--seconds N] | --node-rates [--seconds N] | --inputs-learn [--out <file>] [--inputs <file>]";
+const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send] | --lights-demo [--interval MS] [--send] | --lights-show --engine <endpoint> | --lights-fill <code> [--send] | --lights-night [--rest <code>] [--send] | --lights-bright <byte> [--colour N] [--rounds N] [--send] | --lights-colour-walk [<byte>|left|right|all] [--shift] [--interval MS] [--send] | --lights-pick [<byte>|left|right|all] [--out <file>] [--interval MS] [--send] | --screen-from --engine <endpoint> --out <file.ppm> [--panel left|right] | --lights-off | --serve --engine <endpoint> | --inputs-watch [--seconds N] | --node-rates [--seconds N] | --wheel-init [--seconds N] | --inputs-learn [--out <file>] [--inputs <file>]";
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -127,6 +127,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
             "--serve" => mode = Mode::Serve,
             "--inputs-watch" => mode = Mode::InputsWatch,
             "--node-rates" => mode = Mode::NodeRates,
+            "--wheel-init" => mode = Mode::WheelInit,
             "--inputs-learn" => mode = Mode::InputsLearn,
             "--inputs" => {
                 let Some(path) = arguments.get(index + 1) else {
@@ -450,6 +451,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         ),
         Mode::InputsWatch => inputs_watch(&devices, watch_seconds),
         Mode::NodeRates => node_rates(&devices, watch_seconds),
+        Mode::WheelInit => wheel_init(&devices, watch_seconds),
         Mode::InputsLearn => inputs_learn(&devices, pick_out.as_deref()),
         Mode::ScreenFrom => screen_from(engine.as_deref(), pick_out.as_deref(), screen_panel),
         Mode::LightsPick(what) => lights_pick(
@@ -502,6 +504,7 @@ enum Mode {
     Serve,
     InputsWatch,
     NodeRates,
+    WheelInit,
     InputsLearn,
 }
 
@@ -2160,6 +2163,32 @@ fn node_rates(devices: &[DeviceInfo], seconds: f32) -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+/// Send the jog-wheel light init, then count the reports.
+///
+/// The public mapping sends this pair at start-up with its own note that they are "required for the jog wheel LEDs to
+/// work". The suspicion is that the panel streams the wheels faster only after it — a wheel report at 4 Hz makes every
+/// scratch a guess. Only the light init (report 48) is sent: the motor reset (49) is forbidden until its own decision.
+fn wheel_init(devices: &[DeviceInfo], seconds: f32) -> Result<(), String> {
+    let mut sink = open_lights(devices)?;
+    // 26 bytes: byte 1 = 1, byte 2 = 3, then byte 0 = 1, sent twice — as the mapping does.
+    let mut payload = vec![0_u8; 26];
+    payload[1] = 1;
+    payload[2] = 3;
+    let mut wire = vec![48_u8];
+    wire.extend_from_slice(&payload);
+    sink.send(&wire)?;
+    payload[0] = 1;
+    let mut wire = vec![48_u8];
+    wire.extend_from_slice(&payload);
+    sink.send(&wire)?;
+    drop(sink);
+    println!(
+        "dj-controller: sent the wheel-light init (report 48) twice; counting the reports for {seconds:.0} s"
+    );
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    node_rates(devices, seconds)
 }
 
 /// Prints what the panel says, one line a change: the tool that turns a hand into a map line.
