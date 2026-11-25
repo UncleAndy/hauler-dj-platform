@@ -2253,10 +2253,10 @@ fn palette_from(
 /// the "FX on" button.
 fn fx_keys_from(fx: &dj_config::ControllerFx) -> [(u8, dj_controller_s4mk3::Colour); 4] {
     [
-        (fx.key1.effect.index(), colour_of(fx.key1.colour)),
-        (fx.key2.effect.index(), colour_of(fx.key2.colour)),
-        (fx.key3.effect.index(), colour_of(fx.key3.colour)),
-        (fx.key4.effect.index(), colour_of(fx.key4.colour)),
+        (fx.key1_effect.index(), colour_of(fx.key1_colour)),
+        (fx.key2_effect.index(), colour_of(fx.key2_colour)),
+        (fx.key3_effect.index(), colour_of(fx.key3_colour)),
+        (fx.key4_effect.index(), colour_of(fx.key4_colour)),
     ]
 }
 

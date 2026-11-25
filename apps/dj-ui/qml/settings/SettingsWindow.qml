@@ -153,6 +153,7 @@ Popup {
                                             path: modelData.path
                                             kind: modelData.kind === undefined ? "text" : modelData.kind
                                             values: modelData.values === undefined ? [] : modelData.values
+                                            fallback: modelData.fallback === undefined ? "" : String(modelData.fallback)
                                             pairSide: modelData.pairSide === undefined ? -1 : modelData.pairSide
                                             allowNone: modelData.allowNone === true
                                             channelDevicePath: modelData.channelDevicePath === undefined
@@ -466,6 +467,48 @@ Popup {
                 { label: qsTr("Effect on"),
                   hint: qsTr("The FX button of a deck whose effect is switched in. On the S4 MK3 the mixer section has one for each of the four decks."),
                   path: "engine:controller.lights.fx", kind: "choice",
+                  values: ["off", "red", "carrot", "orange", "honey", "yellow", "lime", "green",
+                           "aqua", "celeste", "sky", "blue", "purple", "fuscia", "magenta",
+                           "azalea", "salmon", "white"] },
+                // What each of the four numbered FX select keys loads and how it glows. The dedicated Filter key beside
+                // them always loads the filter and is not a row here (owner's request, 25.11).
+                { label: qsTr("FX key 1 effect"),
+                  hint: qsTr("Which effect the first FX select key loads when pressed. The dedicated Filter key beside the four numbered ones always loads the filter."),
+                  path: "engine:controller.fx.key1_effect", kind: "choice", fallback: "echo",
+                  values: ["filter", "echo", "roll", "flanger", "phaser", "bitcrusher", "noise"] },
+                { label: qsTr("FX key 1 colour"),
+                  hint: qsTr("The colour the first FX select key glows, and the colour a deck running that effect shows on its FX button."),
+                  path: "engine:controller.fx.key1_colour", kind: "choice", fallback: "blue",
+                  values: ["off", "red", "carrot", "orange", "honey", "yellow", "lime", "green",
+                           "aqua", "celeste", "sky", "blue", "purple", "fuscia", "magenta",
+                           "azalea", "salmon", "white"] },
+                { label: qsTr("FX key 2 effect"),
+                  hint: qsTr("Which effect the second FX select key loads when pressed."),
+                  path: "engine:controller.fx.key2_effect", kind: "choice", fallback: "roll",
+                  values: ["filter", "echo", "roll", "flanger", "phaser", "bitcrusher", "noise"] },
+                { label: qsTr("FX key 2 colour"),
+                  hint: qsTr("The colour the second FX select key glows, and the colour a deck running that effect shows on its FX button."),
+                  path: "engine:controller.fx.key2_colour", kind: "choice", fallback: "green",
+                  values: ["off", "red", "carrot", "orange", "honey", "yellow", "lime", "green",
+                           "aqua", "celeste", "sky", "blue", "purple", "fuscia", "magenta",
+                           "azalea", "salmon", "white"] },
+                { label: qsTr("FX key 3 effect"),
+                  hint: qsTr("Which effect the third FX select key loads when pressed."),
+                  path: "engine:controller.fx.key3_effect", kind: "choice", fallback: "flanger",
+                  values: ["filter", "echo", "roll", "flanger", "phaser", "bitcrusher", "noise"] },
+                { label: qsTr("FX key 3 colour"),
+                  hint: qsTr("The colour the third FX select key glows, and the colour a deck running that effect shows on its FX button."),
+                  path: "engine:controller.fx.key3_colour", kind: "choice", fallback: "purple",
+                  values: ["off", "red", "carrot", "orange", "honey", "yellow", "lime", "green",
+                           "aqua", "celeste", "sky", "blue", "purple", "fuscia", "magenta",
+                           "azalea", "salmon", "white"] },
+                { label: qsTr("FX key 4 effect"),
+                  hint: qsTr("Which effect the fourth FX select key loads when pressed."),
+                  path: "engine:controller.fx.key4_effect", kind: "choice", fallback: "phaser",
+                  values: ["filter", "echo", "roll", "flanger", "phaser", "bitcrusher", "noise"] },
+                { label: qsTr("FX key 4 colour"),
+                  hint: qsTr("The colour the fourth FX select key glows, and the colour a deck running that effect shows on its FX button."),
+                  path: "engine:controller.fx.key4_colour", kind: "choice", fallback: "aqua",
                   values: ["off", "red", "carrot", "orange", "honey", "yellow", "lime", "green",
                            "aqua", "celeste", "sky", "blue", "purple", "fuscia", "magenta",
                            "azalea", "salmon", "white"] }

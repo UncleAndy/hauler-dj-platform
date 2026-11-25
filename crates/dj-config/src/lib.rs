@@ -159,56 +159,38 @@ impl Default for ControllerLights {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ControllerFx {
-    /// The first FX select key.
-    pub key1: FxKey,
-    /// The second FX select key.
-    pub key2: FxKey,
-    /// The third FX select key.
-    pub key3: FxKey,
-    /// The fourth FX select key.
-    pub key4: FxKey,
-}
-
-/// One FX select key: the effect it loads and the colour it glows.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct FxKey {
-    /// The effect the key loads when pressed.
-    pub effect: dj_domain::FxKind,
-    /// The colour the key glows, in the device's own colour names.
-    pub colour: LightColour,
+    /// The effect the first key loads.
+    pub key1_effect: dj_domain::FxKind,
+    /// The colour the first key wears.
+    pub key1_colour: LightColour,
+    /// The effect the second key loads.
+    pub key2_effect: dj_domain::FxKind,
+    /// The colour the second key wears.
+    pub key2_colour: LightColour,
+    /// The effect the third key loads.
+    pub key3_effect: dj_domain::FxKind,
+    /// The colour the third key wears.
+    pub key3_colour: LightColour,
+    /// The effect the fourth key loads.
+    pub key4_effect: dj_domain::FxKind,
+    /// The colour the fourth key wears.
+    pub key4_colour: LightColour,
 }
 
 impl Default for ControllerFx {
     fn default() -> Self {
-        // The keys the first build shipped: echo, roll, flanger and phaser, one per key, in the colours those
-        // effects always wore. A config that does not name the keys changes nothing.
+        // The keys the first build shipped: echo, roll, flanger and phaser, one per key, in the colours those effects
+        // always wore. Flat fields, not one table per key: a file that names only an effect then keeps the key's own
+        // default colour instead of falling back to a single colour for every key.
         Self {
-            key1: FxKey {
-                effect: dj_domain::FxKind::Echo,
-                colour: LightColour::Blue,
-            },
-            key2: FxKey {
-                effect: dj_domain::FxKind::Roll,
-                colour: LightColour::Green,
-            },
-            key3: FxKey {
-                effect: dj_domain::FxKind::Flanger,
-                colour: LightColour::Purple,
-            },
-            key4: FxKey {
-                effect: dj_domain::FxKind::Phaser,
-                colour: LightColour::Aqua,
-            },
-        }
-    }
-}
-
-impl Default for FxKey {
-    fn default() -> Self {
-        Self {
-            effect: dj_domain::FxKind::Filter,
-            colour: LightColour::Yellow,
+            key1_effect: dj_domain::FxKind::Echo,
+            key1_colour: LightColour::Blue,
+            key2_effect: dj_domain::FxKind::Roll,
+            key2_colour: LightColour::Green,
+            key3_effect: dj_domain::FxKind::Flanger,
+            key3_colour: LightColour::Purple,
+            key4_effect: dj_domain::FxKind::Phaser,
+            key4_colour: LightColour::Aqua,
         }
     }
 }
@@ -1150,31 +1132,29 @@ mod tests {
 
     #[test]
     fn the_fx_keys_take_their_effects_and_colours_from_the_file() {
+        // A file that names only an effect keeps the key's own colour: that is why the keys are flat fields, not one
+        // table per key (a partial table fell back to a single colour for every key).
         let named = Config::from_toml(
-            "[controller.fx]\nkey1 = { effect = \"bitcrusher\", colour = \"red\" }\nkey4 = { effect = \"noise\", colour = \"white\" }\n",
+            "[controller.fx]\nkey1_effect = \"bitcrusher\"\nkey4_effect = \"noise\"\nkey4_colour = \"white\"\n",
         )
         .unwrap_or_else(|err| panic!("{err}"));
         assert_eq!(
-            named.controller.fx.key1.effect,
+            named.controller.fx.key1_effect,
             dj_domain::FxKind::Bitcrusher
         );
-        assert_eq!(named.controller.fx.key1.colour, LightColour::Red);
-        assert_eq!(named.controller.fx.key4.effect, dj_domain::FxKind::Noise);
-        assert_eq!(named.controller.fx.key4.colour, LightColour::White);
+        assert_eq!(named.controller.fx.key1_colour, LightColour::Blue);
+        assert_eq!(named.controller.fx.key4_effect, dj_domain::FxKind::Noise);
+        assert_eq!(named.controller.fx.key4_colour, LightColour::White);
         // The keys the file did not name keep the shipped defaults.
-        assert_eq!(named.controller.fx.key2.effect, dj_domain::FxKind::Roll);
-        assert_eq!(named.controller.fx.key3.colour, LightColour::Purple);
+        assert_eq!(named.controller.fx.key2_effect, dj_domain::FxKind::Roll);
+        assert_eq!(named.controller.fx.key3_colour, LightColour::Purple);
 
-        let bad_colour = Config::from_toml(
-            "[controller.fx]\nkey1 = { effect = \"echo\", colour = \"mauve\" }\n",
-        );
+        let bad_colour = Config::from_toml("[controller.fx]\nkey1_colour = \"mauve\"\n");
         assert!(
             matches!(bad_colour, Err(ConfigError::Parse(_))),
             "an unknown colour name must fail, not be ignored"
         );
-        let bad_kind = Config::from_toml(
-            "[controller.fx]\nkey2 = { effect = \"reverb\", colour = \"blue\" }\n",
-        );
+        let bad_kind = Config::from_toml("[controller.fx]\nkey2_effect = \"reverb\"\n");
         assert!(
             matches!(bad_kind, Err(ConfigError::Parse(_))),
             "an unknown effect name must fail, not be ignored"

@@ -24,6 +24,9 @@ Item {
     // What the engine answered about the device (kind "check").
     property string answer: ""
     property var values: []
+    // The value to show when the file does not carry this key yet: the default the engine applies. A choice that shows
+    // the first word of its list instead tells the DJ a setting he does not have (the FX keys, 25.11).
+    property string fallback: ""
     // What this line is for, in a sentence or two: shown as a tooltip when the pointer rests on the label. The window
     // carries a description for every line, and the check refuses to pass when one is missing — a settings window that
     // does not say what a value does is a list of words.
@@ -541,7 +544,8 @@ Item {
         if (!row.asList) {
             return;
         }
-        const index = row.offered.indexOf(row.currentText);
+        const wanted = row.currentText !== "" ? row.currentText : row.fallback;
+        const index = row.offered.indexOf(wanted);
         choice.currentIndex = index >= 0 ? index : 0;
         if (row.pairSide >= 0 && row.current !== undefined) {
             // A channel row shows what it has, and "None" when it has nothing: an empty list is not a state.
