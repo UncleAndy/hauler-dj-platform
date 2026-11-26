@@ -972,8 +972,17 @@ Pane {
     Connections {
         target: Browser
         function onCursorChanged() {
-            if (!browser.extending) {
-                browser.setAnchor(browser.cursorRow());
+            // A Shift press moves the cursor itself, and that move arrives from the engine a moment later — long after the
+            // press stopped extending. So the test is not a flag but the list: a cursor that landed **inside the run the
+            // DJ drew** is the head of that run, and the anchor stays where the press put it. A cursor that landed outside
+            // the run began a new one (owner's report, 25.11: «shift-home» picked 0..39 instead of the anchor's run).
+            //
+            // A cursor that cannot be placed at all — its track is on another page, so `rowOf` says -1 — is not a new run
+            // either: anchoring to -1 wiped the anchor, and the next Shift press began one from the cursor's far end
+            // (that is the «0..39» this check kept seeing under load).
+            const row = browser.cursorRow();
+            if (!browser.extending && row >= 0 && !browser.selection.includes(row)) {
+                browser.setAnchor(row);
             }
             if (!browser.keepScrollOnCursor) {
                 centreOnCursor();
@@ -993,15 +1002,18 @@ Pane {
             // model starts at the top: the DJ's place goes back before anything else is asked of the list.
             if (Browser.pageGeneration !== browser.seenGeneration) {
                 browser.seenGeneration = Browser.pageGeneration;
-                // New rows are not always a new list: the cursor reaching the bottom asks for the next page, and
-                // the run being drawn is still the run the DJ meant. The anchor is a track, so it is looked up again;
-                // a page that lost that track (another section, another filter) leaves no anchor at all, which is the
-                // old behaviour and the right one (the check «shift-home» failed on the page answering in between).
+                // New rows are not always a new list: the cursor reaching the bottom asks for the next page, and the run
+                // being drawn is still the run the DJ meant. The anchor is a **row of the list**, and a page is only a
+                // window onto that list: when the page carries the anchor's track the anchor moves to where it is now,
+                // and when it does not (the track is on another page) the anchor stays where it was — the index is still
+                // the same place in the same ordered list. A real change of list goes through `clearAnchor` (another
+                // mode, another playlist, another filter), which is where an anchor that means nothing is dropped.
                 const kept = browser.anchorPath;
                 const at =
                     kept === "" ? -1 : browser.showingRows.findIndex((row) => row.path === kept);
-                browser.anchorIndex = at;
-                browser.anchorPath = at >= 0 ? kept : "";
+                if (at >= 0) {
+                    browser.anchorIndex = at;
+                }
                 // The list was replaced under the DJ: his offset goes back, and the cursor is not centred —
                 // centring would move the window he is looking at, which is the report this answers.
                 browser.restoreScroll();
