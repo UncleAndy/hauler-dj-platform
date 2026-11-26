@@ -36,7 +36,7 @@ pub enum Intent {
     CueJump,
     /// Store the cue point where the deck stands.
     CueSet,
-    /// The tempo fader: an absolute position over the deck's pitch range.
+    /// The tempo fader: a movement, not a position — see `PitchFader` and `pitch_after`.
     Tempo,
     /// A channel fader: the level a hand rides during a mix.
     ChannelFader,
@@ -112,8 +112,55 @@ pub struct PadState {
     pub active_loop: bool,
 }
 
-/// The deck's pitch range, either side of unity: what a fader at its end asks for.
+/// The deck's pitch range, either side of unity: what a fader's whole length is worth.
 pub const PITCH_RANGE: f32 = 0.16;
+
+/// Where the pitch fader stood the last time it was read, per deck.
+///
+/// The panel's tempo fader is **relative** (owner's request, 25.11): the hand's position is not the setting, only its
+/// movement is. That is what makes the physical fader a control a DJ can pick up and put down, instead of an absolute
+/// scale that moves the pitch when the panel is plugged in — and it needs state, because a movement is a difference
+/// between two readings and the second one is all an event carries.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct PitchFader {
+    last: Option<f64>,
+}
+
+impl PitchFader {
+    /// How far the fader travelled since it was last read, from `-1` to `1` of its whole length.
+    ///
+    /// `None` on the first reading of a panel (there is no movement to speak of yet) and never `Some(0.0)`'s opposite:
+    /// a hand that did not move says nothing.
+    pub fn travel(&mut self, position: f64) -> Option<f64> {
+        let position = position.clamp(0.0, 1.0);
+        let travel = self.last.map(|last| position - last);
+        self.last = Some(position);
+        travel
+    }
+
+    /// Forget where the fader stood: with Shift held the hand moves it and the app stays where it is, so the next
+    /// movement has to start from wherever the hand left the fader, not from where it was picked up.
+    pub fn forget(&mut self) {
+        self.last = None;
+    }
+
+    /// Where the fader was when it was last read.
+    #[must_use]
+    pub fn last(&self) -> Option<f64> {
+        self.last
+    }
+}
+
+/// The pitch the app should have after the fader travelled `travel` of its length from where the app is now.
+///
+/// The whole length is still worth ±`PITCH_RANGE`, the same scale the absolute fader used, so the feel of the control does
+/// not change — only its origin moves with the app. The result stops at the ends of the range: a hand that keeps pushing
+/// past the top asks for the top, and does not walk the pitch away by repeated shoves.
+#[must_use]
+pub fn pitch_after(current: f64, travel: f64) -> f64 {
+    let range = f64::from(PITCH_RANGE);
+    (current + travel * 2.0 * range).clamp(1.0 - range, 1.0 + range)
+}
 
 /// The value a channel fader's handle position is worth, on the window's own law.
 ///
@@ -399,9 +446,12 @@ impl Mapping {
         let intent = intent_for(&event.control).or_else(|| mixer_intent_for(&event.control))?;
         let pressed = event.value > 0.5;
         let command = match intent {
+            // The service does not come through here for the fader: the panel's tempo fader is relative, so the pitch
+            // moves by the *difference* between two readings (`PitchFader`, `pitch_after`), which a table of intents
+            // cannot hold. This arm is the absolute law a recorded trace is read by — a captured fader stood at a place,
+            // and replaying it must land there — and it is kept for that and for the table's own tests.
             Intent::Tempo => {
-                let ratio = 1.0
-                    + (f64::from(event.value.clamp(0.0, 1.0)) * 2.0 - 1.0) * f64::from(PITCH_RANGE);
+                let ratio = pitch_after(1.0, f64::from(event.value.clamp(0.0, 1.0)) * 2.0 - 1.0);
                 Some(DjCommand::SetTempoRatio { deck: deck?, ratio })
             }
             Intent::ChannelFader => Some(DjCommand::SetChannelFader {
@@ -945,5 +995,54 @@ mod tests {
         );
         let unknown = ControlEvent::level("wheel_left", 1.0);
         assert_eq!(mapping.resolve(&unknown, false), None);
+    }
+    #[test]
+    fn the_pitch_fader_moves_the_app_by_its_travel_and_forgets_where_it_was() {
+        let mut fader = super::PitchFader::default();
+        // The first reading is where the hand already is: it is not a movement, and plugging the panel in must not jump
+        // the pitch to wherever the fader happens to stand (owner's report, 25.11).
+        assert_eq!(fader.travel(0.7), None);
+        let up = match fader.travel(0.75) {
+            Some(travel) => travel,
+            None => panic!("the second reading is a movement"),
+        };
+        assert!((up - 0.05).abs() < 1e-9, "{up}");
+        let down = match fader.travel(0.70) {
+            Some(travel) => travel,
+            None => panic!("a reading back is a movement too"),
+        };
+        assert!((down + 0.05).abs() < 1e-9, "{down}");
+        assert_eq!(fader.last(), Some(0.7));
+        // Shift: the hand moves the fader, the app does not follow, and the next movement starts from the new place.
+        fader.forget();
+        assert_eq!(fader.last(), None);
+        assert_eq!(fader.travel(0.2), None);
+        let again = match fader.travel(0.25) {
+            Some(travel) => travel,
+            None => panic!(
+                "the first reading after Shift is where the hand is, the second is a movement"
+            ),
+        };
+        assert!((again - 0.05).abs() < 1e-9, "{again}");
+    }
+
+    #[test]
+    fn a_travel_of_the_whole_length_moves_the_pitch_by_the_whole_range() {
+        // The whole length is still worth ±16 %: a quarter of it is +8 %, half of it takes the pitch to the top of the
+        // range — the same feel as the absolute fader had, only the origin moved (owner's request, 25.11).
+        assert!((super::pitch_after(1.0, 0.25) - 1.08).abs() < 1e-6);
+        assert!((super::pitch_after(1.0, -0.25) - 0.92).abs() < 1e-6);
+        assert!(
+            (super::pitch_after(1.02, 0.125) - 1.06).abs() < 1e-6,
+            "from where the app is"
+        );
+        assert!(
+            (super::pitch_after(1.15, 0.5) - 1.16).abs() < 1e-6,
+            "the top is a wall"
+        );
+        assert!(
+            (super::pitch_after(0.85, -0.5) - 0.84).abs() < 1e-6,
+            "and so is the bottom"
+        );
     }
 }

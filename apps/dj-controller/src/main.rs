@@ -26,7 +26,7 @@ use std::io::{BufWriter, Write};
 use std::process::ExitCode;
 
 use dj_bridge::{ClientMessage, ServerMessage};
-use dj_controller_core::{ControlEvent, Driver, Mapping};
+use dj_controller_core::{ControlEvent, Driver, Mapping, PitchFader};
 use dj_controller_s4mk3::{NAME, PRODUCT, S4Mk3, VENDOR};
 use dj_hid::write::ReportSink;
 use dj_hid::{DeviceInfo, HidrawTransport, Transport};
@@ -1109,6 +1109,9 @@ fn inputs_loop(
 ) {
     let mapping = Mapping::new();
     let mut previous = std::collections::HashMap::new();
+    // Where each tempo fader stood at the last reading: the fader is relative, and a movement is a difference between two
+    // readings (owner's request, 25.11).
+    let mut pitch_faders: [PitchFader; 2] = [PitchFader::default(); 2];
     // The wheels come through report 3, which the map refuses to hold (it is the clock): the driver's own decoder turns
     // its two positions and timer into a speed, and this is where that speed reaches the engine.
     let mut wheels = S4Mk3::new();
@@ -1315,10 +1318,64 @@ fn inputs_loop(
                 if let Ok(mut state) = playing.lock() {
                     state.shift[index] = event.value > 0.5;
                 }
+                // Shift and the tempo fader: the hand moves the fader and the app does not follow, which is how the fader
+                // is brought back to its middle without the pitch going with it. Forgetting where the fader stood is what
+                // makes the first movement after the release a movement, and not a jump of everything it travelled.
+                if event.value > 0.5 {
+                    pitch_faders[index].forget();
+                }
                 println!(
                     "dj-controller: at {now} ms {} = {:.0} (report {report})",
                     event.control, event.value
                 );
+                continue;
+            }
+            // The tempo fader: a movement, not a position. The app's pitch moves by how far the fader travelled from
+            // wherever the app already is, and with Shift held the fader travels alone (owner's request, 25.11).
+            if event.control.ends_with(".tempo") {
+                let side = usize::from(!event.control.starts_with("deck_a"));
+                let travel = pitch_faders[side].travel(f64::from(event.value));
+                let mut held = false;
+                let mut deck = dj_domain::DeckId::A;
+                let mut current = 1.0_f64;
+                if let Ok(state) = playing.lock() {
+                    held = state.shift.get(side).copied().unwrap_or(false);
+                    deck = if side == 0 {
+                        state.panel_left
+                    } else {
+                        state.panel_right
+                    };
+                    current = state
+                        .tempo_ratio
+                        .get(deck_index(deck))
+                        .copied()
+                        .unwrap_or(1.0);
+                }
+                match pitch_after_travel(current, travel, held) {
+                    Some(ratio) => {
+                        println!(
+                            "dj-controller: at {now} ms {} travelled {travel:+.3} of the fader → pitch {ratio:.4} on {deck:?}",
+                            event.control,
+                            travel = travel.unwrap_or(0.0),
+                        );
+                        let asked = vec![(
+                            event.control.clone(),
+                            Some(deck),
+                            dj_domain::DjCommand::SetTempoRatio { deck, ratio },
+                        )];
+                        if let Err(reason) = send_commands(endpoint, &asked) {
+                            println!(
+                                "dj-controller: {} did not reach the engine: {reason}",
+                                event.control
+                            );
+                        }
+                    }
+                    None if held => println!(
+                        "dj-controller: at {now} ms {} moved with Shift: the pitch stands still",
+                        event.control
+                    ),
+                    None => {}
+                }
                 continue;
             }
             // The headphone (PFL) button: hold while pressed, or a switch, whichever the settings ask for. A mixer
@@ -2246,6 +2303,73 @@ fn deck_index(deck: dj_domain::DeckId) -> usize {
 /// Two readers: the lights and the presses. A PLAY button asks for the opposite of what the deck is doing, and a hotcue
 /// pad jumps to its slot when the slot holds a cue and stores one when it does not — both are questions about the decks,
 /// not about the panel.
+/// Where a deck's pitch goes when the fader travels, or `None` when it should not move.
+///
+/// Three reasons to stay still: Shift is held (the fader is released from the app), the panel has never been read before
+/// (the first reading is where the hand already is, not a movement), and the hand did not actually move. Shift is checked
+/// first because while it is held the fader's travel is real but it belongs to nobody.
+fn pitch_after_travel(current: f64, travel: Option<f64>, shift_held: bool) -> Option<f64> {
+    if shift_held {
+        return None;
+    }
+    let travel = travel?;
+    if travel.abs() < 1e-6 {
+        return None;
+    }
+    let ratio = dj_controller_core::pitch_after(current, travel);
+    // A change smaller than a millionth of a ratio is the range's own rounding, not a movement: the far end of the fader
+    // must send nothing, or a hand held against it would keep the wire busy with commands that change nothing.
+    ((ratio - current).abs() > 1e-6).then_some(ratio)
+}
+
+/// How far the pitch may be from the track's own speed and still count as "at zero": one percent (owner's rule, 25.11).
+const ZERO_PITCH_TOLERANCE: f64 = 0.01;
+
+/// Whether the pitch-zero lamp is lit at this pitch.
+///
+/// Lit at zero is the rule a DJ expects, and `inverted` is for the one who reads a lamp as "something is already on": the
+/// setting is `[controller.lights] pitch_zero_inverted` (owner's request, 25.11).
+fn pitch_zero_lit(pitch: f64, inverted: bool) -> bool {
+    let zero = (pitch - 1.0).abs() <= ZERO_PITCH_TOLERANCE;
+    zero != inverted
+}
+
+/// The panel's pitch-zero lamps, from `lights-map.txt`: `11 Left pitch zero point light`, `34 Right pitch zero light`.
+const PITCH_ZERO_LAMPS: [u8; 2] = [11, 34];
+
+/// Light or put out the two pitch-zero lamps, one beside each tempo fader.
+fn paint_pitch_zero(
+    report: &mut dj_controller_s4mk3::lights::LightsReport,
+    pitches: [(dj_domain::DeckId, f64); 2],
+    palette: &dj_controller_s4mk3::lights::Palette,
+    night: bool,
+    inverted: bool,
+) {
+    for (side, (_, pitch)) in pitches.into_iter().enumerate() {
+        let lit = pitch_zero_lit(pitch, inverted);
+        let Some(slot) = report.body.get_mut(usize::from(PITCH_ZERO_LAMPS[side])) else {
+            continue;
+        };
+        *slot = if lit {
+            dj_controller_s4mk3::lights::bright(palette.resting.code())
+        } else if night {
+            dj_controller_s4mk3::lights::dim(palette.resting.code())
+        } else {
+            0
+        };
+    }
+}
+
+/// Whether the pitch-zero lamp is the other way round, from the settings.
+///
+/// Read once per show, like the rest of the panel's colours: the engine's settings file is the one the window's
+/// "Controller" section edits, and a hand that changes it gets it at the next start.
+fn pitch_zero_inverted() -> bool {
+    dj_config::Config::load_or_default(None)
+        .map(|(config, _)| config.controller.lights.pitch_zero_inverted)
+        .unwrap_or(false)
+}
+
 #[derive(Clone, Debug)]
 struct DeckFactsShared {
     playing: [bool; 4],
@@ -2269,6 +2393,10 @@ struct DeckFactsShared {
     /// What the panel last asked the engine for, per channel: a fader thrown to the top must be seen at the top by the
     /// next snapshot, and a disagreement is said out loud rather than left as "it stopped half way".
     fader_asked: [Option<f32>; 4],
+    /// Each deck's pitch as the app has it. The panel's tempo fader is relative, so a movement is added to this number
+    /// rather than replacing it: without it the fader would ask for a pitch from a place the DJ cannot see (owner's
+    /// request, 25.11).
+    tempo_ratio: [f64; 4],
     /// Whether the browser is on the screen: the VIEW button asks for the opposite of this.
     browser_open: bool,
     /// The path the window's browser cursor stands on: what a press of the encoder loads.
@@ -2301,6 +2429,7 @@ impl Default for DeckFactsShared {
             monitoring: [false; 4],
             fx: [dj_domain::FxPatch::default(); 4],
             fader_asked: [None; 4],
+            tempo_ratio: [1.0; 4],
             browser_open: true,
             browser_cursor: None,
             shift: [false; 2],
@@ -3330,6 +3459,7 @@ fn lights_show(
     let Some(endpoint) = engine else {
         return Err(format!("--lights-show wants --engine <endpoint>. {USAGE}"));
     };
+    let pitch_zero_inverted = pitch_zero_inverted();
     // Without a device the show says what it would light: that is the half a person can check without the controller,
     // and the only half a machine with no panel can test at all.
     let _panel = claim_panel()?;
@@ -3446,6 +3576,7 @@ fn lights_show(
                             deck.pad_loops.get(slot).is_some_and(Option::is_some);
                     }
                     state.active_loop[index] = deck.loop_region.is_some();
+                    state.tempo_ratio[index] = deck.tempo_ratio;
                     state.fx[index] = deck.fx;
                 }
                 state.browser_open = snapshot.browser.open;
@@ -3506,6 +3637,23 @@ fn lights_show(
                 .unwrap_or((dj_domain::DeckId::A, dj_domain::DeckId::B));
             let mut report = report;
             paint_deck_select(&mut report, panel_left, panel_right, palette, night);
+            let pitch_of = |deck: dj_domain::DeckId| {
+                snapshot
+                    .decks
+                    .iter()
+                    .find(|decked| decked.deck == deck)
+                    .map_or(1.0, |decked| decked.tempo_ratio)
+            };
+            paint_pitch_zero(
+                &mut report,
+                [
+                    (panel_left, pitch_of(panel_left)),
+                    (panel_right, pitch_of(panel_right)),
+                ],
+                palette,
+                night,
+                pitch_zero_inverted,
+            );
             let wire = report.wire(with_id);
             // Level meters, report 129: the panel's VU column per channel. Sent every snapshot, not only when the lights
             // change — a meter moves while the buttons do not (owner's request, 24.11).
@@ -4105,6 +4253,90 @@ mod tests {
         ];
         let show = show_from_facts(&decks, [0, 1]);
         assert_eq!(show.fx, [false, false, true, true]);
+    }
+
+    #[test]
+    fn the_pitch_moves_by_the_fader_and_stands_still_while_shift_is_held() {
+        // The first reading of a panel is where the hand already is, not a movement: plugging the panel in must not send
+        // the pitch anywhere (owner's request, 25.11).
+        assert_eq!(super::pitch_after_travel(1.0, None, false), None);
+        // A quarter of the fader is 8 % — the same scale the absolute fader had, from wherever the app is.
+        let quarter = match super::pitch_after_travel(1.0, Some(0.25), false) {
+            Some(ratio) => ratio,
+            None => panic!("a quarter of the fader is a movement"),
+        };
+        assert!((quarter - 1.08).abs() < 1e-6, "{quarter}");
+        let from_pitch = match super::pitch_after_travel(1.02, Some(-0.125), false) {
+            Some(ratio) => ratio,
+            None => panic!("a movement down is a movement"),
+        };
+        assert!((from_pitch - 0.98).abs() < 1e-6, "{from_pitch}");
+        // Shift: the hand moves the fader and the app stays where it is, whatever the travel says.
+        assert_eq!(super::pitch_after_travel(1.0, Some(0.5), true), None);
+        // A hand that did not move asks for nothing, and neither does one already against the end of the range.
+        assert_eq!(super::pitch_after_travel(1.0, Some(0.0), false), None);
+        assert_eq!(super::pitch_after_travel(1.16, Some(0.4), false), None);
+    }
+
+    #[test]
+    fn the_pitch_zero_lamps_are_the_two_bytes_the_map_names() {
+        // From `lights-map.txt`: byte 11 is `Left pitch zero point light`, byte 34 `Right pitch zero light`. A painter that
+        // took the wrong byte would light a button that means something else, and nothing in the log would say so.
+        assert_eq!(super::PITCH_ZERO_LAMPS, [11, 34]);
+        let palette = dj_controller_s4mk3::lights::Palette::default();
+        let mut report = dj_controller_s4mk3::lights::LightsReport::dark();
+        super::paint_pitch_zero(
+            &mut report,
+            [(dj_domain::DeckId::A, 1.005), (dj_domain::DeckId::B, 1.03)],
+            &palette,
+            false,
+            false,
+        );
+        assert_eq!(
+            report.body[11],
+            dj_controller_s4mk3::lights::bright(palette.resting.code()),
+            "the deck at its own pitch is lit"
+        );
+        assert_eq!(report.body[34], 0, "three percent away is dark");
+
+        // Inverted: the same two decks the other way round.
+        let mut report = dj_controller_s4mk3::lights::LightsReport::dark();
+        super::paint_pitch_zero(
+            &mut report,
+            [(dj_domain::DeckId::A, 1.005), (dj_domain::DeckId::B, 1.03)],
+            &palette,
+            false,
+            true,
+        );
+        assert_eq!(report.body[11], 0, "at zero it goes out");
+        assert_ne!(report.body[34], 0, "and lights while the pitch is away");
+
+        // Night mode: a lamp that is out still glows faintly, like every other inactive lamp on the panel.
+        let mut report = dj_controller_s4mk3::lights::LightsReport::dark();
+        super::paint_pitch_zero(
+            &mut report,
+            [(dj_domain::DeckId::A, 1.03), (dj_domain::DeckId::B, 1.03)],
+            &palette,
+            true,
+            false,
+        );
+        assert_eq!(
+            report.body[11],
+            dj_controller_s4mk3::lights::dim(palette.resting.code())
+        );
+    }
+
+    #[test]
+    fn the_pitch_zero_lamp_lights_at_zero_and_can_be_the_other_way_round() {
+        // One percent is the tolerance the owner named: closer than that is the track's own speed.
+        assert!(super::pitch_zero_lit(1.0, false));
+        assert!(super::pitch_zero_lit(1.009, false));
+        assert!(super::pitch_zero_lit(0.991, false));
+        assert!(!super::pitch_zero_lit(1.02, false), "2 % away is not zero");
+        assert!(!super::pitch_zero_lit(0.95, false));
+        // Inverted: it goes out at zero and lights while the pitch is somewhere else.
+        assert!(!super::pitch_zero_lit(1.0, true));
+        assert!(super::pitch_zero_lit(1.02, true));
     }
 
     #[test]

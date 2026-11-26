@@ -150,6 +150,12 @@ pub struct ControllerLights {
     pub loop_: LightColour,
     /// A deck whose effect is switched in.
     pub fx: LightColour,
+    /// The pitch-zero lamp the other way round: out at zero, lit while the deck's pitch is away from it.
+    ///
+    /// The lamp is the LED beside the tempo fader (`Left pitch zero point light`, `Right pitch zero light`), and its
+    /// ordinary rule is the one a DJ expects: lit while the deck runs at its own pitch, dark otherwise. Some read a lamp
+    /// as "something is already on" and want the opposite, so the rule is a setting (owner's request, 25.11).
+    pub pitch_zero_inverted: bool,
 }
 
 impl Default for ControllerLights {
@@ -169,6 +175,7 @@ impl Default for ControllerLights {
             slip: LightColour::Sky,
             hotcue: LightColour::Green,
             loop_: LightColour::Yellow,
+            pitch_zero_inverted: false,
             fx: LightColour::Magenta,
         }
     }

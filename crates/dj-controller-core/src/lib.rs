@@ -19,7 +19,9 @@ pub mod wheel;
 use std::time::Duration;
 
 pub use layers::{DeckLayer, LayerChange, Layers};
-pub use mapping::{BindableDeck, DeckStanding, Intent, Mapping, PadState, intent_for};
+pub use mapping::{
+    BindableDeck, DeckStanding, Intent, Mapping, PadState, PitchFader, intent_for, pitch_after,
+};
 pub use wheel::WheelCounter;
 
 /// One thing the DJ did, and when the device said so.
