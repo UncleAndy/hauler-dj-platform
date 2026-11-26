@@ -2395,7 +2395,6 @@ fn paint_pitch_zero(
     report: &mut dj_controller_s4mk3::lights::LightsReport,
     pitches: [(dj_domain::DeckId, f64); 2],
     palette: &dj_controller_s4mk3::lights::Palette,
-    night: bool,
     inverted: bool,
 ) {
     for (side, (_, pitch)) in pitches.into_iter().enumerate() {
@@ -2403,10 +2402,11 @@ fn paint_pitch_zero(
         let Some(slot) = report.body.get_mut(usize::from(PITCH_ZERO_LAMPS[side])) else {
             continue;
         };
+        // Lit or out, with nothing in between: the panel's night mode keeps inactive lamps faintly glowing, and on this
+        // one the faint glow read as "the pitch is somewhere near zero but not quite" (owner's report, 25.11). A lamp that
+        // is meant to say one bit must not have a third state.
         *slot = if lit {
             dj_controller_s4mk3::lights::bright(palette.resting.code())
-        } else if night {
-            dj_controller_s4mk3::lights::dim(palette.resting.code())
         } else {
             0
         };
@@ -3712,7 +3712,6 @@ fn lights_show(
                     (panel_right, pitch_of(panel_right)),
                 ],
                 palette,
-                night,
                 pitch_zero_inverted,
             );
             let wire = report.wire(with_id);
@@ -4351,7 +4350,6 @@ mod tests {
             [(dj_domain::DeckId::A, 1.005), (dj_domain::DeckId::B, 1.03)],
             &palette,
             false,
-            false,
         );
         assert_eq!(
             report.body[11],
@@ -4366,25 +4364,24 @@ mod tests {
             &mut report,
             [(dj_domain::DeckId::A, 1.005), (dj_domain::DeckId::B, 1.03)],
             &palette,
-            false,
             true,
         );
         assert_eq!(report.body[11], 0, "at zero it goes out");
         assert_ne!(report.body[34], 0, "and lights while the pitch is away");
 
-        // Night mode: a lamp that is out still glows faintly, like every other inactive lamp on the panel.
+        // Out is out: the night glow of other lamps reads as a third state on this one (owner's report, 25.11).
         let mut report = dj_controller_s4mk3::lights::LightsReport::dark();
         super::paint_pitch_zero(
             &mut report,
             [(dj_domain::DeckId::A, 1.03), (dj_domain::DeckId::B, 1.03)],
             &palette,
-            true,
             false,
         );
         assert_eq!(
-            report.body[11],
-            dj_controller_s4mk3::lights::dim(palette.resting.code())
+            report.body[11], 0,
+            "a pitch away from zero gives no light at all"
         );
+        assert_eq!(report.body[34], 0);
     }
 
     #[test]
