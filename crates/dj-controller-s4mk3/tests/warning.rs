@@ -54,7 +54,7 @@ fn a_deck_without_the_warning_has_no_red_at_all() {
     let canvas = render_deck(&panel);
     // No pixel of the ordinary deck screen is the warning red: the colour means one thing on this panel.
     assert!(
-        !canvas.pixels().iter().any(|pixel| *pixel == WARNING),
+        !canvas.pixels().contains(&WARNING),
         "a deck that is nowhere near its end is wearing the warning"
     );
     assert_ne!(
