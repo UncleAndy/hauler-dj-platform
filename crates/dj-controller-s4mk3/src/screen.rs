@@ -135,6 +135,41 @@ impl Canvas {
         text::width_of(text, scale)
     }
 
+    /// Draw `text` with a colour per screen column: a rainbow that runs across the line, not across each letter.
+    ///
+    /// The glyphs are the same grid as `text`; only the ink changes, and it changes with the *screen* column, so two
+    /// letters sharing an edge share the colour there. The run of colours covers the line's own advance: red at the left
+    /// end, violet at the right.
+    pub fn text_rainbow(&mut self, x: isize, y: isize, scale: usize, text: &str) -> usize {
+        let scale = scale.max(1);
+        let run = (text_fit_width(text, scale).max(1)) as f32;
+        let mut pen = x;
+        for letter in text.chars() {
+            if let Some(rows) = text_glyph(letter) {
+                for (row, bits) in rows.iter().enumerate() {
+                    for column in 0..text::GLYPH_WIDTH {
+                        if bits & (1 << (text::GLYPH_WIDTH - 1 - column)) == 0 {
+                            continue;
+                        }
+                        for step in 0..scale {
+                            let at = pen + (column * scale + step) as isize;
+                            let share = ((at - x) as f32 / run).clamp(0.0, 1.0);
+                            self.fill_rect(
+                                at,
+                                y + (row * scale) as isize,
+                                1,
+                                scale,
+                                rainbow(share),
+                            );
+                        }
+                    }
+                }
+            }
+            pen += ((text::GLYPH_WIDTH + text::GLYPH_SPACING) * scale) as isize;
+        }
+        text::width_of(text, scale)
+    }
+
     /// Draw the application's emblem, its top-left corner at `x`,`y`.
     ///
     /// A copy, pixel for pixel: the icon is already in the panel's format, transparency and all — the generator lays it
@@ -464,6 +499,30 @@ fn ink_reverse(strip: &Canvas) -> Option<usize> {
         .find(|column| (0..strip.height()).any(|row| strip.at(*column, row) == Some(INK)))
 }
 
+/// The rainbow's colour at a point of its run, 0 … 1: red at the start, violet at the end.
+///
+/// The run stops at 300 degrees rather than going all the way round: a spectrum that comes back to red at its right end
+/// reads as two reds with a hole between them, not as one sweep.
+fn rainbow(share: f32) -> u16 {
+    let (red, green, blue) = hue_to_rgb(share.clamp(0.0, 1.0) * 300.0);
+    (u16::from(red / 8) << 11) | (u16::from(green / 4) << 5) | u16::from(blue / 8)
+}
+
+/// Full-saturation, full-value colour at a hue in degrees, the six sectors of the circle.
+fn hue_to_rgb(hue: f32) -> (u8, u8, u8) {
+    let sector = (hue / 60.0).rem_euclid(6.0);
+    let up = (sector.fract() * 255.0).round() as u8;
+    let down = 255 - up;
+    match sector as u32 {
+        0 => (255, up, 0),
+        1 => (down, 255, 0),
+        2 => (0, 255, up),
+        3 => (0, down, 255),
+        4 => (up, 0, 255),
+        _ => (255, 0, down),
+    }
+}
+
 fn text_fit_width(text: &str, scale: usize) -> isize {
     text::width_of(text, scale.max(1)) as isize
 }
@@ -497,10 +556,12 @@ pub fn render_farewell(screen: Screen) -> Canvas {
     let height = canvas.height();
     match screen {
         Screen::Left => {
-            let side = crate::icon::SIZE;
-            let left = ((width - side) / 2) as isize;
-            let top = ((height - side) / 2) as isize;
-            canvas.emblem(left, top);
+            // The mark is centred, not the square it came in: the file's plate has a couple of pixels of slack on one
+            // side, and those pixels are invisible anyway.
+            let (first, last, top, bottom) = crate::icon::lit_box();
+            let left = ((width.saturating_sub(last + 1 - first)) / 2) as isize - first as isize;
+            let upward = ((height.saturating_sub(bottom + 1 - top)) / 2) as isize - top as isize;
+            canvas.emblem(left, upward);
         }
         Screen::Right => {
             // Two lines at scale 4: the whole name on one line does not fit at this size, and at scale 2 it reads as a
@@ -511,7 +572,9 @@ pub fn render_farewell(screen: Screen) -> Canvas {
             let total = line_height * FAREWELL_LINES.len() + gap * (FAREWELL_LINES.len() - 1);
             let mut top = ((height.saturating_sub(total)) / 2) as isize;
             for line in FAREWELL_LINES {
-                canvas.text(centred_x(line, scale, width), top, scale, INK, line);
+                // The name is the one place on these screens whose colour means nothing: a rainbow across it, so the
+                // program signs off in colour while the decks stay readable (owner's request, 25.11).
+                canvas.text_rainbow(centred_x(line, scale, width), top, scale, line);
                 top += (line_height + gap) as isize;
             }
         }

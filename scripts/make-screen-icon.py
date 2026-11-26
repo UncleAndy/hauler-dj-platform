@@ -9,14 +9,17 @@
 прозрачные углы иконки должны стать тёмными углами, а не чёрными квадратами.
 
 Запуск:
-  nix shell nixpkgs#imagemagick -c magick "assets/app-icon/Hauler DJ.128.png" -depth 8 rgba:- > /tmp/icon.rgba
+  nix shell nixpkgs#imagemagick -c magick "assets/app-icon/Hauler DJ.128.png" -filter Lanczos \
+      -resize 224x224 -depth 8 rgba:- > /tmp/icon.rgba
   nix shell nixpkgs#python3 -c python3 scripts/make-screen-icon.py /tmp/icon.rgba \\
       crates/dj-controller-s4mk3/data/farewell-icon.565
 """
 import sys
 from pathlib import Path
 
-SIZE = 128
+# The side of the dump is taken from the file itself: the icon is resized by ImageMagick before this script runs (224 is
+# what the panel wants), and a hard-coded side is one more number to forget. `src/icon.rs` carries the same number, and
+# `tests/farewell.rs` fails if the two drift apart.
 # `screen::BACKGROUND` — 0x0841 — taken apart into its own five, six and five bit fields. The blend happens in those
 # fields and not in eight-bit colour: a round trip through 888 would land a transparent corner one step away from the
 # background it is meant to be.
@@ -27,8 +30,9 @@ def main() -> None:
     if len(sys.argv) != 3:
         raise SystemExit(__doc__)
     raw = Path(sys.argv[1]).read_bytes()
-    if len(raw) != SIZE * SIZE * 4:
-        raise SystemExit(f"{sys.argv[1]}: {len(raw)} bytes, wanted {SIZE * SIZE * 4}")
+    size = int((len(raw) // 4) ** 0.5)
+    if size * size * 4 != len(raw):
+        raise SystemExit(f"{sys.argv[1]}: {len(raw)} bytes, which is not a square RGBA picture")
 
     out = bytearray()
     background = (
@@ -47,7 +51,7 @@ def main() -> None:
     target = Path(sys.argv[2])
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(out)
-    print(f"{target}: {len(out)} bytes, {SIZE} by {SIZE} pixels of RGB565")
+    print(f"{target}: {len(out)} bytes, {size} by {size} pixels of RGB565 — SIZE in src/icon.rs must be {size}")
 
 
 main()
