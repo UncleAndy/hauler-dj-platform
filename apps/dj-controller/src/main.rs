@@ -2496,7 +2496,6 @@ fn ring_state(
     end_warning: bool,
     seconds: f64,
     palette: &dj_controller_s4mk3::lights::Palette,
-    flash: bool,
 ) -> (u8, u16, u8) {
     // One turn of the ring is one turn of a record: 33⅓ rpm ≈ 0,556 turns a second, so the marker spins the whole time
     // the deck plays — the public mapping's own model. A ratio of the whole track instead crawls and looks motionless
@@ -2505,16 +2504,12 @@ fn ring_state(
     let fractional = revolutions - revolutions.floor();
     let marker = (fractional * 2879.0) as u16;
     if end_warning {
-        return if flash {
-            (
-                2,
-                marker,
-                dj_controller_s4mk3::lights::bright(warning_colour().code()),
-            )
-        } else {
-            // The dark half of the blink.
-            (0, 0, 0)
-        };
+        // The whole ring in red; the panel's own flashing is the blink.
+        return (
+            RING_WHOLE,
+            marker,
+            dj_controller_s4mk3::lights::bright(warning_colour().code()),
+        );
     }
     if playing {
         return (
@@ -2524,6 +2519,24 @@ fn ring_state(
         );
     }
     (0, 0, 0)
+}
+
+/// The whole ring: mode 3 with a full body, and the panel blinks it by itself.
+///
+/// Measured, not guessed: the owner ran `--ring-probe` and the fourth step — mode 3, body all ones — lit the ring as a red
+/// rim that pulses (owner's report, 25.11: «в конце как раз было мигание красным ободком. То, что нужно»). That is exactly
+/// the end warning, so the panel's own flashing is used rather than fought with a second one.
+const RING_WHOLE: u8 = 3;
+
+/// Report 50 for a ring in one of the two measured states: a spot at the marker, or the whole circle.
+fn ring_report(side: u8, mode: u8, position: u16, colour: u8) -> Vec<u8> {
+    let mut report = wheel_leds(side, mode, position, colour);
+    if mode == RING_WHOLE {
+        // The ring reads a mask out of the body — forty bytes follow the id, more than the circle has LEDs — and every
+        // LED on is the whole ring.
+        report[6..].fill(0xFF);
+    }
+    report
 }
 
 /// Report 50: which jog ring, its mode, the marker's position, and the colour.
@@ -3513,12 +3526,10 @@ fn lights_show(
             if let Some(sink) = sink.as_mut() {
                 for (side, deck_id) in [(0_u8, panel_left), (1_u8, panel_right)] {
                     let deck = snapshot.decks.iter().find(|deck| deck.deck == deck_id);
-                    // The end warning owns the ring while it lasts. Only two ring modes have been measured on this
-                    // panel — `0` dark and `2` a single spot at the marker — and a colour change on one spot is invisible
-                    // at speed, which is why the first attempt read as "не мигает и не подсвечивается" (owner, 25.11).
-                    // So the warning *blinks the spot out*: bright red, then nothing, 2,5 times a second. That is a
-                    // measured mode on both halves of the blink; when the whole-ring mode is measured, the `0` below is
-                    // the one line to change (see `ring_probe`).
+                    // The end warning owns the ring while it lasts: the whole circle in red, and the panel blinks it by
+                    // itself (measured with `--ring-probe`, owner's report 25.11). Before that measurement the warning
+                    // could only repaint the one spot the playhead wears, which is invisible at 33⅓ rpm — the reason the
+                    // first attempt read as "не мигает и не подсвечивается".
                     let seconds = deck.map_or(0.0, |deck| {
                         if deck.source_rate > 0 {
                             deck.source_frame.0 as f64 / f64::from(deck.source_rate)
@@ -3531,7 +3542,6 @@ fn lights_show(
                         deck.is_some_and(|deck| deck.end_warning),
                         seconds,
                         palette,
-                        warning_flash(),
                     );
                     if last_wheel_modes[usize::from(side)] == (mode, position, colour) {
                         continue;
@@ -3545,7 +3555,7 @@ fn lights_show(
                         last_ring_log[usize::from(side)] = Some(std::time::Instant::now());
                         println!("dj-controller: jog ring {side}: mode {mode}, marker {position}");
                     }
-                    sink.send(&wheel_leds(side, mode, position, colour))
+                    sink.send(&ring_report(side, mode, position, colour))
                         .map_err(|error| format!("the panel did not take the jog ring: {error}"))?;
                 }
             }
@@ -3931,46 +3941,54 @@ mod tests {
     }
 
     #[test]
-    fn the_end_warning_blinks_the_ring_out_rather_than_repainting_one_spot() {
-        // Only modes 0 and 2 have been measured on this panel: a spot, and dark. A colour change on a single spot at
-        // 33⅓ rpm is invisible, which is exactly what the owner saw — so the warning takes the spot away half the time.
+    fn the_end_warning_lights_the_whole_ring_and_the_panel_does_the_flashing() {
+        // Measured with `--ring-probe` on the owner's panel: mode 3 with a full body lights the whole circle red and the
+        // panel pulses it by itself (owner, 25.11). Repainting the one spot the playhead wears was invisible at 33⅓ rpm.
         let palette = dj_controller_s4mk3::lights::Palette::default();
-        // Two seconds into a 48 kHz track: any position on the ring, the point is which mode carries it.
         let seconds = 2.0;
 
-        let (mode, position, colour) = super::ring_state(true, true, seconds, &palette, true);
-        assert_eq!(
-            mode, 2,
-            "the lit half wears the marker mode this panel has measured"
-        );
+        let (mode, position, colour) = super::ring_state(true, true, seconds, &palette);
+        assert_eq!(mode, super::RING_WHOLE, "the whole ring, not one spot");
         assert_eq!(
             colour,
             dj_controller_s4mk3::lights::bright(super::warning_colour().code()),
             "and it is the one colour nothing else on the panel uses"
         );
         assert!(position <= 2879, "the marker stays on the ring: {position}");
-        assert_eq!(
-            super::ring_state(true, true, seconds, &palette, false),
-            (0, 0, 0),
-            "the dark half puts the ring out — that is the blink the owner can see"
-        );
 
-        // Without the warning the ring is the playhead's own marker, and the two halves of the flash do not touch it.
-        let lit = super::ring_state(true, false, seconds, &palette, true);
-        assert_eq!(lit.0, 2);
+        // Without the warning the ring is the playhead's own marker.
+        let lit = super::ring_state(true, false, seconds, &palette);
+        assert_eq!(lit.0, 2, "a spot at the marker");
         assert_eq!(
             lit.2,
             dj_controller_s4mk3::lights::bright(palette.jog.code())
         );
-        assert_eq!(
-            super::ring_state(true, false, seconds, &palette, false),
-            lit
-        );
 
-        // A stopped deck has no marker at all, warning or not.
+        // A stopped deck has no marker and no warning.
         assert_eq!(
-            super::ring_state(false, false, seconds, &palette, true),
+            super::ring_state(false, false, seconds, &palette),
             (0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn the_whole_ring_is_sent_with_a_full_body_and_the_spot_with_an_empty_one() {
+        // The ring reads its LEDs out of the body: a whole ring with zeros in it is a dark ring.
+        let whole = super::ring_report(0, super::RING_WHOLE, 1439, 40);
+        assert_eq!(whole.len(), 41);
+        assert_eq!(whole[2], super::RING_WHOLE);
+        assert!(
+            whole[6..].iter().all(|byte| *byte == 0xFF),
+            "the body lights every LED"
+        );
+        assert_eq!(&whole[3..5], &[0x9f, 0x05], "the position little-endian");
+        assert_eq!(whole[5], 40, "the colour");
+
+        let spot = super::ring_report(0, 2, 1439, 40);
+        assert_eq!(spot[2], 2);
+        assert!(
+            spot[6..].iter().all(|byte| *byte == 0),
+            "a spot does not light the body"
         );
     }
 
