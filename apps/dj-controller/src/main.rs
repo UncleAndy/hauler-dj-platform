@@ -3043,8 +3043,24 @@ fn ring_probe(devices: &[DeviceInfo]) -> Result<(), String> {
 /// What one screen says, taken from what the engine publishes.
 ///
 /// The panels are two, and the program runs four decks: the left panel belongs to decks A and C, the right one to B and
-/// D. Which of the pair is on the panel at a moment is the DJ's business, and this build shows the primary deck of the
-/// side — the one the settings name first — rather than guessing from what is playing.
+/// D. Which of the pair is on the panel at a moment is the DJ's business: the panel's own deck buttons say it, the engine
+/// publishes the choice in `Snapshot::panel`, and the screen follows it — a screen nailed to A and B went on drawing a deck
+/// nobody was driving (owner's report, 25.11).
+/// The deck a screen is showing: the one its side of the panel is switched to.
+///
+/// The four deck buttons on the panel switch a side between A and C (left) and B and D (right); the engine carries the
+/// choice in every snapshot. The screen is the DJ's answer to "what is under this hand", so it reads the choice and not a
+/// fixed pair.
+fn screen_deck(
+    side: dj_controller_s4mk3::Screen,
+    panel: &dj_domain::PanelDecks,
+) -> dj_domain::DeckId {
+    match side {
+        dj_controller_s4mk3::Screen::Left => panel.left,
+        dj_controller_s4mk3::Screen::Right => panel.right,
+    }
+}
+
 fn panel_from(
     snapshot: &dj_domain::Snapshot,
     side: dj_controller_s4mk3::Screen,
@@ -3052,17 +3068,10 @@ fn panel_from(
     loop_beats: u32,
     warning_flash: bool,
 ) -> dj_controller_s4mk3::screen::DeckPanel {
-    let first = match side {
-        dj_controller_s4mk3::Screen::Left => dj_domain::DeckId::A,
-        dj_controller_s4mk3::Screen::Right => dj_domain::DeckId::B,
-    };
-    let Some(deck) = snapshot.decks.iter().find(|deck| deck.deck == first) else {
+    let chosen = screen_deck(side, &snapshot.panel);
+    let Some(deck) = snapshot.decks.iter().find(|deck| deck.deck == chosen) else {
         return dj_controller_s4mk3::screen::DeckPanel {
-            deck: if first == dj_domain::DeckId::A {
-                'A'
-            } else {
-                'B'
-            },
+            deck: ['A', 'B', 'C', 'D'][chosen.index()],
             jump_beats: Some(jump_beats),
             loop_beats: Some(loop_beats),
             wave_position: 0.5,
@@ -3099,12 +3108,7 @@ fn panel_from(
         _ => None,
     };
     dj_controller_s4mk3::screen::DeckPanel {
-        deck: match first {
-            dj_domain::DeckId::A => 'A',
-            dj_domain::DeckId::B => 'B',
-            dj_domain::DeckId::C => 'C',
-            dj_domain::DeckId::D => 'D',
-        },
+        deck: ['A', 'B', 'C', 'D'][chosen.index()],
         title: deck
             .track
             .as_ref()
@@ -4344,6 +4348,36 @@ mod tests {
         // A hand that did not move asks for nothing, and neither does one already against the end of the range.
         assert_eq!(super::pitch_after_travel(1.0, Some(0.0), false), None);
         assert_eq!(super::pitch_after_travel(1.16, Some(0.4), false), None);
+    }
+
+    #[test]
+    fn the_screens_follow_the_deck_each_side_is_switched_to() {
+        // At the start of a set the left screen shows A and the right one B; after the panel's deck buttons they follow,
+        // and a screen that stayed on A and B drew a deck nobody was driving (owner's report, 25.11).
+        let start = dj_domain::PanelDecks::default();
+        assert_eq!(
+            super::screen_deck(dj_controller_s4mk3::Screen::Left, &start),
+            dj_domain::DeckId::A
+        );
+        assert_eq!(
+            super::screen_deck(dj_controller_s4mk3::Screen::Right, &start),
+            dj_domain::DeckId::B
+        );
+        let switched = dj_domain::PanelDecks {
+            left: dj_domain::DeckId::C,
+            right: dj_domain::DeckId::D,
+            ..dj_domain::PanelDecks::default()
+        };
+        assert_eq!(
+            super::screen_deck(dj_controller_s4mk3::Screen::Left, &switched),
+            dj_domain::DeckId::C,
+            "the left screen shows the deck the left side drives"
+        );
+        assert_eq!(
+            super::screen_deck(dj_controller_s4mk3::Screen::Right, &switched),
+            dj_domain::DeckId::D,
+            "and the right screen its own"
+        );
     }
 
     #[test]
