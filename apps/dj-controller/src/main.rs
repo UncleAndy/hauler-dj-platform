@@ -1345,11 +1345,14 @@ fn inputs_loop(
                     } else {
                         state.panel_right
                     };
+                    let index = deck_index(deck);
+                    let engine = state.tempo_ratio.get(index).copied().unwrap_or(1.0);
                     current = state
-                        .tempo_ratio
-                        .get(deck_index(deck))
+                        .pitch_lead
+                        .get(index)
                         .copied()
-                        .unwrap_or(1.0);
+                        .unwrap_or_default()
+                        .reference(engine);
                 }
                 match pitch_after_travel(current, travel, held) {
                     Some(ratio) => {
@@ -1363,11 +1366,20 @@ fn inputs_loop(
                             Some(deck),
                             dj_domain::DjCommand::SetTempoRatio { deck, ratio },
                         )];
-                        if let Err(reason) = send_commands(endpoint, &asked) {
-                            println!(
+                        match send_commands(endpoint, &asked) {
+                            Ok(()) => {
+                                // The lead is taken *after* the command is in the engine's hands: a pitch the engine never
+                                // received must not become the place the next movement starts from.
+                                if let Ok(mut state) = playing.lock()
+                                    && let Some(lead) = state.pitch_lead.get_mut(deck_index(deck))
+                                {
+                                    lead.take(ratio);
+                                }
+                            }
+                            Err(reason) => println!(
                                 "dj-controller: {} did not reach the engine: {reason}",
                                 event.control
-                            );
+                            ),
                         }
                     }
                     None if held => println!(
@@ -2303,6 +2315,47 @@ fn deck_index(deck: dj_domain::DeckId) -> usize {
 /// Two readers: the lights and the presses. A PLAY button asks for the opposite of what the deck is doing, and a hotcue
 /// pad jumps to its slot when the slot holds a cue and stores one when it does not — both are questions about the decks,
 /// not about the panel.
+/// What the panel last asked of a deck's pitch, and when its hand was last on the fader.
+///
+/// The fader must move from the panel's **own** last answer, never from the snapshot it reads back. A hand sweeping the
+/// fader sends about a hundred events a second and the engine publishes twenty snapshots a second, so a movement read back
+/// from the snapshot is added to a number that has not moved yet — five events in six are thrown away, and a full sweep
+/// moved the pitch by a sixth of its travel (owner's report, 25.11: «полный сдвиг вниз смещает его только примерно на
+/// 2.6 %»). The engine still has the last word when the hand is away: sync, a new track or a refused command all show up
+/// as a pitch that is not the one that was asked for, and then the lead is given up (`yielded`).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+struct PitchLead {
+    /// The pitch the panel last asked for, while it still holds it.
+    asked: Option<f64>,
+    /// When that hand was last on the fader.
+    at: Option<std::time::Instant>,
+}
+
+impl PitchLead {
+    /// How long the hand has to be away before the engine's own pitch is believed again.
+    const QUIET: std::time::Duration = std::time::Duration::from_millis(700);
+
+    /// Where the next movement starts: the panel's own answer, or the engine's when nothing is held.
+    fn reference(self, engine: f64) -> f64 {
+        self.asked.unwrap_or(engine)
+    }
+
+    /// Take the lead with this pitch.
+    fn take(&mut self, ratio: f64) {
+        self.asked = Some(ratio);
+        self.at = Some(std::time::Instant::now());
+    }
+
+    /// Whether the engine has taken the pitch back: it disagrees with the panel, and the hand is no longer on the fader.
+    fn yielded(self, engine: f64) -> bool {
+        let Some(asked) = self.asked else {
+            return false;
+        };
+        let quiet = self.at.is_some_and(|at| at.elapsed() >= Self::QUIET);
+        quiet && (engine - asked).abs() > 1e-3
+    }
+}
+
 /// Where a deck's pitch goes when the fader travels, or `None` when it should not move.
 ///
 /// Three reasons to stay still: Shift is held (the fader is released from the app), the panel has never been read before
@@ -2393,10 +2446,12 @@ struct DeckFactsShared {
     /// What the panel last asked the engine for, per channel: a fader thrown to the top must be seen at the top by the
     /// next snapshot, and a disagreement is said out loud rather than left as "it stopped half way".
     fader_asked: [Option<f32>; 4],
-    /// Each deck's pitch as the app has it. The panel's tempo fader is relative, so a movement is added to this number
-    /// rather than replacing it: without it the fader would ask for a pitch from a place the DJ cannot see (owner's
-    /// request, 25.11).
+    /// Each deck's pitch as the app has it. The panel's tempo fader is relative, so a movement is added to a number
+    /// rather than replacing the hand's position (owner's request, 25.11).
     tempo_ratio: [f64; 4],
+    /// What the panel has asked of each deck's pitch and when its hand was last on the fader: the number the fader moves
+    /// from, which is not the snapshot — see `PitchLead`.
+    pitch_lead: [PitchLead; 4],
     /// Whether the browser is on the screen: the VIEW button asks for the opposite of this.
     browser_open: bool,
     /// The path the window's browser cursor stands on: what a press of the encoder loads.
@@ -2430,6 +2485,7 @@ impl Default for DeckFactsShared {
             fx: [dj_domain::FxPatch::default(); 4],
             fader_asked: [None; 4],
             tempo_ratio: [1.0; 4],
+            pitch_lead: [PitchLead::default(); 4],
             browser_open: true,
             browser_cursor: None,
             shift: [false; 2],
@@ -3577,6 +3633,11 @@ fn lights_show(
                     }
                     state.active_loop[index] = deck.loop_region.is_some();
                     state.tempo_ratio[index] = deck.tempo_ratio;
+                    // Sync, a new track or a refused command: the engine's pitch is not the one the panel asked for, and
+                    // once the hand has been away long enough the engine's is the truth again.
+                    if state.pitch_lead[index].yielded(deck.tempo_ratio) {
+                        state.pitch_lead[index] = PitchLead::default();
+                    }
                     state.fx[index] = deck.fx;
                 }
                 state.browser_open = snapshot.browser.open;
@@ -4323,6 +4384,69 @@ mod tests {
         assert_eq!(
             report.body[11],
             dj_controller_s4mk3::lights::dim(palette.resting.code())
+        );
+    }
+
+    #[test]
+    fn a_sweep_of_the_fader_moves_the_pitch_by_the_whole_range() {
+        // A hand takes the fader from the top to the bottom in a third of a second: about sixty events, while the engine
+        // publishes its pitch twenty times a second. Moving from the snapshot instead of the panel's own answer throws
+        // five events in six away and turned a full sweep into 2,6 % (owner's report, 25.11) — this test reproduces
+        // that arithmetic, snapshot delay and all, so the loss cannot come back unseen.
+        let mut fader = dj_controller_core::PitchFader::default();
+        let mut lead = super::PitchLead::default();
+        let mut engine = 1.0_f64;
+        assert_eq!(
+            fader.travel(1.0),
+            None,
+            "the first reading is where the hand is"
+        );
+        for step in 1..=60 {
+            let position = 1.0 - f64::from(step) / 60.0;
+            let travel = fader.travel(position).unwrap_or(0.0);
+            let current = lead.reference(engine);
+            if let Some(ratio) = super::pitch_after_travel(current, Some(travel), false) {
+                lead.take(ratio);
+            }
+            // The engine's published pitch follows the panel, but only every fifth event.
+            if step % 5 == 0 {
+                engine = lead.asked.unwrap_or(engine);
+            }
+        }
+        let pitch = lead.asked.unwrap_or(engine);
+        assert!(
+            (pitch - 0.84).abs() < 1e-6,
+            "a full sweep must be the whole 16 %, not {}",
+            (1.0 - pitch) * 100.0
+        );
+    }
+
+    #[test]
+    fn the_lead_is_given_up_when_the_engine_takes_the_pitch_back() {
+        // A fresh lead holds nothing: the fader moves from whatever the engine has.
+        assert_eq!(super::PitchLead::default().reference(1.04), 1.04);
+        // A lead that was just taken is believed, even though the engine still reads the old pitch.
+        let mut lead = super::PitchLead::default();
+        lead.take(1.08);
+        assert!((lead.reference(1.0) - 1.08).abs() < 1e-9);
+        assert!(
+            !lead.yielded(1.0),
+            "the hand has just moved: the engine is still catching up"
+        );
+        // Once the hand is away and the engine still disagrees, the engine is right — sync and a new track land here.
+        let mut stale = super::PitchLead {
+            asked: Some(1.08),
+            at: Some(std::time::Instant::now() - super::PitchLead::QUIET * 2),
+        };
+        assert!(stale.yielded(1.0));
+        assert!(
+            !stale.yielded(1.080_1),
+            "a pitch that agrees is not a disagreement"
+        );
+        stale = super::PitchLead::default();
+        assert!(
+            !stale.yielded(1.0),
+            "nothing was asked for, so nothing was taken"
         );
     }
 
