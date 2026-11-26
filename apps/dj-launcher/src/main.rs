@@ -338,9 +338,10 @@ fn start_controller(folder: &Path, options: &Options) -> Option<Child> {
 /// long: a program that cannot close is worse than a panel left lit.
 fn panel_out(folder: &Path) {
     lights_out(folder, "--lights-off");
-    // The screens latch their last picture the way the buttons latch their colour: a closed application leaves the
-    // tracks on the desk glowing (owner's report, 25.11).
-    lights_out(folder, "--screen-off");
+    // The screens latch their last picture the way the buttons latch their colour, so the last thing they are shown is
+    // the program itself: its emblem on the left and its name on the right (owner's request, 25.11). A closed
+    // application that still shows the last track of the night reads as one that is playing it.
+    lights_out(folder, "--farewell");
 }
 
 /// One command that puts part of the panel out, and a short wait for it.

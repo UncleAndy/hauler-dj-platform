@@ -135,6 +135,27 @@ impl Canvas {
         text::width_of(text, scale)
     }
 
+    /// Draw the application's emblem, its top-left corner at `x`,`y`.
+    ///
+    /// A copy, pixel for pixel: the icon is already in the panel's format, transparency and all — the generator lays it
+    /// on this module's background, because RGB565 has no alpha to blend with here.
+    fn emblem(&mut self, x: isize, y: isize) {
+        for row in 0..crate::icon::SIZE {
+            for column in 0..crate::icon::SIZE {
+                let (right, down) = (x + column as isize, y + row as isize);
+                if right < 0
+                    || down < 0
+                    || right >= self.width as isize
+                    || down >= self.height as isize
+                {
+                    continue;
+                }
+                self.pixels[down as usize * self.width + right as usize] =
+                    crate::icon::pixel(column, row);
+            }
+        }
+    }
+
     /// A full-screen frame, ready for the bulk endpoint.
     pub fn frame(&self, screen: Screen) -> Result<Vec<u8>, FrameError> {
         crate::full_screen_frame(screen, &self.pixels)
@@ -409,6 +430,40 @@ fn beats_label(beats: f64) -> String {
     }
 }
 
+/// Where a line of text has to start so that its *ink* is centred, not its advance.
+///
+/// Every glyph carries a blank column after it, so a title centred on the font's advance sits a few pixels left of
+/// centre — visible on a screen 320 pixels wide with a name in it. The line is drawn once into a scratch strip and its
+/// ink measured; the farewell is drawn once per close, so the extra pass costs nothing that matters.
+fn centred_x(line: &str, scale: usize, width: usize) -> isize {
+    let scale = scale.max(1);
+    let mut strip = Canvas::new(width, text::GLYPH_HEIGHT * scale, BACKGROUND);
+    strip.text(0, 0, scale, INK, line);
+    let ink = |row_range: std::ops::Range<usize>| -> Option<usize> {
+        row_range
+            .into_iter()
+            .find(|column| (0..strip.height()).any(|row| strip.at(*column, row) == Some(INK)))
+    };
+    let first = ink(0..width);
+    let last = ink(0..width)
+        .map(|_| width)
+        .and_then(|_| ink_reverse(&strip));
+    match (first, last) {
+        (Some(first), Some(last)) => {
+            let ink_width = last as isize + 1 - first as isize;
+            ((width as isize) - ink_width) / 2 - first as isize
+        }
+        _ => ((width as isize) - text_fit_width(line, scale)) / 2,
+    }
+}
+
+/// The last column of a strip that carries ink.
+fn ink_reverse(strip: &Canvas) -> Option<usize> {
+    (0..strip.width())
+        .rev()
+        .find(|column| (0..strip.height()).any(|row| strip.at(*column, row) == Some(INK)))
+}
+
 fn text_fit_width(text: &str, scale: usize) -> isize {
     text::width_of(text, scale.max(1)) as isize
 }
@@ -422,6 +477,45 @@ pub fn render_idle(deck: char) -> Canvas {
     canvas.text(10, 48, 2, DIM, "NO TRACK");
     canvas.text(10, 70, 1, DIM, "LOAD ONE WITH THE BROWSE KNOB");
     canvas.fill_rect(0, height as isize - 14, width, 1, GROOVE);
+    canvas
+}
+
+/// The name the panels carry when the program closes, as the font can spell it: the screens have capitals only.
+pub const FAREWELL_LINES: [&str; 2] = ["HAULER DJ", "PLATFORM"];
+
+/// The picture a screen holds when the program closes: the emblem on the left, the name on the right (owner's request,
+/// 25.11).
+///
+/// The panel latches whatever it was shown last, so this is what a DJ sees on a closed application: not the last track
+/// of the night, and not a blank screen either, but the program saying which one it was.
+///
+/// The emblem is the icon itself, in its own colours and at its own size, centred: the picture the window and the
+/// installer carry, so the panel says goodbye with the same mark (`crate::icon`).
+pub fn render_farewell(screen: Screen) -> Canvas {
+    let mut canvas = Canvas::screen(BACKGROUND);
+    let width = canvas.width();
+    let height = canvas.height();
+    match screen {
+        Screen::Left => {
+            let side = crate::icon::SIZE;
+            let left = ((width - side) / 2) as isize;
+            let top = ((height - side) / 2) as isize;
+            canvas.emblem(left, top);
+        }
+        Screen::Right => {
+            // Two lines at scale 4: the whole name on one line does not fit at this size, and at scale 2 it reads as a
+            // caption under an emblem this size rather than the name of the program.
+            let scale = 4;
+            let line_height = text::GLYPH_HEIGHT * scale;
+            let gap = 18;
+            let total = line_height * FAREWELL_LINES.len() + gap * (FAREWELL_LINES.len() - 1);
+            let mut top = ((height.saturating_sub(total)) / 2) as isize;
+            for line in FAREWELL_LINES {
+                canvas.text(centred_x(line, scale, width), top, scale, INK, line);
+                top += (line_height + gap) as isize;
+            }
+        }
+    }
     canvas
 }
 

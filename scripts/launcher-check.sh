@@ -155,8 +155,9 @@ case6_out="$(XDG_CONFIG_HOME="$case6/config" XDG_DATA_HOME="$case6/data" XDG_RUN
 case6_code=$?
 if [ "$case6_code" -eq 0 ] && [ -f "$args_file" ] \
   && grep -qx -- "--serve" "$args_file" && grep -qx -- "--engine" "$args_file" \
-  && grep -q "hauler-dj-engine.sock" "$args_file" && grep -qx -- "--lights-off" "$args_file"; then
-  echo "launcher-check: the service is started with --serve and the engine's endpoint, and the panel is put out on the way out"
+  && grep -q "hauler-dj-engine.sock" "$args_file" && grep -qx -- "--lights-off" "$args_file" \
+  && grep -qx -- "--farewell" "$args_file"; then
+  echo "launcher-check: the service is started with --serve and the engine's endpoint, the panel is put out on the way out and the screens say goodbye"
 else
   echo "launcher-check: FAILED — the service was not asked to light anything (exit $case6_code)" >&2
   if [ -f "$args_file" ]; then

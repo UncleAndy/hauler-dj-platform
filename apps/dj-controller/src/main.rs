@@ -31,7 +31,7 @@ use dj_controller_s4mk3::{NAME, PRODUCT, S4Mk3, VENDOR};
 use dj_hid::write::ReportSink;
 use dj_hid::{DeviceInfo, HidrawTransport, Transport};
 
-const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send] | --lights-demo [--interval MS] [--send] | --lights-show --engine <endpoint> | --lights-fill <code> [--send] | --lights-night [--rest <code>] [--send] | --lights-bright <byte> [--colour N] [--rounds N] [--send] | --lights-colour-walk [<byte>|left|right|all] [--shift] [--interval MS] [--send] | --lights-pick [<byte>|left|right|all] [--out <file>] [--interval MS] [--send] | --screen-from --engine <endpoint> --out <file.ppm> [--panel left|right] | --screen-send [--engine <endpoint>] [--panel left|right] | --screen-off | --lights-off | --serve --engine <endpoint> | --inputs-watch [--seconds N] | --node-rates [--seconds N] | --wheel-init [--seconds N] | --inputs-learn [--out <file>] [--inputs <file>]";
+const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send] | --lights-demo [--interval MS] [--send] | --lights-show --engine <endpoint> | --lights-fill <code> [--send] | --lights-night [--rest <code>] [--send] | --lights-bright <byte> [--colour N] [--rounds N] [--send] | --lights-colour-walk [<byte>|left|right|all] [--shift] [--interval MS] [--send] | --lights-pick [<byte>|left|right|all] [--out <file>] [--interval MS] [--send] | --screen-from --engine <endpoint> --out <file.ppm> [--panel left|right] | --screen-send [--engine <endpoint>] [--panel left|right] | --screen-off | --farewell | --farewell-preview <file.ppm> | --lights-off | --serve --engine <endpoint> | --inputs-watch [--seconds N] | --node-rates [--seconds N] | --wheel-init [--seconds N] | --inputs-learn [--out <file>] [--inputs <file>]";
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -148,6 +148,14 @@ fn run(arguments: &[String]) -> Result<(), String> {
             "--screen-from" => mode = Mode::ScreenFrom,
             "--screen-send" => mode = Mode::ScreenSend,
             "--screen-off" => mode = Mode::ScreenOff,
+            "--farewell" => mode = Mode::Farewell,
+            "--farewell-preview" => {
+                let Some(path) = arguments.get(index + 1) else {
+                    return Err(format!("--farewell-preview wants a file name. {USAGE}"));
+                };
+                mode = Mode::FarewellPreview(path.clone());
+                index += 1;
+            }
             "--panel" => {
                 let Some(side) = arguments.get(index + 1) else {
                     return Err(format!("--panel wants left or right. {USAGE}"));
@@ -463,6 +471,8 @@ fn run(arguments: &[String]) -> Result<(), String> {
         Mode::ScreenFrom => screen_from(engine.as_deref(), pick_out.as_deref(), screen_panel),
         Mode::ScreenSend => screen_send(engine.as_deref(), screen_panel),
         Mode::ScreenOff => screen_off(),
+        Mode::Farewell => farewell(),
+        Mode::FarewellPreview(path) => farewell_preview(&path),
         Mode::LightsPick(what) => lights_pick(
             &devices,
             &what,
@@ -511,6 +521,8 @@ enum Mode {
     ScreenFrom,
     ScreenSend,
     ScreenOff,
+    Farewell,
+    FarewellPreview(String),
     LightsOff,
     Serve,
     InputsWatch,
@@ -2901,6 +2913,59 @@ fn screen_off() -> Result<(), String> {
         panels.send(&frame)?;
     }
     println!("dj-controller: the screens are dark");
+    Ok(())
+}
+
+/// What the screens say when the program closes: the emblem on the left, the name on the right (owner's request,
+/// 25.11).
+///
+/// The launcher runs this after the service it started is gone, so nothing can repaint the panel afterwards, and instead
+/// of leaving the screens dark a closed application says which one it was.
+fn farewell() -> Result<(), String> {
+    let mut panels = dj_controller_s4mk3::panels::Panels::open()?;
+    for side in [
+        dj_controller_s4mk3::Screen::Left,
+        dj_controller_s4mk3::Screen::Right,
+    ] {
+        let canvas = dj_controller_s4mk3::screen::render_farewell(side);
+        let frame = canvas
+            .frame(side)
+            .map_err(|error| format!("the frame cannot be built: {error}"))?;
+        panels.send(&frame)?;
+    }
+    println!("dj-controller: the screens say which program this was");
+    Ok(())
+}
+
+/// The same two pictures as files, so the design can be looked at without the panel.
+///
+/// `<file>` is the left screen and `<file>-right.ppm` the right one: one command, one look, and no hardware in the loop —
+/// the same reason `--screen-preview` exists.
+fn farewell_preview(path: &str) -> Result<(), String> {
+    let file = std::path::Path::new(path);
+    let stem = file
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("farewell");
+    let folder = file.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let mut written = Vec::new();
+    for (side, name) in [
+        (dj_controller_s4mk3::Screen::Left, format!("{stem}.ppm")),
+        (
+            dj_controller_s4mk3::Screen::Right,
+            format!("{stem}-right.ppm"),
+        ),
+    ] {
+        let canvas = dj_controller_s4mk3::screen::render_farewell(side);
+        let target = folder.join(&name);
+        std::fs::write(&target, canvas.to_ppm())
+            .map_err(|error| format!("{}: {error}", target.display()))?;
+        written.push(target.display().to_string());
+    }
+    println!(
+        "dj-controller: the farewell is written: {}",
+        written.join(", ")
+    );
     Ok(())
 }
 
