@@ -1795,9 +1795,14 @@ fn inputs_loop(
 /// kept the engine's defaults until one fader happened to move, because its positions had gone to the other reader. Two
 /// writers are no better: the panel ends up dark, flickering or both, depending on who wrote last.
 fn claim_panel() -> Result<std::path::PathBuf, String> {
+    // The runtime directory can be announced and missing — a container without logind, a stale `XDG_RUNTIME_DIR` — and a
+    // service that refuses to start because a directory is absent is a controller that never lights. The lock goes to the
+    // temporary directory then; it is a lock, not a contract about where it lives (gate report, 25.11).
     let directory = std::env::var("XDG_RUNTIME_DIR")
+        .ok()
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::env::temp_dir());
+        .filter(|path| path.is_dir())
+        .unwrap_or_else(std::env::temp_dir);
     let path = directory.join("hauler-dj-controller.pid");
     for attempt in 0..2_u8 {
         match std::fs::OpenOptions::new()

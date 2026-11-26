@@ -140,6 +140,10 @@ esac
 # machine the service prints instead of sending, which is exactly the half a check can see.
 "$engine" --set-config controller.enabled=true >/dev/null 2>&1 || true
 "$engine" --set-config-string controller.driver=s4mk3 >/dev/null 2>&1 || true
+# Night mode off for this step: with it on, every lamp is painted in the resting colour, the summary prints six names in
+# byte order and cuts the rest, and the PLAY button — byte 55 — is never among them. The step is about a playing deck
+# lighting its own button, so the panel here is dark except for what the engines says (gate report, 25.11).
+"$engine" --set-config controller.lights.night=false >/dev/null 2>&1 || true
 show_socket="$work/show.sock"
 "$engine" --null-sink --autoplay --seconds 8 --socket "$show_socket" >/dev/null 2>&1 &
 show_pid=$!
