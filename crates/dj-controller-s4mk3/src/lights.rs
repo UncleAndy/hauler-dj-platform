@@ -299,6 +299,10 @@ pub struct Palette {
     pub cue: Colour,
     /// A deck that follows another.
     pub sync: Colour,
+    /// The LED beside a tempo fader while the deck runs at its own pitch.
+    pub pitch_zero_on: Colour,
+    /// The same LED while the deck's pitch is away from zero.
+    pub pitch_zero_off: Colour,
     /// The deck the others follow: the MASTER lamp.
     pub master: Colour,
     /// A deck playing backwards: the REV lamp.
@@ -331,6 +335,9 @@ impl Default for Palette {
             hotcue: Colour::Green,
             loop_: Colour::Yellow,
             fx: Colour::Magenta,
+            // The ordinary rule: lit at the deck's own pitch, dark away from it.
+            pitch_zero_on: Colour::White,
+            pitch_zero_off: Colour::Off,
             fx_keys: [
                 (1, Colour::Blue),
                 (2, Colour::Green),

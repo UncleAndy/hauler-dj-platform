@@ -496,6 +496,8 @@ fn the_settings_choose_the_colours() {
         resting: Colour::Off,
         jog: Colour::White,
         loop_: Colour::Aqua,
+        pitch_zero_on: Colour::Green,
+        pitch_zero_off: Colour::Red,
         fx_keys: [
             (1, Colour::Blue),
             (2, Colour::Green),

@@ -2402,13 +2402,19 @@ fn paint_pitch_zero(
         let Some(slot) = report.body.get_mut(usize::from(PITCH_ZERO_LAMPS[side])) else {
             continue;
         };
-        // Lit or out, with nothing in between: the panel's night mode keeps inactive lamps faintly glowing, and on this
-        // one the faint glow read as "the pitch is somewhere near zero but not quite" (owner's report, 25.11). A lamp that
-        // is meant to say one bit must not have a third state.
-        *slot = if lit {
-            dj_controller_s4mk3::lights::bright(palette.resting.code())
+        // Two states, two colours, and nothing in between: the panel's night mode keeps inactive lamps faintly glowing,
+        // but on this one the faint glow read as "the pitch is near zero but not quite" (owner's report, 25.11), and a
+        // lamp meant to say one bit must not have a third state. Each side of the bit takes its own colour from the
+        // settings — including `off`, which is the ordinary rule and stays dark.
+        let colour = if lit {
+            palette.pitch_zero_on
         } else {
-            0
+            palette.pitch_zero_off
+        };
+        *slot = if lit {
+            dj_controller_s4mk3::lights::bright(colour.code())
+        } else {
+            dj_controller_s4mk3::lights::dim(colour.code())
         };
     }
 }
@@ -3356,6 +3362,8 @@ fn palette_from(
         hotcue: colour_of(lights.hotcue),
         loop_: colour_of(lights.loop_),
         fx: colour_of(lights.fx),
+        pitch_zero_on: colour_of(lights.pitch_zero_on),
+        pitch_zero_off: colour_of(lights.pitch_zero_off),
         fx_keys: fx_keys_from(fx),
     }
 }
@@ -4353,10 +4361,14 @@ mod tests {
         );
         assert_eq!(
             report.body[11],
-            dj_controller_s4mk3::lights::bright(palette.resting.code()),
-            "the deck at its own pitch is lit"
+            dj_controller_s4mk3::lights::bright(palette.pitch_zero_on.code()),
+            "the deck at its own pitch wears the colour the settings give that state"
         );
-        assert_eq!(report.body[34], 0, "three percent away is dark");
+        assert_eq!(
+            report.body[34],
+            dj_controller_s4mk3::lights::dim(palette.pitch_zero_off.code()),
+            "three percent away wears the other state's colour — off by default"
+        );
 
         // Inverted: the same two decks the other way round.
         let mut report = dj_controller_s4mk3::lights::LightsReport::dark();
@@ -4366,10 +4378,19 @@ mod tests {
             &palette,
             true,
         );
-        assert_eq!(report.body[11], 0, "at zero it goes out");
-        assert_ne!(report.body[34], 0, "and lights while the pitch is away");
+        assert_eq!(
+            report.body[11],
+            dj_controller_s4mk3::lights::dim(palette.pitch_zero_off.code()),
+            "inverted, zero wears the away colour — dark by default"
+        );
+        assert_eq!(
+            report.body[34],
+            dj_controller_s4mk3::lights::bright(palette.pitch_zero_on.code()),
+            "and a pitch away from zero wears the lit colour"
+        );
 
-        // Out is out: the night glow of other lamps reads as a third state on this one (owner's report, 25.11).
+        // Out is out: the night glow of other lamps reads as a third state on this one, so a colour of `off` gives the dim
+        // code of no colour — zero — rather than the faint resting glow (owner's report, 25.11).
         let mut report = dj_controller_s4mk3::lights::LightsReport::dark();
         super::paint_pitch_zero(
             &mut report,
@@ -4382,6 +4403,28 @@ mod tests {
             "a pitch away from zero gives no light at all"
         );
         assert_eq!(report.body[34], 0);
+
+        // And a colour asked for actually arrives: a DJ who wants red away from zero gets red, not the resting colour.
+        let mut wanted = palette;
+        wanted.pitch_zero_off = dj_controller_s4mk3::Colour::Red;
+        wanted.pitch_zero_on = dj_controller_s4mk3::Colour::Green;
+        let mut report = dj_controller_s4mk3::lights::LightsReport::dark();
+        super::paint_pitch_zero(
+            &mut report,
+            [(dj_domain::DeckId::A, 1.0), (dj_domain::DeckId::B, 1.03)],
+            &wanted,
+            false,
+        );
+        assert_eq!(
+            report.body[11],
+            dj_controller_s4mk3::lights::bright(dj_controller_s4mk3::Colour::Green.code()),
+            "at zero it wears the colour the settings name for that state"
+        );
+        assert_eq!(
+            report.body[34],
+            dj_controller_s4mk3::lights::dim(dj_controller_s4mk3::Colour::Red.code()),
+            "away from zero it wears the other one"
+        );
     }
 
     #[test]
