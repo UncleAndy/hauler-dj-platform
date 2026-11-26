@@ -4045,7 +4045,9 @@ fn replay(path: &str, endpoint: Option<&str>) -> Result<(), String> {
 /// command travelled on its own connection, the engine saw them in whatever order they arrived, and an older value could
 /// land after a newer one. A knob is absolute, so the last value has to be the one that stays.
 struct EngineLink {
-    stream: std::os::unix::net::UnixStream,
+    // The bridge's own stream type, not a Unix one: on Windows it is a named pipe, and naming the Unix type here kept the
+    // service from building there at all (owner's report from the Windows release build, 25.11).
+    stream: dj_bridge::transport::Stream,
     next_id: u64,
 }
 
