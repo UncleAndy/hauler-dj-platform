@@ -417,6 +417,25 @@ Pane {
         return locked;
     }
     property int anchorIndex: -1
+    /// The anchor's track, so the anchor can survive a page that replaces the rows under it.
+    ///
+    /// The cursor moving to the bottom of the list asks the collection for the next page, and the answer replaces every
+    /// row. The run the DJ is drawing is still the run he meant, so the anchor is a *path*: it is looked up again in the
+    /// new list, and only a page that lost that track starts a new run (see the page branch in `onChanged`).
+    property string anchorPath: ""
+
+    /// Put the anchor on a row: the index for this list, and the track behind it.
+    function setAnchor(index) {
+        const row = browser.showingRows[index];
+        browser.anchorIndex = index;
+        browser.anchorPath = row !== undefined ? row.path : "";
+    }
+
+    /// Start a new run: there is nothing to keep.
+    function clearAnchor() {
+        browser.anchorIndex = -1;
+        browser.anchorPath = "";
+    }
 
     // What the engine says about the import, if one was started since it came up.
     readonly property var importState: Bridge.snapshot !== undefined && Bridge.snapshot.import !== undefined
@@ -541,10 +560,10 @@ Pane {
             } else {
                 chosen.push(path);
             }
-            browser.anchorIndex = index;
+            browser.setAnchor(index);
         } else {
             chosen = [path];
-            browser.anchorIndex = index;
+            browser.setAnchor(index);
         }
         browser.selection = chosen;
     }
@@ -759,7 +778,7 @@ Pane {
         }
         const to = Math.max(0, Math.min(count - 1, index));
         if (browser.anchorIndex < 0) {
-            browser.anchorIndex = Math.max(0, browser.cursorRow());
+            browser.setAnchor(Math.max(0, browser.cursorRow()));
         }
         const from = Math.min(browser.anchorIndex, to);
         const last = Math.max(browser.anchorIndex, to);
@@ -785,7 +804,7 @@ Pane {
             browser.extendSelectionTo(to);
         } else {
             // A plain move starts a new run: the next Shift press begins where the hand stopped.
-            browser.anchorIndex = to;
+            browser.setAnchor(to);
         }
         // The anchor follows every cursor move that is not a Shift move: the wheel, a load, the lock. A DJ
         // who wheels down the list and then presses Shift+End means from where he is, not from where he was.
@@ -954,7 +973,7 @@ Pane {
         target: Browser
         function onCursorChanged() {
             if (!browser.extending) {
-                browser.anchorIndex = browser.cursorRow();
+                browser.setAnchor(browser.cursorRow());
             }
             if (!browser.keepScrollOnCursor) {
                 centreOnCursor();
@@ -964,19 +983,25 @@ Pane {
         // run counts rows, and rows of the previous list mean other tracks here — a run would cover a
         // stretch nobody asked for.
         function onPlaylistPageChanged() {
-            browser.anchorIndex = -1;
+            browser.clearAnchor();
         }
         function onModeChanged() {
-            browser.anchorIndex = -1;
+            browser.clearAnchor();
         }
         function onChanged() {
             // A page answer replaces every row (the lock asks the collection again), and a view handed a new
             // model starts at the top: the DJ's place goes back before anything else is asked of the list.
             if (Browser.pageGeneration !== browser.seenGeneration) {
                 browser.seenGeneration = Browser.pageGeneration;
-                // New rows mean a new list: an anchor from the previous one points into row numbers that
-                // now hold other tracks, and Shift would select a run nobody asked for.
-                browser.anchorIndex = -1;
+                // New rows are not always a new list: the cursor reaching the bottom asks for the next page, and
+                // the run being drawn is still the run the DJ meant. The anchor is a track, so it is looked up again;
+                // a page that lost that track (another section, another filter) leaves no anchor at all, which is the
+                // old behaviour and the right one (the check «shift-home» failed on the page answering in between).
+                const kept = browser.anchorPath;
+                const at =
+                    kept === "" ? -1 : browser.showingRows.findIndex((row) => row.path === kept);
+                browser.anchorIndex = at;
+                browser.anchorPath = at >= 0 ? kept : "";
                 // The list was replaced under the DJ: his offset goes back, and the cursor is not centred —
                 // centring would move the window he is looking at, which is the report this answers.
                 browser.restoreScroll();
