@@ -396,6 +396,15 @@ fn run(arguments: &[String]) -> Result<(), String> {
         body_only: sweep_body_only,
     };
 
+    // What a mode cannot work without is checked before the switch, not after it: a machine with controller support off
+    // (a fresh install, and the integration run on a machine with no settings at all) answered `--serve` with "nothing to
+    // do" and exit code 0 — a service nobody started, to a caller that asked for one (owner's CI report, 25.11).
+    if engine.is_none()
+        && let Some(flag) = mode_wanting_an_engine(&mode)
+    {
+        return Err(format!("{flag} wants --engine <endpoint>. {USAGE}"));
+    }
+
     let (config, file) = dj_config::Config::load_or_default(None)
         .map_err(|error| format!("the settings file cannot be read: {error}"))?;
     if !config.controller.enabled {
@@ -3321,6 +3330,20 @@ fn screen_send(engine: Option<&str>, side: dj_controller_s4mk3::Screen) -> Resul
         panels.interface_number()
     );
     Ok(())
+}
+
+/// The command-line name of a mode that cannot do anything without an engine, or `None` for the ones that can.
+///
+/// A mode in this list refuses a call with no endpoint however the settings are switched: the endpoint is a property of
+/// the call, the switch is a property of the machine.
+fn mode_wanting_an_engine(mode: &crate::Mode) -> Option<&'static str> {
+    match mode {
+        crate::Mode::Serve => Some("--serve"),
+        crate::Mode::LightsShow => Some("--lights-show"),
+        crate::Mode::ScreenFrom => Some("--screen-from"),
+        crate::Mode::ScreenSend => Some("--screen-send"),
+        _ => None,
+    }
 }
 
 /// The colour of a settings value in the driver's own vocabulary.
