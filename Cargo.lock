@@ -366,7 +366,7 @@ dependencies = [
 
 [[package]]
 name = "dj-analysis"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dj-audio-core",
  "dj-beatmodel",
@@ -376,7 +376,7 @@ dependencies = [
 
 [[package]]
 name = "dj-audio-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dj-domain",
  "dj-testkit",
@@ -384,7 +384,7 @@ dependencies = [
 
 [[package]]
 name = "dj-audio-io"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cpal",
  "rustix",
@@ -393,7 +393,7 @@ dependencies = [
 
 [[package]]
 name = "dj-audio-probe"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cpal",
  "serde_json",
@@ -401,7 +401,7 @@ dependencies = [
 
 [[package]]
 name = "dj-beatmodel"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ort",
  "rustfft",
@@ -409,7 +409,7 @@ dependencies = [
 
 [[package]]
 name = "dj-bridge"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dj-domain",
  "serde",
@@ -419,18 +419,18 @@ dependencies = [
 
 [[package]]
 name = "dj-cli"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "dj-codec"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "symphonia",
 ]
 
 [[package]]
 name = "dj-config"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dj-domain",
  "dj-paths",
@@ -441,7 +441,7 @@ dependencies = [
 
 [[package]]
 name = "dj-controller"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dj-bridge",
  "dj-config",
@@ -454,14 +454,14 @@ dependencies = [
 
 [[package]]
 name = "dj-controller-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dj-domain",
 ]
 
 [[package]]
 name = "dj-controller-s4mk3"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dj-controller-core",
  "dj-domain",
@@ -470,7 +470,7 @@ dependencies = [
 
 [[package]]
 name = "dj-deck"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dj-codec",
  "dj-domain",
@@ -481,7 +481,7 @@ dependencies = [
 
 [[package]]
 name = "dj-domain"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -489,7 +489,7 @@ dependencies = [
 
 [[package]]
 name = "dj-dsp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dj-domain",
  "dj-signalsmith-sys",
@@ -497,7 +497,7 @@ dependencies = [
 
 [[package]]
 name = "dj-engine"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dj-analysis",
  "dj-audio-core",
@@ -520,7 +520,7 @@ dependencies = [
 
 [[package]]
 name = "dj-fingerprint"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chromaprint-next",
  "dj-codec",
@@ -528,7 +528,7 @@ dependencies = [
 
 [[package]]
 name = "dj-fx"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dj-domain",
  "dj-dsp",
@@ -538,7 +538,7 @@ dependencies = [
 
 [[package]]
 name = "dj-headless"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dj-analysis",
  "dj-audio-core",
@@ -553,11 +553,11 @@ dependencies = [
 
 [[package]]
 name = "dj-hid"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "dj-launcher"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dj-config",
  "dj-paths",
@@ -566,7 +566,7 @@ dependencies = [
 
 [[package]]
 name = "dj-library"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dj-codec",
  "dj-fingerprint",
@@ -580,7 +580,7 @@ dependencies = [
 
 [[package]]
 name = "dj-live-probe"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dj-audio-io",
  "dj-codec",
@@ -593,7 +593,7 @@ dependencies = [
 
 [[package]]
 name = "dj-media-bench"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dj-codec",
  "serde_json",
@@ -601,7 +601,7 @@ dependencies = [
 
 [[package]]
 name = "dj-mixer"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dj-domain",
  "dj-fx",
@@ -611,7 +611,7 @@ dependencies = [
 
 [[package]]
 name = "dj-models"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dj-paths",
  "serde",
@@ -622,11 +622,11 @@ dependencies = [
 
 [[package]]
 name = "dj-paths"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "dj-session"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dj-paths",
  "serde",
@@ -635,22 +635,22 @@ dependencies = [
 
 [[package]]
 name = "dj-signalsmith-sys"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "dj-stretch-sys"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "dj-sync"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dj-domain",
 ]
 
 [[package]]
 name = "dj-testkit"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "either"
