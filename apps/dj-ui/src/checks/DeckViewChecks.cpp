@@ -3035,22 +3035,33 @@ int runTransportCheck(QQmlApplicationEngine& engine, BridgeClient* bridge, UiSet
             }
             return ready();
         };
+        // The grid editor folds with it: a DJ working from the panel presses the panel's own buttons, and a strip of
+        // thirteen edit buttons under a folded transport row is the row the fold was meant to give away (owner's
+        // request, 25.11). A locked track has no editor at all, so the strip is only claimed when it is there.
+        auto* grid = findItem(window->contentItem(), QStringLiteral("gridedit_A"));
+        const bool gridShown = grid != nullptr && grid->isVisible();
         const bool shown = row->isVisible();
         auto* wave = findItem(window->contentItem(), QStringLiteral("wave_A"));
         const qreal waveBefore = wave != nullptr ? wave->height() : 0.0;
         bridge->setPanelPresent(true);
-        const bool folded = settle([&]() { return panelPresent() && !row->isVisible(); });
+        const bool folded = settle([&]() {
+            const bool gridFolded = grid == nullptr || !gridShown || !grid->isVisible();
+            return panelPresent() && !row->isVisible() && gridFolded;
+        });
         // The room the row took goes to the wave: a row that folds away and leaves a gap is a hole, not a trade. The layout
         // runs a frame behind the visibility, so the height is read once it has stopped being the old one.
         (void)settle([&]() { return wave != nullptr && wave->height() > waveBefore + 1.0; });
         const qreal waveWhileFolded = wave != nullptr ? wave->height() : 0.0;
         const bool grew = wave != nullptr && waveWhileFolded > waveBefore + 1.0;
         bridge->setPanelPresent(false);
-        const bool back = settle([&]() { return !panelPresent() && row->isVisible(); });
+        const bool back = settle([&]() {
+            const bool gridBack = grid == nullptr || !gridShown || grid->isVisible();
+            return !panelPresent() && row->isVisible() && gridBack;
+        });
         std::fprintf(stdout,
-                     "dj-ui: the deck's transport row %s while a controller is present and %s again after it; the "
-                     "wave takes the room (%.0f -> %.0f px)\n",
-                     folded ? "folds away" : "STAYS", back ? "comes back" : "does NOT come back",
+                     "dj-ui: the deck's transport row and its grid editor %s while a controller is present and %s "
+                     "again after it; the wave takes the room (%.0f -> %.0f px)\n",
+                     folded ? "fold away" : "STAY", back ? "come back" : "do NOT come back",
                      waveBefore, waveWhileFolded);
         if (!shown || !folded || !back || !grew) {
             std::fprintf(stderr,

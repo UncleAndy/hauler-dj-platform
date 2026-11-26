@@ -177,6 +177,8 @@ fn a_snapshot_is_self_describing_enough_to_be_refused() {
         headphones: dj_domain::HeadphoneLevels::default(),
         cache_budget_bytes: 0,
         decks: vec![DeckSnapshot {
+            end_warning: false,
+            auto_gain_correction_db: None,
             fx: dj_domain::FxPatch::default(),
             underruns: 0,
             waveform: None,

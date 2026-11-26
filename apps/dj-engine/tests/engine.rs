@@ -1097,6 +1097,7 @@ fn prepared_with(
             waveform: None,
             auto_gain: 1.0,
             auto_gain_db: None,
+            auto_gain_correction_db: None,
             analyzing: false,
             grid: None,
             source_rate: 48_000,

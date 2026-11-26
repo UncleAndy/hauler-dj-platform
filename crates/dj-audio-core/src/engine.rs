@@ -334,6 +334,8 @@ impl Engine {
             cue: dj_domain::Levels::default(),
             headphones: dj_domain::HeadphoneLevels::default(),
             decks: vec![DeckSnapshot {
+                end_warning: false,
+                auto_gain_correction_db: None,
                 fx: dj_domain::FxPatch::default(),
                 waveform: None,
                 deck: DeckId::A,

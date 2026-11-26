@@ -49,6 +49,30 @@ Pane {
         border.width: panel.playing ? 2 : 1
         radius: 2
 
+        // The end warning: a red frame that breathes, not a lamp that changes colour once — a DJ looking at the other
+        // deck would miss a one-off change (owner's request, 25.11). It sits over the deck's own border and leaves the
+        // controls alone: the hand still has to reach them while the track runs out.
+        Rectangle {
+            objectName: "endWarning_" + panel.deckId
+            anchors.fill: parent
+            radius: parent.radius
+            color: "transparent"
+            border.color: UiSettings.themeDanger
+            border.width: 3
+            visible: panel.endWarning
+            // Off while it is invisible: an animation left running on a deck that is nowhere near its end burns a
+            // frame's worth of work twenty times a second for nothing.
+            SequentialAnimation on opacity {
+                running: panel.endWarning
+                loops: Animation.Infinite
+                NumberAnimation { to: 1.0; duration: 380; easing.type: Easing.InOutQuad }
+                PauseAnimation { duration: 40 }
+                NumberAnimation { to: 0.1; duration: 380; easing.type: Easing.InOutQuad }
+                PauseAnimation { duration: 40 }
+            }
+            opacity: 0.1
+        }
+
         MouseArea {
             anchors.fill: parent
             // Behind the controls: a click on empty panel space chooses this deck as the browser's
@@ -614,9 +638,39 @@ Pane {
     /// `null` means the file's level was never measured, which is a different thing from a correction
     /// of zero and has to read differently too.
     readonly property var autoGainDb: {
+        // The correction the file asked for, not the gain the deck runs at: the gain has the settings' share in it, and
+        // a share of zero turned this label into a floor reading of −120 dB for every track (owner's report, 25.11).
+        const correction = panel.deck.auto_gain_correction_db;
+        if (correction !== undefined && correction !== null) {
+            return Number(correction);
+        }
+        // An engine from before this field: its number is a gain, and the floor of a gain is not a correction — a deck
+        // whose gain is zero says nothing rather than "−120 dB".
         const value = panel.deck.auto_gain_db;
-        return value === undefined || value === null ? null : Number(value);
+        if (value === undefined || value === null) {
+            return null;
+        }
+        const db = Number(value);
+        return db <= -119.0 ? null : db;
     }
+
+    /// Whether the deck's button rows are folded away because the panel's own hardware covers them.
+    ///
+    /// One place, two rows: the transport row and the grid editor fold together, because a DJ working with the panel
+    /// presses the panel's own PLAY, CUE, LOOP and jump — and a deck whose buttons are half on the screen and half on the
+    /// hardware is a deck nobody can read at a glance (owner's request, 25.11).
+    readonly property bool buttonsFolded: {
+        const controllerHere = Bridge.snapshot.panel !== undefined
+                               && Bridge.snapshot.panel.present === true
+        return controllerHere && LayoutState.hideDeckButtonsWithController
+    }
+
+    /// The deck is inside the last seconds of its track: the frame flashes red until the track ends or a loop takes over.
+    ///
+    /// The engine decides it — it is the one place that knows the remaining frames, the tempo and the loop — and every
+    /// client draws the same flag, so the window, the jog's ring and the panel's screen flash together (owner's request,
+    /// 25.11).
+    readonly property bool endWarning: panel.deck !== null && panel.deck.end_warning === true
 
     /// The correction as a person reads it, or an empty string when there is nothing measured.
     // How much of the cache budget this deck's track takes. A size alone says nothing about whether
@@ -996,13 +1050,7 @@ Pane {
             // With a controller under the hands, its own PLAY, CUE, LOOP, jump, REV and FLX do this row's work: the row
             // folds away so the deck keeps the wave and the numbers (owner's request, 25.11). The switch in Settings
             // brings it back for a DJ who wants both.
-            visible: {
-                // Read once, in one place: the row folds when a controller is present and the switch says so, and the
-                // wave below takes the room (owner's request, 25.11).
-                const controllerHere = Bridge.snapshot.panel !== undefined
-                                       && Bridge.snapshot.panel.present === true
-                return !(controllerHere && LayoutState.hideDeckButtonsWithController)
-            }
+            visible: !panel.buttonsFolded
             Layout.fillWidth: true
             spacing: 4
             // Play and Cue are one pair, and a pair of buttons of two widths reads as two sizes of one
@@ -1303,7 +1351,7 @@ Pane {
             // and taking them away leaves nothing to measure with; the tools that only read a grid are
             // greyed instead (DJP-MEDIA-006). Under the lock the row is gone entirely — there is nothing
             // to edit, and thirteen dead buttons cost the wave a row (owner's decision, 14.11).
-            visible: panel.track !== null && !panel.analysisLock && !panel.compact
+            visible: panel.track !== null && !panel.analysisLock && !panel.compact && !panel.buttonsFolded
             Item { Layout.fillWidth: true }
             // The tools of the grid, centred on the deck: the row is a full-width one, and a block of
             // buttons pushed to the left edge leaves the middle of the panel empty (owner's decision).

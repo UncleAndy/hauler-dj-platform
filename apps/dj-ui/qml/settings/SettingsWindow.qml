@@ -289,6 +289,10 @@ Popup {
             title: qsTr("Analysis"),
             about: qsTr("How a track is measured when it is loaded."),
             rows: [
+                { label: qsTr("Warn before the end"),
+                  hint: qsTr("How long before a track ends the decks start flashing: the deck's frame, the jog's ring and the panel's screen. Nothing plays a loop inside a warning, and 0 is off."),
+                  path: "engine:display.end_warning_seconds", kind: "slider",
+                  from: 0, to: 120, decimals: 0 },
                 { label: qsTr("Auto gain share"),
                   hint: qsTr("How much of the automatic gain is applied to the track itself rather than left to the channel fader."), path: "engine:analysis.auto_gain_share", kind: "slider",
                   from: 0, to: 1, decimals: 2 }

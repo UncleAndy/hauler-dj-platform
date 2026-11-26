@@ -1484,6 +1484,22 @@ pub struct DeckSnapshot {
     /// engine never says a measurement is running.
     #[serde(default)]
     pub analyzing: bool,
+    /// The level correction the file itself asked for, in decibels, before the settings' share — `None` when the file
+    /// was never measured.
+    ///
+    /// This is the number the window shows beside the clock: a DJ reading "−3,2 dB" is reading what was done to the
+    /// record, and the deck's own gain (`auto_gain_db`) is that number taken down by the configured share — a product
+    /// with a setting in it, which is not what a correction means (owner's report, 25.11: the label sat at the floor
+    /// because the share was zero, and told the DJ nothing about the track).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_gain_correction_db: Option<f32>,
+    /// True while this deck is close enough to the end of its track to warn, and is not inside a loop.
+    ///
+    /// The rule lives in the engine, not in the clients: the deck's edge in the window, the jog's ring and the panel's
+    /// screen must flash at the same moment, and three copies of one rule is three chances to disagree. Defaulted and
+    /// omitted when false, so a client that knows nothing about the warning reads the same wire it always did.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub end_warning: bool,
     /// True while loop mode repeats this deck's loops.
     ///
     /// The Loop button draws this and keeps no copy of its own: a mode the engine refused would

@@ -317,6 +317,9 @@ impl Default for LibrarySettings {
 /// owner's loudest files, and the peaks are what the meters show, not the RMS that was matched.
 pub const DEFAULT_AUTO_GAIN_SHARE: f32 = 0.7;
 
+/// The longest warning a setting may ask for, in seconds: longer than any single track a DJ plays.
+pub const MAX_END_WARNING_SECONDS: f32 = 600.0;
+
 /// Level matching of the files a deck opens.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -638,13 +641,25 @@ impl Default for RealtimeSettings {
 /// motion. Twenty frames a second is the default: it is cheaper on a booth laptop and the projection
 /// keeps the movement continuous. Raising `frame_hz` towards the display rate makes a fast scroll at
 /// deep zoom smoother; raising `state_hz` does it by sending more truth instead of projecting it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct DisplaySettings {
     /// Snapshots published per second.
     pub state_hz: u32,
     /// Frames drawn per second.
     pub frame_hz: u32,
+    /// How long before the end of a track the decks start warning, in seconds of playing time; 0 is off.
+    ///
+    /// A DJ who is mixing out of a track needs to know it is about to end before the silence arrives, and the warning
+    /// is the deck's own edge, the jog's ring and the panel's screen — three places the hand already looks at (owner's
+    /// request, 25.11). The number is a warning, not a limit: nothing stops the playback.
+    #[serde(default = "default_end_warning_seconds")]
+    pub end_warning_seconds: f32,
+}
+
+/// The warning the application ships with: twenty seconds, about eight bars at 128 BPM.
+const fn default_end_warning_seconds() -> f32 {
+    20.0
 }
 
 impl Default for DisplaySettings {
@@ -652,6 +667,19 @@ impl Default for DisplaySettings {
         Self {
             state_hz: 20,
             frame_hz: 20,
+            end_warning_seconds: default_end_warning_seconds(),
+        }
+    }
+}
+
+impl DisplaySettings {
+    /// The warning in force, in seconds, clamped to something a client can draw: 0 is off, and a setting file cannot
+    /// ask for a warning longer than a track.
+    pub fn end_warning(&self) -> f32 {
+        if self.end_warning_seconds.is_finite() {
+            self.end_warning_seconds.clamp(0.0, MAX_END_WARNING_SECONDS)
+        } else {
+            default_end_warning_seconds()
         }
     }
 }

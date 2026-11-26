@@ -1035,7 +1035,8 @@ fn screens_show(endpoint: &str, playing: &Playing) {
                     (0usize, dj_controller_s4mk3::Screen::Left),
                     (1usize, dj_controller_s4mk3::Screen::Right),
                 ] {
-                    let panel = panel_from(&snapshot, side, jump[index], looped[index]);
+                    let panel =
+                        panel_from(&snapshot, side, jump[index], looped[index], warning_flash());
                     let canvas = dj_controller_s4mk3::screen::render_deck(&panel);
                     if drawn[index].as_deref() == Some(canvas.pixels()) {
                         continue;
@@ -2460,6 +2461,29 @@ fn wheel_init(devices: &[DeviceInfo], seconds: f32) -> Result<(), String> {
     node_rates(devices, seconds)
 }
 
+/// Where the warning flash stands right now: on for half of its period, off for the other half.
+///
+/// A clock rather than a counter: the panel is painted by two threads (the screens at five drawings a second, the ring
+/// whenever a snapshot changes something), and two counters would drift apart into a stutter the eye reads as a fault.
+/// Two and a half flashes a second is fast enough to catch an eye looking at the other deck and slow enough to read as a
+/// warning rather than as a strobe.
+fn warning_flash() -> bool {
+    use std::sync::OnceLock;
+    use std::time::Instant;
+    static START: OnceLock<Instant> = OnceLock::new();
+    let start = START.get_or_init(Instant::now);
+    let phase = start.elapsed().as_millis() % u128::from(FLASH_PERIOD_MS);
+    phase < u128::from(FLASH_PERIOD_MS / 2)
+}
+
+/// One full flash: half on, half off.
+const FLASH_PERIOD_MS: u64 = 400;
+
+/// The colour the warning wears on the panel: red, the one colour that is never a choice elsewhere on this panel.
+fn warning_colour() -> dj_controller_s4mk3::Colour {
+    dj_controller_s4mk3::Colour::Red
+}
+
 /// Report 50: which jog ring, its mode, the marker's position, and the colour.
 ///
 /// Forty bytes after the id: `[0]` the platter (0 left, 1 right), `[1]` the mode (`0` off, `2` a spot), `[2..4]` the
@@ -2730,6 +2754,7 @@ fn panel_from(
     side: dj_controller_s4mk3::Screen,
     jump_beats: f64,
     loop_beats: u32,
+    warning_flash: bool,
 ) -> dj_controller_s4mk3::screen::DeckPanel {
     let first = match side {
         dj_controller_s4mk3::Screen::Left => dj_domain::DeckId::A,
@@ -2745,6 +2770,7 @@ fn panel_from(
             jump_beats: Some(jump_beats),
             loop_beats: Some(loop_beats),
             wave_position: 0.5,
+            warning: false,
             ..dj_controller_s4mk3::screen::DeckPanel::default()
         };
     };
@@ -2794,6 +2820,7 @@ fn panel_from(
             .map(|track| track.artist.clone())
             .unwrap_or_default(),
         playing: deck.playing,
+        warning: warning_flash && deck.end_warning,
         loaded: deck.track.is_some(),
         elapsed_seconds: elapsed,
         remaining_seconds: remaining,
@@ -2857,7 +2884,7 @@ fn live_panel(
             dj_bridge::ServerMessage::Snapshot(snapshot) => {
                 // The knobs' own values: this one-shot tool has no live controller, so it draws what a fresh service
                 // carries. The service itself passes the numbers its hand set.
-                return Ok(panel_from(&snapshot, side, 4.0, 4));
+                return Ok(panel_from(&snapshot, side, 4.0, 4, warning_flash()));
             }
             _ => continue,
         }
@@ -3244,7 +3271,7 @@ fn lights_show(
     let mut last_pads = String::new();
     // The last ring state per platter: mode and marker position. Report 50 is sent only when one of them changes, because
     // the position moves every snapshot while a deck plays and nothing needs saying while it does not.
-    let mut last_wheel_modes: [(u8, u16); 2] = [(255, 0); 2];
+    let mut last_wheel_modes: [(u8, u16, u8); 2] = [(255, 0, 0); 2];
     let mut last_ring_log: [Option<std::time::Instant>; 2] = [None, None];
     loop {
         let (mut client, _welcome) = match dj_bridge::connect_with_timeout(
@@ -3394,7 +3421,24 @@ fn lights_show(
             if let Some(sink) = sink.as_mut() {
                 for (side, deck_id) in [(0_u8, panel_left), (1_u8, panel_right)] {
                     let deck = snapshot.decks.iter().find(|deck| deck.deck == deck_id);
+                    // The end warning owns the ring while it lasts: the whole ring goes red, and the marker keeps
+                    // turning so it still reads as a platter rather than a dead ring (owner's request, 25.11).
+                    let warning = deck.is_some_and(|deck| deck.end_warning) && warning_flash();
                     let (mode, position, colour) = match deck {
+                        Some(deck) if warning => {
+                            let seconds = if deck.source_rate > 0 {
+                                deck.source_frame.0 as f64 / f64::from(deck.source_rate)
+                            } else {
+                                0.0
+                            };
+                            let revolutions = seconds * (33.0 + 1.0 / 3.0) / 60.0;
+                            let fractional = revolutions - revolutions.floor();
+                            (
+                                2_u8,
+                                (fractional * 2879.0) as u16,
+                                dj_controller_s4mk3::lights::bright(warning_colour().code()),
+                            )
+                        }
                         Some(deck) if deck.playing => {
                             // The marker goes round once per platter revolution, not once per track: one turn of the ring is
                             // one turn of a record (33⅓ rpm ≈ 0.556 turns a second), so it spins the whole time the deck
@@ -3415,10 +3459,10 @@ fn lights_show(
                         }
                         _ => (0_u8, 0_u16, 0_u8),
                     };
-                    if last_wheel_modes[usize::from(side)] == (mode, position) {
+                    if last_wheel_modes[usize::from(side)] == (mode, position, colour) {
                         continue;
                     }
-                    last_wheel_modes[usize::from(side)] = (mode, position);
+                    last_wheel_modes[usize::from(side)] = (mode, position, colour);
                     let speak = match last_ring_log[usize::from(side)] {
                         None => true,
                         Some(at) => at.elapsed() >= std::time::Duration::from_millis(500),

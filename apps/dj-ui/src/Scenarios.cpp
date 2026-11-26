@@ -428,12 +428,21 @@ int runScenarios(BridgeClient &bridge, QQuickWindow &window, const QString &deck
                              why = QStringLiteral("the track did not load");
                              return false;
                          }
-                         const double gain = run.deck().value(QStringLiteral("auto_gain")).toDouble();
-                         if (!(gain > 0.0)) {
-                             why = QStringLiteral("the snapshot carries no auto_gain");
+                         // The label shows the correction the file asked for, not the gain the deck runs at: the gain
+                         // has the settings' share in it, and a share of zero turned this label into a floor reading
+                         // for every track (owner's report, 25.11). An engine from before this field is read through
+                         // its gain, which is the old meaning of the same label.
+                         const QVariant correction =
+                             run.deck().value(QStringLiteral("auto_gain_correction_db"));
+                         const double gain =
+                             run.deck().value(QStringLiteral("auto_gain")).toDouble();
+                         if (!(gain > 0.0) && (correction.isNull() || !correction.isValid())) {
+                             why = QStringLiteral("the snapshot carries neither a correction nor a gain");
                              return false;
                          }
-                         const double db = 20.0 * std::log10(gain);
+                         const double db = correction.isValid() && !correction.isNull()
+                                               ? correction.toDouble()
+                                               : 20.0 * std::log10(std::max(gain, 1e-6));
                          QQuickItem *label = run.item(QStringLiteral("autogain_") + run.deckId());
                          if (label == nullptr) {
                              why = QStringLiteral("there is no correction label beside the clock");
@@ -1395,6 +1404,17 @@ int runScenarios(BridgeClient &bridge, QQuickWindow &window, const QString &deck
                              return false;
                          }
                          const double db = raw.toDouble();
+                         // The correction the file asked for, which is what the label shows: the gain in
+                         // force above has the settings' share in it, and a share of zero turned the label
+                         // into a floor reading for every track (owner's report, 25.11).
+                         const double correction = run.deck()
+                                                       .value(QStringLiteral("auto_gain_correction_db"))
+                                                       .toDouble();
+                         if (std::abs(correction - 0.3) > 0.4) {
+                             why = QStringLiteral("the correction is %1 dB, not the +0,3 dB of this tone")
+                                       .arg(correction, 0, 'f', 2);
+                             return false;
+                         }
                          // The correction of this tone is +0,3 dB and the level factor takes 3,1 dB off
                          // it, so the published gain is −2,8 dB. Both halves are asserted: a snapshot
                          // that dropped either would look plausible and be wrong.
@@ -1441,10 +1461,11 @@ int runScenarios(BridgeClient &bridge, QQuickWindow &window, const QString &deck
                          }
                          bool parsed = false;
                          const double shown = digits.toDouble(&parsed);
-                         if (!parsed || std::abs(shown - db) > 0.06) {
-                             why = QStringLiteral("the label reads \"%1\" where %2 dB was applied")
+                         if (!parsed || std::abs(shown - correction) > 0.06) {
+                             why = QStringLiteral(
+                                       "the label reads \"%1\" where the correction is %2 dB")
                                        .arg(label->property("text").toString())
-                                       .arg(db, 0, 'f', 1);
+                                       .arg(correction, 0, 'f', 1);
                              return false;
                          }
                          return true;

@@ -838,6 +838,9 @@ fn run(argv: &[String]) -> Result<(), String> {
 
     // The render thread writes scalars here; nothing in the audio path allocates or locks.
     let cells = Arc::new(StateCells::new());
+    // The end-of-track warning is a display setting read once, like the sample rate: how long before a track's end the
+    // decks start flashing, from the settings the DJ saved (owner's request, 25.11).
+    cells.set_end_warning_seconds(defaults.display.end_warning());
     // Что уже стоит в хранилище — с первой публикации, а не после команды: иначе после рестарта
     // экран говорит «built-in» про установленную модель, пока её не скачают заново.
     dj_engine::beatmodel::seed_model(&cells, &dj_models::Store::default_root());
@@ -1528,6 +1531,7 @@ fn run(argv: &[String]) -> Result<(), String> {
                         waveform: None,
                         auto_gain: 1.0,
                         auto_gain_db: None,
+                        auto_gain_correction_db: None,
                         analyzing: false,
                         analysis_lock: false,
                         grid: None,
@@ -1673,6 +1677,7 @@ fn run(argv: &[String]) -> Result<(), String> {
                                 waveform: None,
                                 auto_gain: 1.0,
                                 auto_gain_db: None,
+                                auto_gain_correction_db: None,
                                 analyzing: false,
                                 analysis_lock: false,
                                 grid: None,

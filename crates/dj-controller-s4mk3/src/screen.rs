@@ -23,6 +23,9 @@ pub const ACCENT: u16 = 0x07E0;
 pub const WARM: u16 = 0xFD20;
 /// Loop brackets and the bar's groove.
 pub const GROOVE: u16 = 0x2104;
+/// The end warning: red, and the only red on these screens — a colour that means one thing is a colour a hand reads
+/// without being told.
+pub const WARNING: u16 = 0xF800;
 
 /// A picture, in the hardware's own colour format.
 pub struct Canvas {
@@ -237,6 +240,11 @@ pub struct DeckPanel {
     pub artist: String,
     /// Whether the deck is playing: the state is drawn, not only written.
     pub playing: bool,
+    /// Whether the track is inside its last seconds: the screen wears a red frame while it is (owner's request, 25.11).
+    ///
+    /// The flashing is the caller's: the screen is drawn five times a second, and a frame that is red on every other
+    /// drawing is a pulse a eye catches at arm's length. This field only says "draw it now".
+    pub warning: bool,
     /// Whether a track is loaded at all.
     pub loaded: bool,
     /// Seconds played.
@@ -453,6 +461,28 @@ pub fn render_deck(panel: &DeckPanel) -> Canvas {
         );
     }
 
+    // The end warning goes on last: the frame is the outer edge of the picture, and anything painted after it would cut
+    // a hole in it.
+    if panel.warning {
+        let thickness = 10;
+        canvas.fill_rect(0, 0, width, thickness, WARNING);
+        canvas.fill_rect(
+            0,
+            height as isize - thickness as isize,
+            width,
+            thickness,
+            WARNING,
+        );
+        canvas.fill_rect(0, 0, thickness, height, WARNING);
+        canvas.fill_rect(
+            width as isize - thickness as isize,
+            0,
+            thickness,
+            height,
+            WARNING,
+        );
+    }
+
     canvas
 }
 
@@ -536,6 +566,7 @@ pub fn render_idle(deck: char) -> Canvas {
     canvas.text(10, 48, 2, DIM, "NO TRACK");
     canvas.text(10, 70, 1, DIM, "LOAD ONE WITH THE BROWSE KNOB");
     canvas.fill_rect(0, height as isize - 14, width, 1, GROOVE);
+
     canvas
 }
 
@@ -602,6 +633,7 @@ pub fn sample_panel() -> DeckPanel {
         jump_beats: Some(4.0),
         loop_beats: Some(8),
         wave_position: 0.5,
+        warning: false,
         // A made-up track: a swell, a chorus and one quiet break, so the strip shows what a track looks like.
         waveform: (0..300)
             .map(|column| {

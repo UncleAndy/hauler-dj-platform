@@ -2992,6 +2992,8 @@ impl Deck {
         let beat = self.grid.as_ref().map(|grid| grid.beat_at(heard, rate));
         let local_bpm = self.grid.as_ref().map(|grid| grid.bpm_at(heard));
         DeckSnapshot {
+            end_warning: false,
+            auto_gain_correction_db: None,
             // The deck renders the material; the effect sits in its channel strip, so this field is only carried
             // through by whoever publishes the deck snapshot with a mixer behind it.
             fx: dj_domain::FxPatch::default(),

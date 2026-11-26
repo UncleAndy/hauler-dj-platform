@@ -553,6 +553,8 @@ pub struct DeckStatic {
     pub auto_gain: f32,
     /// The same correction in decibels, `None` when the level of this file was never measured.
     pub auto_gain_db: Option<f32>,
+    /// What the file itself asked for, in decibels, before the settings' share.
+    pub auto_gain_correction_db: Option<f32>,
     /// True while the tempo of this deck's file is being measured again (B02).
     pub analyzing: bool,
     /// True when the DJ locked this track's grid: no measurement and no edit may move it.
@@ -586,6 +588,7 @@ impl DeckStatic {
             waveform: snapshot.waveform.clone(),
             auto_gain: snapshot.auto_gain,
             auto_gain_db: snapshot.auto_gain_db,
+            auto_gain_correction_db: snapshot.auto_gain_correction_db,
             analyzing: snapshot.analyzing,
             analysis_lock: snapshot.analysis_lock,
             grid: snapshot.track.as_ref().and_then(|track| track.grid.clone()),
@@ -1089,6 +1092,8 @@ pub struct StateCells {
     count: AtomicUsize,
     /// Bytes the whole-track cache may hold: the whole a deck's cost is a fraction of.
     cache_budget: AtomicU64,
+    /// How long before a track's end the decks warn, in seconds; 0 is off (`DisplaySettings::end_warning`).
+    end_warning_seconds: AtomicU32,
     decks: [DeckCells; MAX_DECKS],
     /// Hotcue names and colours, per deck and slot.
     ///
@@ -1417,6 +1422,7 @@ impl StateCells {
             cue_mix: AtomicU32::new(1.0f32.to_bits()),
             count: AtomicUsize::new(0),
             cache_budget: AtomicU64::new(0),
+            end_warning_seconds: AtomicU32::new(0.0f32.to_bits()),
             decks: std::array::from_fn(|_| DeckCells::new()),
             cue_meta: std::sync::Mutex::new(Vec::new()),
             pad_loops: std::sync::Mutex::new(Vec::new()),
@@ -1601,6 +1607,25 @@ impl StateCells {
         }
     }
 
+    /// Tell the publisher how long before a track's end to warn, in seconds; 0 is off.
+    ///
+    /// Set once at startup from the settings file: the warning is a display setting, and the engine reads its settings
+    /// the way it reads the sample rate — before the first block, not while the music plays.
+    pub fn set_end_warning_seconds(&self, seconds: f32) {
+        let seconds = if seconds.is_finite() {
+            seconds.clamp(0.0, dj_config::MAX_END_WARNING_SECONDS)
+        } else {
+            0.0
+        };
+        self.end_warning_seconds
+            .store(seconds.to_bits(), Ordering::Relaxed);
+    }
+
+    /// The warning in force, in seconds.
+    fn end_warning_seconds(&self) -> f32 {
+        f32::from_bits(self.end_warning_seconds.load(Ordering::Relaxed))
+    }
+
     /// Assemble a snapshot. Allocates, so it belongs to the publisher thread, never the callback.
     pub fn read(&self, statics: &[DeckStatic], rate: u32, epoch: u64, revision: u64) -> Snapshot {
         let count = self
@@ -1633,6 +1658,19 @@ impl StateCells {
             };
             let loop_start = cells.loop_start.load(Ordering::Relaxed);
             let loop_end = cells.loop_end.load(Ordering::Relaxed);
+            // The decks warn together and only while the music is running out: a deck standing in a loop has no end to
+            // warn about, and a paused one is not going to reach it.
+            let end_warning = {
+                let seconds = self.end_warning_seconds();
+                let looping = self.loop_mode_of(index) || !self.active_loops_of(index).is_empty();
+                let remaining = total.map_or(u64::MAX, |total| total.saturating_sub(frame));
+                let horizon = f64::from(seconds) * f64::from(fixed.source_rate.max(1));
+                seconds > 0.0
+                    && attached
+                    && cells.playing.load(Ordering::Relaxed)
+                    && !looping
+                    && remaining as f64 <= horizon
+            };
             // Where the play head is in beats, and the tempo there: a track that changes tempo has no
             // single number to show, and a client must not have to guess which segment it is looking at.
             let (beat, local_bpm) = match fixed.grid.as_ref() {
@@ -1682,6 +1720,7 @@ impl StateCells {
                     start: SourceFrame(loop_start),
                     end: SourceFrame(loop_end),
                 }),
+                end_warning,
                 loop_mode: self.loop_mode_of(index),
                 loop_press_seq: cells.loop_press_seq.load(Ordering::Relaxed),
                 active_loops: self
@@ -1729,6 +1768,7 @@ impl StateCells {
                 linear_gain: f32::from_bits(cells.gain.load(Ordering::Relaxed)),
                 auto_gain: fixed.auto_gain,
                 auto_gain_db: fixed.auto_gain_db,
+                auto_gain_correction_db: fixed.auto_gain_correction_db,
                 tempo_ratio: f64::from_bits(cells.tempo.load(Ordering::Relaxed)),
                 nudge: f32::from_bits(cells.nudge.load(Ordering::Relaxed)),
                 slip: cells.slip.load(Ordering::Relaxed),
@@ -2540,6 +2580,7 @@ pub fn prepare_track_with_key(
         waveform: None, // filled by the caller, which knows the cache directory
         auto_gain: 1.0, // the loader fills it in below: this function knows samples, not levels
         auto_gain_db: None,
+        auto_gain_correction_db: None,
         analyzing: false,
         analysis_lock: false, // the stored decision arrives with the metadata
         grid: None,           // filled in below, once the tempo is measured
@@ -2612,6 +2653,7 @@ pub fn prepare_track_with_key(
     // The published deck description carries the correction too: the shell reads the snapshot, and a
     // snapshot that says "1.0" about a trimmed track hides the only place the number could be seen.
     static_info.auto_gain = auto_gain;
+    static_info.auto_gain_correction_db = correction_db;
     static_info.auto_gain_db = auto_gain_db;
 
     // Where this deck will read from: memory when the cache accepts the file, the decode window
