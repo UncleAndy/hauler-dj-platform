@@ -3136,6 +3136,7 @@ fn panel_from(
                 .unwrap_or(0.0)
         }),
         loop_fraction,
+        loop_mode: deck.loop_mode,
         beat_phase: deck
             .bar_error_beats
             .map(|beats| f64::from(beats).rem_euclid(1.0)),

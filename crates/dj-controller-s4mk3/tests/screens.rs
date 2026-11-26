@@ -7,7 +7,7 @@
 #![allow(clippy::expect_used)]
 
 use dj_controller_s4mk3::screen::{
-    ACCENT, BACKGROUND, Canvas, DeckPanel, GROOVE, INK, clock, from_rgb565, render_deck,
+    ACCENT, BACKGROUND, Canvas, DIM, DeckPanel, GROOVE, INK, clock, from_rgb565, render_deck,
     render_idle, sample_panel,
 };
 use dj_controller_s4mk3::text;
@@ -253,6 +253,47 @@ fn inked(canvas: &Canvas, x: usize, y: usize, width: usize, height: usize) -> us
         }
     }
     count
+}
+
+/// How much of the floor's last sixteen rows is lit in each of two inks.
+fn floor_inks(canvas: &Canvas) -> (usize, usize) {
+    let mut accent = 0;
+    let mut dim = 0;
+    for y in (usize::from(SCREEN_HEIGHT) - 16)..usize::from(SCREEN_HEIGHT) {
+        for x in 0..usize::from(SCREEN_WIDTH) {
+            match canvas.at(x, y) {
+                Some(ACCENT) => accent += 1,
+                Some(DIM) => dim += 1,
+                _ => {}
+            }
+        }
+    }
+    (accent, dim)
+}
+
+#[test]
+fn the_floor_says_whether_loop_mode_is_on() {
+    // The word is always there and its light is the switch: bright while LOOP is on, dim while it is off. It used to be
+    // drawn only when the track held a loop and said "LOOP ON", which answered "does this track hold a loop" — the wrong
+    // question for the hand in front of the button (owner's report, 25.11).
+    let mut panel = sample_panel();
+    panel.loop_fraction = None;
+    panel.loop_mode = true;
+    let (lit_accent, lit_dim) = floor_inks(&render_deck(&panel));
+    panel.loop_mode = false;
+    let (out_accent, out_dim) = floor_inks(&render_deck(&panel));
+
+    assert!(lit_accent > 0, "the indicator is not lit with the mode on");
+    assert_eq!(out_accent, 0, "the indicator stayed lit with the mode off");
+    assert!(
+        lit_dim > 0 && out_dim > 0,
+        "the word is missing from the floor"
+    );
+    // And it is there with no loop in the track at all: the mode is what it reports.
+    assert!(
+        panel.loop_fraction.is_none(),
+        "the test meant a deck with nothing stored"
+    );
 }
 
 #[test]

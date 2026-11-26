@@ -259,6 +259,12 @@ pub struct DeckPanel {
     pub position: f64,
     /// The loop's start and end as fractions of the track, when a loop is active.
     pub loop_fraction: Option<(f64, f64)>,
+    /// Whether the deck's LOOP mode is switched on.
+    ///
+    /// The switch, not the loops: a track can hold stored loops with the mode off, and a mode can be on with nothing
+    /// stored yet (the button lays one down). The indicator on the floor answers "what does the LOOP button do right now",
+    /// which is the question a hand asks before pressing it (owner's report, 25.11).
+    pub loop_mode: bool,
     /// Where the beat is: 0 to 1 through the beat, when the grid is known.
     pub beat_phase: Option<f64>,
     /// Beats in the bar, for the tick marks.
@@ -449,17 +455,18 @@ pub fn render_deck(panel: &DeckPanel) -> Canvas {
     // The floor: a rule that closes the picture, and the state repeated in words a colour-blind eye can read.
     canvas.fill_rect(0, height as isize - 16, width, 1, GROOVE);
     canvas.text(margin as isize, height as isize - 13, 1, DIM, state_word);
-    if panel.loop_fraction.is_some() {
-        let hint = "LOOP ON";
-        let hint_width = text_fit_width(hint, 1);
-        canvas.text(
-            width as isize - hint_width - margin as isize,
-            height as isize - 13,
-            1,
-            DIM,
-            hint,
-        );
-    }
+    // The loop mode, in words and in light: lit while the button is on, dim while it is off. It used to say "LOOP ON"
+    // only when a loop region existed, so it answered "does this track hold a loop" — not the question the hand in front of
+    // the button is asking (owner's report, 25.11).
+    let hint = "LOOP";
+    let hint_width = text_fit_width(hint, 1);
+    canvas.text(
+        width as isize - hint_width - margin as isize,
+        height as isize - 13,
+        1,
+        if panel.loop_mode { ACCENT } else { DIM },
+        hint,
+    );
 
     // The end warning goes on last: the frame is the outer edge of the picture, and anything painted after it would cut
     // a hole in it.
@@ -627,6 +634,7 @@ pub fn sample_panel() -> DeckPanel {
         pitch_percent: 2.4,
         position: 0.26,
         loop_fraction: Some((0.24, 0.31)),
+        loop_mode: true,
         beat_phase: Some(0.35),
         beats_per_bar: 4,
         key: Some("8A".to_string()),
