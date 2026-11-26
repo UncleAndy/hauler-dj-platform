@@ -31,6 +31,10 @@ SYSTEM_DLLS = {
     "wsock32.dll", "wtsapi32.dll", "dnsapi.dll", "dxcore.dll", "opengl32.dll", "glu32.dll",
     "avrt.dll", "mfplat.dll", "mf.dll", "mfreadwrite.dll", "dwrite.dll", "dcomp.dll",
     "d2d1.dll", "d3dcompiler_47.dll", "textshaping.dll", "wldap32.dll", "bluetoothapis.dll",
+    # WinUSB: the user-mode half of the driver the controller's bulk endpoints (the screens) go through on Windows. It is
+    # part of Windows — `dj-controller.exe` imports it through `nusb`, and without this line the packaging refused a
+    # distribution for a library that is already on every machine (owner's build report, 25.11).
+    "winusb.dll",
 }
 
 SYSTEM_PREFIXES = ("api-ms-win-", "ext-ms-", "ucrtbase")
