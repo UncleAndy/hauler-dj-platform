@@ -57,12 +57,23 @@ fn the_second_screen_is_named_in_the_header_and_the_footer() {
 }
 
 #[test]
-fn a_pixel_goes_out_high_byte_first() {
-    // A red pixel: 0xF800. The wire carries 0xF8 then 0x00, because the device wants the high byte first.
+fn a_pixel_goes_out_high_byte_first_and_red_in_the_low_bits() {
+    // A red pixel, drawn the usual way: 0xF800. This panel takes blue in the high five bits — a red frame came out blue on
+    // the owner's unit (25.11) — so red leaves in the low ones, and the wire carries 0x00 then 0x1F.
     let mut canvas = Canvas::screen(0);
     canvas.fill_rect(0, 0, 1, 1, 0xF800);
     let frame = full_screen_frame(Screen::Left, canvas.pixels()).expect("the frame fits");
-    assert_eq!(&frame[16..18], &[0xF8, 0x00]);
+    assert_eq!(&frame[16..18], &[0x00, 0x1F]);
+    // White, green and black are the same either way round: the swap must not touch them.
+    for (drawn, expected) in [
+        (0xFFFF_u16, [0xFF_u8, 0xFF]),
+        (0x07E0, [0x07, 0xE0]),
+        (0x0000, [0x00, 0x00]),
+    ] {
+        let canvas = Canvas::screen(drawn);
+        let frame = full_screen_frame(Screen::Left, canvas.pixels()).expect("the frame fits");
+        assert_eq!(&frame[16..18], &expected, "{drawn:#06x}");
+    }
 }
 
 #[test]

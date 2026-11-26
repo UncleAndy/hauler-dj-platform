@@ -31,7 +31,7 @@ use dj_controller_s4mk3::{NAME, PRODUCT, S4Mk3, VENDOR};
 use dj_hid::write::ReportSink;
 use dj_hid::{DeviceInfo, HidrawTransport, Transport};
 
-const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send] | --lights-demo [--interval MS] [--send] | --lights-show --engine <endpoint> | --lights-fill <code> [--send] | --lights-night [--rest <code>] [--send] | --lights-bright <byte> [--colour N] [--rounds N] [--send] | --lights-colour-walk [<byte>|left|right|all] [--shift] [--interval MS] [--send] | --lights-pick [<byte>|left|right|all] [--out <file>] [--interval MS] [--send] | --screen-from --engine <endpoint> --out <file.ppm> [--panel left|right] | --screen-send [--engine <endpoint>] [--panel left|right] | --screen-off | --farewell | --farewell-preview <file.ppm> | --lights-off | --serve --engine <endpoint> | --inputs-watch [--seconds N] | --node-rates [--seconds N] | --wheel-init [--seconds N] | --inputs-learn [--out <file>] [--inputs <file>]";
+const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send] | --lights-demo [--interval MS] [--send] | --lights-show --engine <endpoint> | --lights-fill <code> [--send] | --lights-night [--rest <code>] [--send] | --lights-bright <byte> [--colour N] [--rounds N] [--send] | --lights-colour-walk [<byte>|left|right|all] [--shift] [--interval MS] [--send] | --lights-pick [<byte>|left|right|all] [--out <file>] [--interval MS] [--send] | --screen-from --engine <endpoint> --out <file.ppm> [--panel left|right] | --screen-send [--engine <endpoint>] [--panel left|right] | --screen-off | --farewell | --farewell-preview <file.ppm> | --lights-off | --ring-probe | --serve --engine <endpoint> | --inputs-watch [--seconds N] | --node-rates [--seconds N] | --wheel-init [--seconds N] | --inputs-learn [--out <file>] [--inputs <file>]";
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -124,6 +124,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
             }
             "--shift" => shifted = true,
             "--lights-off" => mode = Mode::LightsOff,
+            "--ring-probe" => mode = Mode::RingProbe,
             "--serve" => mode = Mode::Serve,
             "--inputs-watch" => mode = Mode::InputsWatch,
             "--node-rates" => mode = Mode::NodeRates,
@@ -451,6 +452,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         ),
         Mode::LightsFill(code) => lights_fill(&devices, code, sweep_send, sweep_body_only),
         Mode::LightsOff => lights_off(&devices),
+        Mode::RingProbe => ring_probe(&devices),
         Mode::Serve => serve(
             &devices,
             engine.as_deref(),
@@ -524,6 +526,7 @@ enum Mode {
     Farewell,
     FarewellPreview(String),
     LightsOff,
+    RingProbe,
     Serve,
     InputsWatch,
     NodeRates,
@@ -2484,6 +2487,45 @@ fn warning_colour() -> dj_controller_s4mk3::Colour {
     dj_controller_s4mk3::Colour::Red
 }
 
+/// What the ring says at this moment: the warning blinks a red spot out, everything else is the playhead's marker.
+///
+/// Pure and separate from the loop so that the blinking can be asked about without a panel: a warning that turns the ring
+/// off half the time is a different report from one that only changes a colour, and the difference is what the owner saw.
+fn ring_state(
+    playing: bool,
+    end_warning: bool,
+    seconds: f64,
+    palette: &dj_controller_s4mk3::lights::Palette,
+    flash: bool,
+) -> (u8, u16, u8) {
+    // One turn of the ring is one turn of a record: 33⅓ rpm ≈ 0,556 turns a second, so the marker spins the whole time
+    // the deck plays — the public mapping's own model. A ratio of the whole track instead crawls and looks motionless
+    // (owner's report, 25.11).
+    let revolutions = seconds * (33.0 + 1.0 / 3.0) / 60.0;
+    let fractional = revolutions - revolutions.floor();
+    let marker = (fractional * 2879.0) as u16;
+    if end_warning {
+        return if flash {
+            (
+                2,
+                marker,
+                dj_controller_s4mk3::lights::bright(warning_colour().code()),
+            )
+        } else {
+            // The dark half of the blink.
+            (0, 0, 0)
+        };
+    }
+    if playing {
+        return (
+            2,
+            marker,
+            dj_controller_s4mk3::lights::bright(palette.jog.code()),
+        );
+    }
+    (0, 0, 0)
+}
+
 /// Report 50: which jog ring, its mode, the marker's position, and the colour.
 ///
 /// Forty bytes after the id: `[0]` the platter (0 left, 1 right), `[1]` the mode (`0` off, `2` a spot), `[2..4]` the
@@ -2741,6 +2783,56 @@ fn lights_off(devices: &[DeviceInfo]) -> Result<(), String> {
     sink.send(&dark.wire(true))
         .map_err(|error| format!("the panel did not take the dark report: {error}"))?;
     println!("dj-controller: the panel is dark");
+    Ok(())
+}
+
+/// Lights both jog rings in each mode in turn, and says which mode is showing.
+///
+/// The ring is a *spot* at the marker in mode 2 — the mode this build uses for the playhead — and the end warning wants the
+/// whole circle. Nobody has measured the other mode values on this panel, and guessing them is how a light ends up meaning
+/// two things; so the panel is asked instead: three seconds of each mode, both rings, red, and whoever is looking says
+/// which one lit the circle. Run it and watch the platters.
+fn ring_probe(devices: &[DeviceInfo]) -> Result<(), String> {
+    if devices.is_empty() {
+        println!("dj-controller: no panel to light");
+        return Ok(());
+    }
+    let mut sink = open_lights(devices)?;
+    send_wheel_init(devices);
+    let colour = dj_controller_s4mk3::lights::bright(warning_colour().code());
+    // The marker at the top of the ring, where a hand would look first.
+    let position = 2879_u16 / 2;
+    // Mode 2 with one marker is known to be a spot. The other values are unknown, and one of them may light the ring from
+    // a mask in the body (forty bytes follow the id, more than the ring has LEDs), so both a blank and a full body are
+    // tried: a mode that reads a mask shows nothing with zeros in it.
+    let steps: [(u8, u8, &str); 5] = [
+        (1, 0x00, "mode 1, body empty"),
+        (1, 0xFF, "mode 1, body all ones"),
+        (
+            2,
+            0x00,
+            "mode 2, a spot at the marker: what this build uses while a deck plays",
+        ),
+        (3, 0xFF, "mode 3, body all ones"),
+        (0, 0x00, "mode 0, off"),
+    ];
+    for (mode, body, what) in steps {
+        println!("dj-controller: ring probe: {what}");
+        for side in [0_u8, 1_u8] {
+            let mut report = wheel_leds(side, mode, position, colour);
+            if body == 0xFF {
+                report[6..].fill(0xFF);
+            }
+            // Twice, like every other report in this file: the panel drops one that arrives mid-frame.
+            sink.send(&report)
+                .map_err(|error| format!("the panel did not take the ring probe: {error}"))?;
+            std::thread::sleep(std::time::Duration::from_millis(40));
+            sink.send(&report)
+                .map_err(|error| format!("the panel did not take the ring probe: {error}"))?;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(3));
+    }
+    println!("dj-controller: the ring probe is done; the rings are dark");
     Ok(())
 }
 
@@ -3421,44 +3513,26 @@ fn lights_show(
             if let Some(sink) = sink.as_mut() {
                 for (side, deck_id) in [(0_u8, panel_left), (1_u8, panel_right)] {
                     let deck = snapshot.decks.iter().find(|deck| deck.deck == deck_id);
-                    // The end warning owns the ring while it lasts: the whole ring goes red, and the marker keeps
-                    // turning so it still reads as a platter rather than a dead ring (owner's request, 25.11).
-                    let warning = deck.is_some_and(|deck| deck.end_warning) && warning_flash();
-                    let (mode, position, colour) = match deck {
-                        Some(deck) if warning => {
-                            let seconds = if deck.source_rate > 0 {
-                                deck.source_frame.0 as f64 / f64::from(deck.source_rate)
-                            } else {
-                                0.0
-                            };
-                            let revolutions = seconds * (33.0 + 1.0 / 3.0) / 60.0;
-                            let fractional = revolutions - revolutions.floor();
-                            (
-                                2_u8,
-                                (fractional * 2879.0) as u16,
-                                dj_controller_s4mk3::lights::bright(warning_colour().code()),
-                            )
+                    // The end warning owns the ring while it lasts. Only two ring modes have been measured on this
+                    // panel — `0` dark and `2` a single spot at the marker — and a colour change on one spot is invisible
+                    // at speed, which is why the first attempt read as "не мигает и не подсвечивается" (owner, 25.11).
+                    // So the warning *blinks the spot out*: bright red, then nothing, 2,5 times a second. That is a
+                    // measured mode on both halves of the blink; when the whole-ring mode is measured, the `0` below is
+                    // the one line to change (see `ring_probe`).
+                    let seconds = deck.map_or(0.0, |deck| {
+                        if deck.source_rate > 0 {
+                            deck.source_frame.0 as f64 / f64::from(deck.source_rate)
+                        } else {
+                            0.0
                         }
-                        Some(deck) if deck.playing => {
-                            // The marker goes round once per platter revolution, not once per track: one turn of the ring is
-                            // one turn of a record (33⅓ rpm ≈ 0.556 turns a second), so it spins the whole time the deck
-                            // plays — the public mapping's own model. A ratio of the whole track instead crawls and looks
-                            // motionless (owner's report, 25.11).
-                            let seconds = if deck.source_rate > 0 {
-                                deck.source_frame.0 as f64 / f64::from(deck.source_rate)
-                            } else {
-                                0.0
-                            };
-                            let revolutions = seconds * (33.0 + 1.0 / 3.0) / 60.0;
-                            let fractional = revolutions - revolutions.floor();
-                            (
-                                2_u8,
-                                (fractional * 2879.0) as u16,
-                                dj_controller_s4mk3::lights::bright(palette.jog.code()),
-                            )
-                        }
-                        _ => (0_u8, 0_u16, 0_u8),
-                    };
+                    });
+                    let (mode, position, colour) = ring_state(
+                        deck.is_some_and(|deck| deck.playing),
+                        deck.is_some_and(|deck| deck.end_warning),
+                        seconds,
+                        palette,
+                        warning_flash(),
+                    );
                     if last_wheel_modes[usize::from(side)] == (mode, position, colour) {
                         continue;
                     }
@@ -3853,6 +3927,50 @@ mod tests {
             pads[7],
             Some(pad(palette.hotcue, false)),
             "past the cue list"
+        );
+    }
+
+    #[test]
+    fn the_end_warning_blinks_the_ring_out_rather_than_repainting_one_spot() {
+        // Only modes 0 and 2 have been measured on this panel: a spot, and dark. A colour change on a single spot at
+        // 33⅓ rpm is invisible, which is exactly what the owner saw — so the warning takes the spot away half the time.
+        let palette = dj_controller_s4mk3::lights::Palette::default();
+        // Two seconds into a 48 kHz track: any position on the ring, the point is which mode carries it.
+        let seconds = 2.0;
+
+        let (mode, position, colour) = super::ring_state(true, true, seconds, &palette, true);
+        assert_eq!(
+            mode, 2,
+            "the lit half wears the marker mode this panel has measured"
+        );
+        assert_eq!(
+            colour,
+            dj_controller_s4mk3::lights::bright(super::warning_colour().code()),
+            "and it is the one colour nothing else on the panel uses"
+        );
+        assert!(position <= 2879, "the marker stays on the ring: {position}");
+        assert_eq!(
+            super::ring_state(true, true, seconds, &palette, false),
+            (0, 0, 0),
+            "the dark half puts the ring out — that is the blink the owner can see"
+        );
+
+        // Without the warning the ring is the playhead's own marker, and the two halves of the flash do not touch it.
+        let lit = super::ring_state(true, false, seconds, &palette, true);
+        assert_eq!(lit.0, 2);
+        assert_eq!(
+            lit.2,
+            dj_controller_s4mk3::lights::bright(palette.jog.code())
+        );
+        assert_eq!(
+            super::ring_state(true, false, seconds, &palette, false),
+            lit
+        );
+
+        // A stopped deck has no marker at all, warning or not.
+        assert_eq!(
+            super::ring_state(false, false, seconds, &palette, true),
+            (0, 0, 0)
         );
     }
 

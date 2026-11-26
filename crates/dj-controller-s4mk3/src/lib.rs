@@ -353,7 +353,8 @@ pub fn screen_frame(screen: Screen, rect: Rect, pixels: &[u16]) -> Result<Vec<u8
     frame.extend_from_slice(&rect.width.to_be_bytes());
     frame.extend_from_slice(&rect.height.to_be_bytes());
     for pixel in pixels {
-        frame.extend_from_slice(&pixel.to_be_bytes());
+        // The panel wants blue in the high five bits; the picture is drawn the usual way round.
+        frame.extend_from_slice(&panel_word(*pixel).to_be_bytes());
     }
     frame.extend_from_slice(&[0x40, 0x00, screen as u8, 0x00]);
     Ok(frame)
@@ -362,6 +363,20 @@ pub fn screen_frame(screen: Screen, rect: Rect, pixels: &[u16]) -> Result<Vec<u8
 /// The whole screen at once, which is the case a picture of a waveform falls into.
 pub fn full_screen_frame(screen: Screen, pixels: &[u16]) -> Result<Vec<u8>, FrameError> {
     screen_frame(screen, Rect::full(), pixels)
+}
+
+/// Red and blue the other way round, because that is how this panel reads a pixel.
+///
+/// Measured on the owner's unit, not taken from a datasheet: a frame drawn in the usual RGB565 red (`0xF800`) lit up
+/// **blue** (owner's report, 25.11 — «мигающая рамка синяя, а не красная»). Green is the middle six bits and stays in
+/// place whatever the order, which is why the screens' accent read correctly all along and nothing else gave it away.
+///
+/// The colours in `screen.rs` and the icon generator stay written the usual way — five bits of red, six of green, five of
+/// blue — and the swap lives here, where a picture becomes bytes, so there is one place to change if a panel of another
+/// batch ever reads the other way.
+#[must_use]
+pub fn panel_word(colour: u16) -> u16 {
+    ((colour & 0x001f) << 11) | (colour & 0x07e0) | ((colour & 0xf800) >> 11)
 }
 
 /// Turns an RGB colour into the 16 bits a screen takes: five bits of red, six of green, five of blue.
@@ -462,8 +477,9 @@ mod tests {
             &frame[8..16],
             &[0x00, 0x00, 0x00, 0x00, 0x01, 0x40, 0x00, 0xf0]
         );
-        // The first pixel, high byte first.
-        assert_eq!(&frame[16..18], &[0x12, 0x34]);
+        // The first pixel, high byte first, with red and blue the other way round: 0x1234 is red 2, green 17, blue 20,
+        // and the panel reads it as red 20, green 17, blue 2 — 0xA222, so `[0xA2, 0x22]` on the wire.
+        assert_eq!(&frame[16..18], &[0xa2, 0x22]);
         assert_eq!(&frame[frame.len() - 4..], &[0x40, 0x00, 0x00, 0x00]);
     }
 
