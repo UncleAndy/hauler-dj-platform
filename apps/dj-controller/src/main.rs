@@ -3037,7 +3037,19 @@ fn inputs_learn(devices: &[DeviceInfo], out: Option<&str>) -> Result<(), String>
     Ok(())
 }
 
-/// Put the panel out: every byte of the lights report dark.
+/// The reports that put the panel out: the buttons dark, and the VU columns at zero.
+///
+/// Two reports, because the panel has two: the buttons are output 128 and the meters 129, and the device latches both.
+/// Darkening only the buttons left the meters standing at whatever the last snapshot said — four columns still glowing
+/// on a machine where nothing runs, which is the same lie as a lit button (owner's report, 26.11).
+fn exit_reports() -> [dj_controller_s4mk3::lights::LightsReport; 2] {
+    [
+        dj_controller_s4mk3::lights::meter_report(&[(0.0, false); 4]),
+        dj_controller_s4mk3::lights::LightsReport::dark(),
+    ]
+}
+
+/// Put the panel out: every byte of both reports dark.
 ///
 /// A panel left lit after the program closes is an instrument left on: the buttons stay glowing on a switched-off
 /// machine, and the next person cannot tell whether the program is running. Said twice, because the panel has been
@@ -3048,13 +3060,20 @@ fn lights_off(devices: &[DeviceInfo]) -> Result<(), String> {
         return Ok(());
     }
     let mut sink = open_lights(devices)?;
-    let dark = dj_controller_s4mk3::lights::LightsReport::dark();
-    sink.send(&dark.wire(true))
-        .map_err(|error| format!("the panel did not take the dark report: {error}"))?;
-    std::thread::sleep(std::time::Duration::from_millis(60));
-    sink.send(&dark.wire(true))
-        .map_err(|error| format!("the panel did not take the dark report: {error}"))?;
-    println!("dj-controller: the panel is dark");
+    for pass in 0..2 {
+        for report in exit_reports() {
+            sink.send(&report.wire(true)).map_err(|error| {
+                format!(
+                    "the panel did not take the dark report ({}): {error}",
+                    report.id
+                )
+            })?;
+        }
+        if pass == 0 {
+            std::thread::sleep(std::time::Duration::from_millis(60));
+        }
+    }
+    println!("dj-controller: the panel is dark, meters included");
     Ok(())
 }
 
@@ -4472,6 +4491,35 @@ mod tests {
             super::screen_deck(dj_controller_s4mk3::Screen::Right, &switched),
             dj_domain::DeckId::D,
             "and the right screen its own"
+        );
+    }
+
+    #[test]
+    fn the_exit_puts_out_the_meters_as_well_as_the_buttons() {
+        // The panel latches both outputs: darkening 128 alone left the VU columns standing at the last snapshot when the
+        // program closed (owner's report, 26.11).
+        let reports = super::exit_reports();
+        assert_eq!(
+            reports[0].id,
+            dj_controller_s4mk3::lights::REPORT_METERS,
+            "the meters are a report of their own, 129"
+        );
+        assert!(
+            reports[0].body.iter().all(|byte| *byte == 0),
+            "every VU segment comes down"
+        );
+        assert_eq!(
+            reports[1].id,
+            dj_controller_s4mk3::lights::REPORT_LIGHTS,
+            "and the buttons keep theirs, 128"
+        );
+        assert!(
+            reports[1].body.iter().all(|byte| *byte == 0),
+            "with every lamp dark"
+        );
+        assert_ne!(
+            reports[0].id, reports[1].id,
+            "two reports, not one sent twice"
         );
     }
 
