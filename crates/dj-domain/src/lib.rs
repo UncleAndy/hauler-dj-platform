@@ -2181,6 +2181,14 @@ pub struct Snapshot {
     /// from here, because the settings file is the engine's to read (it owns `dj-config`).
     #[serde(default, skip_serializing_if = "is_zero_frame_hz")]
     pub frame_hz: u32,
+    /// How many rows the engine has written into the collection index since it started.
+    ///
+    /// A client that holds a list asked for it once, and an edit of the grid, a measurement or an import changes the
+    /// record behind that list. The counter is the word that the record moved: the list is asked again when it changes,
+    /// once per change and not once per snapshot (owner's report, 26.11: a grid edited in the collection left the row
+    /// showing the old tempo and the old colour).
+    #[serde(default, skip_serializing_if = "is_zero_count")]
+    pub library_revision: u64,
     /// Внешняя модель удара: что установлено (ADR-0012).
     ///
     /// Defaulted and skipped when nothing is installed, so the wire stays byte-identical on a build

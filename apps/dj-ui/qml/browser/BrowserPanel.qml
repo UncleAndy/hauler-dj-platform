@@ -684,8 +684,35 @@ Pane {
     // The engine is the channel between the panel and this window: the browse encoder asks for a row, and the row the
     // cursor stands on is published back so a press of the encoder knows what to load. The list that is showing decides
     // what a step means — a folder, the collection and a playlist are three different lists.
+    // How many rows the engine had written when the list in hand was last asked for. A number that moved means the
+    // record changed behind the list — an edit of the grid, a measurement, an import — and the list is asked again once.
+    // Only the counter is watched: the snapshot also carries the meters and the playheads, and a refresh on each of those
+    // reopens the collection under an answer that is already on its way (the rule the analysis window follows too).
+    property real librarySeen: -1
+    // Waiting for the counter to stand still: a hand on the tempo may write a few grids a second, and the list is asked
+    // once, after the last of them.
+    Timer {
+        id: libraryRefresh
+        objectName: "libraryRefresh"
+        interval: 400
+        repeat: false
+        onTriggered: {
+            // Each says nothing when its section is not the one open: `refreshCollection` is for the collection,
+            // `refreshPlaylist` for the playlist the DJ holds.
+            Browser.refreshCollection();
+            Browser.refreshPlaylist();
+        }
+    }
     Connections {
         target: Bridge
+        function onSnapshotChanged() {
+            const revision = Bridge.snapshot !== undefined && Bridge.snapshot.library_revision !== undefined
+                             ? Number(Bridge.snapshot.library_revision) : 0;
+            if (browser.librarySeen >= 0 && revision > browser.librarySeen) {
+                libraryRefresh.restart();
+            }
+            browser.librarySeen = revision;
+        }
         function onBrowserChanged() {
             if (Bridge.browserStepSeq !== browser.browserStepSeen) {
                 browser.browserStepSeen = Bridge.browserStepSeq;

@@ -240,6 +240,13 @@ pub fn write_beatgrid(
         .save(volume, root, path, &meta)
         .map(|_| {
             refresh_row(path, &meta);
+            // A grid the DJ asked for — an edit, or the Measure button — is what the list shows as a number and a
+            // colour, and the window asks again (owner's report, 26.11). A measurement that came with an import is not
+            // counted: it writes forty grids in a row, and a list replaced forty times is the list moving under the DJ's
+            // hands (the selection check holds exactly that).
+            if force {
+                GRIDS_WRITTEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             true
         })
         .map_err(|error| error.to_string())
@@ -448,6 +455,17 @@ pub fn write_names(
 /// The list is built from the index, and a record on disk that the index has not seen is a track whose
 /// tempo, key and rating are all missing on screen. A write that changes what the row says calls this: a
 /// grid, a key, a lock, the names.
+/// How many stored grids have been written since this process started.
+///
+/// The window holds a list it asked for once. An edit of the grid or a measurement changes the tempo and the flag behind
+/// that list, and without a word from the engine the list keeps saying what used to be true — the row of a track whose
+/// grid was just edited went on showing the old tempo, because nothing told the window to ask again (owner's report,
+/// 26.11). The counter is that word: it moves when a grid lands, and a client asks once per move.
+///
+/// A lock is deliberately not counted: it changes one flag of one row, the window patches that row where it stands, and a
+/// page replaced under the DJ's press drags the list out from under him (the lock check holds exactly that).
+pub static GRIDS_WRITTEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub fn refresh_row(path: &Path, meta: &TrackMeta) {
     if let Ok(mut index) = dj_library::Index::open_default() {
         let _ = index.upsert(&row_of(meta, path));
@@ -473,7 +491,13 @@ pub fn row_of(meta: &TrackMeta, path: &Path) -> dj_library::TrackRow {
         play_count: 0,
         last_played_ms: None,
         analysis_lock: meta.analysis_lock,
-        variable_bpm: false,
+        // The same reading of the record the library makes: a row refreshed after an edit must say what a row rebuilt
+        // from the file says, and a hard `false` here made every edited grid look like one tempo (owner's report,
+        // 26.11: «поменял битгрид… BPM показывается тем же цветом»).
+        variable_bpm: meta
+            .beatgrid
+            .as_ref()
+            .is_some_and(dj_library::meta::BeatGrid::is_variable),
     }
 }
 
@@ -617,4 +641,51 @@ pub fn write_edit(store: &Store, volume: &str, root: &Path, edit: &MetaEdit) -> 
         .save(volume, root, &edit.path, &meta)
         .map(|_| ())
         .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use super::row_of;
+
+    /// A record with two tempos, the way an edit leaves one: a tempo, and an anchor that states its own.
+    fn print() -> dj_library::meta::Fingerprint {
+        dj_library::meta::Fingerprint {
+            size: 4096,
+            head: "aaaa".to_owned(),
+            tail: "bbbb".to_owned(),
+            duration_frames: Some(9_600_000),
+            sample_rate: Some(48_000),
+        }
+    }
+
+    fn two_tempos() -> dj_library::TrackMeta {
+        let mut meta = dj_library::TrackMeta::new(print(), 0);
+        meta.beatgrid = Some(dj_library::BeatGrid {
+            bpm: 128.0,
+            first_beat_frame: 0,
+            anchors: vec![dj_library::Anchor {
+                frame: 4_800_000,
+                beat: 256,
+                bpm: Some(256.0),
+            }],
+            beats_per_bar: 4,
+        });
+        meta
+    }
+
+    #[test]
+    fn a_row_refreshed_after_an_edit_says_the_track_is_more_than_one_tempo() {
+        let row = row_of(&two_tempos(), std::path::Path::new("/music/a.flac"));
+        assert!(
+            row.variable_bpm,
+            "the same record gives the library's row a raised flag; the engine's refresh must not answer otherwise"
+        );
+        assert_eq!(row.bpm, Some(128.0), "and the number is the stored one");
+        let single = dj_library::TrackMeta::new(print(), 0);
+        assert!(
+            !row_of(&single, std::path::Path::new("/music/b.flac")).variable_bpm,
+            "a track with no grid is not a variable one"
+        );
+    }
 }

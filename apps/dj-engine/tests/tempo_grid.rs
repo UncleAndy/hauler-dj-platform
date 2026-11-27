@@ -289,3 +289,55 @@ fn an_edit_that_needs_a_grid_changes_nothing_without_one() {
         );
     }
 }
+
+#[test]
+fn two_tempos_are_stored_with_their_own_tempos_and_the_row_says_so() {
+    // The DJ's route to a variable grid: split at the change, then type the tempo of the new stretch (owner's
+    // report, 26.11). What the row must then say is two things: the number that holds most of the track, and the
+    // flag that the number is not the whole track.
+    let dir = scratch("two-tempos");
+    let track = dir.join("clicks.wav");
+    write_click_track(&track, 16.0);
+    let store = dj_library::Store::new(dir.join("mirror"));
+
+    let rate = 48_000_u64;
+    let grid = dj_domain::BeatGrid::from_segments(vec![
+        dj_domain::BeatSegment {
+            frame: 0,
+            beat: 0,
+            bpm: 128.0,
+        },
+        // Ten seconds at 128, six at twice that: the first stretch holds the track.
+        dj_domain::BeatSegment {
+            frame: 10 * rate,
+            beat: 21,
+            bpm: 256.0,
+        },
+    ])
+    .expect("a grid of two tempos");
+    assert!(
+        dj_engine::meta::write_beatgrid(&store, "vol", &dir, &track, &grid, true).expect("write"),
+        "an edit is the DJ's decision and lands"
+    );
+
+    let loaded = store.load("vol", &dir, &track).expect("load");
+    let stored = loaded.meta.beatgrid.clone().expect("a stored grid");
+    assert_eq!(
+        stored.bpm, 128.0,
+        "the tempo of the stretch that plays longest: ten seconds against six"
+    );
+    assert_eq!(stored.anchors.len(), 1, "the second stretch is an anchor");
+    assert_eq!(
+        stored.anchors[0].bpm,
+        Some(256.0),
+        "and it carries its own tempo, which is what makes the record tell a variable grid from a steady one"
+    );
+    assert!(
+        stored.is_variable(),
+        "twice the tempo is more than the three percent that makes a track 'more than one tempo'"
+    );
+    let row = dj_engine::meta::row_of(&loaded.meta, &track);
+    assert!(row.variable_bpm, "and the row carries the flag to the list");
+    assert_eq!(row.bpm, Some(128.0), "with the dominant number beside it");
+    let _ = std::fs::remove_dir_all(&dir);
+}

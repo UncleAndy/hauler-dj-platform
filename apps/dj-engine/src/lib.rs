@@ -460,6 +460,7 @@ pub fn snapshot(
         plays: Vec::new(),
         recent_window_ms: 0,
         frame_hz: 0,
+        library_revision: crate::meta::GRIDS_WRITTEN.load(std::sync::atomic::Ordering::Relaxed),
         import: None,
         analysis: None,
         collection: None,
@@ -1808,6 +1809,7 @@ impl StateCells {
             plays: Vec::new(),
             recent_window_ms: 0,
             frame_hz: 0,
+            library_revision: crate::meta::GRIDS_WRITTEN.load(Ordering::Relaxed),
             // The monitoring bus is measured by the mixer, not by the cells: this snapshot reads the two knobs and
             // leaves the meter at rest.
             cue: dj_domain::Levels::default(),
