@@ -303,6 +303,8 @@ pub struct Palette {
     pub pitch_zero_on: Colour,
     /// The same LED while the deck's pitch is away from zero.
     pub pitch_zero_off: Colour,
+    /// The same LED while the fader stands on its zero point and the deck has not arrived there.
+    pub pitch_zero_target: Colour,
     /// The deck the others follow: the MASTER lamp.
     pub master: Colour,
     /// A deck playing backwards: the REV lamp.
@@ -338,6 +340,9 @@ impl Default for Palette {
             // The ordinary rule: lit at the deck's own pitch, dark away from it.
             pitch_zero_on: Colour::White,
             pitch_zero_off: Colour::Off,
+            // The hand is on zero and the deck is not there yet: a colour of its own, quiet enough for a lit lamp in
+            // the booth and unlike both the "at zero" and the "away" colours the owner picked.
+            pitch_zero_target: Colour::Honey,
             fx_keys: [
                 (1, Colour::Blue),
                 (2, Colour::Green),

@@ -162,6 +162,14 @@ pub struct ControllerLights {
     /// panel is quieter that way. A colour here turns the lamp into a two-colour signal — red away from zero, green at it,
     /// for instance.
     pub pitch_zero_off: LightColour,
+    /// The colour the pitch-zero lamp wears while the tempo fader stands on its zero point and the deck is not there yet.
+    ///
+    /// The fader is relative, so its position says "this much pitch from where the hand took it": the position that makes
+    /// the pitch zero moves with the hand, and the panel knows it — the pitch it last asked for. This state is the moment
+    /// when the hand is on that point and the deck's speed has not arrived: the engine glides for about 30 ms, and a sync
+    /// can hold the pitch elsewhere for as long as it wants. `off` leaves the lamp two-coloured, as it was before the third
+    /// state existed (owner's request, 26.11).
+    pub pitch_zero_target: LightColour,
     /// The pitch-zero lamp the other way round: out at zero, lit while the deck's pitch is away from it.
     ///
     /// The lamp is the LED beside the tempo fader (`Left pitch zero point light`, `Right pitch zero light`), and its
@@ -189,6 +197,7 @@ impl Default for ControllerLights {
             loop_: LightColour::Yellow,
             pitch_zero_on: LightColour::White,
             pitch_zero_off: LightColour::Off,
+            pitch_zero_target: LightColour::Honey,
             pitch_zero_inverted: false,
             fx: LightColour::Magenta,
         }
