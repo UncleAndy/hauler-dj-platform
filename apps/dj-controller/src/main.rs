@@ -1365,40 +1365,36 @@ fn inputs_loop(
                 }
                 match pitch_after_travel(current, travel, held) {
                     Some(ratio) => {
+                        let point = if zero_point_reached(current, ratio) {
+                            " (the hand is on the zero point)"
+                        } else {
+                            ""
+                        };
                         println!(
-                            "dj-controller: at {now} ms {} travelled {travel:+.3} of the fader → pitch {ratio:.4} on {deck:?}",
+                            "dj-controller: at {now} ms {} travelled {travel:+.3} of the fader → pitch {ratio:.4} on {deck:?}{point}",
                             event.control,
                             travel = travel.unwrap_or(0.0),
                         );
-                        let asked = vec![(
-                            event.control.clone(),
-                            Some(deck),
-                            dj_domain::DjCommand::SetTempoRatio { deck, ratio },
-                        )];
-                        match send_commands(endpoint, &asked) {
-                            Ok(()) => {
-                                // The lead is taken *after* the command is in the engine's hands: a pitch the engine never
-                                // received must not become the place the next movement starts from.
-                                if let Ok(mut state) = playing.lock() {
-                                    if let Some(lead) = state.pitch_lead.get_mut(deck_index(deck)) {
-                                        lead.take(ratio);
-                                    }
-                                    // The fader has arrived at its zero point: inside the band, or across it — which is
-                                    // what a fast sweep does between two events, since the band is a thirty-second of
-                                    // the fader's travel. Both are the same moment to a hand, so both are the event.
-                                    let arrived = (ratio - 1.0).abs() <= ZERO_PITCH_TOLERANCE;
-                                    let crossed = (current - 1.0) * (ratio - 1.0) < 0.0;
-                                    if (arrived || crossed)
-                                        && let Some(slot) = state.pitch_zero_point.get_mut(side)
-                                    {
-                                        *slot = Some(std::time::Instant::now());
-                                    }
-                                }
+                        // Queued, not sent on a connection of its own. A hand gives about a hundred events a second,
+                        // and every send waited for the engine's answer — the engine applies a command at the next
+                        // block — so the loop spent more time waiting than the hand spent moving, and the pitch fell
+                        // behind it. The queue keeps the newest position of each control and the ten-millisecond flush
+                        // sends that one; a refusal is caught by `PitchLead::yielded`, as it is for the knobs.
+                        let command = dj_domain::DjCommand::SetTempoRatio { deck, ratio };
+                        push_pending(&mut pending, &event.control, command.clone());
+                        last_positions.insert(event.control.clone(), command);
+                        // The lead and the lamp's zero point are stamped **now**, while the hand is there, not when the
+                        // engine answers: the answer comes a block later, and a state stamped after it arrived visibly
+                        // late against the physical fader (owner's report, 26.11).
+                        if let Ok(mut state) = playing.lock() {
+                            if let Some(lead) = state.pitch_lead.get_mut(deck_index(deck)) {
+                                lead.take(ratio);
                             }
-                            Err(reason) => println!(
-                                "dj-controller: {} did not reach the engine: {reason}",
-                                event.control
-                            ),
+                            if zero_point_reached(current, ratio)
+                                && let Some(slot) = state.pitch_zero_point.get_mut(side)
+                            {
+                                *slot = Some(std::time::Instant::now());
+                            }
                         }
                     }
                     None if held => println!(
@@ -2441,6 +2437,15 @@ fn pitch_lamp(pitch: f64, on_point: bool) -> PitchLamp {
     } else {
         PitchLamp::Away
     }
+}
+
+/// Whether the hand has put the fader on its zero point with this movement.
+///
+/// Two ways to arrive: inside the band, or across it. The band is a thirty-second of the fader's travel, so a quick throw
+/// passes it between two events and only the crossing is left to see — a lamp that waited for a reading inside the band
+/// would stay dark for the throw that most wanted it.
+fn zero_point_reached(current: f64, ratio: f64) -> bool {
+    (ratio - 1.0).abs() <= ZERO_PITCH_TOLERANCE || (current - 1.0) * (ratio - 1.0) < 0.0
 }
 
 /// The panel's pitch-zero lamps, from `lights-map.txt`: `11 Left pitch zero point light`, `34 Right pitch zero light`.
@@ -4467,6 +4472,36 @@ mod tests {
             super::screen_deck(dj_controller_s4mk3::Screen::Right, &switched),
             dj_domain::DeckId::D,
             "and the right screen its own"
+        );
+    }
+
+    #[test]
+    fn a_throw_across_the_zero_point_counts_as_arriving_on_it() {
+        use super::{ZERO_PITCH_TOLERANCE, zero_point_reached};
+        assert!(
+            zero_point_reached(1.05, 1.0 + ZERO_PITCH_TOLERANCE * 0.5),
+            "inside the band is an arrival"
+        );
+        assert!(
+            zero_point_reached(1.04, 0.997),
+            "and so is a throw that crosses zero between two events — the band is a thirty-second of the fader's travel, \
+             and a quick hand never lands inside it"
+        );
+        assert!(
+            zero_point_reached(0.96, 1.002),
+            "crossing upwards counts the same"
+        );
+        assert!(
+            !zero_point_reached(1.04, 1.02),
+            "moving towards zero without reaching it is not an arrival"
+        );
+        assert!(
+            !zero_point_reached(1.02, 1.04),
+            "nor is moving away from it"
+        );
+        assert!(
+            !zero_point_reached(1.02, 1.02),
+            "and a pitch that is away from zero and stays away is not an arrival either"
         );
     }
 
