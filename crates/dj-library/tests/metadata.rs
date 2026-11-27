@@ -67,7 +67,7 @@ fn row(meta: &TrackMeta, path: &Path, title: &str) -> TrackRow {
         play_count: 0,
         last_played_ms: None,
         analysis_lock: meta.analysis_lock,
-        variable_bpm: false,
+        bpm_trend: String::new(),
     }
 }
 
@@ -305,7 +305,10 @@ fn a_row_says_when_a_track_is_more_than_one_tempo() {
         beats_per_bar: 4,
     });
     let row = dj_library::index::row_of(&meta, &path);
-    assert!(row.variable_bpm, "3,125 % is more than one tempo");
+    assert_eq!(
+        row.bpm_trend, "\u{2197}",
+        "3,125 % faster: more than one tempo, and the arrow says which way"
+    );
     assert_eq!(
         row.bpm,
         Some(128.0),
@@ -315,12 +318,12 @@ fn a_row_says_when_a_track_is_more_than_one_tempo() {
         grid.anchors[0].bpm = Some(131.0);
     }
     assert!(
-        !dj_library::index::row_of(&meta, &path).variable_bpm,
-        "2,3 % is one tempo"
+        dj_library::index::row_of(&meta, &path).bpm_trend.is_empty(),
+        "2,3 % is one tempo, and wears nothing"
     );
     meta.beatgrid = None;
     assert!(
-        !dj_library::index::row_of(&meta, &path).variable_bpm,
-        "a track without a grid is not a variable one"
+        dj_library::index::row_of(&meta, &path).bpm_trend.is_empty(),
+        "a track without a grid is not one that moves"
     );
 }

@@ -35,7 +35,7 @@ fn row(fingerprint: &str, path: &str) -> TrackRow {
         play_count: 0,
         last_played_ms: None,
         analysis_lock: false,
-        variable_bpm: false,
+        bpm_trend: String::new(),
     }
 }
 

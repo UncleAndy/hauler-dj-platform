@@ -69,9 +69,26 @@ pub struct Anchor {
 /// How far a track's stretches may differ and still count as one tempo: three percent (owner's rule, 26.11).
 ///
 /// The comparison is the fastest stretch against the slowest. A track whose sections sit at 128 and 132 is one tempo to
-/// an ear and two numbers to a list, and the list has to say so instead of printing one of them as if it were the whole
-/// track.
+/// an ear and one number to a list, so it wears no symbol; below this a "trend" would be a claim about noise.
 pub const VARIABLE_BPM_TOLERANCE: f64 = 0.03;
+
+/// How far a stretch must differ from the one before it to count as a step: a tenth of a percent (owner's rule, 26.11).
+///
+/// The measured tempo carries noise, and a step built from a hundredth of a BPM would be a symbol that says nothing
+/// about the track. A tenth of a percent is above that noise and below anything a DJ would call a change of tempo.
+pub const BPM_STEP_TOLERANCE: f64 = 0.001;
+
+/// The suffix a track's tempo wears in a list, after its number (owner's request, 26.11).
+///
+/// `RISING` for a track that only ever gets faster, `FALLING` for one that only ever slows down, `FLUCTUATING` for one
+/// that does both, and an empty string for a track of one tempo. The number is the stretch that plays longest
+/// (`dj_domain::BeatGrid::dominant_bpm`), and the suffix says the number is not the whole track.
+///
+/// Each constant is the whole suffix, spaces included: an arrow reads as part of the number (`125.00↗`), and a tilde is
+/// a separate mark and takes its own space (`125.00 ~`). A list appends the string and decides nothing about spacing.
+pub const BPM_RISING: &str = "\u{2197}";
+pub const BPM_FALLING: &str = "\u{2198}";
+pub const BPM_FLUCTUATING: &str = " ~";
 
 /// The beat grid: a tempo and the frame of its first beat, plus manual anchors.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -87,22 +104,69 @@ pub struct BeatGrid {
 }
 
 impl BeatGrid {
-    /// Whether this grid holds more than one tempo.
+    /// The tempo of each stretch in track order: the first one from `bpm`, the rest from their anchors.
     ///
-    /// The first stretch states its tempo in `bpm`; the anchors state theirs, one per stretch. A file written before
-    /// anchors carried a tempo states none, and such a grid cannot be told apart from a single-tempo one: it answers
-    /// `false`, which is what it was drawn as.
-    pub fn is_variable(&self) -> bool {
-        let mut slowest = self.bpm;
-        let mut fastest = self.bpm;
+    /// A file written before anchors carried a tempo states none for those stretches, and such a grid cannot be told
+    /// apart from a single-tempo one — it answers with the one tempo it states, which is what it was drawn as.
+    fn stretch_tempos(&self) -> Vec<f64> {
+        let mut tempos = vec![self.bpm];
         for anchor in &self.anchors {
-            let Some(bpm) = anchor.bpm.filter(|value| value.is_finite() && *value > 0.0) else {
-                continue;
-            };
-            slowest = slowest.min(bpm);
-            fastest = fastest.max(bpm);
+            match anchor.bpm.filter(|value| value.is_finite() && *value > 0.0) {
+                Some(bpm) => tempos.push(bpm),
+                // A stretch with no tempo of its own is not a second tempo: the file says one number for the track.
+                None => return tempos,
+            }
         }
-        slowest.is_finite() && slowest > 0.0 && fastest > slowest * (1.0 + VARIABLE_BPM_TOLERANCE)
+        tempos
+    }
+
+    /// Whether this grid holds more than one tempo: the owner's three percent, the same stretch against stretch.
+    pub fn is_variable(&self) -> bool {
+        let tempos = self.stretch_tempos();
+        let Some(&first) = tempos.first() else {
+            return false;
+        };
+        if !(first.is_finite() && first > 0.0) {
+            return false;
+        }
+        let slowest = tempos.iter().copied().fold(first, f64::min);
+        let fastest = tempos.iter().copied().fold(first, f64::max);
+        slowest > 0.0 && fastest > slowest * (1.0 + VARIABLE_BPM_TOLERANCE)
+    }
+
+    /// Which way the track's tempo moves, as the symbol that follows its number.
+    ///
+    /// A track of one tempo wears nothing — the symbol answers only where the number is not the whole track
+    /// ([`Self::is_variable`]). Then every stretch is compared with the one before it: all steps up is a rise, all steps
+    /// down is a fall, both is a fluctuation. Steps smaller than [`BPM_STEP_TOLERANCE`] are not steps, so a track that
+    /// rises and then holds keeps its arrow.
+    pub fn bpm_trend(&self) -> &'static str {
+        if !self.is_variable() {
+            return "";
+        }
+        let tempos = self.stretch_tempos();
+        let mut rose = false;
+        let mut fell = false;
+        for pair in tempos.windows(2) {
+            let before = pair[0];
+            let after = pair[1];
+            if !(before.is_finite() && after.is_finite() && before > 0.0) {
+                return "";
+            }
+            if after > before * (1.0 + BPM_STEP_TOLERANCE) {
+                rose = true;
+            } else if after < before * (1.0 - BPM_STEP_TOLERANCE) {
+                fell = true;
+            }
+            if rose && fell {
+                return BPM_FLUCTUATING;
+            }
+        }
+        match (rose, fell) {
+            (true, false) => BPM_RISING,
+            (false, true) => BPM_FALLING,
+            _ => "",
+        }
     }
 }
 
@@ -325,26 +389,50 @@ mod tests {
     }
 
     #[test]
-    fn a_track_whose_sections_differ_by_more_than_three_percent_is_more_than_one_tempo() {
-        assert!(
-            !grid(128.0, vec![]).is_variable(),
-            "one stretch is one tempo"
+    fn a_track_says_which_way_its_tempo_moves() {
+        let grid_of = |bpm: f64, anchors: Vec<Anchor>| grid(bpm, anchors);
+        assert_eq!(
+            grid_of(128.0, vec![]).bpm_trend(),
+            "",
+            "one stretch is one tempo, and wears nothing"
         );
-        assert!(
-            !grid(128.0, vec![anchor(960_000, Some(131.0))]).is_variable(),
-            "131 against 128 is 2,3 % — one tempo to an ear"
+        assert_eq!(
+            grid_of(128.0, vec![anchor(960_000, Some(131.0))]).bpm_trend(),
+            "",
+            "131 against 128 is 2,3 % — one tempo to an ear, so no symbol either"
         );
-        assert!(
-            grid(128.0, vec![anchor(960_000, Some(132.0))]).is_variable(),
-            "132 against 128 is 3,125 % — the list must say so"
+        assert_eq!(
+            grid_of(128.0, vec![anchor(960_000, Some(132.0))]).bpm_trend(),
+            "\u{2197}",
+            "132 against 128 is 3,125 %: faster, and the list says so with the arrow"
         );
-        assert!(
-            !grid(128.0, vec![anchor(960_000, None)]).is_variable(),
+        assert_eq!(
+            grid_of(128.0, vec![anchor(960_000, Some(120.0))]).bpm_trend(),
+            "\u{2198}",
+            "slower sections count the same as faster ones, and the arrow points down"
+        );
+        assert_eq!(
+            grid_of(
+                128.0,
+                vec![anchor(480_000, Some(132.0)), anchor(960_000, Some(140.0))]
+            )
+            .bpm_trend(),
+            "\u{2197}",
+            "faster and faster: one arrow up"
+        );
+        assert_eq!(
+            grid_of(
+                128.0,
+                vec![anchor(480_000, Some(136.0)), anchor(960_000, Some(128.0))]
+            )
+            .bpm_trend(),
+            " ~",
+            "up and back down is a tempo that wanders, not one that rises"
+        );
+        assert_eq!(
+            grid_of(128.0, vec![anchor(960_000, None)]).bpm_trend(),
+            "",
             "a file written before anchors carried a tempo cannot be told apart from a single-tempo one"
-        );
-        assert!(
-            grid(128.0, vec![anchor(960_000, Some(120.0))]).is_variable(),
-            "slower sections count the same as faster ones"
         );
     }
 }

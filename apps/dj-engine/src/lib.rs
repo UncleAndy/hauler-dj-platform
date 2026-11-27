@@ -2381,7 +2381,7 @@ pub fn collection_row(row: &dj_library::TrackRow) -> dj_domain::CollectionRow {
         duration_frames: row.duration_frames,
         sample_rate: row.sample_rate,
         analysis_lock: row.analysis_lock,
-        variable_bpm: row.variable_bpm,
+        bpm_trend: row.bpm_trend.clone(),
         last_played_ms: row.last_played_ms,
     }
 }

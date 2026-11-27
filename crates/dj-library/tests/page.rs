@@ -34,7 +34,7 @@ fn row(title: &str, artist: &str, bpm: f64, genres: &[&str]) -> (TrackRow, Vec<S
         play_count: 0,
         last_played_ms: None,
         analysis_lock: false,
-        variable_bpm: false,
+        bpm_trend: String::new(),
     };
     let genres = genres.iter().map(|genre| (*genre).to_owned()).collect();
     (row, genres)

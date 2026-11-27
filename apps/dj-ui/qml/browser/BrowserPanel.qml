@@ -1135,19 +1135,6 @@ Pane {
         return current ? UiSettings.themePlayhead : ordinary;
     }
 
-    /// The tempo column of a track that is more than one tempo: the number is the stretch that plays
-    /// longest, and the colour says a single number cannot stand for the whole track (owner's request,
-    /// 26.11). A chosen row keeps its own colour — the selection outranks every other signal.
-    function bpmTextColour(entry, chosen, current, ordinary) {
-        if (chosen) {
-            return UiSettings.themeTextOnAccent;
-        }
-        if (entry !== undefined && entry.variable_bpm === true) {
-            return "#ffd400";
-        }
-        return current ? UiSettings.themePlayhead : ordinary;
-    }
-
     function columnIndexOf(id) {
         for (let i = 0; i < columns.length; ++i) {
             if (columns[i].id === id) {
@@ -1198,7 +1185,16 @@ Pane {
         case "time": return browser.clock(entry.duration_ms);
         // A hundredth, always: the index keeps the tempo to two places, and a column of whole numbers
         // is a column of rounded guesses — 128,00 and 128,004 must not read the same.
-        case "bpm": return entry.bpm !== undefined && entry.bpm > 0 ? Number(entry.bpm).toFixed(2) : "";
+        case "bpm": {
+            if (entry.bpm === undefined || !(entry.bpm > 0)) {
+                return "";
+            }
+            // The suffix says the number is not the whole track: an arrow for a tempo that only moves one way, a tilde
+            // for one that wanders. It arrives with its own spacing, so a list appends it and copies nothing (owner's
+            // request, 26.11).
+            const trend = entry.bpm_trend !== undefined && entry.bpm_trend !== null ? String(entry.bpm_trend) : "";
+            return Number(entry.bpm).toFixed(2) + trend;
+        }
         case "key": return entry.key !== undefined ? entry.key : "";
         case "recent": return browser.playedRecently(entry) ? "\u2713" : "";
         }
@@ -3043,7 +3039,7 @@ Pane {
                             text: browser.columnText(row.modelData, "bpm")
                             horizontalAlignment: Text.AlignRight
                             font: browser.listFace
-                            color: browser.bpmTextColour(row.modelData, row.chosen, row.current,
+                            color: browser.rowTextColour(row.chosen, row.current,
                                                          UiSettings.themeTextDim)
                         }
                         Label {

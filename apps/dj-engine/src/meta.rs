@@ -250,14 +250,17 @@ pub fn write_beatgrid(
         dominant,
         stretches.len(),
         stretches.join(" / "),
-        if meta
+        match meta
             .beatgrid
             .as_ref()
-            .is_some_and(dj_library::meta::BeatGrid::is_variable)
+            .map(dj_library::meta::BeatGrid::bpm_trend)
         {
-            ", the list will say it is more than one tempo"
-        } else {
-            ""
+            None | Some("") => "",
+            Some(trend) => match trend {
+                "\u{2197}" => ", the list will mark it rising",
+                "\u{2198}" => ", the list will mark it falling",
+                _ => ", the list will mark it as moving both ways",
+            },
         }
     ));
     store
@@ -516,12 +519,14 @@ pub fn row_of(meta: &TrackMeta, path: &Path) -> dj_library::TrackRow {
         last_played_ms: None,
         analysis_lock: meta.analysis_lock,
         // The same reading of the record the library makes: a row refreshed after an edit must say what a row rebuilt
-        // from the file says, and a hard `false` here made every edited grid look like one tempo (owner's report,
-        // 26.11: «поменял битгрид… BPM показывается тем же цветом»).
-        variable_bpm: meta
+        // from the file says, and a hard-coded answer here once made every edited grid look like one tempo (owner's
+        // report, 26.11).
+        bpm_trend: meta
             .beatgrid
             .as_ref()
-            .is_some_and(dj_library::meta::BeatGrid::is_variable),
+            .map(dj_library::meta::BeatGrid::bpm_trend)
+            .unwrap_or_default()
+            .to_owned(),
     }
 }
 
@@ -701,15 +706,17 @@ mod tests {
     #[test]
     fn a_row_refreshed_after_an_edit_says_the_track_is_more_than_one_tempo() {
         let row = row_of(&two_tempos(), std::path::Path::new("/music/a.flac"));
-        assert!(
-            row.variable_bpm,
-            "the same record gives the library's row a raised flag; the engine's refresh must not answer otherwise"
+        assert_eq!(
+            row.bpm_trend, "\u{2197}",
+            "the same record gives the library's row the same symbol; the engine's refresh must not answer otherwise"
         );
         assert_eq!(row.bpm, Some(128.0), "and the number is the stored one");
         let single = dj_library::TrackMeta::new(print(), 0);
         assert!(
-            !row_of(&single, std::path::Path::new("/music/b.flac")).variable_bpm,
-            "a track with no grid is not a variable one"
+            row_of(&single, std::path::Path::new("/music/b.flac"))
+                .bpm_trend
+                .is_empty(),
+            "a track with no grid is not one that moves"
         );
     }
 }

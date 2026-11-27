@@ -1820,10 +1820,11 @@ pub struct CollectionRow {
     /// True when the DJ locked this track's beat grid.
     #[serde(default, skip_serializing_if = "is_false")]
     pub analysis_lock: bool,
-    /// True when the grid holds more than one tempo: the `bpm` above is then the stretch that plays longest, and the
-    /// list says the number is not the whole track (owner's request, 26.11).
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub variable_bpm: bool,
+    /// The symbol the list puts after the tempo when the track is more than one tempo: `↗` for one that only gets
+    /// faster, `↘` for one that only slows down, `~` for one that does both. Empty for a track of one tempo, which is
+    /// why nothing is written for the ordinary case (owner's request, 26.11).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub bpm_trend: String,
     /// When the track was last played, milliseconds since the epoch.
     ///
     /// The column that marks a track as "played recently" is decided against the window the engine

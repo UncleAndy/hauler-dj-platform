@@ -811,11 +811,13 @@ QVariantMap rowFromPage(const QVariantMap &row)
     // The list draws a lock beside the number when this track's grid is locked.
     made.insert(QStringLiteral("analysis_lock"),
                 row.value(QStringLiteral("analysis_lock")).toBool());
-    // And it draws the tempo in another colour when the grid holds more than one: the row arrives as a page, and
-    // everything this function does not copy is a field the list can never see (owner's report, 26.11: the highlight
-    // never appeared although the record and the page both said `variable_bpm`).
-    made.insert(QStringLiteral("variable_bpm"),
-                row.value(QStringLiteral("variable_bpm")).toBool());
+    // And it appends the tempo's suffix when the grid holds more than one: the row arrives as a page, and everything
+    // this function does not copy is a field the list can never see (owner's report, 26.11: the highlight never
+    // appeared although the record and the page both said the tempo was more than one).
+    made.insert(QStringLiteral("bpm_trend"),
+                row.value(QStringLiteral("bpm_trend")).toString().trimmed().isEmpty()
+                    ? QString()
+                    : row.value(QStringLiteral("bpm_trend")).toString());
     return made;
 }
 

@@ -41,7 +41,7 @@ pub fn index_row(imported: &Imported) -> (TrackRow, Vec<genres::GenreName>) {
         last_played_ms: None,
         analysis_lock: false,
         // A row built by an import has no grid yet; the flag arrives with the measurement, which rebuilds this row.
-        variable_bpm: false,
+        bpm_trend: String::new(),
     };
     (row, genres::split(&imported.tags.genre))
 }

@@ -80,7 +80,7 @@ fn a_row_keeps_everything_the_list_shows() {
         play_count: 0,
         last_played_ms: None,
         analysis_lock: false,
-        variable_bpm: false,
+        bpm_trend: String::new(),
     };
     let wire = dj_engine::collection_row(&row);
     assert_eq!(wire.fingerprint, "10:a:b");
@@ -91,27 +91,27 @@ fn a_row_keeps_everything_the_list_shows() {
     assert_eq!(wire.duration_frames, Some(48_000));
     assert_eq!(wire.rating, 4);
     assert!(
-        !wire.variable_bpm,
+        wire.bpm_trend.is_empty(),
         "a track of one tempo says nothing about its grid"
     );
 
-    // The flag has to survive the wire as well: the window draws the tempo in another colour from the page, and a field
-    // the page does not carry is a field no list can see (owner's report, 26.11).
+    // The symbol has to survive the wire as well: the window puts it after the tempo, and a field the page does not
+    // carry is a field no list can see (owner's report, 26.11).
     let mut two_tempos = row;
-    two_tempos.variable_bpm = true;
+    two_tempos.bpm_trend = "\u{2197}".to_owned();
     let wire = dj_engine::collection_row(&two_tempos);
-    assert!(wire.variable_bpm, "the page carries the flag");
+    assert_eq!(wire.bpm_trend, "\u{2197}", "the page carries the arrow");
     let json = serde_json::to_value(&wire).expect("the page is JSON on the wire");
     assert_eq!(
-        json.get("variable_bpm").and_then(|value| value.as_bool()),
-        Some(true),
-        "and the JSON a page is written as says so"
+        json.get("bpm_trend").and_then(|value| value.as_str()),
+        Some("\u{2197}"),
+        "and the JSON a page is written as says which way the tempo moves"
     );
     let mut one_tempo = two_tempos.clone();
-    one_tempo.variable_bpm = false;
+    one_tempo.bpm_trend = String::new();
     let json = serde_json::to_value(dj_engine::collection_row(&one_tempo)).expect("json");
     assert!(
-        json.get("variable_bpm").is_none(),
+        json.get("bpm_trend").is_none(),
         "a steady track does not write the field at all: the wire stays what it was"
     );
 }

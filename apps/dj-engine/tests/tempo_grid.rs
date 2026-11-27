@@ -337,7 +337,10 @@ fn two_tempos_are_stored_with_their_own_tempos_and_the_row_says_so() {
         "twice the tempo is more than the three percent that makes a track 'more than one tempo'"
     );
     let row = dj_engine::meta::row_of(&loaded.meta, &track);
-    assert!(row.variable_bpm, "and the row carries the flag to the list");
+    assert_eq!(
+        row.bpm_trend, "\u{2197}",
+        "and the row carries the arrow to the list: the second stretch is twice as fast"
+    );
     assert_eq!(row.bpm, Some(128.0), "with the dominant number beside it");
     let _ = std::fs::remove_dir_all(&dir);
 }

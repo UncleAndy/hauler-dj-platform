@@ -49,9 +49,12 @@ pub struct TrackRow {
     pub last_played_ms: Option<u64>,
     /// True when analysis must not overwrite the grid.
     pub analysis_lock: bool,
-    /// True when the grid holds more than one tempo: `bpm` above is then the stretch that plays longest
-    /// (`BeatGrid::dominant_bpm`), and a list can say the number is not the whole track.
-    pub variable_bpm: bool,
+    /// The symbol the list puts after the tempo: `↗` for a track that only gets faster, `↘` for one that only slows
+    /// down, `~` for one that does both, and nothing for a track of one tempo (`BeatGrid::bpm_trend`).
+    ///
+    /// `bpm` above is then the stretch that plays longest (`dj_domain::BeatGrid::dominant_bpm`), and the symbol says the
+    /// number is not the whole track (owner's request, 26.11).
+    pub bpm_trend: String,
 }
 
 /// One finished play, as the index keeps it (DJP-MEDIA-004).
@@ -151,7 +154,7 @@ CREATE TABLE IF NOT EXISTS tracks (
     play_count INTEGER NOT NULL DEFAULT 0,
     last_played_ms INTEGER,
     analysis_lock INTEGER NOT NULL DEFAULT 0,
-    variable_bpm INTEGER NOT NULL DEFAULT 0
+    bpm_trend TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS genres (
     id   INTEGER PRIMARY KEY,
@@ -194,7 +197,7 @@ CREATE TABLE IF NOT EXISTS playlist_tracks (
 CREATE INDEX IF NOT EXISTS track_genres_genre ON track_genres(genre_id, fingerprint);
 CREATE INDEX IF NOT EXISTS plays_recent        ON plays(started_at_ms DESC, fingerprint);
 CREATE INDEX IF NOT EXISTS playlist_tracks_of  ON playlist_tracks(playlist_id, position);
-PRAGMA user_version = 6;
+PRAGMA user_version = 7;
 ";
 
 /// A stored path, spelled the way the platform spells paths.
@@ -235,16 +238,16 @@ impl Index {
         // database from before a column existed would then look up to date.
         let previous: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
         connection.execute_batch(SCHEMA)?;
-        if previous < 6 {
+        if previous < 7 {
             // A column added to a database that already exists: the default is the whole answer for rows written
             // before it, and a rebuild fills the real one.
             let mut statement = connection.prepare("PRAGMA table_info(tracks)")?;
             let columns: Vec<String> = statement
                 .query_map([], |row| row.get::<_, String>(1))?
                 .collect::<Result<Vec<_>, _>>()?;
-            if !columns.iter().any(|name| name == "variable_bpm") {
+            if !columns.iter().any(|name| name == "bpm_trend") {
                 connection.execute_batch(
-                    "ALTER TABLE tracks ADD COLUMN variable_bpm INTEGER NOT NULL DEFAULT 0",
+                    "ALTER TABLE tracks ADD COLUMN bpm_trend TEXT NOT NULL DEFAULT ''",
                 )?;
             }
         }
@@ -623,7 +626,7 @@ impl Index {
                     COALESCE(r.musical_key, ''), COALESCE(r.rating, 0), COALESCE(r.duration_frames, 0), \
                     COALESCE(r.sample_rate, 0), COALESCE(r.gain, 0), COALESCE(r.play_count, 0), \
                     COALESCE(r.last_played_ms, 0), COALESCE(r.analysis_lock, 0), \
-                    COALESCE(r.variable_bpm, 0) \
+                    COALESCE(r.bpm_trend, '') \
              FROM playlist_tracks t LEFT JOIN tracks r ON r.fingerprint = t.fingerprint \
              WHERE t.playlist_id = ?1",
         );
@@ -982,7 +985,7 @@ impl Index {
             .connection
             .query_row(
                 "SELECT fingerprint, path, artist, title, album, genre, year, bpm, musical_key,
-                        rating, duration_frames, sample_rate, gain, play_count, last_played_ms, analysis_lock, variable_bpm
+                        rating, duration_frames, sample_rate, gain, play_count, last_played_ms, analysis_lock, bpm_trend
                  FROM tracks WHERE fingerprint = ?1",
                 [fingerprint],
                 Self::row,
@@ -996,7 +999,7 @@ impl Index {
         let pattern = format!("%{needle}%");
         let mut statement = self.connection.prepare(
             "SELECT fingerprint, path, artist, title, album, genre, year, bpm, musical_key,
-                    rating, duration_frames, sample_rate, gain, play_count, last_played_ms, analysis_lock, variable_bpm
+                    rating, duration_frames, sample_rate, gain, play_count, last_played_ms, analysis_lock, bpm_trend
              FROM tracks
              WHERE title LIKE ?1 OR artist LIKE ?1 OR album LIKE ?1
              ORDER BY artist, album, title",
@@ -1098,7 +1101,7 @@ impl Index {
 
         let sql = format!(
             "SELECT fingerprint, path, artist, title, album, genre, year, bpm, musical_key,
-                    rating, duration_frames, sample_rate, gain, play_count, last_played_ms, analysis_lock, variable_bpm
+                    rating, duration_frames, sample_rate, gain, play_count, last_played_ms, analysis_lock, bpm_trend
              FROM tracks{where_sql}{} LIMIT ?{limit_at} OFFSET ?{offset_at}",
             order_clause(&query.order)
         );
@@ -1143,7 +1146,7 @@ impl Index {
             play_count: raw.get::<_, i64>(13)?.max(0) as u64,
             last_played_ms: raw.get::<_, Option<i64>>(14)?.map(|ms| ms.max(0) as u64),
             analysis_lock: raw.get(15)?,
-            variable_bpm: raw.get(16)?,
+            bpm_trend: raw.get(16)?,
         })
     }
 }
@@ -1288,12 +1291,14 @@ pub fn row_of(meta: &TrackMeta, path: &Path) -> TrackRow {
         play_count: 0,
         last_played_ms: None,
         analysis_lock: meta.analysis_lock,
-        // Derived, not stored again: the flag is a reading of the grid, and a second copy of it would be a second thing
-        // to keep true.
-        variable_bpm: meta
+        // Derived, not stored again: the symbol is a reading of the grid, and a second copy of it would be a second
+        // thing to keep true.
+        bpm_trend: meta
             .beatgrid
             .as_ref()
-            .is_some_and(crate::meta::BeatGrid::is_variable),
+            .map(crate::meta::BeatGrid::bpm_trend)
+            .unwrap_or_default()
+            .to_owned(),
     }
 }
 
@@ -1416,7 +1421,7 @@ fn records_under(roots: &[PathBuf]) -> Vec<PathBuf> {
 // 2026-11-19). A row that is written again keeps its children.
 const INSERT: &str = "INSERT INTO tracks
      (fingerprint, path, artist, title, album, genre, year, bpm, musical_key, rating,
-      duration_frames, sample_rate, gain, play_count, last_played_ms, analysis_lock, variable_bpm)
+      duration_frames, sample_rate, gain, play_count, last_played_ms, analysis_lock, bpm_trend)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
      ON CONFLICT(fingerprint) DO UPDATE SET
         path = excluded.path, artist = excluded.artist, title = excluded.title,
@@ -1425,7 +1430,7 @@ const INSERT: &str = "INSERT INTO tracks
         duration_frames = excluded.duration_frames, sample_rate = excluded.sample_rate,
         gain = excluded.gain, play_count = excluded.play_count,
         last_played_ms = excluded.last_played_ms, analysis_lock = excluded.analysis_lock,
-        variable_bpm = excluded.variable_bpm";
+        bpm_trend = excluded.bpm_trend";
 
 fn bind(statement: &mut rusqlite::Statement<'_>, row: &TrackRow) -> Result<(), IndexError> {
     statement.execute(params![
@@ -1445,7 +1450,7 @@ fn bind(statement: &mut rusqlite::Statement<'_>, row: &TrackRow) -> Result<(), I
         row.play_count as i64,
         row.last_played_ms.map(|ms| ms as i64),
         row.analysis_lock,
-        row.variable_bpm,
+        row.bpm_trend,
     ])?;
     Ok(())
 }
@@ -1538,8 +1543,8 @@ mod tests {
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version");
         assert_eq!(
-            version, 6,
-            "the schema must move to version 6: the row says when a track is more than one tempo"
+            version, 7,
+            "the schema must move to version 7: the row says which way a track's tempo moves"
         );
         assert!(
             index
@@ -1576,7 +1581,7 @@ mod tests {
             .connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version");
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
         assert!(table_exists(&index, "track_genres"));
         assert!(table_exists(&index, "plays"));
         assert!(table_exists(&index, "playlists"));
