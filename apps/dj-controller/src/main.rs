@@ -1379,10 +1379,20 @@ fn inputs_loop(
                             Ok(()) => {
                                 // The lead is taken *after* the command is in the engine's hands: a pitch the engine never
                                 // received must not become the place the next movement starts from.
-                                if let Ok(mut state) = playing.lock()
-                                    && let Some(lead) = state.pitch_lead.get_mut(deck_index(deck))
-                                {
-                                    lead.take(ratio);
+                                if let Ok(mut state) = playing.lock() {
+                                    if let Some(lead) = state.pitch_lead.get_mut(deck_index(deck)) {
+                                        lead.take(ratio);
+                                    }
+                                    // The fader has arrived at its zero point: inside the band, or across it — which is
+                                    // what a fast sweep does between two events, since the band is a thirty-second of
+                                    // the fader's travel. Both are the same moment to a hand, so both are the event.
+                                    let arrived = (ratio - 1.0).abs() <= ZERO_PITCH_TOLERANCE;
+                                    let crossed = (current - 1.0) * (ratio - 1.0) < 0.0;
+                                    if (arrived || crossed)
+                                        && let Some(slot) = state.pitch_zero_point.get_mut(side)
+                                    {
+                                        *slot = Some(std::time::Instant::now());
+                                    }
                                 }
                             }
                             Err(reason) => println!(
@@ -2392,35 +2402,44 @@ fn pitch_after_travel(current: f64, travel: Option<f64>, shift_held: bool) -> Op
 /// How far the pitch may be from the track's own speed and still count as "at zero": one percent (owner's rule, 25.11).
 const ZERO_PITCH_TOLERANCE: f64 = 0.01;
 
+/// How long the third state is shown after the hand puts the fader on its zero point.
+///
+/// The deck needs about thirty milliseconds to follow the command, and a sweep crosses the point's band in about ten —
+/// so the honest difference between "the fader is on zero" and "the deck is on zero" lasts one snapshot, and a state that
+/// short is indistinguishable from no state at all (owner's report, 26.11: the third colour was «не видно», only the old
+/// rule). Half a second is the eye's measure, not the engine's: long enough to see, short enough that the lamp is back to
+/// telling the truth about the deck while the hand still stands there.
+const PITCH_ZERO_POINT_HOLD: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// What the pitch-zero lamp has to say.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PitchLamp {
     /// The deck runs at its own pitch, within the tolerance.
     AtZero,
-    /// The tempo fader stands on its zero point and the deck is not there yet.
+    /// The hand has just put the tempo fader on its zero point.
     ///
-    /// The fader is relative: its position means "this much pitch from where the hand took it", so the position that
-    /// makes the pitch zero is where the panel's own last answer stands at zero, not where the snapshot's speed does. The
-    /// two agree a moment later — the engine glides for about 30 ms — and that moment is what the third colour is for. A
-    /// sync holds the pitch elsewhere for as long as it likes, so the state can stay as long as the sync does: the hand is
-    /// on zero and the deck is not (owner's request, 26.11).
+    /// The fader is relative, so its zero point is wherever the hand stands when the pitch it asked for is zero: there is
+    /// no fixed mark to look at, and the deck arrives a moment later. This state is that moment, held for
+    /// [`PITCH_ZERO_POINT_HOLD`] so a hand can see where the point was — and it wins over `AtZero` for as long as it
+    /// lasts, because the deck's arrival is the older news (owner's request, 26.11).
     AtZeroPoint,
     /// Everything else.
     Away,
 }
 
-/// Which of the three states the lamp shows, from the deck's pitch and the pitch the fader last asked for.
+/// Which of the three states the lamp shows, from the deck's pitch and whether the fader has just been on its zero point.
 ///
-/// The panel's own answer is where the hand stands: `PitchLead` re-anchors on every movement, so `asked` is the pitch the
-/// fader's position means. Without a hand there is no zero point to stand on either, and the lamp speaks only about the
-/// deck — which is also the honest answer under a sync, where the pitch is not the fader's to give.
-fn pitch_lamp(pitch: f64, asked: Option<f64>) -> PitchLamp {
-    if (pitch - 1.0).abs() <= ZERO_PITCH_TOLERANCE {
-        return PitchLamp::AtZero;
+/// `on_point` comes from the press loop, which sees the pitch the fader asked for at the moment it asks; the lights loop
+/// only reads how long ago that was. Reading the same thing from the snapshot instead would put the state a snapshot
+/// behind the hand — and the snapshot already carries the deck's arrival by then.
+fn pitch_lamp(pitch: f64, on_point: bool) -> PitchLamp {
+    if on_point {
+        return PitchLamp::AtZeroPoint;
     }
-    match asked {
-        Some(asked) if (asked - 1.0).abs() <= ZERO_PITCH_TOLERANCE => PitchLamp::AtZeroPoint,
-        _ => PitchLamp::Away,
+    if (pitch - 1.0).abs() <= ZERO_PITCH_TOLERANCE {
+        PitchLamp::AtZero
+    } else {
+        PitchLamp::Away
     }
 }
 
@@ -2429,19 +2448,19 @@ const PITCH_ZERO_LAMPS: [u8; 2] = [11, 34];
 
 /// Light or put out the two pitch-zero lamps, one beside each tempo fader.
 ///
-/// Three states, three colours: the deck at its own pitch, the fader on its zero point while the deck is not there, and
-/// everything else. `inverted` is for the hand that reads a lit lamp as "something is already on": it swaps the first and
-/// the last state and leaves the middle alone, because that one is about where the hand is, not about which way the rule
-/// reads. A colour of `off` gives no light at all even in the night mode — the faint resting glow read as a third state on
-/// this lamp (owner's report, 25.11).
+/// Three states, three colours: the fader just arrived on its zero point, the deck at its own pitch, and everything
+/// else. `inverted` is for the hand that reads a lit lamp as "something is already on": it swaps the deck's two states and
+/// leaves the arrival alone, because that one is about where the hand is, not about which way the rule reads. A colour of
+/// `off` gives no light at all even in the night mode — the faint resting glow read as a third state on this lamp
+/// (owner's report, 25.11).
 fn paint_pitch_zero(
     report: &mut dj_controller_s4mk3::lights::LightsReport,
-    pitches: [(dj_domain::DeckId, f64, Option<f64>); 2],
+    pitches: [(dj_domain::DeckId, f64, bool); 2],
     palette: &dj_controller_s4mk3::lights::Palette,
     inverted: bool,
 ) {
-    for (side, (_, pitch, asked)) in pitches.into_iter().enumerate() {
-        let (colour, lit) = match (pitch_lamp(pitch, asked), inverted) {
+    for (side, (_, pitch, on_point)) in pitches.into_iter().enumerate() {
+        let (colour, lit) = match (pitch_lamp(pitch, on_point), inverted) {
             (PitchLamp::AtZero, false) | (PitchLamp::Away, true) => (palette.pitch_zero_on, true),
             (PitchLamp::AtZero, true) | (PitchLamp::Away, false) => (palette.pitch_zero_off, false),
             (PitchLamp::AtZeroPoint, _) => (palette.pitch_zero_target, true),
@@ -2496,6 +2515,11 @@ struct DeckFactsShared {
     /// What the panel has asked of each deck's pitch and when its hand was last on the fader: the number the fader moves
     /// from, which is not the snapshot — see `PitchLead`.
     pitch_lead: [PitchLead; 4],
+    /// When the hand last put each side's tempo fader on its zero point: the third lamp state is that **event**, not a
+    /// level. The deck arrives about thirty milliseconds after the command — one snapshot — so a state that waited for the
+    /// deck to disagree would light for a single frame and nobody would ever see it (owner's report, 26.11: «сейчас я
+    /// вижу только работу по старому»).
+    pitch_zero_point: [Option<std::time::Instant>; 2],
     /// Whether the browser is on the screen: the VIEW button asks for the opposite of this.
     browser_open: bool,
     /// The path the window's browser cursor stands on: what a press of the encoder loads.
@@ -2530,6 +2554,7 @@ impl Default for DeckFactsShared {
             fader_asked: [None; 4],
             tempo_ratio: [1.0; 4],
             pitch_lead: [PitchLead::default(); 4],
+            pitch_zero_point: [None; 2],
             browser_open: true,
             browser_cursor: None,
             shift: [false; 2],
@@ -3754,20 +3779,23 @@ fn lights_show(
             };
             // The deck each side drives is marked on the panel itself: its select button is the bright one, so a hand can
             // see where a load would land without looking at the screen.
-            // The side, the deck it drives, and the pitch the fader last asked of that deck: the third lamp state is
-            // about where the hand stands, which is the panel's own answer and not the snapshot.
-            let (panel_left, panel_right, asked_left, asked_right) = playing
+            // The side, the deck it drives, and whether the hand has just been on that side's zero point: the third lamp
+            // state is an event the press loop stamps, and the lights only ask how long ago.
+            let (panel_left, panel_right, point_left, point_right) = playing
                 .and_then(|playing| {
                     playing.lock().ok().map(|state| {
+                        let fresh = |at: Option<std::time::Instant>| {
+                            at.is_some_and(|at| at.elapsed() < PITCH_ZERO_POINT_HOLD)
+                        };
                         (
                             state.panel_left,
                             state.panel_right,
-                            state.pitch_lead[state.panel_left.index()].asked,
-                            state.pitch_lead[state.panel_right.index()].asked,
+                            fresh(state.pitch_zero_point[0]),
+                            fresh(state.pitch_zero_point[1]),
                         )
                     })
                 })
-                .unwrap_or((dj_domain::DeckId::A, dj_domain::DeckId::B, None, None));
+                .unwrap_or((dj_domain::DeckId::A, dj_domain::DeckId::B, false, false));
             let mut report = report;
             paint_deck_select(&mut report, panel_left, panel_right, palette, night);
             let pitch_of = |deck: dj_domain::DeckId| {
@@ -3780,8 +3808,8 @@ fn lights_show(
             paint_pitch_zero(
                 &mut report,
                 [
-                    (panel_left, pitch_of(panel_left), asked_left),
-                    (panel_right, pitch_of(panel_right), asked_right),
+                    (panel_left, pitch_of(panel_left), point_left),
+                    (panel_right, pitch_of(panel_right), point_right),
                 ],
                 palette,
                 pitch_zero_inverted,
@@ -4443,36 +4471,40 @@ mod tests {
     }
 
     #[test]
-    fn the_third_colour_is_the_fader_on_its_zero_point_before_the_deck_arrives() {
+    fn the_third_colour_is_the_hand_arriving_on_the_zero_point() {
         use super::{PitchLamp, pitch_lamp};
         // The truth, without colours: what the lamp has to say.
         assert_eq!(
-            pitch_lamp(1.004, None),
+            pitch_lamp(1.004, false),
             PitchLamp::AtZero,
             "the deck at its own pitch is the first state"
         );
         assert_eq!(
-            pitch_lamp(1.02, Some(1.003)),
+            pitch_lamp(1.03, true),
             PitchLamp::AtZeroPoint,
-            "the hand is on the zero point and the deck has not arrived"
+            "the hand has just arrived on its zero point and the deck has not followed yet"
         );
         assert_eq!(
-            pitch_lamp(1.02, Some(1.10)),
+            pitch_lamp(1.001, true),
+            PitchLamp::AtZeroPoint,
+            "and it still wins while the hold lasts: thirty milliseconds later the arrival is the newer news, and a \
+             state that lasted a single snapshot was never seen (owner's report, 26.11)"
+        );
+        assert_eq!(
+            pitch_lamp(1.03, false),
             PitchLamp::Away,
-            "both are away from zero: the ordinary state"
-        );
-        assert_eq!(
-            pitch_lamp(1.02, None),
-            PitchLamp::Away,
-            "no hand: no zero point to stand on, and the lamp speaks only about the deck"
-        );
-        assert_eq!(
-            pitch_lamp(1.005, Some(1.003)),
-            PitchLamp::AtZero,
-            "once the deck arrives the zero point gives way to the deck itself"
+            "neither: the ordinary state"
         );
 
-        // The bytes: the third state wears its own colour, and the inversion leaves it alone — it is about the hand, not
+        // The hold is the eye's measure, not the engine's.
+        let hold = super::PITCH_ZERO_POINT_HOLD;
+        assert!(
+            hold >= std::time::Duration::from_millis(300)
+                && hold <= std::time::Duration::from_millis(2000),
+            "the hold has to be visible and short (got {hold:?})"
+        );
+
+        // The bytes: the arrival wears its own colour, and the inversion leaves it alone — it is about the hand, not
         // about which way the rule reads.
         let palette = dj_controller_s4mk3::lights::Palette::default();
         for inverted in [false, true] {
@@ -4480,8 +4512,8 @@ mod tests {
             super::paint_pitch_zero(
                 &mut report,
                 [
-                    (dj_domain::DeckId::A, 1.02, Some(1.003)),
-                    (dj_domain::DeckId::B, 1.02, Some(1.10)),
+                    (dj_domain::DeckId::A, 1.03, true),
+                    (dj_domain::DeckId::B, 1.03, false),
                 ],
                 &palette,
                 inverted,
@@ -4489,9 +4521,9 @@ mod tests {
             assert_eq!(
                 report.body[11],
                 dj_controller_s4mk3::lights::bright(palette.pitch_zero_target.code()),
-                "the fader on its zero point wears the third colour (inverted: {inverted})"
+                "the arrival wears the third colour (inverted: {inverted})"
             );
-            // The away state is the one the inversion swaps: lit colours away from zero, dark at it.
+            // Away from zero with no arrival is the state the inversion swaps.
             let away = if inverted {
                 dj_controller_s4mk3::lights::bright(palette.pitch_zero_on.code())
             } else {
@@ -4499,7 +4531,7 @@ mod tests {
             };
             assert_eq!(
                 report.body[34], away,
-                "a deck away from zero with no hand on the point wears what the rule gives that state \
+                "and a deck away from zero with no arrival wears what the rule gives that state \
                  (inverted: {inverted})"
             );
         }
@@ -4515,8 +4547,8 @@ mod tests {
         super::paint_pitch_zero(
             &mut report,
             [
-                (dj_domain::DeckId::A, 1.005, None),
-                (dj_domain::DeckId::B, 1.03, None),
+                (dj_domain::DeckId::A, 1.005, false),
+                (dj_domain::DeckId::B, 1.03, false),
             ],
             &palette,
             false,
@@ -4537,8 +4569,8 @@ mod tests {
         super::paint_pitch_zero(
             &mut report,
             [
-                (dj_domain::DeckId::A, 1.005, None),
-                (dj_domain::DeckId::B, 1.03, None),
+                (dj_domain::DeckId::A, 1.005, false),
+                (dj_domain::DeckId::B, 1.03, false),
             ],
             &palette,
             true,
@@ -4560,8 +4592,8 @@ mod tests {
         super::paint_pitch_zero(
             &mut report,
             [
-                (dj_domain::DeckId::A, 1.03, None),
-                (dj_domain::DeckId::B, 1.03, None),
+                (dj_domain::DeckId::A, 1.03, false),
+                (dj_domain::DeckId::B, 1.03, false),
             ],
             &palette,
             false,
@@ -4580,8 +4612,8 @@ mod tests {
         super::paint_pitch_zero(
             &mut report,
             [
-                (dj_domain::DeckId::A, 1.0, None),
-                (dj_domain::DeckId::B, 1.03, None),
+                (dj_domain::DeckId::A, 1.0, false),
+                (dj_domain::DeckId::B, 1.03, false),
             ],
             &wanted,
             false,
@@ -4666,15 +4698,15 @@ mod tests {
         use super::{PitchLamp, pitch_lamp};
         // One percent is the tolerance the owner named: closer than that is the track's own speed. No hand on the fader,
         // so there is no zero point to stand on and the lamp speaks only about the deck.
-        assert_eq!(pitch_lamp(1.0, None), PitchLamp::AtZero);
-        assert_eq!(pitch_lamp(1.009, None), PitchLamp::AtZero);
-        assert_eq!(pitch_lamp(0.991, None), PitchLamp::AtZero);
+        assert_eq!(pitch_lamp(1.0, false), PitchLamp::AtZero);
+        assert_eq!(pitch_lamp(1.009, false), PitchLamp::AtZero);
+        assert_eq!(pitch_lamp(0.991, false), PitchLamp::AtZero);
         assert_eq!(
-            pitch_lamp(1.02, None),
+            pitch_lamp(1.02, false),
             PitchLamp::Away,
             "2 % away is not zero"
         );
-        assert_eq!(pitch_lamp(0.95, None), PitchLamp::Away);
+        assert_eq!(pitch_lamp(0.95, false), PitchLamp::Away);
         // The other way round is a rule about the colours, not about the truth: `paint_pitch_zero` swaps the first and
         // last states and leaves the zero point alone. The witnesses above check those bytes.
     }

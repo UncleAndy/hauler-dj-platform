@@ -475,7 +475,7 @@ Popup {
                            "aqua", "celeste", "sky", "blue", "purple", "fuscia", "magenta",
                            "azalea", "salmon", "white"] },
                 { label: qsTr("Pitch-zero lamp: at the fader's zero point"),
-                  hint: qsTr("The fader is relative — its position means 'this much pitch from where the hand took it' — so the place that makes the pitch zero moves with the hand. This is the colour of the LED while the fader stands on that place and the deck has not arrived there yet: the engine glides for about 30 ms after a command, and a sync can hold the pitch elsewhere for as long as it likes. `honey` by default; `off` leaves the lamp with the two states it had before."),
+                  hint: qsTr("The fader is relative — its position means 'this much pitch from where the hand took it' — so the place that makes the pitch zero moves with the hand and has no mark on the panel. This is the colour of the LED at the moment the hand puts the fader on that place, and it is held for half a second: the deck follows the command about 30 ms later, which is too short to see. After the hold the lamp goes back to telling the truth about the deck. `honey` by default; `off` leaves the lamp with the two states it had before."),
                   path: "engine:controller.lights.pitch_zero_target", kind: "choice", fallback: "honey",
                   values: ["off", "red", "carrot", "orange", "honey", "yellow", "lime", "green",
                            "aqua", "celeste", "sky", "blue", "purple", "fuscia", "magenta",
