@@ -449,6 +449,9 @@ Pane {
     // batch would never open (the second import of a session).
     property string importBaseline: ""
     property bool importSawRunning: false
+    /// Whether the batch under the list has been seen running: the refresh waits for it to stop, so the rows the DJ is
+    /// reading stay where they are while the files are written (owner's report, 27.11).
+    property bool importSawRunningForList: false
     // How the window is shown: from our own note, until the engine's word about *this* batch.
     // The window is shown by our own note or by the engine's word, whichever comes first: a batch started by
     // something other than this panel (a check, a future caller) still gets its window.
@@ -466,6 +469,18 @@ Pane {
     // The engine has the last word, but only about the batch it was asked about: a state that was already finished
     // when the command left is the previous batch, and a state that is running is this one.
     onImportStateChanged: {
+        // The list is read again once the batch has stopped, and never under it: every answer replaces every row, and a
+        // replaced row is a list that jumps under the eye. A rescan was asked for again every 900 ms, and that was
+        // exactly the jerk the DJ saw (owner's report, 27.11). A rescan and an import are one batch here — the engine
+        // reports both through the same state — so the latch is per batch, and the engine's word is what ends it.
+        if (importState !== null && importState.running === true) {
+            importSawRunningForList = true;
+        } else if (importSawRunningForList) {
+            importSawRunningForList = false;
+            if (browser.section === "collection") {
+                Browser.refreshCollection();
+            }
+        }
         if (!importPending || importState === null) {
             return;
         }
@@ -1573,18 +1588,6 @@ Pane {
     // puts the highlight where the DJ left it.
     // The analysis writes the file, not a snapshot: the numbers appear when the worker is done, so
     // the list is read again a few times instead of being waited on once.
-    // The rescan writes records and rebuilds the index; the list is read again while it runs, so the
-    // rows and the counts follow the files instead of appearing only after a restart.
-    Timer {
-        id: rescanPoll
-        objectName: "rescanPoll"
-        interval: 900
-        repeat: true
-        running: browser.section === "collection" && browser.importState !== null
-                 && browser.importState.running === true
-        onTriggered: Browser.refreshCollection()
-    }
-
     // The batch writes the files, and the numbers reach the rows when it is done. Asking the engine for the
     // page under the running batch was the jerk the DJ saw: every answer replaces every row, and a replaced
     // row is a list that jumps under the eye three times a second. So the list is read again once — when the
@@ -1675,7 +1678,7 @@ Pane {
             }
             CheckBox {
                 objectName: "analyzeParallelBox"
-                text: qsTr("Выполнять параллельно")
+                text: qsTr("Run in parallel")
                 checked: analyzeDialog.parallel
                 onToggled: analyzeDialog.parallel = checked
                 font.pixelSize: browser.listFont
@@ -1685,7 +1688,7 @@ Pane {
             Item { Layout.fillWidth: true }
             Button {
                 objectName: "analyzeStart"
-                text: qsTr("Анализировать")
+                text: qsTr("Analyze")
                 font.pixelSize: browser.listFont
                 onClicked: {
                     analyzeDialog.close();
@@ -1695,7 +1698,7 @@ Pane {
             }
             Button {
                 objectName: "analyzeDialogCancel"
-                text: qsTr("Отменить")
+                text: qsTr("Cancel")
                 font.pixelSize: browser.listFont
                 onClicked: analyzeDialog.close()
             }
@@ -1751,7 +1754,7 @@ Pane {
             Item { Layout.fillWidth: true }
             Button {
                 objectName: "analyzeStop"
-                text: browser.batchStopping ? qsTr("Останавливаю…") : qsTr("Отменить")
+                text: browser.batchStopping ? qsTr("Stopping…") : qsTr("Cancel")
                 enabled: !browser.batchStopping
                 font.pixelSize: browser.listFont
                 onClicked: {
@@ -1787,7 +1790,7 @@ Pane {
             CheckBox {
                 id: parallelBox
                 objectName: "importParallel"
-                text: qsTr("Выполнять параллельно")
+                text: qsTr("Run in parallel")
                 checked: true
                 font.pixelSize: browser.listFont
             }
@@ -1797,13 +1800,13 @@ Pane {
             Item { Layout.fillWidth: true }
             Button {
                 objectName: "importCancel"
-                text: qsTr("Отменить")
+                text: qsTr("Cancel")
                 font.pixelSize: browser.listFont
                 onClicked: importDialog.close()
             }
             Button {
                 objectName: "importConfirm"
-                text: qsTr("Добавить")
+                text: qsTr("Add")
                 font.pixelSize: browser.listFont
                 onClicked: {
                     browser.startImport(browser.selection, parallelBox.checked);
@@ -1861,7 +1864,7 @@ Pane {
             Item { Layout.fillWidth: true }
             Button {
                 objectName: "importStop"
-                text: qsTr("Отменить")
+                text: qsTr("Cancel")
                 font.pixelSize: browser.listFont
                 onClicked: Bridge.cancelImport()
             }
@@ -2054,25 +2057,25 @@ Pane {
             spacing: 4
             Button {
                 objectName: "duplicateSkip"
-                text: qsTr("Пропустить")
+                text: qsTr("Skip")
                 font.pixelSize: browser.listFont
                 onClicked: Bridge.answerImport("skip")
             }
             Button {
                 objectName: "duplicateReplace"
-                text: qsTr("Заменить")
+                text: qsTr("Replace")
                 font.pixelSize: browser.listFont
                 onClicked: Bridge.answerImport("replace")
             }
             Button {
                 objectName: "duplicateAdd"
-                text: qsTr("Добавить")
+                text: qsTr("Add")
                 font.pixelSize: browser.listFont
                 onClicked: Bridge.answerImport("add")
             }
             Button {
                 objectName: "duplicateAddMarked"
-                text: qsTr("Добавить с меткой")
+                text: qsTr("Add as variant")
                 font.pixelSize: browser.listFont
                 onClicked: Bridge.answerImport("add_marked")
             }

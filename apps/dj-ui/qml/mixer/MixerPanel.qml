@@ -237,7 +237,7 @@ Pane {
                         enabled: !mixer.cueOnHardware
                         opacity: mixer.cueOnHardware ? 0.4 : 1.0
                         ToolTip.visible: phonesHover.hovered && mixer.cueOnHardware
-                        ToolTip.text: qsTr("Громкость наушников — ручкой на контроллере")
+                        ToolTip.text: qsTr("Headphone volume — with the knob on the controller")
                         HoverHandler { id: phonesHover }
                     }
 
@@ -271,7 +271,7 @@ Pane {
                         enabled: !mixer.cueOnHardware
                         opacity: mixer.cueOnHardware ? 0.4 : 1.0
                         ToolTip.visible: mixHover.hovered && mixer.cueOnHardware
-                        ToolTip.text: qsTr("Степень микса — ручкой на контроллере")
+                        ToolTip.text: qsTr("Mix level — with the knob on the controller")
                         HoverHandler { id: mixHover }
                     }
                 }

@@ -2281,6 +2281,10 @@ fn serve_client(
     // time, because a second batch would ask questions the DJ never sees.
     let mut import: Option<dj_engine::ImportJob> = None;
 
+    // The rescan in flight, if any. It is a batch of the same shape, and the DJ's Cancel reaches it the same way — a
+    // walk that ignores the button is a window that lies about being stoppable (owner's report, 27.11).
+    let mut rescan: Option<dj_engine::ScanJob> = None;
+
     // The reader only reads, so a quiet client cannot starve the snapshot stream.
     let alerts = alerts;
     // How many messages of each kind arrive, once a second: a hand on the platter sends a seek every block, and
@@ -2716,60 +2720,42 @@ fn serve_client(
                         // rebuilt from the records, which is where the genre counts come from.
                         let worker_cells = Arc::clone(&cells);
                         let worker_store = work.store.clone();
+                        // The stop flag lives here as well as in the walk: the loop has to be able to answer a Cancel,
+                        // and the walk has to be the one that decides when the job is over.
+                        let stop = Arc::new(AtomicBool::new(false));
+                        let walking = Arc::new(AtomicBool::new(true));
+                        // A second rescan stops the first: two walks writing the same records is one walk too many,
+                        // and the DJ asked for this one.
+                        if let Some(previous) = rescan.take() {
+                            previous.cancel.store(true, Ordering::Relaxed);
+                        }
+                        rescan = Some(dj_engine::ScanJob {
+                            cancel: Arc::clone(&stop),
+                            running: Arc::clone(&walking),
+                        });
                         std::thread::spawn(move || {
-                            let folders: Vec<std::path::PathBuf> =
-                                roots.iter().map(std::path::PathBuf::from).collect();
-                            let files = dj_library::index::audio_files_under(&folders);
-                            let mut index = dj_library::Index::open_default().ok();
-                            let mut state = dj_domain::ImportState {
-                                total: files.len(),
-                                done: 0,
-                                placed: 0,
-                                skipped: 0,
-                                failed: 0,
-                                running: true,
-                                current: None,
-                                question: None,
-                            };
-                            worker_cells.set_import(Some(state.clone()));
-                            for file in &files {
-                                state.current = Some(file.display().to_string());
-                                worker_cells.set_import(Some(state.clone()));
-                                // The tags are read again from the file — names and genres — because that is
-                                // what "rescan" means: a record whose tags are stale makes the genre boxes
-                                // and the columns lie.
+                            // The tags are read again from the file — names and genres — because that is what
+                            // "rescan" means: a record whose tags are stale makes the genre boxes and the columns
+                            // lie. Then the file is measured when it has no grid and no key (`force = false`).
+                            let step = |file: &std::path::Path, mut index: Option<&mut dj_library::Index>| {
                                 let _ = dj_engine::meta::write_names(
                                     &worker_store,
                                     volume(),
                                     self::root(),
                                     file,
                                     true,
-                                    index.as_mut(),
+                                    index.as_deref_mut(),
                                 );
-                                // `force = false`: a record that already has a grid and a key is not
-                                // measured again — only what is missing is measured.
-                                if dj_engine::meta::analyze_file(
-                                    &worker_store,
-                                    volume(),
-                                    self::root(),
-                                    file,
-                                    false,
-                                ) {
-                                    state.placed += 1;
-                                } else {
-                                    state.skipped += 1;
-                                }
-                                state.done += 1;
-                                worker_cells.set_import(Some(state.clone()));
-                            }
-                            // The records are the source: the index is rebuilt from them, so the genre
-                            // counts and the list both follow what the files say now.
-                            if let Some(mut index) = index {
-                                let _ = index.rebuild_from(&folders);
-                            }
-                            state.running = false;
-                            state.current = None;
-                            worker_cells.set_import(Some(state));
+                                dj_engine::meta::analyze_file(&worker_store, volume(), self::root(), file, false)
+                            };
+                            dj_engine::run_rescan(
+                                &roots,
+                                &worker_cells,
+                                &stop,
+                                &walking,
+                                &step,
+                                dj_library::Index::open_default().ok(),
+                            );
                         });
                         if alerts
                             .send(ServerMessage::Ack(dj_domain::Ack::accepted(command_id)))
@@ -2781,14 +2767,24 @@ fn serve_client(
                     }
                     dj_engine::Routed::ImportCancel { command_id } => {
                         // An answer, not a gesture: a cancel with no batch to stop is refused, because a
-                        // panel that shows "stopping" for a batch that already ended is lying.
-                        let asked = import
+                        // panel that shows "stopping" for a batch that already ended is lying. A rescan is a
+                        // batch too — the same button, the same window (owner's report, 27.11: the button
+                        // answered nothing while the collection was being rescanned).
+                        let imported = import
                             .as_ref()
                             .map(|job| job.cancel.store(true, Ordering::Relaxed))
                             .is_some();
+                        let scanning = rescan
+                            .as_ref()
+                            .filter(|job| job.running.load(Ordering::Relaxed))
+                            .map(|job| job.cancel.store(true, Ordering::Relaxed))
+                            .is_some();
+                        let asked = imported || scanning;
                         // A cancel that leaves no trace in the log cannot be argued with: either the
                         // command arrives and the batch ignores it, or it never arrives at all.
-                        eprintln!("dj-engine: cancel asked (batch present: {asked})");
+                        eprintln!(
+                            "dj-engine: cancel asked (import: {imported}, rescan: {scanning})"
+                        );
                         let ack = if asked {
                             dj_domain::Ack::accepted(command_id)
                         } else {

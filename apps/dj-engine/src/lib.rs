@@ -3341,6 +3341,94 @@ pub struct ImportJob {
     pub running: Arc<AtomicBool>,
 }
 
+/// What one file of a rescan is asked to do: read its names again, and measure it when it has no record.
+///
+/// Returns whether the file was measured. The walk itself owns no knowledge of tags or grids — that belongs to the
+/// engine's own paths — so the rule "walk the folders, stop when the DJ says so, rebuild the index at the end" can be
+/// exercised without a disk full of music.
+pub type RescanStep<'a> =
+    &'a (dyn Fn(&std::path::Path, Option<&mut dj_library::Index>) -> bool + Sync);
+
+/// Walk the folders the DJ asked to rescan, publishing progress and stopping between files when told.
+///
+/// The walk is the long half of the rescan, and it has to be interruptible: the DJ's Cancel answers nothing if the loop
+/// never looks at the flag (owner's report, 27.11). A stopped walk does **not** rebuild the index — the rebuild is
+/// another walk of the same folders, and a DJ who stopped the rescan asked for it to stop, not to carry on writing. The
+/// records already written stay: half a file's record is still true.
+///
+/// `running` is cleared here, not by the caller: the loop that answers a Cancel reads it to know whether there is
+/// anything to stop.
+pub fn run_rescan(
+    roots: &[String],
+    cells: &StateCells,
+    cancel: &AtomicBool,
+    running: &AtomicBool,
+    step: RescanStep<'_>,
+    index: Option<dj_library::Index>,
+) {
+    let folders: Vec<std::path::PathBuf> = roots.iter().map(std::path::PathBuf::from).collect();
+    let files = dj_library::index::audio_files_under(&folders);
+    let mut index = index;
+    let mut state = dj_domain::ImportState {
+        total: files.len(),
+        done: 0,
+        placed: 0,
+        skipped: 0,
+        failed: 0,
+        running: true,
+        current: None,
+        question: None,
+    };
+    cells.set_import(Some(state.clone()));
+    let mut stopped = false;
+    for file in &files {
+        if cancel.load(Ordering::Relaxed) {
+            stopped = true;
+            break;
+        }
+        state.current = Some(file.display().to_string());
+        cells.set_import(Some(state.clone()));
+        if step(file, index.as_mut()) {
+            state.placed += 1;
+        } else {
+            state.skipped += 1;
+        }
+        state.done += 1;
+        cells.set_import(Some(state.clone()));
+    }
+    // The records are the source: the index is rebuilt from them, so the genre counts and the list both follow what the
+    // files say now. A walk that was stopped does not rebuild.
+    if let Some(mut index) = index
+        && !stopped
+    {
+        let _ = index.rebuild_from(&folders);
+    }
+    if stopped {
+        crate::log::info(format!(
+            "the rescan was stopped after {} of {} files",
+            state.done,
+            files.len()
+        ));
+    }
+    state.running = false;
+    state.current = None;
+    running.store(false, Ordering::Relaxed);
+    cells.set_import(Some(state));
+}
+
+/// A rescan in flight, as the engine's main loop sees it.
+///
+/// The walk has the same shape as an import's — files one after another, each writing a record — and the DJ's Cancel has
+/// to reach it the way it reaches a batch. It did not: the walk held no flag at all, so the button answered nothing and
+/// the collection went on being measured (owner's report, 27.11). `running` says whether a cancel has anything to stop;
+/// a flag set after the walk has finished would make the panel say "stopping" for a job that no longer exists.
+pub struct ScanJob {
+    /// Set to stop the walk between files.
+    pub cancel: Arc<AtomicBool>,
+    /// False once the walk has finished, whether it walked everything or was stopped.
+    pub running: Arc<AtomicBool>,
+}
+
 /// Add the DJ's files to the collection, publishing progress and asking about duplicates.
 ///
 /// Runs on its own thread: a batch of files must not block the mix, and a question must not block the
