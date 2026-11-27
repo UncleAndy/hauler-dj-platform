@@ -80,6 +80,7 @@ fn a_row_keeps_everything_the_list_shows() {
         play_count: 0,
         last_played_ms: None,
         analysis_lock: false,
+        variable_bpm: false,
     };
     let wire = dj_engine::collection_row(&row);
     assert_eq!(wire.fingerprint, "10:a:b");

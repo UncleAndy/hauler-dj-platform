@@ -66,6 +66,13 @@ pub struct Anchor {
     pub bpm: Option<f64>,
 }
 
+/// How far a track's stretches may differ and still count as one tempo: three percent (owner's rule, 26.11).
+///
+/// The comparison is the fastest stretch against the slowest. A track whose sections sit at 128 and 132 is one tempo to
+/// an ear and two numbers to a list, and the list has to say so instead of printing one of them as if it were the whole
+/// track.
+pub const VARIABLE_BPM_TOLERANCE: f64 = 0.03;
+
 /// The beat grid: a tempo and the frame of its first beat, plus manual anchors.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BeatGrid {
@@ -77,6 +84,26 @@ pub struct BeatGrid {
     /// its four, which is what those files were drawn with.
     #[serde(default = "four_beats_to_the_bar")]
     pub beats_per_bar: u8,
+}
+
+impl BeatGrid {
+    /// Whether this grid holds more than one tempo.
+    ///
+    /// The first stretch states its tempo in `bpm`; the anchors state theirs, one per stretch. A file written before
+    /// anchors carried a tempo states none, and such a grid cannot be told apart from a single-tempo one: it answers
+    /// `false`, which is what it was drawn as.
+    pub fn is_variable(&self) -> bool {
+        let mut slowest = self.bpm;
+        let mut fastest = self.bpm;
+        for anchor in &self.anchors {
+            let Some(bpm) = anchor.bpm.filter(|value| value.is_finite() && *value > 0.0) else {
+                continue;
+            };
+            slowest = slowest.min(bpm);
+            fastest = fastest.max(bpm);
+        }
+        slowest.is_finite() && slowest > 0.0 && fastest > slowest * (1.0 + VARIABLE_BPM_TOLERANCE)
+    }
 }
 
 /// A bar of four beats: what every grid without a measurement behind it is.
@@ -272,5 +299,52 @@ impl TrackMeta {
     pub fn bump(&mut self, now_ms: u64) {
         self.revision = self.revision.saturating_add(1);
         self.updated_at_ms = now_ms;
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use super::{Anchor, BeatGrid};
+
+    fn grid(bpm: f64, anchors: Vec<Anchor>) -> BeatGrid {
+        BeatGrid {
+            bpm,
+            first_beat_frame: 0,
+            anchors,
+            beats_per_bar: 4,
+        }
+    }
+
+    fn anchor(frame: u64, bpm: Option<f64>) -> Anchor {
+        Anchor {
+            frame,
+            beat: frame / 22_500,
+            bpm,
+        }
+    }
+
+    #[test]
+    fn a_track_whose_sections_differ_by_more_than_three_percent_is_more_than_one_tempo() {
+        assert!(
+            !grid(128.0, vec![]).is_variable(),
+            "one stretch is one tempo"
+        );
+        assert!(
+            !grid(128.0, vec![anchor(960_000, Some(131.0))]).is_variable(),
+            "131 against 128 is 2,3 % — one tempo to an ear"
+        );
+        assert!(
+            grid(128.0, vec![anchor(960_000, Some(132.0))]).is_variable(),
+            "132 against 128 is 3,125 % — the list must say so"
+        );
+        assert!(
+            !grid(128.0, vec![anchor(960_000, None)]).is_variable(),
+            "a file written before anchors carried a tempo cannot be told apart from a single-tempo one"
+        );
+        assert!(
+            grid(128.0, vec![anchor(960_000, Some(120.0))]).is_variable(),
+            "slower sections count the same as faster ones"
+        );
     }
 }

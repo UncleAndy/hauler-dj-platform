@@ -139,7 +139,7 @@ pub fn restore(
                     prepared.grid = Some(grid.clone());
                     prepared.static_info.grid = Some(grid.clone());
                     if let Some(track) = prepared.track.as_mut() {
-                        track.bpm = Some(grid.bpm());
+                        track.bpm = Some(grid.dominant_bpm(track.duration_frames));
                         track.first_beat_frame = Some(grid.first_beat_frame());
                         track.grid = Some(grid);
                     }
@@ -216,8 +216,11 @@ pub fn write_beatgrid(
     // A stored grid is already the decision: the condition above keeps the automatic pass away from a
     // track that has one, so no flag is needed for that. The lock is the DJ's switch and stays his —
     // setting it here took the Measure button away the moment he used it once.
+    // One number stands for the track: the stretch that plays longest, not the one the file happens to start with. A
+    // list built from this row shows the tempo a DJ mixes with (owner's rule, 26.11).
+    let dominant = grid.dominant_bpm(meta.fingerprint.duration_frames);
     meta.beatgrid = Some(dj_library::BeatGrid {
-        bpm: grid.bpm(),
+        bpm: dominant,
         first_beat_frame: grid.first_beat_frame(),
         beats_per_bar: grid.beats_per_bar(),
         anchors: grid
@@ -470,6 +473,7 @@ pub fn row_of(meta: &TrackMeta, path: &Path) -> dj_library::TrackRow {
         play_count: 0,
         last_played_ms: None,
         analysis_lock: meta.analysis_lock,
+        variable_bpm: false,
     }
 }
 

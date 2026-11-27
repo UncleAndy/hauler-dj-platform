@@ -1058,6 +1058,19 @@ Pane {
                       : (current ? UiSettings.themePlayhead : ordinary);
     }
 
+    /// The tempo column of a track that is more than one tempo: the number is the stretch that plays
+    /// longest, and the colour says a single number cannot stand for the whole track (owner's request,
+    /// 26.11). A chosen row keeps its own colour — the selection outranks every other signal.
+    function bpmTextColour(entry, chosen, current, ordinary) {
+        if (chosen) {
+            return UiSettings.themeTextOnAccent;
+        }
+        if (entry !== undefined && entry.variable_bpm === true) {
+            return "#ffd400";
+        }
+        return current ? UiSettings.themePlayhead : ordinary;
+    }
+
     function columnIndexOf(id) {
         for (let i = 0; i < columns.length; ++i) {
             if (columns[i].id === id) {
@@ -2953,7 +2966,8 @@ Pane {
                             text: browser.columnText(row.modelData, "bpm")
                             horizontalAlignment: Text.AlignRight
                             font: browser.listFace
-                            color: browser.rowTextColour(row.chosen, row.current, UiSettings.themeTextDim)
+                            color: browser.bpmTextColour(row.modelData, row.chosen, row.current,
+                                                         UiSettings.themeTextDim)
                         }
                         Label {
                             objectName: "collectionCell_recent_" + row.index

@@ -143,6 +143,34 @@ impl BeatGrid {
         self.segments[0].bpm
     }
 
+    /// The tempo that holds the most of the track.
+    ///
+    /// A list has one column for the tempo, and a track whose sections disagree needs a number that stands for the whole
+    /// of it: the stretch that plays longest is the honest one (owner's rule, 26.11). Weight is time, taken from the
+    /// frames a stretch covers — from its first beat to the next stretch's, and for the last one to the file's end,
+    /// `end_frame`.
+    ///
+    /// A caller that does not know the length leaves the last stretch without weight, so the answer comes from the
+    /// stretches that do have one. That is a worse answer than a file's own length gives, and never a wrong one: it is
+    /// still a tempo the track really plays.
+    pub fn dominant_bpm(&self, end_frame: Option<u64>) -> f64 {
+        let weight_of = |index: usize| -> f64 {
+            let segment = self.segments[index];
+            match self.segments.get(index + 1) {
+                Some(next) => next.frame.saturating_sub(segment.frame) as f64,
+                None => end_frame.map_or(0.0, |end| end.saturating_sub(segment.frame) as f64),
+            }
+        };
+        let mut best = 0;
+        for index in 1..self.segments.len() {
+            // Strictly greater: a tie goes to the stretch the track starts with.
+            if weight_of(index) > weight_of(best) {
+                best = index;
+            }
+        }
+        self.segments[best].bpm
+    }
+
     /// Frames per beat in a segment, at a sample rate.
     fn frames_per_beat(segment: &BeatSegment, rate: f64) -> f64 {
         rate * 60.0 / segment.bpm
@@ -462,5 +490,65 @@ impl BeatGrid {
             segments[index].bpm = length;
         }
         Self::rebuilt(segments, beats_per_bar)
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use super::{BeatGrid, BeatSegment};
+
+    /// Five minutes at 128, then a second stretch at 132: one number has to stand for the track, and time decides.
+    fn two_tempos() -> BeatGrid {
+        BeatGrid::from_segments(vec![
+            BeatSegment {
+                frame: 0,
+                beat: 0,
+                bpm: 128.0,
+            },
+            BeatSegment {
+                frame: 5 * 60 * 48_000,
+                beat: 640,
+                bpm: 132.0,
+            },
+        ])
+        .expect("a grid of two tempos")
+    }
+
+    #[test]
+    fn the_tempo_that_holds_most_of_the_track_is_the_one_a_list_shows() {
+        let grid = two_tempos();
+        assert_eq!(
+            grid.dominant_bpm(Some(8 * 60 * 48_000)),
+            128.0,
+            "five minutes against three: the first stretch holds the track"
+        );
+        assert_eq!(
+            grid.dominant_bpm(Some(12 * 60 * 48_000)),
+            132.0,
+            "seven minutes against five: now the second one does"
+        );
+        assert_eq!(
+            grid.dominant_bpm(Some(10 * 60 * 48_000)),
+            128.0,
+            "a tie goes to the stretch the track starts with"
+        );
+        assert_eq!(
+            grid.dominant_bpm(Some(5 * 60 * 48_000)),
+            128.0,
+            "a last stretch with no time at all does not win"
+        );
+        assert_eq!(
+            grid.dominant_bpm(None),
+            128.0,
+            "without the file's length the last stretch has no weight, and the answer is still a tempo the track plays"
+        );
+        assert_eq!(
+            BeatGrid::single(126.0, 0)
+                .expect("one tempo")
+                .dominant_bpm(None),
+            126.0,
+            "a track of one tempo answers with it"
+        );
     }
 }

@@ -67,6 +67,7 @@ fn row(meta: &TrackMeta, path: &Path, title: &str) -> TrackRow {
         play_count: 0,
         last_played_ms: None,
         analysis_lock: meta.analysis_lock,
+        variable_bpm: false,
     }
 }
 
@@ -284,4 +285,42 @@ fn copy_tree(from: &Path, to: &Path) {
             std::fs::copy(entry.path(), &target).expect("copy");
         }
     }
+}
+
+#[test]
+fn a_row_says_when_a_track_is_more_than_one_tempo() {
+    // The row is a cache over the record, so the flag is read from the record every time: a grid edited by hand and a
+    // grid measured by the detector land here the same way.
+    let dir = workspace("variable-bpm");
+    let path = track(&dir, "two-tempos.flac");
+    let mut meta = record(&path, 1, 0);
+    meta.beatgrid = Some(dj_library::BeatGrid {
+        bpm: 128.0,
+        first_beat_frame: 0,
+        anchors: vec![dj_library::Anchor {
+            frame: 960_000,
+            beat: 256,
+            bpm: Some(132.0),
+        }],
+        beats_per_bar: 4,
+    });
+    let row = dj_library::index::row_of(&meta, &path);
+    assert!(row.variable_bpm, "3,125 % is more than one tempo");
+    assert_eq!(
+        row.bpm,
+        Some(128.0),
+        "and the number is still the grid's own"
+    );
+    if let Some(grid) = meta.beatgrid.as_mut() {
+        grid.anchors[0].bpm = Some(131.0);
+    }
+    assert!(
+        !dj_library::index::row_of(&meta, &path).variable_bpm,
+        "2,3 % is one tempo"
+    );
+    meta.beatgrid = None;
+    assert!(
+        !dj_library::index::row_of(&meta, &path).variable_bpm,
+        "a track without a grid is not a variable one"
+    );
 }

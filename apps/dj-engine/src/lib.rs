@@ -2348,6 +2348,7 @@ pub fn collection_row(row: &dj_library::TrackRow) -> dj_domain::CollectionRow {
         duration_frames: row.duration_frames,
         sample_rate: row.sample_rate,
         analysis_lock: row.analysis_lock,
+        variable_bpm: row.variable_bpm,
         last_played_ms: row.last_played_ms,
     }
 }
@@ -2631,7 +2632,8 @@ pub fn prepare_track_with_key(
     });
     let mut track = track;
     if let Some(grid) = measured_grid.clone() {
-        track.bpm = Some(grid.bpm());
+        // One number stands for the track: the stretch that holds the most of it (owner's rule, 26.11).
+        track.bpm = Some(grid.dominant_bpm(track.duration_frames));
         track.first_beat_frame = Some(grid.first_beat_frame());
         track.grid = Some(grid);
     }

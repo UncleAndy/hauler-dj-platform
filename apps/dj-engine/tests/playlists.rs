@@ -382,6 +382,7 @@ fn a_page_of_a_playlist_keeps_the_rows_whose_files_have_gone() {
             play_count: 0,
             last_played_ms: None,
             analysis_lock: false,
+            variable_bpm: false,
         })
         .expect("a track the index knows");
 

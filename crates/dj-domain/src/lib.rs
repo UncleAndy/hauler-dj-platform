@@ -1820,6 +1820,10 @@ pub struct CollectionRow {
     /// True when the DJ locked this track's beat grid.
     #[serde(default, skip_serializing_if = "is_false")]
     pub analysis_lock: bool,
+    /// True when the grid holds more than one tempo: the `bpm` above is then the stretch that plays longest, and the
+    /// list says the number is not the whole track (owner's request, 26.11).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub variable_bpm: bool,
     /// When the track was last played, milliseconds since the epoch.
     ///
     /// The column that marks a track as "played recently" is decided against the window the engine

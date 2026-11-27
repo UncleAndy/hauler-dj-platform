@@ -1059,7 +1059,7 @@ fn run(argv: &[String]) -> Result<(), String> {
                             {
                                 slot.grid = Some(*grid.clone());
                                 if let Some(track) = slot.track.as_mut() {
-                                    track.bpm = Some(grid.bpm());
+                                    track.bpm = Some(grid.dominant_bpm(track.duration_frames));
                                     track.first_beat_frame = Some(grid.first_beat_frame());
                                     track.grid = Some(*grid);
                                 }
