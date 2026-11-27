@@ -341,3 +341,37 @@ fn two_tempos_are_stored_with_their_own_tempos_and_the_row_says_so() {
     assert_eq!(row.bpm, Some(128.0), "with the dominant number beside it");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_split_and_a_doubled_stretch_leave_two_tempos() {
+    // The DJ's route, button by button: split at the play head, then type the tempo of the new stretch (owner's
+    // report, 26.11). Each step has to leave a grid the next can read, and the second stretch has to keep its own
+    // tempo — an anchor that states no tempo makes the record read as one tempo again.
+    let rate = 48_000_u32;
+    let start = dj_domain::BeatGrid::single(128.0, 0).expect("one tempo");
+    let split = dj_engine::edit_grid(
+        Some(&start),
+        &dj_domain::GridEdit::Split {
+            frame: 10 * u64::from(rate),
+        },
+        rate,
+    )
+    .expect("a split makes two stretches");
+    assert_eq!(split.segments().len(), 2, "two stretches after the split");
+    let retimed = dj_engine::edit_grid(
+        Some(&split),
+        &dj_domain::GridEdit::StretchTempo {
+            frame: 10 * u64::from(rate),
+            bpm: 256.0,
+        },
+        rate,
+    )
+    .expect("the second stretch takes the tempo that was typed");
+    assert_eq!(retimed.segments().len(), 2);
+    assert_eq!(retimed.segments()[1].bpm, 256.0, "twice the tempo");
+    assert_eq!(
+        retimed.stored_anchors(),
+        vec![(10 * u64::from(rate), retimed.segments()[1].beat, 256.0)],
+        "and the anchor carries that tempo into the record"
+    );
+}

@@ -90,4 +90,28 @@ fn a_row_keeps_everything_the_list_shows() {
     assert_eq!(wire.musical_key.as_deref(), Some("8d"));
     assert_eq!(wire.duration_frames, Some(48_000));
     assert_eq!(wire.rating, 4);
+    assert!(
+        !wire.variable_bpm,
+        "a track of one tempo says nothing about its grid"
+    );
+
+    // The flag has to survive the wire as well: the window draws the tempo in another colour from the page, and a field
+    // the page does not carry is a field no list can see (owner's report, 26.11).
+    let mut two_tempos = row;
+    two_tempos.variable_bpm = true;
+    let wire = dj_engine::collection_row(&two_tempos);
+    assert!(wire.variable_bpm, "the page carries the flag");
+    let json = serde_json::to_value(&wire).expect("the page is JSON on the wire");
+    assert_eq!(
+        json.get("variable_bpm").and_then(|value| value.as_bool()),
+        Some(true),
+        "and the JSON a page is written as says so"
+    );
+    let mut one_tempo = two_tempos.clone();
+    one_tempo.variable_bpm = false;
+    let json = serde_json::to_value(dj_engine::collection_row(&one_tempo)).expect("json");
+    assert!(
+        json.get("variable_bpm").is_none(),
+        "a steady track does not write the field at all: the wire stays what it was"
+    );
 }

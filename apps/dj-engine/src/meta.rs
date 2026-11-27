@@ -236,6 +236,30 @@ pub fn write_beatgrid(
     if existed {
         meta.bump(now_ms);
     }
+    // What the file now says, in one line: a list that shows the wrong tempo is either a record written differently or
+    // a list not asked again, and this line tells the two apart without guessing (owner's report, 26.11: an edited grid
+    // still showed the old colour).
+    let stretches: Vec<String> = grid
+        .segments()
+        .iter()
+        .map(|segment| format!("{:.2}", segment.bpm))
+        .collect();
+    crate::log::info(format!(
+        "{}: grid {:.2} BPM, {} stretch(es) [{}]{}",
+        path.display(),
+        dominant,
+        stretches.len(),
+        stretches.join(" / "),
+        if meta
+            .beatgrid
+            .as_ref()
+            .is_some_and(dj_library::meta::BeatGrid::is_variable)
+        {
+            ", the list will say it is more than one tempo"
+        } else {
+            ""
+        }
+    ));
     store
         .save(volume, root, path, &meta)
         .map(|_| {
