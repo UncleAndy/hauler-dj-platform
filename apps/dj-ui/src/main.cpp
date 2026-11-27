@@ -2264,6 +2264,48 @@ int main(int argc, char *argv[])
     }
 
     if (parser.isSet(keyCheckOption)) {
+        // The wheel's rules first, and without an engine: they are arithmetic on two key names, and a table here is the
+        // reason the rules live in one function instead of in the list (owner's specification, 26.11). Every rule of the
+        // highlight is named, both notations are read, and a key nobody can read is no rule at all.
+        {
+            const struct {
+                const char *key;
+                const char *base;
+                const char *wanted;
+            } wheel[] = {
+                {"8m", "8m", "same"},
+                {"8A", "8a", "same"},
+                {"9m", "8m", "up"},
+                {"1m", "12m", "up"},
+                {"7m", "8m", "down"},
+                {"12m", "1m", "down"},
+                {"8d", "8m", "parallel"},
+                {"8A", "8B", "parallel"},
+                {"10m", "8m", "boost"},
+                {"3m", "8m", "boost"},
+                {"9d", "8m", "diagonal"},
+                {"9A", "8B", "diagonal"},
+                {"8m", "", ""},
+                {"", "8m", ""},
+                {"8m", "bogus", ""},
+                {"13m", "8m", ""},
+                {"2m", "1m", "up"},
+                {"12m", "1m", "down"},
+            };
+            for (const auto &rule : wheel) {
+                const QString got = browser.keyRelation(QString::fromLatin1(rule.key),
+                                                        QString::fromLatin1(rule.base));
+                if (got != QString::fromLatin1(rule.wanted)) {
+                    std::fprintf(stderr,
+                                 "dj-ui: %s against %s is \"%s\", the wheel says \"%s\"\n",
+                                 rule.key, rule.base, qPrintable(got), rule.wanted);
+                    return 1;
+                }
+            }
+            std::fprintf(stdout,
+                         "dj-ui: the wheel's rules hold: same key, a step up and down, the parallel key, the two-step "
+                         "lift, the diagonal, and a key nobody can read is no rule\n");
+        }
         // The key is a measurement, so the check reads the two places a person reads it: the label in
         // the deck's header, and the file the engine wrote beside the track. A key that only exists in
         // memory is a key the next load forgets.

@@ -43,6 +43,15 @@ class LayoutSettings : public QObject
     // The folders the browser's Collection section lists. One collection may live on several disks,
     // and each root holds its own tracks and its own .djmeta; empty means the default root.
     Q_PROPERTY(QStringList collectionRoots READ collectionRoots WRITE setCollectionRoots NOTIFY changed)
+    /// The colours the collection gives a key that mixes with the one playing, one per rule of the Open Key wheel
+    /// (owner's request, 26.11): the same key, a step up (more energy), a step down, the parallel key, a two-step lift,
+    /// and the diagonal. A name of `off` turns that rule's highlight away — the two advanced rules are off by default.
+    Q_PROPERTY(QString keySame READ keySame WRITE setKeySame NOTIFY changed)
+    Q_PROPERTY(QString keyUp READ keyUp WRITE setKeyUp NOTIFY changed)
+    Q_PROPERTY(QString keyDown READ keyDown WRITE setKeyDown NOTIFY changed)
+    Q_PROPERTY(QString keyParallel READ keyParallel WRITE setKeyParallel NOTIFY changed)
+    Q_PROPERTY(QString keyBoost READ keyBoost WRITE setKeyBoost NOTIFY changed)
+    Q_PROPERTY(QString keyDiagonal READ keyDiagonal WRITE setKeyDiagonal NOTIFY changed)
     /// The genres the collection is narrowed to: the chips the DJ left on, kept between runs.
     Q_PROPERTY(QStringList collectionGenres READ collectionGenres WRITE setCollectionGenres NOTIFY changed)
     // Visible fraction of a track in a deck's main waveform. Zero means "the deck's own default", so a
@@ -121,6 +130,20 @@ public:
     bool hideDeckButtonsWithController() const { return m_hideDeckButtonsWithController; }
     void setHideDeckButtonsWithController(bool on);
     void setWaveformSpan(double span);
+
+    // The key highlight: a colour name per rule of the wheel.
+    QString keySame() const { return m_keySame; }
+    void setKeySame(const QString &colour) { applyKeyColour(m_keySame, colour); }
+    QString keyUp() const { return m_keyUp; }
+    void setKeyUp(const QString &colour) { applyKeyColour(m_keyUp, colour); }
+    QString keyDown() const { return m_keyDown; }
+    void setKeyDown(const QString &colour) { applyKeyColour(m_keyDown, colour); }
+    QString keyParallel() const { return m_keyParallel; }
+    void setKeyParallel(const QString &colour) { applyKeyColour(m_keyParallel, colour); }
+    QString keyBoost() const { return m_keyBoost; }
+    void setKeyBoost(const QString &colour) { applyKeyColour(m_keyBoost, colour); }
+    QString keyDiagonal() const { return m_keyDiagonal; }
+    void setKeyDiagonal(const QString &colour) { applyKeyColour(m_keyDiagonal, colour); }
 
     // The order of channel strips in the mixer, left to right, e.g. "CABD".
     QString channelOrder() const { return m_channelOrder; }
@@ -204,6 +227,17 @@ private:
     bool m_scrubAudible = false;
     // On by default: a controller under the hands is the case this switch was asked for.
     bool m_hideDeckButtonsWithController = true;
+    /// One color of the key highlight. The name is the panel's own vocabulary (eighteen names, `off` for none), so a
+    /// DJ reads the same words in both places and the window keeps no second table of colours.
+    void applyKeyColour(QString &slot, const QString &colour);
+    QString m_keySame = QStringLiteral("green");
+    QString m_keyUp = QStringLiteral("lime");
+    QString m_keyDown = QStringLiteral("sky");
+    QString m_keyParallel = QStringLiteral("yellow");
+    // The two advanced rules are off until a DJ asks for them: they describe a lift and a diagonal, and a list that
+    // colours six rules at once is a list with no colour that means anything.
+    QString m_keyBoost = QStringLiteral("off");
+    QString m_keyDiagonal = QStringLiteral("off");
     QTimer *m_saveTimer = nullptr;
     UiSettings *m_ui = nullptr;
     QString m_file;

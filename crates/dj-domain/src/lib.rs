@@ -2189,6 +2189,14 @@ pub struct Snapshot {
     /// showing the old tempo and the old colour).
     #[serde(default, skip_serializing_if = "is_zero_count")]
     pub library_revision: u64,
+    /// The key the room is dancing to, as a key name (`8d`, `8m`): the master's while a master plays, otherwise the
+    /// first deck that does.
+    ///
+    /// A list colours a track by how its own key sits against this one — the same, a step up or down the wheel, the
+    /// parallel key — so the reference travels with the snapshot and the client does not guess which deck leads
+    /// (owner's request, 26.11). Absent when nothing plays, which is the same as "no colour anywhere".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_reference: Option<String>,
     /// Внешняя модель удара: что установлено (ADR-0012).
     ///
     /// Defaulted and skipped when nothing is installed, so the wire stays byte-identical on a build

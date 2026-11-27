@@ -375,3 +375,35 @@ fn a_split_and_a_doubled_stretch_leave_two_tempos() {
         "and the anchor carries that tempo into the record"
     );
 }
+
+#[test]
+fn the_playing_master_decides_the_key_the_list_colours_by() {
+    // The rule behind the highlight (owner's request, 26.11): the key of the track playing, and of the master when two
+    // play. Described with the three facts the choice needs, so the check is about the choice and not about the audio.
+    let choose = |decks: Vec<(bool, bool, Option<&str>)>| dj_engine::choose_key_reference(decks);
+    assert_eq!(
+        choose(vec![(true, false, Some("8m")), (true, true, Some("5d"))]),
+        Some("5d".to_owned()),
+        "two decks playing: the master's key is the reference"
+    );
+    assert_eq!(
+        choose(vec![(true, false, Some("8m")), (false, true, Some("5d"))]),
+        Some("8m".to_owned()),
+        "a master that is not playing is not what the room hears"
+    );
+    assert_eq!(
+        choose(vec![(false, false, Some("8m")), (true, false, Some("3d"))]),
+        Some("3d".to_owned()),
+        "one deck playing, whatever the other holds"
+    );
+    assert_eq!(
+        choose(vec![(false, false, Some("8m"))]),
+        None,
+        "nothing plays"
+    );
+    assert_eq!(
+        choose(vec![(true, false, Some("   "))]),
+        None,
+        "a deck playing a track whose key was never measured says nothing"
+    );
+}

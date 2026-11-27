@@ -322,6 +322,7 @@ impl Engine {
             recent_window_ms: 0,
             frame_hz: 0,
             library_revision: 0,
+            key_reference: None,
             epoch: self.epoch,
             audio_clock_samples: self.clock,
             sample_rate: self.sample_rate,

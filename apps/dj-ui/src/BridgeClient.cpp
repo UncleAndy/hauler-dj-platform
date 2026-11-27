@@ -1869,6 +1869,50 @@ int camelot(const QString &key, bool *read)
     return wheel * 2 + (minor ? 1 : 0);
 }
 
+/// How a row's key sits against the key that is playing, as a word the list can pick a colour for.
+///
+/// The rules are the ones a DJ mixes by on the Open Key wheel (owner's specification, 26.11): the same key; a step up
+/// the wheel (more energy) and a step down (less); the same number in the other mode, which is the parallel key; a
+/// two-step lift — +2, or +7 the other way round; and the diagonal, up one and across. Both notations the list may hold
+/// are read by `camelot`, so `8m` against `8A` is a comparison of the same wheel and not of two strings.
+///
+/// A word, not a colour: the colours are settings, and a check can compare words without a scene.
+QString keyRelationOf(const QString &key, const QString &reference)
+{
+    bool rowRead = false;
+    bool baseRead = false;
+    const int row = camelot(key, &rowRead);
+    const int base = camelot(reference, &baseRead);
+    if (!rowRead || !baseRead) {
+        return QString();
+    }
+    const int rowWheel = row / 2;
+    const bool rowMinor = (row % 2) == 1;
+    const int baseWheel = base / 2;
+    const bool baseMinor = (base % 2) == 1;
+    // The wheel is a circle of twelve: after 12 comes 1, and before 1 comes 12.
+    const auto step = [baseWheel](int offset) { return ((baseWheel - 1 + offset + 12) % 12) + 1; };
+    if (rowWheel == baseWheel && rowMinor == baseMinor) {
+        return QStringLiteral("same");
+    }
+    if (rowMinor == baseMinor && rowWheel == step(1)) {
+        return QStringLiteral("up");
+    }
+    if (rowMinor == baseMinor && rowWheel == step(-1)) {
+        return QStringLiteral("down");
+    }
+    if (rowWheel == baseWheel) {
+        return QStringLiteral("parallel");
+    }
+    if (rowMinor == baseMinor && (rowWheel == step(2) || rowWheel == step(7))) {
+        return QStringLiteral("boost");
+    }
+    if (rowMinor != baseMinor && rowWheel == step(1)) {
+        return QStringLiteral("diagonal");
+    }
+    return QString();
+}
+
 /// The order of two rows in one column, ascending.
 int compareColumn(const QVariantMap &left, const QVariantMap &right, const QString &column)
 {
@@ -1929,6 +1973,11 @@ int compareRows(const QVariantMap &left, const QVariantMap &right, const QVarian
 }
 
 } // namespace
+
+QString FileBrowser::keyRelation(const QString &key, const QString &reference) const
+{
+    return keyRelationOf(key, reference);
+}
 
 void FileBrowser::sortCollection(const QString &column, bool shift)
 {

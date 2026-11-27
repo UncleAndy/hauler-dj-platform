@@ -441,6 +441,26 @@ pub fn apply(decks: &mut [Deck], mixer: &mut Mixer, command: &ScheduledCommand, 
     }
 }
 
+/// The key the room is dancing to: the master's while a master plays, otherwise the first deck that does.
+///
+/// The signature is the three facts the choice needs, not the deck structure: a test can then describe a mixer with
+/// tuples instead of building four deck descriptions, which is the same rule the panel's pure functions follow. A deck
+/// that plays a track whose key was never measured says nothing — not "unknown", which a list would have to draw.
+pub fn choose_key_reference<'a>(
+    decks: impl IntoIterator<Item = (bool, bool, Option<&'a str>)>,
+) -> Option<String> {
+    decks
+        .into_iter()
+        .filter(|(playing, _, _)| *playing)
+        .filter_map(|(_, master, key)| {
+            let key = key.map(str::trim)?;
+            (!key.is_empty()).then(|| (master, key.to_owned()))
+        })
+        // The master first: `false` sorts before `true` for a deck that is not one.
+        .min_by_key(|(master, _)| !*master)
+        .map(|(_, key)| key)
+}
+
 pub fn snapshot(
     decks: &[Deck],
     mixer: &Mixer,
@@ -461,6 +481,8 @@ pub fn snapshot(
         recent_window_ms: 0,
         frame_hz: 0,
         library_revision: crate::meta::GRIDS_WRITTEN.load(std::sync::atomic::Ordering::Relaxed),
+        // A snapshot built from the mixer alone has no decks to read a key from.
+        key_reference: None,
         import: None,
         analysis: None,
         collection: None,
@@ -1805,11 +1827,20 @@ impl StateCells {
                 deck.phase_error_ms = Some(f64::from(f32::from_bits(bits)));
             }
         }
+        // Which key the room is dancing to (owner's request, 26.11).
+        let key_reference = choose_key_reference(decks.iter().map(|deck| {
+            (
+                deck.playing,
+                deck.master,
+                deck.track.as_ref().and_then(|track| track.key.as_deref()),
+            )
+        }));
         Snapshot {
             plays: Vec::new(),
             recent_window_ms: 0,
             frame_hz: 0,
             library_revision: crate::meta::GRIDS_WRITTEN.load(Ordering::Relaxed),
+            key_reference,
             // The monitoring bus is measured by the mixer, not by the cells: this snapshot reads the two knobs and
             // leaves the meter at rest.
             cue: dj_domain::Levels::default(),

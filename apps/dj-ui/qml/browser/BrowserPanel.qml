@@ -1085,6 +1085,56 @@ Pane {
                       : (current ? UiSettings.themePlayhead : ordinary);
     }
 
+    /// The panel's colour names, which are the window's too: a key colour is chosen from the same eighteen words the
+    /// hardware uses, so a DJ reads one vocabulary in both places. `off` is the empty string — no highlight.
+    readonly property var keyColourNames: ({
+        "off": "", "red": "#cc0000", "carrot": "#cc5e00", "orange": "#cc7800", "honey": "#cc9200",
+        "yellow": "#cccc00", "lime": "#81cc00", "green": "#00cc00", "aqua": "#00cc49",
+        "celeste": "#00cccc", "sky": "#0091cc", "blue": "#0000cc", "purple": "#cc00cc",
+        "fuscia": "#ad65ff", "magenta": "#cc0079", "azalea": "#cc477e", "salmon": "#cc4761",
+        "white": "#cccccc"
+    })
+
+    /// The colour a key wears when it mixes with the one playing, or "" when no rule applies.
+    ///
+    /// The rules are one function's to know (`Browser.keyRelation`) and the colour is the layout's: the rules answer with
+    /// a word, and the layout says what that word looks like. Nothing here guesses about the music — a track whose key
+    /// was never measured, and a room with nothing playing, both answer with no colour at all.
+    function keyHighlight(entry) {
+        if (entry === undefined || entry === null) {
+            return "";
+        }
+        const reference = Bridge.snapshot !== undefined && Bridge.snapshot.key_reference !== undefined
+                          && Bridge.snapshot.key_reference !== null
+                          ? String(Bridge.snapshot.key_reference) : "";
+        if (reference === "") {
+            return "";
+        }
+        const rule = Browser.keyRelation(String(entry.key !== undefined ? entry.key : ""), reference);
+        if (rule === "") {
+            return "";
+        }
+        const names = {
+            same: LayoutState.keySame, up: LayoutState.keyUp, down: LayoutState.keyDown,
+            parallel: LayoutState.keyParallel, boost: LayoutState.keyBoost,
+            diagonal: LayoutState.keyDiagonal
+        };
+        const colour = browser.keyColourNames[String(names[rule]).toLowerCase()];
+        return colour === undefined ? "" : colour;
+    }
+
+    /// The key column's colour: a chosen row keeps its own, then the highlight, then the ordinary rule.
+    function keyTextColour(entry, chosen, current, ordinary) {
+        if (chosen) {
+            return UiSettings.themeTextOnAccent;
+        }
+        const highlight = browser.keyHighlight(entry);
+        if (highlight !== "") {
+            return highlight;
+        }
+        return current ? UiSettings.themePlayhead : ordinary;
+    }
+
     /// The tempo column of a track that is more than one tempo: the number is the stretch that plays
     /// longest, and the colour says a single number cannot stand for the whole track (owner's request,
     /// 26.11). A chosen row keeps its own colour — the selection outranks every other signal.
@@ -3019,7 +3069,8 @@ Pane {
                             text: browser.columnText(row.modelData, "key")
                             horizontalAlignment: Text.AlignRight
                             font: browser.listFace
-                            color: browser.rowTextColour(row.chosen, row.current, UiSettings.themeTextDim)
+                            color: browser.keyTextColour(row.modelData, row.chosen, row.current,
+                                                         UiSettings.themeTextDim)
                         }
                     }
                     Label {

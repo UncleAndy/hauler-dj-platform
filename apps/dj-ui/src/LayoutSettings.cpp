@@ -489,6 +489,16 @@ void LayoutSettings::scheduleSave()
     m_saveTimer->start();
 }
 
+void LayoutSettings::applyKeyColour(QString &slot, const QString &colour)
+{
+    const QString wanted = colour.trimmed().toLower();
+    if (wanted.isEmpty() || wanted == slot) {
+        return;
+    }
+    slot = wanted;
+    emit changed();
+}
+
 bool LayoutSettings::setChannelOrder(const QString &order)
 {
     // A permutation of A, B, C, D and nothing else: a repeated letter would draw one deck twice and
@@ -602,6 +612,12 @@ bool LayoutSettings::load()
             .toBool(m_hideDeckButtonsWithController);
     m_waveformSpan = span <= 0.0 ? 0.0 : std::clamp(span, 0.0025, 1.0);
     setChannelOrder(root.value(QStringLiteral("channel_order")).toString(m_channelOrder));
+    setKeySame(root.value(QStringLiteral("key_same")).toString(m_keySame));
+    setKeyUp(root.value(QStringLiteral("key_up")).toString(m_keyUp));
+    setKeyDown(root.value(QStringLiteral("key_down")).toString(m_keyDown));
+    setKeyParallel(root.value(QStringLiteral("key_parallel")).toString(m_keyParallel));
+    setKeyBoost(root.value(QStringLiteral("key_boost")).toString(m_keyBoost));
+    setKeyDiagonal(root.value(QStringLiteral("key_diagonal")).toString(m_keyDiagonal));
     // Several roots are the normal case: one collection may live on several disks. A file written by
     // a build that knew one root still reads, and keeps its root.
     QStringList roots;
@@ -682,6 +698,12 @@ bool LayoutSettings::save() const
     root.insert(QStringLiteral("browser_percent"), m_browserPercent);
     root.insert(QStringLiteral("mixer_percent"), m_mixerPercent);
     root.insert(QStringLiteral("channel_order"), m_channelOrder);
+    root.insert(QStringLiteral("key_same"), m_keySame);
+    root.insert(QStringLiteral("key_up"), m_keyUp);
+    root.insert(QStringLiteral("key_down"), m_keyDown);
+    root.insert(QStringLiteral("key_parallel"), m_keyParallel);
+    root.insert(QStringLiteral("key_boost"), m_keyBoost);
+    root.insert(QStringLiteral("key_diagonal"), m_keyDiagonal);
     root.insert(QStringLiteral("browser_font"), m_browserFont);
     root.insert(QStringLiteral("browser_rail_width"), m_browserRailWidth);
     QJsonArray roots;

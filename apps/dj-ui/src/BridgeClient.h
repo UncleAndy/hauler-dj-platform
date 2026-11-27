@@ -110,6 +110,10 @@ public:
     /// Sort the collection by `column`. A plain click makes it the only key and turns it around on a
     /// second click; `shift` adds it as the next key, so two columns can decide together.
     Q_INVOKABLE void sortCollection(const QString &column, bool shift);
+    /// How a row's key sits against the one playing: `same`, `up`, `down`, `parallel`, `boost`, `diagonal`, or empty
+    /// when the pair says nothing (a key never measured, a wheel number nobody can read). The list turns each word into
+    /// the colour the settings give it.
+    Q_INVOKABLE QString keyRelation(const QString &key, const QString &reference) const;
     /// Drop every sort key: the collection goes back to the order its source gives it — the index when
     /// there is one, the walk of the disks when there is not. It is the way out of a sort set by
     /// accident, and the only way to a list that no column decides.
