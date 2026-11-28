@@ -155,6 +155,20 @@ def render_screens_step(tree: dict[str, list[str]]) -> str:
     return '      <Custom Action="BindScreensDriver" After="InstallFiles">NOT Installed</Custom>'
 
 
+def render_reboot_step(tree: dict[str, list[str]]) -> str:
+    """Предупредить о перезагрузке после установки — стандартным действием Windows, без своего окна.
+
+    Замена драйвера у **подключённого** устройства WinUSB доводит до конца только после рестарта (так ответила
+    `UpdateDriverForPlugAndPlayDevices` на панели владельца, 28.11: привязка принята, `bRebootRequired`). Установщик
+    не может знать заранее, попросит ли Windows рестарт, поэтому спрашивает всегда при первой установке —
+    `ScheduleReboot` показывает родное окно «Требуется перезагрузка» с выбором «перезагрузить сейчас/позже».
+    Кто не хочет — ставит с `REBOOT=ReallySuppress`.
+    """
+    if CONTROLLER_EXE not in tree.get("", []):
+        return ""
+    return '      <ScheduleReboot After="InstallFinalize">NOT Installed</ScheduleReboot>'
+
+
 def render(dist: Path, version: str) -> str:
     tree = collect(dist)
     total = sum(len(files) for files in tree.values())
@@ -170,6 +184,7 @@ def render(dist: Path, version: str) -> str:
     components = render_directories(tree, dist)
     screens_action = render_screens_action(tree)
     screens_step = render_screens_step(tree)
+    reboot_step = render_reboot_step(tree)
 
     return f"""<?xml version="1.0" encoding="utf-8"?>
 <!-- Сгенерировано scripts/windows-msi.py: файлов {total}, версия {version}. Руками не править. -->
@@ -189,6 +204,7 @@ def render(dist: Path, version: str) -> str:
     <InstallExecuteSequence>
       <RemoveExistingProducts After="InstallValidate" />
 {screens_step}
+{reboot_step}
     </InstallExecuteSequence>
 {screens_action}
 
