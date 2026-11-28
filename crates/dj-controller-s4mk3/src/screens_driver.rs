@@ -517,6 +517,104 @@ mod libwdi {
     }
 }
 
+/// The arguments the elevated copy is started with: the same command, marked as elevated, plus where to write the
+/// answer.
+///
+/// The marker exists so the copy Windows starts never asks for a prompt of its own — a command that re-elevates itself
+/// on every run would ask the DJ for a password until one of the copies gave up.
+#[must_use]
+pub fn elevated_parameters(report: &Path) -> String {
+    format!(
+        "--screens-driver --elevated --report \"{}\"",
+        report.display()
+    )
+}
+
+/// Ask Windows for an elevated copy of this program, and wait until it has written its answer into `report`.
+///
+/// A driver install needs administrator rights. A console program that answers "access denied" leaves the DJ hunting
+/// for an elevated prompt, so the command asks for the prompt itself (`runas`); the elevated copy is this same program
+/// with [`elevated_parameters`], and its answer travels back through `report`, because the copy Windows starts has a
+/// console of its own that closes with it. Nothing is installed without that prompt.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+pub fn elevate(report: &Path) -> Result<(), String> {
+    let program = std::env::current_exe()
+        .map_err(|error| format!("this program's own path cannot be found: {error}"))?;
+    let verb = wide("runas");
+    let file = wide(&program.display().to_string());
+    let parameters = wide(&elevated_parameters(report));
+    // SAFETY: four null-terminated UTF-16 strings built just above outlive the call; `ShellExecuteW` reads them and
+    // nothing else, returns an `HINSTANCE`-shaped integer (32 or less means the shell refused), and no pointer comes
+    // back to this side.
+    let answer = unsafe {
+        shell::ShellExecuteW(
+            std::ptr::null_mut(),
+            verb.as_ptr(),
+            file.as_ptr(),
+            parameters.as_ptr(),
+            std::ptr::null(),
+            shell::SW_SHOWNORMAL,
+        )
+    };
+    if answer as usize <= 32 {
+        return Err(format!(
+            "Windows did not start the elevated copy (code {}): the prompt was cancelled, or this account cannot \
+             elevate. Run `dj-controller --screens-driver` from a console started as administrator",
+            answer as usize
+        ));
+    }
+    // The child writes the report as its last act, so the file appearing with something in it is the end of the wait.
+    // Five minutes covers a slow driver install and a prompt nobody answered yet; the message says what to do if it
+    // runs out.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
+    while std::time::Instant::now() < deadline {
+        if let Ok(text) = std::fs::read_to_string(report)
+            && !text.trim().is_empty()
+        {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    Err(format!(
+        "the elevated copy did not write {} in five minutes: answer the Windows prompt it opened, or run \
+         `dj-controller --screens-driver` from a console started as administrator",
+        report.display()
+    ))
+}
+
+/// A null-terminated UTF-16 copy of `text`, which is what every `W` entry point of Windows takes.
+#[cfg(windows)]
+fn wide(text: &str) -> Vec<u16> {
+    text.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+/// The one Windows call outside `libwdi`: asking for an elevated copy of this program.
+///
+/// Declared here rather than pulled in as a binding crate: it is one call, and the project takes the platform's own
+/// declarations over a crate everywhere else too. `HINSTANCE` and `HWND` are declared as `*mut c_void`, which is what
+/// they are.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+mod shell {
+    use std::ffi::{c_int, c_void};
+
+    /// `SW_SHOWNORMAL` — the console of the elevated copy is what the DJ has to see.
+    pub const SW_SHOWNORMAL: c_int = 1;
+
+    #[link(name = "shell32")]
+    unsafe extern "system" {
+        pub fn ShellExecuteW(
+            hwnd: *mut c_void,
+            verb: *const u16,
+            file: *const u16,
+            parameters: *const u16,
+            directory: *const u16,
+            show: c_int,
+        ) -> *mut c_void;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -681,6 +779,22 @@ mod tests {
         assert_eq!(offset_of!(ffi::OptionsPrepare, cert_subject), 32);
         assert_eq!(offset_of!(ffi::OptionsPrepare, use_wcid_driver), 40);
         assert_eq!(offset_of!(ffi::OptionsPrepare, external_inf), 44);
+    }
+
+    /// The elevated copy has to be the same command with the marker that stops it from asking for a prompt of its own,
+    /// and the report path has to survive the quotes Windows will hand back.
+    #[test]
+    fn the_elevated_copy_is_the_same_command_with_a_marker_and_a_quoted_report() {
+        let report = Path::new("C:\\Users\\uncle\\Temp\\hauler-dj-screens-driver\\report.txt");
+        let parameters = elevated_parameters(report);
+        assert!(parameters.contains("--screens-driver"), "{parameters}");
+        assert!(parameters.contains("--elevated"), "{parameters}");
+        assert!(
+            parameters.contains(&format!("--report \"{}\"", report.display())),
+            "{parameters}"
+        );
+        // Nothing that would bind the install path: the elevated copy resolves the package itself.
+        assert!(!parameters.contains("driver/"), "{parameters}");
     }
 
     /// The listing has to ask for everything: a null options pointer returns driverless devices only, and the interface

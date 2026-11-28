@@ -49,6 +49,9 @@ fn run(arguments: &[String]) -> Result<(), String> {
     // `--check` reads better before or after the command it modifies, and a flag whose meaning depends on word order is a
     // flag that will be written the other way by the next person.
     let mut screens_check = false;
+    // Set only in the copy Windows starts for the install (`--elevated`), and the file it writes its answer into.
+    let mut screens_elevated = false;
+    let mut screens_report: Option<String> = None;
     let mut reports = 200_usize;
     let mut engine: Option<String> = None;
     let mut sweep_from = 0usize;
@@ -97,6 +100,17 @@ fn run(arguments: &[String]) -> Result<(), String> {
                 if let Mode::ScreensDriver { check } = &mut mode {
                     *check = true;
                 }
+            }
+            // Internal, and absent from the usage line on purpose: a person never types these. `--screens-driver`
+            // starts an elevated copy of itself, and that copy is the one carrying `--elevated` plus the file it
+            // writes its answer into (its own console closes with it, and the answer has to reach the DJ's).
+            "--elevated" => screens_elevated = true,
+            "--report" => {
+                let Some(path) = arguments.get(index + 1) else {
+                    return Err(format!("--report wants a file name. {USAGE}"));
+                };
+                screens_report = Some(path.clone());
+                index += 1;
             }
             "--lights-demo" => mode = Mode::LightsDemo,
             "--lights-show" => mode = Mode::LightsShow,
@@ -427,7 +441,12 @@ fn run(arguments: &[String]) -> Result<(), String> {
     // The arm in the switch below stays because a switch has to name every mode.
     if let Mode::ScreensDriver { check } = &mode {
         let devices = HidTransport::new().enumerate().unwrap_or_default();
-        return screens_driver(*check, &devices);
+        return screens_driver(
+            *check,
+            screens_elevated,
+            screens_report.as_deref().map(std::path::Path::new),
+            &devices,
+        );
     }
 
     let (config, file) = dj_config::Config::load_or_default(None)
@@ -466,7 +485,12 @@ fn run(arguments: &[String]) -> Result<(), String> {
         .map_err(|error| format!("the HID nodes cannot be listed: {error}"))?;
     match mode {
         Mode::Status => status(&devices),
-        Mode::ScreensDriver { check } => screens_driver(check, &devices),
+        Mode::ScreensDriver { check } => screens_driver(
+            check,
+            screens_elevated,
+            screens_report.as_deref().map(std::path::Path::new),
+            &devices,
+        ),
         Mode::List => {
             list(&devices);
             Ok(())
@@ -4027,9 +4051,14 @@ fn open_lights(devices: &[DeviceInfo]) -> Result<dj_hid::write::HidSink, String>
 /// The screens are a bulk interface of their own, and Windows gives it to the vendor's driver: `nusb` can only claim it
 /// when WinUSB is bound. That binding is a driver install, so it is its own command with its own words rather than
 /// something the service tries behind the DJ's back (owner's decision, 2026-11-28).
-fn screens_driver(check: bool, devices: &[DeviceInfo]) -> Result<(), String> {
-    // The platform first: a person on Linux asking about a Windows driver pack should read one sentence, not a directory
-    // listing of a Windows answer.
+fn screens_driver(
+    check: bool,
+    elevated: bool,
+    report: Option<&std::path::Path>,
+    devices: &[DeviceInfo],
+) -> Result<(), String> {
+    // The platform first: a person on Linux asking about a Windows driver pack should read one sentence, not a
+    // directory listing of a Windows answer.
     if !cfg!(windows) {
         println!(
             "dj-controller: the screens need a udev rule on this system, not a driver: see \
@@ -4047,48 +4076,120 @@ fn screens_driver(check: bool, devices: &[DeviceInfo]) -> Result<(), String> {
         .ok()
         .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
         .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let offer = dj_controller_s4mk3::screens_driver::find_offer(&programs);
-    println!("dj-controller: screens driver: {}", offer.describe());
-    println!(
-        "dj-controller: {} {}",
-        NAME,
-        match devices.iter().find(|device| device.is(VENDOR, PRODUCT)) {
-            Some(device) => format!("is plugged in ({})", device.path.display()),
-            None => "is not plugged in".to_string(),
-        }
-    );
-    #[cfg(windows)]
-    {
-        if check {
-            match dj_controller_s4mk3::panels::Panels::open() {
-                Ok(panels) => println!(
-                    "dj-controller: interface {} opens: WinUSB is bound and the screens are reachable",
-                    panels.interface_number()
-                ),
-                Err(error) => {
-                    println!(
-                        "dj-controller: interface {} does not open yet: {error}",
-                        dj_controller_s4mk3::screens_driver::INTERFACE
-                    );
-                    println!(
-                        "dj-controller: {}",
-                        dj_controller_s4mk3::screens_driver::instructions()
-                    );
-                }
+    // Every line is collected before it is printed, for one reason: the elevated copy has a console of its own that
+    // Windows closes with it, so its answer travels back through a file instead (`--report`).
+    let mut lines: Vec<String> = vec![
+        format!(
+            "screens driver: {}",
+            dj_controller_s4mk3::screens_driver::find_offer(&programs).describe()
+        ),
+        format!(
+            "{NAME} {}",
+            match devices.iter().find(|device| device.is(VENDOR, PRODUCT)) {
+                Some(device) => format!("is plugged in ({})", device.path.display()),
+                None => "is not plugged in".to_string(),
             }
-            return Ok(());
-        }
-        let said = dj_controller_s4mk3::screens_driver::install(&programs)?;
-        println!("dj-controller: {said}");
+        ),
+    ];
+    #[cfg(windows)]
+    let outcome = screens_driver_windows(check, elevated, &programs, &mut lines);
+    #[cfg(not(windows))]
+    let outcome: Result<(), String> = {
+        let _ = (check, elevated, &programs);
+        Ok(())
+    };
+    if let Err(error) = &outcome {
+        lines.push(format!("the install did not finish: {error}"));
+    }
+    for line in &lines {
+        println!("dj-controller: {line}");
+    }
+    if let Some(path) = report {
+        std::fs::write(path, format!("{}\n", lines.join("\n")))
+            .map_err(|error| format!("{} cannot be written: {error}", path.display()))?;
+    }
+    outcome
+}
+
+/// The Windows half: answer, or ask Windows for the prompt and report what the elevated copy said.
+#[cfg(windows)]
+fn screens_driver_windows(
+    check: bool,
+    elevated: bool,
+    programs: &std::path::Path,
+    lines: &mut Vec<String>,
+) -> Result<(), String> {
+    use dj_controller_s4mk3::panels::Panels;
+    use dj_controller_s4mk3::screens_driver as driver;
+
+    if check {
+        return match Panels::open() {
+            Ok(panels) => {
+                lines.push(format!(
+                    "interface {} opens: WinUSB is bound and the screens are reachable",
+                    panels.interface_number()
+                ));
+                Ok(())
+            }
+            Err(error) => {
+                lines.push(format!(
+                    "interface {} does not open yet: {error}",
+                    driver::INTERFACE
+                ));
+                lines.push(driver::instructions());
+                Ok(())
+            }
+        };
+    }
+    // Already bound: nothing to install, and no reason to ask for a password.
+    if let Ok(panels) = Panels::open() {
+        lines.push(format!(
+            "interface {} is already on WinUSB: nothing to install",
+            panels.interface_number()
+        ));
         return Ok(());
     }
-    #[cfg(not(windows))]
-    {
-        let _ = (check, offer);
-        unreachable!(
-            "the platform check above returns before this point on any system that is not Windows"
-        )
+    if !elevated {
+        // A driver install needs administrator rights, so the command asks for the prompt itself instead of failing
+        // with "access denied" and leaving the DJ to find one. Windows starts this same program with `--elevated`,
+        // that copy installs and writes its answer into `report`, and this copy reads it out and checks the interface.
+        let report = std::env::temp_dir()
+            .join("hauler-dj-screens-driver")
+            .join("report.txt");
+        if let Some(folder) = report.parent() {
+            std::fs::create_dir_all(folder)
+                .map_err(|error| format!("{} cannot be made: {error}", folder.display()))?;
+        }
+        std::fs::remove_file(&report).ok();
+        driver::elevate(&report)?;
+        let said = std::fs::read_to_string(&report)
+            .map_err(|error| format!("{} cannot be read: {error}", report.display()))?;
+        lines.extend(said.lines().map(str::to_string));
+        // The verdict is the interface itself, not the elevated copy's word for it: whatever the driver installer
+        // answered, the screens work only if the interface opens. A command that exits 0 after a failed install would
+        // be the same lie as a log line nobody reads.
+        return match Panels::open() {
+            Ok(panels) => {
+                lines.push(format!(
+                    "interface {} opens now: the screens are reachable",
+                    panels.interface_number()
+                ));
+                Ok(())
+            }
+            Err(error) => {
+                lines.push(format!(
+                    "interface {} still does not open: {error}",
+                    driver::INTERFACE
+                ));
+                Err(String::from(
+                    "the driver was not installed: the screens' interface is still closed",
+                ))
+            }
+        };
     }
+    let said = driver::install(programs)?;
+    lines.push(said);
+    Ok(())
 }
 
 fn status(devices: &[DeviceInfo]) -> Result<(), String> {

@@ -1,0 +1,24 @@
+Пакет WinUSB для интерфейса экранов Traktor Kontrol S4 MK3.
+
+Устройство: USB\VID_17CC&PID_1720&MI_04 — vendor-интерфейс экранов (bulk out 0x03), не HID.
+
+Собран один раз утилитой wdi-simple из libwdi, от администратора (28.11.2026):
+
+  wdi-simple.exe -n "Traktor Kontrol S4 MK3 BD" -v 0x17cc -p 0x1720 -i 4 -t 0 -d usb_driver --extract
+
+Состав и происхождение:
+
+  Traktor_Kontrol_S4_MK3_BD_(Interface_4).inf   описание драйвера, сгенерировано libwdi (LGPL)
+  Traktor_Kontrol_S4_MK3_BD_(Interface_4).cat   каталог файлов, подписан самоподписанным сертификатом
+  driver.cer                                    открытая часть этого сертификата (DER, X.509)
+  amd64/, x86/                                  WinUSBCoInstaller2.dll и WdfCoInstaller01011.dll
+
+WinUSBCoInstaller2.dll и WdfCoInstaller01011.dll — компоненты Microsoft из WDK; распространяются как часть
+пакета драйвера и не требуют отдельной лицензии на копирование вместе с ним. Драйвер WinUSB (winusb.sys) —
+системный, в пакет не входит и не нужен: ставится только привязка интерфейса к нему.
+
+libusb0/libusbK и установщики libwdi в этот каталог намеренно не попали: экранам нужен только WinUSB, а лишние
+драйверы в пакете — это лишние способы сделать панель нерабочей.
+
+Ставится командой `dj-controller --screens-driver` (спросит права администратора: сертификат в Root и
+TrustedPublisher, затем pnputil). Подробности — docs/hardware/windows-install.md.
