@@ -1097,6 +1097,7 @@ fn screens_show(endpoint: &str, playing: &Playing) {
     // the deck was drawn once, then stood still, and the log said nothing).
     let mut pictures = 0_usize;
     let mut frames_sent = 0_usize;
+    let mut slowest = std::time::Duration::ZERO;
     let mut last_note = std::time::Instant::now();
     loop {
         match client.recv_server() {
@@ -1112,8 +1113,9 @@ fn screens_show(endpoint: &str, playing: &Playing) {
                         .and_then(|deck| deck.position_ratio)
                         .unwrap_or(0.0);
                     println!(
-                        "dj-controller: the screens: {pictures} snapshots, {frames_sent} frames sent, left deck {shown:?} \
-                         at {:.1}%",
+                        "dj-controller: the screens: {pictures} snapshots, {frames_sent} frames sent, slowest \
+                         {} ms, left deck {shown:?} at {:.1}%",
+                        slowest.as_millis(),
                         f64::from(at) * 100.0
                     );
                 }
@@ -1138,9 +1140,24 @@ fn screens_show(endpoint: &str, playing: &Playing) {
                     let Ok(frame) = canvas.frame(side) else {
                         continue;
                     };
+                    // How long one frame takes to leave says whether the panel keeps up: a full screen is 153 620 bytes
+                    // and two of them at five a second is 1,5 MB/s, more than a full-speed bus carries — a write that
+                    // waits for the device is normal, a write that never returns is the freeze the owner saw.
+                    let started = std::time::Instant::now();
                     if let Err(reason) = panels.send(&frame) {
                         println!("dj-controller: the screens stopped: {reason}");
                         return;
+                    }
+                    let took = started.elapsed();
+                    if took > slowest {
+                        slowest = took;
+                    }
+                    if frames_sent == 0 {
+                        println!(
+                            "dj-controller: the screens: the first frame went out in {} ms ({} bytes)",
+                            took.as_millis(),
+                            frame.len()
+                        );
                     }
                     frames_sent += 1;
                     drawn[index] = Some(canvas.pixels().to_vec());
