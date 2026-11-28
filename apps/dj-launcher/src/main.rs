@@ -464,18 +464,53 @@ fn wait_for_endpoint_while_alive(child: &mut Child, timeout: Duration) -> Result
             .try_wait()
             .map_err(|error| format!("cannot ask after the engine: {error}"))?
         {
+            let hint = early_exit_hint(&status)
+                .map(|hint| format!("\n{hint}"))
+                .unwrap_or_default();
             return Err(format!(
-                "the engine stopped at start ({status}). Its log ends with:\n{}",
+                "the engine stopped at start ({status}).{hint}\n{}",
                 engine_log_tail()
             ));
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+    // Which of the two it was matters: no endpoint at all is an engine that never started, an endpoint that will not
+    // take a connection is one that started and cannot serve. The line says which, so the next report does not have to.
+    let state = if !endpoint.exists() {
+        String::from("there is no endpoint file")
+    } else if connect_once(&endpoint) {
+        String::from("the endpoint answers now, but it did not inside the window")
+    } else {
+        String::from("the endpoint is there and refuses a connection")
+    };
     Err(format!(
-        "the engine did not answer within {:.0} s. Its log ends with:\n{}",
+        "the engine did not answer within {:.0} s ({state}). Its log ends with:\n{}",
         timeout.as_secs_f64(),
         engine_log_tail()
     ))
+}
+
+/// What an exit code means when the program never got as far as writing a log of its own.
+///
+/// `0xC0000135` is Windows' `STATUS_DLL_NOT_FOUND`: a library the exe was built against is not beside it. The engine
+/// writes nothing in that case — it never starts — so the tail the launcher prints belongs to *another* run, and a
+/// report of this read as "the engine is alive and answering" while it was not (owner's log, 2026-11-28: an engine from
+/// an earlier evening was still on the endpoint). Naming the code turns three days of guessing into one rebuild.
+fn early_exit_hint(status: &std::process::ExitStatus) -> Option<String> {
+    #[cfg(windows)]
+    {
+        if let Some(code) = status.code() {
+            if code as u32 == 0xC000_0135 {
+                return Some(String::from(
+                    "0xC0000135 is \"a library the engine was built against is not in this folder\": rebuild the package \
+                     with `scripts/windows.sh --dist`, which copies the runtime DLLs the binaries name, instead of \
+                     copying the exes by hand",
+                ));
+            }
+        }
+    }
+    let _ = status;
+    None
 }
 
 /// The last lines the engine wrote, so a start that failed says why without anyone opening a file by hand.
@@ -488,6 +523,21 @@ fn engine_log_tail() -> String {
     let Ok(text) = std::fs::read_to_string(&path) else {
         return format!("(no log at {})", path.display());
     };
+    // How old the file is, said out loud: an engine that died before its first line leaves the *previous* run's tail
+    // behind, and read without the age it looks like this engine's own last words.
+    let age = std::fs::metadata(&path)
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|modified| modified.elapsed().ok())
+        .map(|age| {
+            if age.as_secs() < 120 {
+                format!("{} s", age.as_secs())
+            } else {
+                format!("{} min", age.as_secs() / 60)
+            }
+        })
+        .unwrap_or_else(|| String::from("an unknown time"));
+    let header = format!("(the file was last written {age} ago)");
     let lines: Vec<&str> = text.lines().rev().take(8).collect();
     if lines.is_empty() {
         // A settings file the engine cannot read stops it before the first log line, and the engine's own message is the
@@ -498,7 +548,7 @@ fn engine_log_tail() -> String {
     }
     let mut tail: Vec<&str> = lines.into_iter().collect();
     tail.reverse();
-    tail.join("\n")
+    format!("{header}\n{}", tail.join("\n"))
 }
 
 #[cfg(unix)]

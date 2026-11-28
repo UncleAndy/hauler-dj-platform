@@ -2619,12 +2619,25 @@ fn pick_talkative(
     // Every node of the panel, not one guess: a device shows up as several HID nodes, the buttons and the clock need not
     // live on the same one, and the node that carries the buttons may only speak when one is pressed. Reading them all
     // costs a few threads and removes the guess entirely.
+    // Two different findings wear one face: a system whose HID transport offers nothing at all (on Windows the
+    // hidraw walk finds no nodes — there is no backend there yet) and a panel that is plugged in but held by another
+    // driver. Saying which is the difference between "install the driver" and "this build cannot do it".
+    let matching: Vec<&DeviceInfo> = devices
+        .iter()
+        .filter(|device| device.is(VENDOR, PRODUCT))
+        .collect();
+    if matching.is_empty() {
+        return Err(format!(
+            "no {NAME} node was offered by this system's HID transport ({} node(s) in all)",
+            devices.len()
+        ));
+    }
     let (sender, receiver) = std::sync::mpsc::channel();
     let mut opened = Vec::new();
-    for device in devices.iter().filter(|device| device.is(VENDOR, PRODUCT)) {
+    for device in matching {
         let Ok(reports) = spawn_reader(&device.path) else {
             println!(
-                "dj-controller: {} не открывается — пропускаю этот узел",
+                "dj-controller: {} does not open — skipping this node",
                 device.path.display()
             );
             continue;
