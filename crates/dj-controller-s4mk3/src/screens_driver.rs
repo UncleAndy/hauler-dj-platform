@@ -287,6 +287,10 @@ mod bind {
 
     #[link(name = "kernel32")]
     unsafe extern "system" {
+        /// The code page of the console this program was started from — `pnputil` answers in that one.
+        fn GetConsoleOutputCP() -> u32;
+        /// The system's OEM code page: what is left when there is no console at all.
+        fn GetOEMCP() -> u32;
         fn MultiByteToWideChar(
             code_page: u32,
             flags: u32,
@@ -322,7 +326,8 @@ mod bind {
         }
         Ok(if reboot != 0 {
             format!(
-                "interface {INTERFACE} is on WinUSB (a reboot is needed before the screens open)"
+                "interface {INTERFACE} is on WinUSB; Windows wants a restart before the device moves: reboot, or \
+                 unplug the panel and plug it back in"
             )
         } else {
             format!("interface {INTERFACE} is on WinUSB")
@@ -341,11 +346,23 @@ mod bind {
             return String::new();
         }
         let length = i32::try_from(bytes.len()).unwrap_or(i32::MAX);
+        // The console's own code page first: `pnputil` writes in that one, and `CP_OEMCP` was 437 on the owner's Russian
+        // Windows while the program answered in 866 — every Russian word came out as `╤ыєцсэр` (log of 28.11).
+        // SAFETY: both calls take no arguments and return the current code page as a plain number.
+        let code_page = unsafe {
+            match GetConsoleOutputCP() {
+                0 => match GetOEMCP() {
+                    0 => OEM_CODE_PAGE,
+                    page => page,
+                },
+                page => page,
+            }
+        };
         // SAFETY: the slice is valid for `length` bytes, and a null output pointer with a zero size only asks how long
         // the converted string would be.
         let needed = unsafe {
             MultiByteToWideChar(
-                OEM_CODE_PAGE,
+                code_page,
                 0,
                 bytes.as_ptr(),
                 length,
@@ -360,7 +377,7 @@ mod bind {
         // SAFETY: the buffer is exactly the size the first call asked for, and the pointer is valid for that size.
         let written = unsafe {
             MultiByteToWideChar(
-                OEM_CODE_PAGE,
+                code_page,
                 0,
                 bytes.as_ptr(),
                 length,

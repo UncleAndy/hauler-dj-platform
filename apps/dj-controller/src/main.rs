@@ -4223,6 +4223,18 @@ fn screens_driver_windows(
     }
     let said = driver::install(programs)?;
     lines.push(said);
+    // The elevated copy is the whole of the install when Windows started it (the msi's step, or a copy of this program
+    // launched from the prompt), so the verdict has to be checked here and not only in a parent that may not exist.
+    match Panels::open() {
+        Ok(panels) => lines.push(format!(
+            "interface {} opens now: the screens are reachable",
+            panels.interface_number()
+        )),
+        Err(error) => lines.push(format!(
+            "interface {} does not open yet: {error}",
+            driver::INTERFACE
+        )),
+    }
     Ok(())
 }
 
