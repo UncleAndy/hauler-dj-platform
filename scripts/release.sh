@@ -348,8 +348,18 @@ publish() {
         exit 1
     fi
     local upload="$out/upload"
-    rm -rf "$upload"
-    mkdir -p "$upload"
+    # Каталог выгрузки собирается заново: так `SHA256SUMS` считаются по тому набору, который уедет в релиз, а не поверх
+    # файлов прошлой версии. Чужой каталог (сборка шла другим пользователем) — обычная причина, по которой это не
+    # выходит, и девять строк от `rm` об этом не говорят.
+    if ! rm -rf "$upload" 2>/dev/null; then
+        echo "release: не очистить $upload — он принадлежит $(stat -c %U:%G "$upload" 2>/dev/null), права $(stat -c %A "$upload" 2>/dev/null)." >&2
+        echo "release: сборка шла другим пользователем; выровняйте владельца (chown -R) и повторите." >&2
+        exit 1
+    fi
+    if ! mkdir -p "$upload"; then
+        echo "release: не создать $upload — каталог $out принадлежит $(stat -c %U:%G "$out" 2>/dev/null), права $(stat -c %A "$out" 2>/dev/null)." >&2
+        exit 1
+    fi
     [ -n "$linux_artefact" ] && cp "$linux_artefact" "$linux_artefact.sha256" "$upload/"
     for package in "${linux_extra[@]:-}"; do
         [ -n "$package" ] && cp "$package" "$upload/"
