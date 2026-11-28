@@ -500,6 +500,29 @@ pub fn report_at_rest(show: &Show, palette: &Palette) -> LightsReport {
     report
 }
 
+/// The hue each hotcue pad wears when the cue itself carries no colour.
+///
+/// The window paints such a cue in the pad's own hue — `DeckPanel.qml`: `hotcueColor(slot, cuePalette[slot])`, eight
+/// colours chosen to be told apart in a booth — and the panel has always been meant to follow the window. It did not:
+/// an unpainted cue wore the palette's single hotcue colour, so a stored pad differed from an empty one by two
+/// brightness steps and nothing else, which in a dark booth reads as "my cue did not take" (owner's report, 28.11 —
+/// the pad appeared as soon as he gave the cue a colour of its own). Same hexes as the window, in the same order.
+pub const CUE_SLOT_HEX: [&str; 8] = [
+    "#ff4d4d", "#ff9f1a", "#7cf03d", "#00e0c6", "#3d9bff", "#b07bff", "#ff5cc8", "#ffffff",
+];
+
+/// [`CUE_SLOT_HEX`] as colours from the device's own table — the nearest named colour to each hue.
+///
+/// White for a slot past the eighth: the panel has eight pads per deck, and a colour chosen by a coin is worse than the
+/// one colour that is always visible.
+#[must_use]
+pub fn cue_slot_colour(slot: usize) -> Colour {
+    CUE_SLOT_HEX
+        .get(slot)
+        .and_then(|hex| nearest_colour(hex))
+        .unwrap_or(Colour::White)
+}
+
 /// The colour a settings file names, by the name the device's own table uses.
 pub fn colour_by_name(name: &str) -> Option<Colour> {
     let wanted = name.trim().to_ascii_lowercase();

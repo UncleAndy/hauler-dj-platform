@@ -9,9 +9,9 @@
 use dj_controller_s4mk3::Colour;
 use dj_controller_s4mk3::lights::{
     LIGHTS_LENGTH, LightsReport, Pad, Palette, REPORT_LIGHTS, Show, bright, brightness_probe,
-    byte_of, bytes_for, colour_by_name, colour_name, colour_walk, colours, dim, fill_only,
-    fx_colour, hotcue_bytes, known_bytes, map, map_line, meter_report, name_of, nearest_colour,
-    parse_map, pick_line, report_at_rest, report_for, report_with, sweep, walk,
+    byte_of, bytes_for, colour_by_name, colour_name, colour_walk, colours, cue_slot_colour, dim,
+    fill_only, fx_colour, hotcue_bytes, known_bytes, map, map_line, meter_report, name_of,
+    nearest_colour, parse_map, pick_line, report_at_rest, report_for, report_with, sweep, walk,
 };
 
 #[test]
@@ -664,4 +664,35 @@ fn a_meter_lights_segments_for_a_level_and_a_clip_for_the_peak() {
         "the second deck's clip light is its own byte"
     );
     assert_eq!(report.body[30], 0, "a silent deck's column stays dark");
+}
+
+/// Eight pads, eight hues, and none of them the colour an empty pad wears.
+///
+/// A stored cue used to share the empty pad's colour and differ only by two brightness steps, and in a booth that read
+/// as "my cue did not take" (owner's report, 28.11 — the pad appeared as soon as the cue got a colour of its own). The
+/// window has always painted these eight hues (`DeckPanel.qml`: `cuePalette`), so the panel follows the window.
+#[test]
+fn a_cue_without_a_colour_wears_the_hue_of_its_slot() {
+    let slots: Vec<Colour> = (0..8).map(cue_slot_colour).collect();
+    assert_eq!(
+        slots,
+        vec![
+            Colour::Salmon,
+            Colour::Honey,
+            Colour::Lime,
+            Colour::Celeste,
+            Colour::Sky,
+            Colour::Fuscia,
+            Colour::Azalea,
+            Colour::White,
+        ],
+        "the window's eight pad colours, in its order"
+    );
+    assert!(!slots.contains(&Colour::Off), "a pad is never painted off");
+    let empty = Palette::default().hotcue;
+    assert!(
+        slots.iter().all(|colour| *colour != empty),
+        "an unpainted cue must not wear the colour of an empty pad"
+    );
+    assert_eq!(cue_slot_colour(9), Colour::White, "past the eighth pad");
 }

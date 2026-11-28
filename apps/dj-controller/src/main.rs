@@ -3635,10 +3635,14 @@ fn pad_colours(
         // over a cue** in the same slot. Both can be there at once — the domain says a pad holds a point or a loop, never
         // both, but a track can carry the two — and putting the cue first made a loop pad go dark whenever the cue colour
         // was set to `off` (owner's log, 24.11: `cues [0, 1, 2] loops [1]`, `hotcue Off`).
+        // A cue the DJ has not painted yet wears **the hue of its own slot** — the same one the window gives it
+        // (`DeckPanel.qml`: `cuePalette[slot]`). Not the palette's single hotcue colour: that left a stored pad differing
+        // from an empty one by two brightness steps and nothing else, which reads as "my cue did not take" (owner's
+        // report, 28.11: the pad appeared the moment he gave the cue a colour).
         let colour = if has_loop {
             palette.loop_
         } else if has_cue {
-            painted.unwrap_or(palette.hotcue)
+            painted.unwrap_or_else(|| dj_controller_s4mk3::lights::cue_slot_colour(slot))
         } else {
             palette.hotcue
         };
@@ -4481,7 +4485,11 @@ mod tests {
         let palette = dj_controller_s4mk3::lights::Palette::default();
         let cues = vec![cue_at(4800), None];
         let pads = super::pad_colours(true, &cues, &[], &[], &palette);
-        assert_eq!(pads[0], Some(pad(palette.hotcue, true)), "a stored cue");
+        assert_eq!(
+            pads[0],
+            Some(pad(dj_controller_s4mk3::lights::cue_slot_colour(0), true)),
+            "a stored cue wears its slot's own hue"
+        );
         assert_eq!(pads[1], Some(pad(palette.hotcue, false)), "an empty slot");
         assert_eq!(
             pads[7],
@@ -4596,11 +4604,15 @@ mod tests {
         ];
         let pads = super::pad_colours(true, &cues, &[], &colours, &palette);
         assert_eq!(pads[0], Some(pad(dj_controller_s4mk3::Colour::Red, true)));
-        assert_eq!(pads[1], Some(pad(palette.hotcue, true)), "an unpainted cue");
+        assert_eq!(
+            pads[1],
+            Some(pad(dj_controller_s4mk3::lights::cue_slot_colour(1), true)),
+            "an unpainted cue wears its slot's hue"
+        );
         assert_eq!(
             pads[2],
-            Some(pad(palette.hotcue, true)),
-            "a broken colour is no colour"
+            Some(pad(dj_controller_s4mk3::lights::cue_slot_colour(2), true)),
+            "a broken colour is no colour, so the slot's hue stands"
         );
     }
 
