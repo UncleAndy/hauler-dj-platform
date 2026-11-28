@@ -97,15 +97,20 @@ def main() -> int:
     # разрешает и app-local, тогда их приносит `--ort` с ORT_CRT_DIR), а dbghelp.dll есть в любой Windows.
     allowed_missing = {"dbghelp.dll", "msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll",
                        "vcruntime140_1.dll"}
-    for name in sorted(allowed_missing):
-        if name in missing:
-            print(f"DJ Windows deps: {name} — приходит из Visual C++ Redistributable или из Windows")
-            missing.pop(name, None)
+    # Что из этого действительно пропало — запоминаем, но объяснение печатаем только в отчёте для человека: в
+    # режиме `--only-missing` этот поток читает цикл сборки, и любая фраза в нём принимается за имя библиотеки
+    # (сборка печатала «не нашлось: DJ», «не нашлось: Windows»).
+    explained = [name for name in sorted(allowed_missing) if name in missing]
+    for name in explained:
+        missing.pop(name, None)
 
     if args.only_missing:
         for name in sorted(missing):
             print(name)
         return 1 if missing else 0
+
+    for name in explained:
+        print(f"DJ Windows deps: {name} — приходит из Visual C++ Redistributable или из Windows")
 
     exes = sorted(p.name for p in pe_files if p.suffix.lower() == ".exe")
     if missing:
