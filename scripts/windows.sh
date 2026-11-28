@@ -367,18 +367,17 @@ deploy() {
     # C++-рантайм: два разных набора, и нужны оба. Наши exe собраны mingw из nix — его libstdc++ работает через
     # mcfgthread (libmcfgthread-2.dll). Qt собран mingw с winpthreads — Qt6*.dll требуют libwinpthread-1.dll.
     # Без первого не стартует наш код, без второго — Qt.
-    DIST="$dist" nix shell "nixpkgs#pkgsCross.mingwW64.stdenv.cc" --command bash -c '
-        set -eu
-        for store_path in $(nix-store -qR "$(readlink -f "$(command -v x86_64-w64-mingw32-g++)")"); do
-            for dll in libstdc++-6.dll libgcc_s_seh-1.dll libatomic-1.dll libmcfgthread-2.dll; do
-                for dir in x86_64-w64-mingw32/lib bin lib; do
-                    if [ -f "$store_path/$dir/$dll" ] && [ ! -f "$DIST/$dll" ]; then
-                        cp "$store_path/$dir/$dll" "$DIST/"
-                    fi
-                done
+    #
+    # Что именно нужно, решают сами бинарники: список имён, написанный рукой, стареет молча (тулчейн переименовывает
+    # свой потоковый рантайм, добавляет libssp/libquadmath), а поиск «где-то в замыкании компилятора» зависит от того,
+    # какой nixpkgs разрешился на этой машине. Так пакет дважды уехал без `libmcfgthread-2.dll` (отчёты владельца,
+    # 25.11 и 27.11). Теперь набор берётся из таблиц импорта, а ищется он и в bin Qt, и в замыкании тулчейна.
+    mingw_runtime_roots=$(nix shell "nixpkgs#pkgsCross.mingwW64.stdenv.cc" --command bash -c '
+        for path in $(nix-store -qR "$(readlink -f "$(command -v x86_64-w64-mingw32-g++)")"); do
+            for dir in bin lib x86_64-w64-mingw32/lib x86_64-w64-mingw32/bin; do
+                [ -d "$path/$dir" ] && echo "$path/$dir"
             done
-        done
-    '
+        done' 2>/dev/null || true)
     winpthread_dir="$(qt_mingw_tool)"
     if [ -f "$winpthread_dir/bin/libwinpthread-1.dll" ]; then
         cp "$winpthread_dir/bin/libwinpthread-1.dll" "$dist/"
@@ -441,14 +440,20 @@ TXT
         [ -z "$missing" ] && break
         copied=0
         for name in $missing; do
-            found=$(find "$prefix/bin" -maxdepth 1 -iname "$name" | head -1)
+            found=$(find "$prefix/bin" -maxdepth 1 -iname "$name" 2>/dev/null | head -1)
+            if [ -z "$found" ]; then
+                # shellcheck disable=SC2086 # the roots are a list of paths, split on purpose
+                found=$(find $mingw_runtime_roots -maxdepth 1 -iname "$name" 2>/dev/null | head -1)
+            fi
             if [ -n "$found" ]; then
                 cp "$found" "$dist/"
                 copied=1
+            else
+                echo "не нашлось: $name" >&2
             fi
         done
         if [ "$copied" -eq 0 ]; then
-            echo "модули не найдены в $prefix/bin: $(echo "$missing" | tr '\n' ' ')" >&2
+            echo "нечего взять: $(echo "$missing" | tr '\n' ' ')" >&2
             break
         fi
     done
@@ -483,6 +488,14 @@ msi() {
         echo "нет готового дистрибутива в $dist: сначала --dist" >&2
         exit 1
     fi
+    # Пакет собирается только из доказанного дистрибутива: `msi` проверяет, что рядом с exe есть всё, что они просят,
+    # а не только что exe на месте. Раньше сюда можно было подсунуть каталог без рантайма, и установщик увозил
+    # неполный набор — тот самый «не хватает dll» на машине, где сборки уже нет (отчёт владельца, 27.11).
+    DIST="$dist" REPO="$repo" nix shell "nixpkgs#pkgsCross.mingwW64.stdenv.cc" nixpkgs#python3 --command bash -c '
+        set -eu
+        cd "$REPO"
+        python3 scripts/windows-deps-check.py --dist "$DIST"
+    '
     tools="$(msi_tools)"
     echo "== пакет msi"
     REPO="$repo" DIST="$dist" MSITOOLS="$tools" nix shell nixpkgs#python3 --command bash -c '
