@@ -35,6 +35,9 @@ SYSTEM_DLLS = {
     # part of Windows — `dj-controller.exe` imports it through `nusb`, and without this line the packaging refused a
     # distribution for a library that is already on every machine (owner's build report, 25.11).
     "winusb.dll",
+    # `newdev.dll` — системная: через неё связан драйвер экранов (`UpdateDriverForPlugAndPlayDevices`), и она есть на
+    # любой Windows с Vista; в пакет её не кладут, как и winusb.dll.
+    "newdev.dll",
 }
 
 SYSTEM_PREFIXES = ("api-ms-win-", "ext-ms-", "ucrtbase")

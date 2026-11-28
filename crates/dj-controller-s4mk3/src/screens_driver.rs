@@ -169,6 +169,13 @@ pub fn certutil_command(certificate: &Path, store: &str) -> Vec<String> {
     ]
 }
 
+/// The hardware id the panel's screen interface answers to — the same string the `.inf` names and Windows shows under
+/// the device's instance path.
+#[must_use]
+pub fn hardware_id() -> String {
+    format!("USB\\VID_{VENDOR:04X}&PID_{PRODUCT:04X}&MI_{INTERFACE:02X}")
+}
+
 /// Bind the interface, by whichever way this copy carries.
 ///
 /// Windows only: on any other system the answer is a udev rule, and pretending otherwise would be a lie told by a
@@ -202,20 +209,29 @@ fn install_package(inf: &Path) -> Result<String, String> {
         .args(arguments)
         .output()
         .map_err(|error| format!("{program} did not run: {error}"))?;
-    let answer = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout).trim(),
-        String::from_utf8_lossy(&output.stderr).trim()
-    );
+    let answer = oem_text(&output.stdout, &output.stderr);
     if output.status.success() {
         said.push(format!("{program} took {}: {answer}", inf.display()));
-        return Ok(said.join("; "));
+    } else {
+        // Not fatal on its own: `pnputil` puts the package in the driver store and *then* says whether the device took
+        // it, and Windows refuses to replace a better-ranked driver. The vendor's 2018 driver outranks WinUSB's 2012
+        // `DriverVer`, so the answer was "the driver package is not the best match for the device" with the package
+        // staged as `oemN.inf` (owner's Windows log, 28.11). The binding is forced below; the answer is kept for the
+        // journal either way.
+        said.push(format!("{program} refused {}: {answer}", inf.display()));
     }
-    Err(format!(
-        "{program} refused {}: {answer}\nif it names a signature, this machine does not trust the package's \
-         certificate: put the .cer exported from the .cat beside the .inf, or ship libwdi.dll instead",
-        inf.display()
-    ))
+    // Windows ranks drivers by date and version before it will replace one, and a package whose `DriverVer` is 2012
+    // never wins against the vendor's; `UpdateDriverForPlugAndPlayDevices` with `INSTALLFLAG_FORCE` is the documented way
+    // to say "this device, this package, now" (it is what `devcon update` does). Without it the interface stays on the
+    // vendor's driver for ever, which reads as "the screens do not work" (owner's report, 28.11).
+    let bound = bind::forced(inf).map_err(|error| {
+        format!(
+            "{}; the interface could not be bound: {error}",
+            said.join("; ")
+        )
+    })?;
+    said.push(bound);
+    Ok(said.join("; "))
 }
 
 /// Run one `certutil -addstore` and keep what it answered.
@@ -227,11 +243,7 @@ fn run_certutil(certificate: &Path, store: &str) -> Result<(String, String), Str
         .args(arguments)
         .output()
         .map_err(|error| format!("{program} did not run: {error}"))?;
-    let answer = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout).trim(),
-        String::from_utf8_lossy(&output.stderr).trim()
-    );
+    let answer = oem_text(&output.stdout, &output.stderr);
     if output.status.success() {
         Ok((program.clone(), answer))
     } else {
@@ -240,6 +252,138 @@ fn run_certutil(certificate: &Path, store: &str) -> Result<(String, String), Str
             certificate.display()
         ))
     }
+}
+
+/// The two Windows calls the package path needs beyond `libwdi`: binding a driver to a device by force, and reading a
+/// console program's answer in the code page it was written in.
+///
+/// Declared here rather than pulled in as a crate: two calls, and the project takes the platform's own declarations
+/// elsewhere too (`shell32` in `dj-controller`, `libwdi` above).
+#[cfg(windows)]
+#[allow(unsafe_code)]
+mod bind {
+    use std::ffi::c_void;
+    use std::path::Path;
+
+    use super::{INTERFACE, hardware_id};
+
+    /// `INSTALLFLAG_FORCE | INSTALLFLAG_NONINTERACTIVE`: replace whatever driver the device has, and never ask a
+    /// question — an installer step has no desktop to put a dialog on.
+    const FLAGS: u32 = 0x0000_0001 | 0x0000_0004;
+    /// `CP_OEMCP` — the code page `pnputil` and `certutil` write their answers in.
+    const OEM_CODE_PAGE: u32 = 1;
+
+    #[link(name = "newdev")]
+    unsafe extern "system" {
+        /// `UpdateDriverForPlugAndPlayDevicesW(hwnd, hardware_id, inf_path, flags, reboot_required)`.
+        fn UpdateDriverForPlugAndPlayDevicesW(
+            hwnd: *mut c_void,
+            hardware_id: *const u16,
+            inf_path: *const u16,
+            flags: u32,
+            reboot: *mut i32,
+        ) -> i32;
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn MultiByteToWideChar(
+            code_page: u32,
+            flags: u32,
+            bytes: *const u8,
+            length: i32,
+            out: *mut u16,
+            out_length: i32,
+        ) -> i32;
+    }
+
+    /// Replace the device's driver with the package in `inf`, whatever Windows thinks of its rank.
+    pub fn forced(inf: &Path) -> Result<String, String> {
+        let hwid = wide(&hardware_id());
+        let path = wide(&inf.display().to_string());
+        let mut reboot: i32 = 0;
+        // SAFETY: both strings are null-terminated UTF-16 that outlive the call, `reboot` points at a live `i32`, and
+        // the function reads nothing else and keeps nothing of this side.
+        let answered = unsafe {
+            UpdateDriverForPlugAndPlayDevicesW(
+                std::ptr::null_mut(),
+                hwid.as_ptr(),
+                path.as_ptr(),
+                FLAGS,
+                &mut reboot,
+            )
+        };
+        if answered == 0 {
+            return Err(format!(
+                "Windows refused to replace the driver of {}: {}",
+                hardware_id(),
+                std::io::Error::last_os_error()
+            ));
+        }
+        Ok(if reboot != 0 {
+            format!(
+                "interface {INTERFACE} is on WinUSB (a reboot is needed before the screens open)"
+            )
+        } else {
+            format!("interface {INTERFACE} is on WinUSB")
+        })
+    }
+
+    /// What a console program answered, in the code page it wrote in.
+    pub fn oem(stdout: &[u8], stderr: &[u8]) -> String {
+        format!("{}{}", decode(stdout), decode(stderr))
+            .trim()
+            .to_string()
+    }
+
+    fn decode(bytes: &[u8]) -> String {
+        if bytes.is_empty() {
+            return String::new();
+        }
+        let length = i32::try_from(bytes.len()).unwrap_or(i32::MAX);
+        // SAFETY: the slice is valid for `length` bytes, and a null output pointer with a zero size only asks how long
+        // the converted string would be.
+        let needed = unsafe {
+            MultiByteToWideChar(
+                OEM_CODE_PAGE,
+                0,
+                bytes.as_ptr(),
+                length,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        if needed <= 0 {
+            return String::from_utf8_lossy(bytes).into_owned();
+        }
+        let mut buffer = vec![0u16; needed as usize];
+        // SAFETY: the buffer is exactly the size the first call asked for, and the pointer is valid for that size.
+        let written = unsafe {
+            MultiByteToWideChar(
+                OEM_CODE_PAGE,
+                0,
+                bytes.as_ptr(),
+                length,
+                buffer.as_mut_ptr(),
+                needed,
+            )
+        };
+        if written <= 0 {
+            return String::from_utf8_lossy(bytes).into_owned();
+        }
+        String::from_utf16_lossy(&buffer[..written as usize])
+    }
+
+    fn wide(text: &str) -> Vec<u16> {
+        text.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+}
+
+/// The answer of a console program, decoded from the code page Windows wrote it in — `pnputil` speaks Russian in
+/// cp866, and reading those bytes as UTF-8 turned its refusal into question marks (owner's Windows log, 28.11).
+#[cfg(windows)]
+fn oem_text(stdout: &[u8], stderr: &[u8]) -> String {
+    bind::oem(stdout, stderr)
 }
 
 /// The C declarations, copied from `libwdi.h` 1.5.1 rather than guessed.
@@ -741,6 +885,13 @@ mod tests {
             command.iter().any(|part| part.ends_with("driver.cer")),
             "{command:?}"
         );
+    }
+
+    /// The hardware id is what the `.inf` names, what Windows shows under the device instance, and what the forced
+    /// install is asked to replace — a typo here binds nothing and reports "no such device".
+    #[test]
+    fn the_hardware_id_is_the_one_the_package_and_the_device_name() {
+        assert_eq!(hardware_id(), r"USB\VID_17CC&PID_1720&MI_04");
     }
 
     /// The offsets below were measured with a C compiler on the declarations copied from `libwdi.h` 1.5.1
