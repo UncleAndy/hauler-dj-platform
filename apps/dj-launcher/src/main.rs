@@ -206,8 +206,20 @@ fn run(options: &Options) -> Result<u8, String> {
         let _ = service.wait();
     }
     panel_out(&folder);
-    // The engine leaves by its own idle exit once the shell's connection is gone; nothing to kill here.
-    drop(engine_process.take());
+    // The engine must not outlive the application. On Linux the parent-death signal does it, and the idle exit covers a
+    // shell that lost its connection; on Windows there is neither a signal nor a job object, and the idle exit does not
+    // cover an engine whose audio device keeps its loop busy — the record went on playing with no program in sight
+    // (owner's report on Windows, 27.11). Stopping it here is the one place that knows the shell has gone.
+    if let Some(mut engine) = engine_process.take() {
+        say(options, "engine: stopping it with the shell");
+        if let Err(error) = engine.kill() {
+            append_log(
+                "dj-launcher",
+                &format!("engine: could not be stopped ({error})"),
+            );
+        }
+        let _ = engine.wait();
+    }
     Ok(status.code().unwrap_or(0).clamp(0, 255) as u8)
 }
 
@@ -428,7 +440,8 @@ fn attach_lifeline(command: &mut Command) {
     }
 }
 
-/// Nothing to attach: Windows closes the child with the job object, and macOS with the session.
+/// Nothing to attach: Windows has no parent-death signal and the launcher owns no job object, so the engine is stopped
+/// on the way out instead (`run`), and macOS closes children with the session.
 #[cfg(not(unix))]
 fn attach_lifeline(_command: &mut Command) {}
 
