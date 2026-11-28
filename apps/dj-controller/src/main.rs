@@ -29,7 +29,7 @@ use dj_bridge::{ClientMessage, ServerMessage};
 use dj_controller_core::{ControlEvent, Driver, Mapping, PitchFader};
 use dj_controller_s4mk3::{NAME, PRODUCT, S4Mk3, VENDOR};
 use dj_hid::write::ReportSink;
-use dj_hid::{DeviceInfo, HidrawTransport, Transport};
+use dj_hid::{DeviceInfo, HidTransport, Transport};
 
 const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send] | --lights-demo [--interval MS] [--send] | --lights-show --engine <endpoint> | --lights-fill <code> [--send] | --lights-night [--rest <code>] [--send] | --lights-bright <byte> [--colour N] [--rounds N] [--send] | --lights-colour-walk [<byte>|left|right|all] [--shift] [--interval MS] [--send] | --lights-pick [<byte>|left|right|all] [--out <file>] [--interval MS] [--send] | --screen-from --engine <endpoint> --out <file.ppm> [--panel left|right] | --screen-send [--engine <endpoint>] [--panel left|right] | --screen-off | --farewell | --farewell-preview <file.ppm> | --lights-off | --ring-probe | --serve --engine <endpoint> | --inputs-watch [--seconds N] | --node-rates [--seconds N] | --wheel-init [--seconds N] | --inputs-learn [--out <file>] [--inputs <file>]";
 
@@ -435,7 +435,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         night = true;
     }
 
-    let transport = HidrawTransport::new();
+    let transport = HidTransport::new();
     let devices = transport
         .enumerate()
         .map_err(|error| format!("the HID nodes cannot be listed: {error}"))?;
@@ -602,7 +602,7 @@ fn lights_sweep(devices: &[DeviceInfo], sweep: &Sweep, send: bool) -> Result<(),
         .iter()
         .find(|device| device.is(VENDOR, PRODUCT))
         .ok_or_else(|| format!("no {NAME} on this machine"))?;
-    let mut sink = dj_hid::write::NodeSink::open(&ours.path)
+    let mut sink = dj_hid::write::HidSink::open(ours)
         .map_err(|error| format!("the lights need a writable node: {error}"))?;
     println!(
         "dj-controller: sending {} reports to {}, {} ms apart; watch which control lights",
@@ -2577,14 +2577,10 @@ type Playing = std::sync::Arc<std::sync::Mutex<DeckFactsShared>>;
 ///
 /// A blocking read on a device that says nothing would hang whoever is listening: the walk would never reach its
 /// deadline, and "press the button" would sit there for ever. Over a channel the listener keeps its own clock.
-fn spawn_reader(path: &std::path::Path) -> Result<std::sync::mpsc::Receiver<Vec<u8>>, String> {
-    let device = DeviceInfo {
-        path: path.to_path_buf(),
-        vendor: VENDOR,
-        product: PRODUCT,
-        name: NAME.to_string(),
-    };
-    let mut source = HidrawTransport::new().open(&device).map_err(|error| {
+fn spawn_reader(device: &DeviceInfo) -> Result<std::sync::mpsc::Receiver<Vec<u8>>, String> {
+    // The node is opened by the bytes the system gave for it, not by a rendering of its path: `hidapi` takes the spelling
+    // it handed out, and on Windows that spelling is a device path with its own rules.
+    let mut source = HidTransport::new().open(device).map_err(|error| {
         format!(
             "{} cannot be opened for reading: {error}",
             device.path.display()
@@ -2635,7 +2631,7 @@ fn pick_talkative(
     let (sender, receiver) = std::sync::mpsc::channel();
     let mut opened = Vec::new();
     for device in matching {
-        let Ok(reports) = spawn_reader(&device.path) else {
+        let Ok(reports) = spawn_reader(device) else {
             println!(
                 "dj-controller: {} does not open — skipping this node",
                 device.path.display()
@@ -2678,7 +2674,7 @@ fn node_rates(devices: &[DeviceInfo], seconds: f32) -> Result<(), String> {
     let seconds = seconds.max(1.0);
     let mut readers = Vec::new();
     for device in &matching {
-        match spawn_reader(&device.path) {
+        match spawn_reader(device) {
             Ok(reports) => readers.push((device.path.clone(), reports)),
             Err(reason) => println!("dj-controller: {} — {reason}", device.path.display()),
         }
@@ -3984,12 +3980,12 @@ fn from_to_width(sweep: &Sweep) -> usize {
 }
 
 /// The node the lights go to, with the message a person needs when the rules do not allow it.
-fn open_lights(devices: &[DeviceInfo]) -> Result<dj_hid::write::NodeSink, String> {
+fn open_lights(devices: &[DeviceInfo]) -> Result<dj_hid::write::HidSink, String> {
     let ours = devices
         .iter()
         .find(|device| device.is(VENDOR, PRODUCT))
         .ok_or_else(|| format!("no {NAME} on this machine"))?;
-    dj_hid::write::NodeSink::open(&ours.path).map_err(|error| {
+    dj_hid::write::HidSink::open(ours).map_err(|error| {
         format!(
             "the lights need a writable node {error}; on Linux that is a udev rule for this device"
         )
@@ -4029,7 +4025,7 @@ fn list(devices: &[DeviceInfo]) {
 }
 
 fn capture(
-    transport: &HidrawTransport,
+    transport: &HidTransport,
     devices: &[DeviceInfo],
     path: &str,
     reports: usize,

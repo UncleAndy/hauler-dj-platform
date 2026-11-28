@@ -302,6 +302,9 @@
             # <stdlib.h> fails ("stdlib.h: No such file"). bindgen gets the headers via
             # BINDGEN_EXTRA_CLANG_ARGS below, which is all the Rust side needs.
             alsa-lib
+            # HID: the controller's buttons, lights and wheels go through hidapi on every platform (owner's decision,
+            # 2026-11-28), and the crate links the system library rather than compiling a second copy.
+            hidapi
             pipewire
             openssl
             libGL

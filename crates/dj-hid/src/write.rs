@@ -6,12 +6,14 @@
 //! keeps what would have been sent. The recorder is what makes this testable without a device, and it is what the
 //! sweep's dry run uses.
 //!
+//! The real node goes through `hidapi`, the same library that reads it (owner's decision, 2026-11-28): one backend for
+//! every platform, and the bytes a report carries are the bytes the library takes — the report identifier first, then
+//! the body.
+//!
 //! Motors do not go through here: they are forbidden until a separate decision (ADR-0006), and a forbidden thing has no
 //! door in the code.
 
-use std::fs::{File, OpenOptions};
-use std::io::Write;
-use std::path::Path;
+use crate::DeviceInfo;
 
 /// Somewhere reports go.
 pub trait ReportSink {
@@ -21,30 +23,39 @@ pub trait ReportSink {
 }
 
 /// A node opened for writing.
-pub struct NodeSink {
-    file: File,
+pub struct HidSink {
+    handle: hidapi::HidDevice,
 }
 
-impl NodeSink {
-    /// Open `path` for writing: the hidraw node of the device, which usually needs a `udev` rule to be writable by a
-    /// person rather than by root.
-    pub fn open(path: &Path) -> Result<Self, String> {
-        let file = OpenOptions::new()
-            .write(true)
-            .open(path)
-            .map_err(|error| format!("{}: {error}", path.display()))?;
-        Ok(Self { file })
+impl HidSink {
+    /// Open the node of `device` for writing.
+    ///
+    /// A HID node is written by the system's own rules: on Linux the hidraw node needs a `udev` rule to be writable by a
+    /// person rather than by root, and the error here says which node and why, because "the lights do nothing" is a
+    /// permission problem every second time.
+    pub fn open(device: &DeviceInfo) -> Result<Self, String> {
+        let api = hidapi::HidApi::new().map_err(|error| error.to_string())?;
+        let path = device.hid_path()?;
+        let handle = api
+            .open_path(&path)
+            .map_err(|error| format!("{}: {error}", device.path.display()))?;
+        Ok(Self { handle })
     }
 }
 
-impl ReportSink for NodeSink {
+impl ReportSink for HidSink {
     fn send(&mut self, report: &[u8]) -> Result<(), String> {
-        self.file
-            .write_all(report)
+        let sent = self
+            .handle
+            .write(report)
             .map_err(|error| format!("the node did not take the report: {error}"))?;
-        self.file
-            .flush()
-            .map_err(|error| format!("the report did not leave: {error}"))
+        if sent != report.len() {
+            return Err(format!(
+                "the node took {sent} of {} bytes of the report",
+                report.len()
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -59,5 +70,18 @@ impl ReportSink for RecordedSink {
     fn send(&mut self, report: &[u8]) -> Result<(), String> {
         self.sent.push(report.to_vec());
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_recorder_keeps_every_report_in_order() {
+        let mut sink = RecordedSink::default();
+        assert!(sink.send(&[0x80, 1]).is_ok(), "a recorder always takes");
+        assert!(sink.send(&[0x81, 2, 3]).is_ok(), "a recorder always takes");
+        assert_eq!(sink.sent, vec![vec![0x80, 1], vec![0x81, 2, 3]]);
     }
 }

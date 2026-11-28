@@ -8,6 +8,10 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+# A cross-platform HID backend, the same code on Linux, macOS and Windows. The default feature set also compiles
+# hidapi's own Linux backend, and two Linux backends at once is a build error ("exactly one ... must be selected"), so
+# the choice is made here: the system's libhidapi, which nixpkgs carries and the dev shell links.
+hidapi = { version = "2", default-features = false, features = ["linux-shared-hidraw"] }
 
 [lints]
 workspace = true

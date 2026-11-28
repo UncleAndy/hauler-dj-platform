@@ -94,8 +94,24 @@ launcher() {
     mkdir -p "$dist"
     # Запускатор — чистый Rust без C++: нужны только линкер mingw и сам target, поэтому обёртка проще,
     # чем у движка, но rustup в dev shell не живёт: он приходит из nix shell.
-    REPO="$repo" nix shell nixpkgs#rustup nixpkgs#llvm "nixpkgs#pkgsCross.mingwW64.stdenv.cc" --command bash -c '
+    REPO="$repo" nix shell nixpkgs#rustup nixpkgs#llvm "nixpkgs#pkgsCross.mingwW64.stdenv.cc" nixpkgs#lld --command bash -c '
         export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
+        # The controller HID layer is C (`hidapi`), so the compiler for the *target* has to be named: without these the
+        # build script reaches for the host `gcc`, compiles Windows code against Linux headers and stops at
+        # `guiddef.h: No such file or directory` (found 2026-11-28, the first cross build after HID moved to hidapi).
+        export CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc
+        export CXX_x86_64_pc_windows_gnu=x86_64-w64-mingw32-g++
+        export AR_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ar
+        # The host half: the build scripts of every crate in the graph are host programs, and rustc links them with its
+        # own lld through the `gcc-ld` folder inside the toolchain, which is empty in a nix shell. Without this the build
+        # stops at the first build script with `posix_spawn failed` — and it stops before a single line of ours is
+        # compiled, which is why it reads as "the Windows port broke" while nothing of it ran (found 2026-11-28, when the
+        # launcher was built on a machine whose rustup had been refreshed).
+        export CARGO_HOME="$REPO/.cache/cargo-rustup"
+        export RUSTUP_HOME="$REPO/.cache/rustup"
+        sysroot="$(rustup run stable rustc --print sysroot)"
+        mkdir -p "$sysroot/lib/rustlib/x86_64-unknown-linux-gnu/bin/gcc-ld"
+        ln -sf "$(command -v ld.lld)" "$sysroot/lib/rustlib/x86_64-unknown-linux-gnu/bin/gcc-ld/ld.lld"
         # chromaprint просит libpthread.a, которого mingw из nix не содержит: пустой архив под этим именем
         # лежит в кэше сборки, и тот же путь нужен запускатору — он тянет dj-paths, а через него конвейер.
         mkdir -p "$REPO/.cache/win-shims"

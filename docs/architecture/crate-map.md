@@ -45,7 +45,7 @@
 | `dj-stems` | ml | M5 (DJP-STEM-*) |
 | `dj-remix` | ml | M5 (DJP-REMIX-*) |
 | `dj-pattern` | ml | M5 |
-| `dj-hid` | hardware | A09 (транспорт hidraw / IOHIDManager / Windows HID, ADR-0006) |
+| `dj-hid` | hardware | A09 (транспорт HID через `hidapi`: Linux, macOS, Windows — ADR-0006; решение владельца, 2026-11-28) |
 | `dj-midi` | hardware | A09 (транспорт ALSA-seq / CoreMIDI / WinMM, DJP-CTRL-002); на нём же MIDI Clock (`C18`) и
 MIDI-триггеры ритма (`D16`) — отправка из non-RT потока, время события из beat timeline |
 | `dj-ext` | audio-core | R3 (DJP-SYNC-010/011 — предложены) — non-RT мосты наружу: OSC-мост (`D17`), Pro DJ Link read-only (`D18`); аудиопоток сюда не входит |
