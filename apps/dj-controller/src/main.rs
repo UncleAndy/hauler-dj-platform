@@ -4068,27 +4068,13 @@ fn screens_driver(
     report: Option<&std::path::Path>,
     devices: &[DeviceInfo],
 ) -> Result<(), String> {
-    // The platform first: a person on Linux asking about a Windows driver pack should read one sentence, not a
-    // directory listing of a Windows answer.
-    if !cfg!(windows) {
-        println!(
-            "dj-controller: the screens need a udev rule on this system, not a driver: see \
-             docs/hardware/s4mk3/screens.md"
-        );
-        if check {
-            println!("dj-controller: nothing to install here: this is not Windows");
-            return Ok(());
-        }
-        return Err(String::from(
-            "--screens-driver binds a Windows driver package; on this system the answer is a udev rule",
-        ));
-    }
     let programs = std::env::current_exe()
         .ok()
         .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
         .unwrap_or_else(|| std::path::PathBuf::from("."));
-    // Every line is collected before it is printed, for one reason: the elevated copy has a console of its own that
-    // Windows closes with it, so its answer travels back through a file instead (`--report`).
+    // Every line is collected before it is printed, for three reasons: the elevated copy has a console of its own that
+    // Windows closes with it (its answer travels back through `--report`), the same lines are appended to
+    // `logs/screens-driver.log` so a failed attempt leaves a trace, and the platform question is answered last.
     let mut lines: Vec<String> = vec![
         format!(
             "screens driver: {}",
@@ -4106,8 +4092,18 @@ fn screens_driver(
     let outcome = screens_driver_windows(check, elevated, &programs, &mut lines);
     #[cfg(not(windows))]
     let outcome: Result<(), String> = {
-        let _ = (check, elevated, &programs);
-        Ok(())
+        let _ = (elevated, &programs);
+        lines.push(String::from(
+            "the screens need a udev rule on this system, not a driver: see docs/hardware/s4mk3/screens.md",
+        ));
+        if check {
+            lines.push(String::from("nothing to install here: this is not Windows"));
+            Ok(())
+        } else {
+            Err(String::from(
+                "--screens-driver binds a Windows driver package; on this system the answer is a udev rule",
+            ))
+        }
     };
     if let Err(error) = &outcome {
         lines.push(format!("the install did not finish: {error}"));
@@ -4119,7 +4115,34 @@ fn screens_driver(
         std::fs::write(path, format!("{}\n", lines.join("\n")))
             .map_err(|error| format!("{} cannot be written: {error}", path.display()))?;
     }
+    // The answer also goes to the logs folder, because the person who needs it reads `logs/` next to the other files: a
+    // command whose whole output lives in a console window nobody kept is a command whose failure is invisible (owner's
+    // Windows loop, 28.11 — the driver had never been installed and the log said only "cannot be claimed").
+    journal(&lines);
     outcome
+}
+
+/// Append the answer to `logs/screens-driver.log`, best effort: a log that cannot be written never fails the command.
+fn journal(lines: &[String]) {
+    let Some(folder) = dj_paths::data_dir().map(|base| base.join("hauler-dj").join("logs")) else {
+        return;
+    };
+    if std::fs::create_dir_all(&folder).is_err() {
+        return;
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0);
+    let entry = format!("== {stamp} screens driver\n{}\n", lines.join("\n"));
+    let opened = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(folder.join("screens-driver.log"));
+    if let Ok(mut file) = opened {
+        use std::io::Write;
+        let _ = file.write_all(entry.as_bytes());
+    }
 }
 
 /// The Windows half: answer, or ask Windows for the prompt and report what the elevated copy said.
