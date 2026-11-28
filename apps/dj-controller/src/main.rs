@@ -1043,14 +1043,20 @@ fn serve(
         let state = std::sync::Arc::clone(&playing);
         std::thread::spawn(move || screens_show(&endpoint, &state));
     }
-    lights_show(
+    // A refused report stops the lights, not the service. Presses and screens are threads of their own, and a service
+    // that exits because one report was not taken takes the buttons and the screens with it — exactly what the owner saw
+    // on Windows: one refused meter report ended everything, and the panel looked dead (28.11).
+    if let Err(reason) = lights_show(
         devices,
         Some(endpoint),
         body_only,
         night,
         palette,
         Some(&playing),
-    )
+    ) {
+        println!("dj-controller: the lights stopped: {reason}; presses and screens keep running");
+    }
+    Ok(())
 }
 
 /// Keep the two screens showing the decks while the engine publishes.
@@ -2669,9 +2675,10 @@ fn pick_talkative(
     // Every node of the panel, not one guess: a device shows up as several HID nodes, the buttons and the clock need not
     // live on the same one, and the node that carries the buttons may only speak when one is pressed. Reading them all
     // costs a few threads and removes the guess entirely.
-    // Two different findings wear one face: a system whose HID transport offers nothing at all (on Windows the
-    // hidraw walk finds no nodes — there is no backend there yet) and a panel that is plugged in but held by another
-    // driver. Saying which is the difference between "install the driver" and "this build cannot do it".
+    // Two different findings wear one face: a system whose HID transport offers nothing at all (a panel whose HID
+    // collection was taken by another driver — on Windows that is WinUSB where the vendor's HID collection used to be)
+    // and a panel that is plugged in but held by another process. Saying which is the difference between "install the
+    // driver" and "this build cannot do it".
     let matching: Vec<&DeviceInfo> = devices
         .iter()
         .filter(|device| device.is(VENDOR, PRODUCT))

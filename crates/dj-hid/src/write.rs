@@ -49,14 +49,26 @@ impl ReportSink for HidSink {
             .handle
             .write(report)
             .map_err(|error| format!("the node did not take the report: {error}"))?;
-        if sent != report.len() {
-            return Err(format!(
-                "the node took {sent} of {} bytes of the report",
-                report.len()
-            ));
-        }
-        Ok(())
+        accepted(sent, report.len())
     }
+}
+
+/// Did the node take the whole report?
+///
+/// The count that comes back is **not** the length of the report on every platform: `hidapi`'s Windows backend pads a
+/// short report up to the device's `OutputReportByteLength` before writing and returns the padded count (`hid.c`:
+/// "Windows expects the number of bytes which are in the _longest_ report (plus one for the report number)"). On the
+/// owner's panel that is 95: a 94-byte light report comes back as 95, and a 79-byte meter report also as 95 — and a
+/// check that demanded equality turned every light report into "the panel did not take the meter report" while the
+/// bytes had in fact gone out (owner's Windows report, 28.11). A **short** write is still a failure: that is the case
+/// where part of the report was dropped.
+fn accepted(sent: usize, wanted: usize) -> Result<(), String> {
+    if sent < wanted {
+        return Err(format!(
+            "the node took {sent} of {wanted} bytes of the report"
+        ));
+    }
+    Ok(())
 }
 
 /// A sink that keeps what it was given, so a test — or a dry run — can look at it.
@@ -76,6 +88,22 @@ impl ReportSink for RecordedSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Windows answers with the padded length; a report that was taken in full must not be reported as a failure, and a
+    /// report that lost bytes must be.
+    #[test]
+    fn a_padded_write_is_a_success_and_a_short_one_is_not() {
+        assert!(accepted(94, 94).is_ok());
+        assert!(
+            accepted(95, 94).is_ok(),
+            "Windows pads to the longest report"
+        );
+        assert!(accepted(95, 79).is_ok(), "a short report is padded too");
+        match accepted(78, 94) {
+            Ok(()) => panic!("a short write loses bytes, yet it was accepted"),
+            Err(refused) => assert!(refused.contains("took 78 of 94"), "{refused}"),
+        }
+    }
 
     #[test]
     fn the_recorder_keeps_every_report_in_order() {
