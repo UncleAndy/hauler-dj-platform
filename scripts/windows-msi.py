@@ -216,8 +216,41 @@ def main() -> int:
 
     files = sum(len(files) for files in collect(dist).values())
     print(f"== msi: {files} файлов, версия {version}")
-    subprocess.run([wixl, "-v", "-a", "x64", "-o", str(out), str(wxs)], check=True)
-    print(f"готово: {out}")
+
+    # `wixl` opens the output file itself, and when it cannot — a package left by another user, a directory it may not
+    # write — it prints a cascade of `db != NULL` assertions and **still exits 0**. The build then said "готово" and
+    # left no package behind (owner's reports, 27.11, twice: the second build tried to overwrite the file the first
+    # one had made under another account). So the package is written beside the target and moved into place, and what
+    # came out is opened and counted before anything is called finished.
+    staged = out.with_name(out.name + ".part")
+    staged.unlink(missing_ok=True)
+    result = subprocess.run([wixl, "-v", "-a", "x64", "-o", str(staged), str(wxs)],
+                            capture_output=True, text=True, check=False)
+    if result.returncode != 0 or not staged.is_file() or staged.stat().st_size == 0:
+        noise = [line for line in (result.stderr or "").splitlines() if "CRITICAL" in line or "WARNING" in line]
+        print("wixl не собрал пакет:", file=sys.stderr)
+        for line in noise[:6]:
+            print(f"  {line}", file=sys.stderr)
+        if result.returncode != 0:
+            print(f"  код {result.returncode}", file=sys.stderr)
+        else:
+            print(f"  код 0, но файла нет или он пуст: {staged}", file=sys.stderr)
+        staged.unlink(missing_ok=True)
+        raise SystemExit(1)
+    # The tables are the proof: a database wixl failed to fill answers nothing, or answers fewer rows than the folder
+    # holds. Counting here is what turns "wixl printed nothing" into "the package is real".
+    msiinfo = shutil.which("msiinfo")
+    if msiinfo:
+        listing = subprocess.run([msiinfo, "export", str(staged), "File"],
+                                 capture_output=True, text=True, check=False)
+        rows = sum(1 for line in listing.stdout.splitlines() if line.startswith("cmp_"))
+        if listing.returncode != 0 or rows != files:
+            print(f"пакет не той полноты: {rows} строк в таблице File, в дистрибутиве {files}",
+                  file=sys.stderr)
+            staged.unlink(missing_ok=True)
+            raise SystemExit(1)
+    std_replace = staged.replace(out)
+    print(f"готово: {std_replace}")
     return 0
 
 
