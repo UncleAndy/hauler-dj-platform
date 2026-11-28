@@ -21,7 +21,7 @@
 
 | Устройство | Транспорт | Идентичность | Органы | LED | Экраны | Драйвер | Проверено |
 |---|---|---|---|---|---|---|---|
-| Traktor Kontrol S4 MK3 | HID (vendor-коллекция) — см. `s4mk3/protocol-notes.md` | `0x17cc:0x1720` | карта не снята (A09) | не сняты | есть, параметры неизвестны | `dj-controller-s4mk3` (план) | ничего, кроме аудио |
+| Traktor Kontrol S4 MK3 | HID через `hidapi` (Linux — `/dev/hidraw3`; коллекция vendor + экраны через bulk) | `0x17cc:0x1720` | карта снята: `crates/dj-controller-s4mk3/data/inputs-map.txt` | карта снята: `crates/dj-controller-s4mk3/data/lights-map.txt` | 320×240, vendor bulk (interface 4) — см. `s4mk3/screens.md` | `dj-controller-s4mk3` (`--serve`) | Linux: подсветка, нажатия, колёса, питч и экраны — на живой панели (28.11, уже через `hidapi`). Windows: HID не проверялся; экраны требуют WinUSB на vendor-интерфейсе — `windows-install.md` |
 
 ## Как строка заполняется
 
