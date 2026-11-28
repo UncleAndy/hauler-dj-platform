@@ -2443,6 +2443,28 @@ int runSelectionCheck(QQmlApplicationEngine& engine, FileBrowser& browser, Bridg
         return 1;
     }
 
+    // The list has to stand still before the keys are tried. A page that lands between two presses replaces the model,
+    // and a replaced model has a new anchor: the run is then read against a list the DJ never had, which is what this
+    // check kept reporting as "shift-up selected rows 12..13, wanted 10..12" under load. The engine's own count is the
+    // measure — four tenths of a second with nothing replaced and no row added is a list that has settled.
+    {
+        int stableGeneration = browser.pageGeneration();
+        int stableRows = static_cast<int>(rows().size());
+        int quiet = 0;
+        for (int tick = 0; tick < 60 && quiet < 4; ++tick) {
+            QCoreApplication::processEvents();
+            QThread::msleep(100);
+            if (browser.pageGeneration() == stableGeneration
+                && static_cast<int>(rows().size()) == stableRows) {
+                ++quiet;
+            } else {
+                stableGeneration = browser.pageGeneration();
+                stableRows = static_cast<int>(rows().size());
+                quiet = 0;
+            }
+        }
+    }
+
     // Ten rows down: the run has room above it and below it.
     browser.setCursor(pathAt(10));
     (void)waitFor([&]() { return false; }, 300);

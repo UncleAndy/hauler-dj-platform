@@ -84,11 +84,11 @@ pub const BPM_STEP_TOLERANCE: f64 = 0.001;
 /// that does both, and an empty string for a track of one tempo. The number is the stretch that plays longest
 /// (`dj_domain::BeatGrid::dominant_bpm`), and the suffix says the number is not the whole track.
 ///
-/// Each constant is the whole suffix, spaces included: an arrow reads as part of the number (`125.00↗`), and a tilde is
-/// a separate mark and takes its own space (`125.00 ~`). A list appends the string and decides nothing about spacing.
+/// Each constant is the whole suffix, spacing included: all three sit against the number (`125.00↗`, `125.00~`). A list
+/// appends the string and decides nothing about spacing (owner's correction, 27.11: the tilde had a space and should not).
 pub const BPM_RISING: &str = "\u{2197}";
 pub const BPM_FALLING: &str = "\u{2198}";
-pub const BPM_FLUCTUATING: &str = " ~";
+pub const BPM_FLUCTUATING: &str = "~";
 
 /// The beat grid: a tempo and the frame of its first beat, plus manual anchors.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -426,7 +426,7 @@ mod tests {
                 vec![anchor(480_000, Some(136.0)), anchor(960_000, Some(128.0))]
             )
             .bpm_trend(),
-            " ~",
+            "~",
             "up and back down is a tempo that wanders, not one that rises"
         );
         assert_eq!(
