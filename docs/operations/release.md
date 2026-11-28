@@ -35,7 +35,7 @@ nix develop --command dj-release --dry-run  # то же, но черновик �
 | `--linux` | `cargo build --release` движка, запускатора и службы; `ui.sh --build-only`; tar.gz с `.desktop`, иконками и лицензиями; затем deb, rpm и AppImage из одного набора | `dist/release`, `dist/packages` |
 | `--windows` | `scripts/windows.sh --all`: zip и MSI mingw-цепочкой, ONNX Runtime, при `ORT_CRT_DIR` — MSVC runtime | `dist/windows` |
 | `--notes` | `docs/release-notes-<версия>.md` из шаблона, **только если файла нет** | — |
-| `--github` | `gh release create "v<версия>" --draft --title "Hauler DJ <версия>" --notes-file <заметки> --target <ветка>` и загрузка всех файлов и `SHA256SUMS` | черновик на GitHub |
+| `--github` | `gh release create "v<версия>" --draft --title "Hauler DJ <версия>" --notes-file <заметки> --target <ветка>` и загрузка всех файлов и `SHA256SUMS`. Один, без сборки, берёт уже собранное: tar.gz этой версии, три пакета для дистрибутивов и msi именно этой версии — прошлогодний установщик, лежащий рядом в каталоге, в черновик не попадёт | черновик на GitHub |
 | `--version X.Y.Z` | версия; обязана совпадать с `Cargo.toml` | — |
 | `--dry-run` | собирает пакеты и суммы, не отправляя на GitHub | — |
 
@@ -54,5 +54,10 @@ nix develop --command dj-release --dry-run  # то же, но черновик �
   `scripts/linux-packages.sh` подкладывает статический busybox и говорит об этом, если подложить нечем.
 - **`wixl` отсутствует** в основной оболочке: он приходит из `msitools` и нужен только для MSI (`scripts/windows.sh
   --msi`).
+- **Каталоги сборки могут принадлежать другому пользователю** (`build-windows/`, `dist/windows/` после чужого прогона):
+  тогда `release.sh` собирает в `~/.cache/dj-platform-win-build` и `~/.cache/dj-platform-win-dist` и говорит об этом.
+  Черновик потом берёт файлы оттуда только с `DJ_WIN_DIST=<каталог>`; проще выровнять владельца (`chown -R`) до сборки.
+- **`--github` без сборки не выпускает черновик из одних заметок**: если файлов не нашлось, он перечисляет, чего нет, и
+  выходит с ошибкой — пустой черновик выглядит как готовый релиз, а им не является.
 - **Размеры файлов не пишутся в заметки**: они меняются от сборки к сборке, и таблица «223 МБ» из заметок 0.1.0 —
   исторический факт, а не обещание. Живые размеры и суммы — в файлах релиза.

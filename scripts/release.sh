@@ -204,6 +204,48 @@ EOF
 
 windows_artefacts=()
 
+# Файлы Windows-выпуска из каталога, где лежит готовое.
+#
+# Каталог выпуска хранит пакеты прошлых версий, и «все msi, что тут лежат» утащило бы в черновик 0.2.1 установщик 0.2.0 —
+# файл с чужим содержимым и знакомым именем. Имя msi несёт версию, поэтому спрашиваем ровно своё; zip называется без
+# версии и перезаписывается сборкой.
+windows_msi_found=0
+collect_windows_artefacts() {
+    local win_dist="$1"
+    local file
+    windows_artefacts=()
+    windows_msi_found=0
+    while IFS= read -r file; do
+        windows_artefacts+=("$file")
+        case "$file" in
+            *"-$version-x64.msi") windows_msi_found=1 ;;
+        esac
+    done < <(find "$win_dist" -maxdepth 1 -type f \( -name '*.zip' -o -name "*-$version-x64.msi" \) | sort)
+}
+
+# Что уже собрано прошлым запуском.
+#
+# `release.sh --github` без сборки — обычный путь: пакеты собираются часами, черновик создаётся минуту. Пока этот поиск
+# отсутствовал, такой запуск выпускал черновик из одних заметок и контрольных сумм — без единого файла.
+discover_artefacts() {
+    local file
+    linux_extra=()
+    for file in "$out"/hauler-dj-"$version"-*-x86_64.tar.gz; do
+        if [ -f "$file" ]; then
+            linux_artefact="$file"
+            break
+        fi
+    done
+    for file in "$repo/dist/packages/hauler-dj_${version}_amd64.deb" \
+        "$repo/dist/packages/hauler-dj-${version}-1.x86_64.rpm" \
+        "$repo/dist/packages/hauler-dj-${version}-x86_64.AppImage"; do
+        if [ -f "$file" ]; then
+            linux_extra+=("$file")
+        fi
+    done
+    collect_windows_artefacts "${DJ_WIN_DIST:-$repo/dist/windows}"
+}
+
 build_windows() {
     echo "== пакет для Windows"
     # Каталоги windows-сборки могут принадлежать другому пользователю — тогда их не переписать, и спорить за них
@@ -226,11 +268,9 @@ build_windows() {
     local win_dist="${DJ_WIN_DIST:-$repo/dist/windows}"
 
     bash "$repo/scripts/windows.sh" --all
-    while IFS= read -r file; do
-        windows_artefacts+=("$file")
-    done < <(find "$win_dist" -maxdepth 1 -type f \( -name '*.zip' -o -name '*.msi' \) | sort)
-    if [ "${#windows_artefacts[@]}" -eq 0 ]; then
-        echo "release: windows.sh не оставил ни zip, ни MSI" >&2
+    collect_windows_artefacts "$win_dist"
+    if [ "$windows_msi_found" != 1 ]; then
+        echo "release: в $win_dist нет msi версии $version — Windows-релиза без установщика не выпускаю" >&2
         exit 1
     fi
     local file
@@ -299,6 +339,14 @@ publish() {
     fi
     # Суммы считаются по каталогу выгрузки уже после того, как все файлы на месте: сумма, посчитанная раньше, о новом
     # файле молчит, и проверка по ней проходит, ничего не проверив.
+    if [ -z "$linux_artefact" ] || [ "${#windows_artefacts[@]}" -eq 0 ]; then
+        discover_artefacts
+    fi
+    if [ -z "$linux_artefact" ] || [ "$windows_msi_found" != 1 ]; then
+        echo "release: не нашлось файлов для черновика — нет $out/hauler-dj-$version-*-x86_64.tar.gz или msi версии $version." >&2
+        echo "release: сначала соберите их (--linux, --windows), проверьте $repo/dist/packages и ${DJ_WIN_DIST:-$repo/dist/windows}." >&2
+        exit 1
+    fi
     local upload="$out/upload"
     rm -rf "$upload"
     mkdir -p "$upload"
