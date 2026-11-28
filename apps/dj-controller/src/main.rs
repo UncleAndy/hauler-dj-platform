@@ -1092,9 +1092,31 @@ fn screens_show(endpoint: &str, playing: &Playing) {
         .unwrap_or_else(std::time::Instant::now);
     // What each panel showed last: a picture that has not changed is not sent again.
     let mut drawn: [Option<Vec<u16>>; 2] = [None, None];
+    // A frozen picture has two causes that look identical from the outside — a thread that stopped and a panel that takes
+    // frames without changing — so every ten seconds one line says how far each side got (owner's Windows report, 28.11:
+    // the deck was drawn once, then stood still, and the log said nothing).
+    let mut pictures = 0_usize;
+    let mut frames_sent = 0_usize;
+    let mut last_note = std::time::Instant::now();
     loop {
         match client.recv_server() {
             Ok(dj_bridge::ServerMessage::Snapshot(snapshot)) => {
+                pictures += 1;
+                if last_note.elapsed() >= std::time::Duration::from_secs(10) {
+                    last_note = std::time::Instant::now();
+                    let shown = screen_deck(dj_controller_s4mk3::Screen::Left, &snapshot.panel);
+                    let at = snapshot
+                        .decks
+                        .iter()
+                        .find(|deck| deck.deck == shown)
+                        .and_then(|deck| deck.position_ratio)
+                        .unwrap_or(0.0);
+                    println!(
+                        "dj-controller: the screens: {pictures} snapshots, {frames_sent} frames sent, left deck {shown:?} \
+                         at {:.1}%",
+                        f64::from(at) * 100.0
+                    );
+                }
                 if last_drawn.elapsed() < interval {
                     continue;
                 }
@@ -1120,6 +1142,7 @@ fn screens_show(endpoint: &str, playing: &Playing) {
                         println!("dj-controller: the screens stopped: {reason}");
                         return;
                     }
+                    frames_sent += 1;
                     drawn[index] = Some(canvas.pixels().to_vec());
                 }
             }
