@@ -1095,6 +1095,7 @@ fn screens_show(endpoint: &str, playing: &Playing) {
     // A frozen picture has two causes that look identical from the outside — a thread that stopped and a panel that takes
     // frames without changing — so every ten seconds one line says how far each side got (owner's Windows report, 28.11:
     // the deck was drawn once, then stood still, and the log said nothing).
+    let mut waves = WaveCache::default();
     let mut pictures = 0_usize;
     let mut frames_sent = 0_usize;
     let mut slowest = std::time::Duration::ZERO;
@@ -1131,8 +1132,21 @@ fn screens_show(endpoint: &str, playing: &Playing) {
                     (0usize, dj_controller_s4mk3::Screen::Left),
                     (1usize, dj_controller_s4mk3::Screen::Right),
                 ] {
-                    let panel =
-                        panel_from(&snapshot, side, jump[index], looped[index], warning_flash());
+                    let bars = waves.bars(
+                        snapshot
+                            .decks
+                            .iter()
+                            .find(|deck| deck.deck == screen_deck(side, &snapshot.panel))
+                            .and_then(|deck| deck.waveform.as_ref()),
+                    );
+                    let panel = panel_from(
+                        &snapshot,
+                        side,
+                        jump[index],
+                        looped[index],
+                        warning_flash(),
+                        bars,
+                    );
                     let canvas = dj_controller_s4mk3::screen::render_deck(&panel);
                     if drawn[index].as_deref() == Some(canvas.pixels()) {
                         continue;
@@ -3264,6 +3278,7 @@ fn panel_from(
     jump_beats: f64,
     loop_beats: u32,
     warning_flash: bool,
+    waveform_bars: Vec<f32>,
 ) -> dj_controller_s4mk3::screen::DeckPanel {
     let chosen = screen_deck(side, &snapshot.panel);
     let Some(deck) = snapshot.decks.iter().find(|deck| deck.deck == chosen) else {
@@ -3349,20 +3364,66 @@ fn panel_from(
         // is where in the track we are, not what the next few seconds look like (owner's request, 25.11). The drawing
         // rule is still the window's own (`waveform::bars`). A track with no envelope gets no strip, which is honest:
         // it is not a track with no sound.
-        waveform: deck
-            .waveform
-            .as_ref()
-            .and_then(|wave| dj_controller_s4mk3::waveform::read(&wave.path))
-            .map(|envelope| {
-                dj_controller_s4mk3::waveform::bars(&envelope.columns, STRIP_COLUMNS, 0.0, 1.0)
-            })
-            .unwrap_or_default(),
+        // The strip is read once per track and kept by the caller: see `WaveCache`.
+        waveform: waveform_bars,
         wave_position,
     }
 }
 
 /// How many columns the strip at the bottom of a screen is drawn with: the width of the picture inside its margins.
 const STRIP_COLUMNS: usize = 300;
+
+/// The waveform bars of the tracks on the screens, read once per track and kept.
+///
+/// The strip at the bottom of a screen comes from the envelope the engine cached for the track, and that file was being
+/// read **on every drawing**: two screens five times a second is ten reads of the same file a second. On Linux the page
+/// cache hides it; on Windows a virus scanner sits between the program and the disk, the screens thread fell behind the
+/// engine's snapshots, drew stale ones — the log said `148 snapshots, 3 frames sent, left deck A at 0.0%` — and the
+/// picture froze on the first state it had drawn, while the lights (the same snapshots, no file reads) kept up
+/// (owner's report, 28.11).
+#[derive(Default)]
+struct WaveCache {
+    /// Path and column count together: a file rewritten with a different count is a different envelope.
+    entries: Vec<(String, u32, Vec<f32>)>,
+}
+
+impl WaveCache {
+    /// The strip for this track, read from disk at most once per track.
+    fn bars(&mut self, wave: Option<&dj_domain::Waveform>) -> Vec<f32> {
+        let Some(wave) = wave else {
+            return Vec::new();
+        };
+        let fresh = self
+            .entries
+            .iter()
+            .find(|(path, buckets, _)| *path == wave.path && *buckets == wave.buckets);
+        if let Some((_, _, bars)) = fresh {
+            return bars.clone();
+        }
+        let started = std::time::Instant::now();
+        let bars = dj_controller_s4mk3::waveform::read(&wave.path)
+            .map(|envelope| {
+                dj_controller_s4mk3::waveform::bars(&envelope.columns, STRIP_COLUMNS, 0.0, 1.0)
+            })
+            .unwrap_or_default();
+        // Said out loud because it costs what it costs: a read of a megabyte takes milliseconds on Linux and can take a
+        // second on a machine that scans it, and this line is the difference between "the screens are slow" and "the
+        // disk is slow".
+        println!(
+            "dj-controller: the screens: waveform {} read in {} ms ({} columns of {} in the file)",
+            wave.path,
+            started.elapsed().as_millis(),
+            bars.len(),
+            wave.buckets
+        );
+        if self.entries.len() >= 8 {
+            self.entries.remove(0);
+        }
+        self.entries
+            .push((wave.path.clone(), wave.buckets, bars.clone()));
+        bars
+    }
+}
 
 /// The panel of one screen, taken from the engine's first snapshot.
 fn live_panel(
@@ -3374,6 +3435,8 @@ fn live_panel(
         Some(std::time::Duration::from_secs(2)),
     )
     .map_err(|error| format!("no engine at {endpoint}: {error}"))?;
+    // One frame out of a live engine: a cache of its own is enough, and it keeps the same read-once rule.
+    let mut waves = WaveCache::default();
     loop {
         match client
             .recv_server()
@@ -3382,7 +3445,14 @@ fn live_panel(
             dj_bridge::ServerMessage::Snapshot(snapshot) => {
                 // The knobs' own values: this one-shot tool has no live controller, so it draws what a fresh service
                 // carries. The service itself passes the numbers its hand set.
-                return Ok(panel_from(&snapshot, side, 4.0, 4, warning_flash()));
+                let bars = waves.bars(
+                    snapshot
+                        .decks
+                        .iter()
+                        .find(|deck| deck.deck == screen_deck(side, &snapshot.panel))
+                        .and_then(|deck| deck.waveform.as_ref()),
+                );
+                return Ok(panel_from(&snapshot, side, 4.0, 4, warning_flash(), bars));
             }
             _ => continue,
         }
@@ -4551,6 +4621,66 @@ mod tests {
             super::pad_colours(false, &[], &[], &[], &palette),
             [None; 8]
         );
+    }
+
+    /// The strip is read once per track, not once per drawing: ten reads of the same file a second put the screens
+    /// thread behind the engine's snapshots on Windows, and the picture froze (owner's report, 28.11).
+    #[test]
+    fn the_waveform_of_a_track_is_read_once_and_kept() {
+        let folder = std::env::temp_dir().join(format!("dj-wave-cache-{}", std::process::id()));
+        if std::fs::create_dir_all(&folder).is_err() {
+            panic!("a temporary folder cannot be made");
+        }
+        let path = folder.join("track.wave");
+        let buckets = 64_u32;
+        let mut file = Vec::new();
+        file.extend_from_slice(b"DJWAVE11");
+        file.extend_from_slice(&1234_u64.to_le_bytes());
+        file.extend_from_slice(&[0_u8; 16]);
+        file.extend_from_slice(&48_000_u64.to_le_bytes());
+        file.extend_from_slice(&512_u64.to_le_bytes());
+        file.extend_from_slice(&u64::from(buckets).to_le_bytes());
+        for column in 0..buckets {
+            let level = if column % 2 == 0 { 20_000_i16 } else { -20_000 };
+            file.extend_from_slice(&level.to_le_bytes());
+            file.extend_from_slice(&level.to_le_bytes());
+            file.extend_from_slice(&[0_u8; 3]);
+        }
+        if std::fs::write(&path, &file).is_err() {
+            panic!("the envelope file cannot be written");
+        }
+
+        let wave = dj_domain::Waveform {
+            path: path.display().to_string(),
+            frames_per_bucket: 512,
+            buckets,
+            sample_rate: 48_000,
+        };
+        let mut cache = super::WaveCache::default();
+        let first = cache.bars(Some(&wave));
+        assert!(!first.is_empty(), "an envelope of peaks becomes bars");
+        assert_eq!(cache.entries.len(), 1, "one track, one entry");
+
+        let again = cache.bars(Some(&wave));
+        assert_eq!(again, first, "the same track gives the same strip");
+        assert_eq!(cache.entries.len(), 1, "and is not read again");
+
+        // A file rewritten with another column count is another envelope, not the cached one.
+        let rewritten = dj_domain::Waveform {
+            buckets: buckets + 1,
+            ..wave.clone()
+        };
+        let _ = cache.bars(Some(&rewritten));
+        assert_eq!(
+            cache.entries.len(),
+            2,
+            "a different envelope is a new entry"
+        );
+        assert!(
+            cache.bars(None).is_empty(),
+            "a track without one has no strip"
+        );
+        std::fs::remove_dir_all(&folder).ok();
     }
 
     #[test]
