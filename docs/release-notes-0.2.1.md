@@ -85,8 +85,8 @@ Sizes and checksums are the assets themselves, not a table here that goes stale.
 ## Verified
 
 - `bash scripts/check.sh` — all gates: fixtures, formatting, clippy with `-D warnings`, 161 test binaries (1023 tests),
-  document traceability, and the shell's own checks against a real engine: **34 of 34** scenarios, 763 witness lines, the
-  frame-rate measurement and the launcher's shutdown.
+  document traceability, and the shell's own checks against a real engine: **34 of 34** scenarios, the witness lines each
+  scenario demands, the frame-rate measurement and the launcher's shutdown.
 - **The controller was measured on Windows, by the owner, on his own S4 MK3** — this is the release where that happened:
   presses, faders, lights, the screens' driver installation, the screens drawing and, after the fix in this release,
   playing back with a running timer and a moving playhead.
