@@ -125,6 +125,36 @@ def render_directories(tree: dict[str, list[str]], dist: Path) -> str:
     return walk("")
 
 
+# Контроллер, который связывает драйвер экранов: он же и команда, и файл в пакете.
+CONTROLLER_EXE = "dj-controller.exe"
+
+
+def render_screens_action(tree: dict[str, list[str]]) -> str:
+    """Связывание драйвера экранов во время установки — или ничего, если контроллера в дистрибутиве нет.
+
+    Драйвер WinUSB для интерфейса `4` ставится один раз и только из-под администратора; в msi установщик уже
+    администратор, поэтому шаг выполняется здесь, а не остаётся командой, которую человек забудет (владелец: экраны
+    так и не заработали, потому что `--screens-driver` никто не запускал, 28.11).
+
+    Три атрибута — не украшение: `Execute="deferred"` + `Impersonate="no"` ставят действие в отложенный скрипт от
+    SYSTEM (иначе `pnputil` получит отказ в правах), а `Return="ignore"` не даёт отказу драйвера отменить установку
+    приложения: программа без экранов всё ещё программа, а установщик, падающий на драйвере, — нет.
+    """
+    if CONTROLLER_EXE not in tree.get("", []):
+        return ""
+    return (
+        f'    <CustomAction Id="BindScreensDriver" FileKey="{component_id(CONTROLLER_EXE)}_f" '
+        f'ExeCommand="--screens-driver --elevated" Execute="deferred" Impersonate="no" Return="ignore" />'
+    )
+
+
+def render_screens_step(tree: dict[str, list[str]]) -> str:
+    """Строка последовательности: после того как файлы на месте, и только при первой установке."""
+    if CONTROLLER_EXE not in tree.get("", []):
+        return ""
+    return '      <Custom Action="BindScreensDriver" After="InstallFiles">NOT Installed</Custom>'
+
+
 def render(dist: Path, version: str) -> str:
     tree = collect(dist)
     total = sum(len(files) for files in tree.values())
@@ -138,6 +168,8 @@ def render(dist: Path, version: str) -> str:
     ]
     heat = "\n".join(refs)
     components = render_directories(tree, dist)
+    screens_action = render_screens_action(tree)
+    screens_step = render_screens_step(tree)
 
     return f"""<?xml version="1.0" encoding="utf-8"?>
 <!-- Сгенерировано scripts/windows-msi.py: файлов {total}, версия {version}. Руками не править. -->
@@ -156,7 +188,9 @@ def render(dist: Path, version: str) -> str:
     </Upgrade>
     <InstallExecuteSequence>
       <RemoveExistingProducts After="InstallValidate" />
+{screens_step}
     </InstallExecuteSequence>
+{screens_action}
 
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFiles64Folder">

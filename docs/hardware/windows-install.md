@@ -21,6 +21,13 @@ display interface 4 cannot be claimed: incompatible driver is installed for this
 dj-controller --screens-driver
 ```
 
+**Из msi шаг делается сам.** Установщик уже администратор, поэтому в его последовательность добавлено отложенное
+действие `BindScreensDriver` (тип `3154`: exe из установленного файла, отложенный скрипт, без олицетворения — то есть
+от SYSTEM, и `Return="ignore"`): после того как файлы на месте, `dj-controller.exe --screens-driver --elevated`
+связывает `MI_04`. Отказ драйвера не отменяет установку приложения — программа без экранов всё ещё программа.
+Ответ шага, если что-то пошло не так, лежит в журнале SYSTEM:
+`C:\Windows\System32\config\systemprofile\AppData\Roaming\hauler-dj\logs\screens-driver.log`.
+
 - **Права команда просит сама** (`runas`, обычное окно UAC): драйвер ставится только от администратора. Elevated-копия
   — та же программа с внутренним `--elevated`; она кладёт `driver.cer` в `Root` и `TrustedPublisher`, запускает
   `pnputil /add-driver … /install`, а её ответ возвращается в консоль, откуда команду позвали (у elevated-копии свой
