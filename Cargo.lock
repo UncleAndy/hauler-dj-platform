@@ -465,6 +465,7 @@ version = "0.2.0"
 dependencies = [
  "dj-controller-core",
  "dj-domain",
+ "libloading 0.8.9",
  "nusb",
 ]
 

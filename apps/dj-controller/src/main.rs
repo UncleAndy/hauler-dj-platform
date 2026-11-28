@@ -31,7 +31,7 @@ use dj_controller_s4mk3::{NAME, PRODUCT, S4Mk3, VENDOR};
 use dj_hid::write::ReportSink;
 use dj_hid::{DeviceInfo, HidTransport, Transport};
 
-const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send] | --lights-demo [--interval MS] [--send] | --lights-show --engine <endpoint> | --lights-fill <code> [--send] | --lights-night [--rest <code>] [--send] | --lights-bright <byte> [--colour N] [--rounds N] [--send] | --lights-colour-walk [<byte>|left|right|all] [--shift] [--interval MS] [--send] | --lights-pick [<byte>|left|right|all] [--out <file>] [--interval MS] [--send] | --screen-from --engine <endpoint> --out <file.ppm> [--panel left|right] | --screen-send [--engine <endpoint>] [--panel left|right] | --screen-off | --farewell | --farewell-preview <file.ppm> | --lights-off | --ring-probe | --serve --engine <endpoint> | --inputs-watch [--seconds N] | --node-rates [--seconds N] | --wheel-init [--seconds N] | --inputs-learn [--out <file>] [--inputs <file>]";
+const USAGE: &str = "dj-controller --status | --list | --capture <file> [--reports <n>] | --replay <file> [--engine <endpoint>] | --screen-preview <file.ppm> [--panel left|right] | --lights-sweep [--from N] [--to M] [--colour C] [--interval MS] [--body-only] [--send] | --lights-map <file> [--from N] [--to M] [--colour C] [--send] | --lights-colours <byte> --colours 4,8,12 [--interval MS] [--send] | --lights-demo [--interval MS] [--send] | --lights-show --engine <endpoint> | --lights-fill <code> [--send] | --lights-night [--rest <code>] [--send] | --lights-bright <byte> [--colour N] [--rounds N] [--send] | --lights-colour-walk [<byte>|left|right|all] [--shift] [--interval MS] [--send] | --lights-pick [<byte>|left|right|all] [--out <file>] [--interval MS] [--send] | --screen-from --engine <endpoint> --out <file.ppm> [--panel left|right] | --screen-send [--engine <endpoint>] [--panel left|right] | --screen-off | --screens-driver [--check] | --farewell | --farewell-preview <file.ppm> | --lights-off | --ring-probe | --serve --engine <endpoint> | --inputs-watch [--seconds N] | --node-rates [--seconds N] | --wheel-init [--seconds N] | --inputs-learn [--out <file>] [--inputs <file>]";
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -46,6 +46,9 @@ fn main() -> ExitCode {
 
 fn run(arguments: &[String]) -> Result<(), String> {
     let mut mode = Mode::Status;
+    // `--check` reads better before or after the command it modifies, and a flag whose meaning depends on word order is a
+    // flag that will be written the other way by the next person.
+    let mut screens_check = false;
     let mut reports = 200_usize;
     let mut engine: Option<String> = None;
     let mut sweep_from = 0usize;
@@ -81,6 +84,19 @@ fn run(arguments: &[String]) -> Result<(), String> {
                 };
                 engine = Some(endpoint.clone());
                 index += 1;
+            }
+            // The screens on Windows: the interface is a vendor bulk one, and Windows hands it to the vendor's driver.
+            // This is the one command that asks for the driver package to be bound, and it says what it found first.
+            "--screens-driver" => {
+                mode = Mode::ScreensDriver {
+                    check: screens_check,
+                };
+            }
+            "--check" => {
+                screens_check = true;
+                if let Mode::ScreensDriver { check } = &mut mode {
+                    *check = true;
+                }
             }
             "--lights-demo" => mode = Mode::LightsDemo,
             "--lights-show" => mode = Mode::LightsShow,
@@ -405,6 +421,15 @@ fn run(arguments: &[String]) -> Result<(), String> {
         return Err(format!("{flag} wants --engine <endpoint>. {USAGE}"));
     }
 
+    // The driver of the screens' interface is a property of the machine, not of a setting: the copy that runs this
+    // command is the copy whose screens never opened, and "controller support is off" is a normal state of exactly that
+    // copy (a fresh install). So this mode answers before the settings are read — it opens no panel and lights nothing.
+    // The arm in the switch below stays because a switch has to name every mode.
+    if let Mode::ScreensDriver { check } = &mode {
+        let devices = HidTransport::new().enumerate().unwrap_or_default();
+        return screens_driver(*check, &devices);
+    }
+
     let (config, file) = dj_config::Config::load_or_default(None)
         .map_err(|error| format!("the settings file cannot be read: {error}"))?;
     if !config.controller.enabled {
@@ -441,6 +466,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         .map_err(|error| format!("the HID nodes cannot be listed: {error}"))?;
     match mode {
         Mode::Status => status(&devices),
+        Mode::ScreensDriver { check } => screens_driver(check, &devices),
         Mode::List => {
             list(&devices);
             Ok(())
@@ -541,6 +567,10 @@ enum Mode {
     NodeRates,
     WheelInit,
     InputsLearn,
+    /// Bind the screens' interface to WinUSB, or say what is missing. Windows only, and never guessed at elsewhere.
+    ScreensDriver {
+        check: bool,
+    },
 }
 
 /// Write one screen as a picture a person can open, and say how big the frame would be.
@@ -3990,6 +4020,75 @@ fn open_lights(devices: &[DeviceInfo]) -> Result<dj_hid::write::HidSink, String>
             "the lights need a writable node {error}; on Linux that is a udev rule for this device"
         )
     })
+}
+
+/// Bind the screens' interface to WinUSB — or report what the machine offers and what is still missing.
+///
+/// The screens are a bulk interface of their own, and Windows gives it to the vendor's driver: `nusb` can only claim it
+/// when WinUSB is bound. That binding is a driver install, so it is its own command with its own words rather than
+/// something the service tries behind the DJ's back (owner's decision, 2026-11-28).
+fn screens_driver(check: bool, devices: &[DeviceInfo]) -> Result<(), String> {
+    // The platform first: a person on Linux asking about a Windows driver pack should read one sentence, not a directory
+    // listing of a Windows answer.
+    if !cfg!(windows) {
+        println!(
+            "dj-controller: the screens need a udev rule on this system, not a driver: see \
+             docs/hardware/s4mk3/screens.md"
+        );
+        if check {
+            println!("dj-controller: nothing to install here: this is not Windows");
+            return Ok(());
+        }
+        return Err(String::from(
+            "--screens-driver binds a Windows driver package; on this system the answer is a udev rule",
+        ));
+    }
+    let programs = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let offer = dj_controller_s4mk3::screens_driver::find_offer(&programs);
+    println!("dj-controller: screens driver: {}", offer.describe());
+    println!(
+        "dj-controller: {} {}",
+        NAME,
+        match devices.iter().find(|device| device.is(VENDOR, PRODUCT)) {
+            Some(device) => format!("is plugged in ({})", device.path.display()),
+            None => "is not plugged in".to_string(),
+        }
+    );
+    #[cfg(windows)]
+    {
+        if check {
+            match dj_controller_s4mk3::panels::Panels::open() {
+                Ok(panels) => println!(
+                    "dj-controller: interface {} opens: WinUSB is bound and the screens are reachable",
+                    panels.interface_number()
+                ),
+                Err(error) => {
+                    println!(
+                        "dj-controller: interface {} does not open yet: {error}",
+                        dj_controller_s4mk3::screens_driver::INTERFACE
+                    );
+                    println!(
+                        "dj-controller: {}",
+                        dj_controller_s4mk3::screens_driver::instructions()
+                    );
+                }
+            }
+            return Ok(());
+        }
+        let said = dj_controller_s4mk3::screens_driver::install(&programs)?;
+        println!("dj-controller: {said}");
+        return Ok(());
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (check, offer);
+        unreachable!(
+            "the platform check above returns before this point on any system that is not Windows"
+        )
+    }
 }
 
 fn status(devices: &[DeviceInfo]) -> Result<(), String> {

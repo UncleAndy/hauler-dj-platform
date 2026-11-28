@@ -13,6 +13,11 @@ dj-controller-core = { path = "../dj-controller-core" }
 # system libusb and works on the platforms the project ships for.
 nusb = "0.2"
 
+# `libwdi.dll` is loaded at run time, not linked: the Windows driver installer is optional, and a copy of the program
+# without it must still start and say what the screens need (owner's decision, 2026-11-28).
+[target.'cfg(windows)'.dependencies]
+libloading = "0.8"
+
 [dev-dependencies]
 dj-domain = { path = "../dj-domain" }
 

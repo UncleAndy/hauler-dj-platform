@@ -49,7 +49,12 @@ impl Panels {
         let interface = device
             .claim_interface(INTERFACE)
             .wait()
-            .map_err(|error| format!("display interface {INTERFACE} cannot be claimed: {error}"))?;
+            .map_err(|error| {
+                format!(
+                    "display interface {INTERFACE} cannot be claimed: {error}. On Windows that means the interface is \
+                     not on WinUSB yet — `dj-controller --screens-driver --check` says what this copy can do about it"
+                )
+            })?;
         let endpoint = interface
             .endpoint::<nusb::transfer::Bulk, nusb::transfer::Out>(ENDPOINT)
             .map_err(|error| format!("endpoint {ENDPOINT:#04x} is not a bulk out: {error}"))?;

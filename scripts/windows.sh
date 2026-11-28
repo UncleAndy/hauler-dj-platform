@@ -394,6 +394,18 @@ deploy() {
                 [ -d "$path/$dir" ] && echo "$path/$dir"
             done
         done' 2>/dev/null || true)
+    # The Windows-only halves of the screens, copied only when the tree carries them: `libwdi.dll` (loaded at run time,
+    # so its absence is a message and never a failure to start) and a prepared driver package. `assets/windows/` is the
+    # place a person drops them; nothing here invents a signed driver.
+    if [ -f "$repo/assets/windows/libwdi.dll" ]; then
+        cp "$repo/assets/windows/libwdi.dll" "$dist/"
+        echo "  libwdi.dll: копия из assets/windows"
+    fi
+    if [ -d "$repo/assets/windows/driver" ]; then
+        rm -rf "$dist/driver"
+        cp -r "$repo/assets/windows/driver" "$dist/driver"
+        echo "  driver/: пакет драйвера из assets/windows"
+    fi
     winpthread_dir="$(qt_mingw_tool)"
     if [ -f "$winpthread_dir/bin/libwinpthread-1.dll" ]; then
         cp "$winpthread_dir/bin/libwinpthread-1.dll" "$dist/"

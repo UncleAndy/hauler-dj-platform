@@ -28,6 +28,7 @@ pub mod inputs;
 pub mod lights;
 pub mod panels;
 pub mod screen;
+pub mod screens_driver;
 pub mod text;
 pub mod waveform;
 
